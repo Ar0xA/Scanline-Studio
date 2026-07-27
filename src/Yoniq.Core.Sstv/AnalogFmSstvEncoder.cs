@@ -5,8 +5,11 @@ using Yoniq.Abstractions.Sstv;
 namespace Yoniq.Core.Sstv;
 
 /// <summary>
-/// Generic continuous-phase FM encoder driven entirely by <see cref="SstvModeDefinition"/> data —
-/// no per-mode code, per spec/06-sstv-dsp.md's "modes are data" design goal.
+/// Generic continuous-phase FM encoder. Shared infrastructure (VIS header, phase accumulation) is
+/// family-agnostic; the actual per-line frequency sequence is delegated to a
+/// <see cref="IScanlineEncoder"/> selected via <see cref="ScanlineCodecFactory"/> — see
+/// <see cref="ColorEncoding"/>'s doc comment for why different families need different codec
+/// logic rather than one generic interpreter.
 /// </summary>
 public sealed class AnalogFmSstvEncoder : ISstvEncoder
 {
@@ -22,6 +25,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         IImageSource image,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
         var phase = 0.0;
 
         // Running accumulator, not "round(durationMs -> samples) per segment": with ~245,000
@@ -32,7 +36,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         var idealSamplesSoFar = 0.0;
         var emittedSamples = 0L;
 
-        foreach (var (frequencyHz, durationMs) in GenerateFrequencySegments(mode, image))
+        foreach (var (frequencyHz, durationMs) in GenerateFrequencySegments(mode, image, lineEncoder))
         {
             ct.ThrowIfCancellationRequested();
 
@@ -60,7 +64,8 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
 
     private static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFrequencySegments(
         SstvModeDefinition mode,
-        IImageSource image)
+        IImageSource image,
+        IScanlineEncoder lineEncoder)
     {
         foreach (var segment in VisHeader.GenerateSegments(mode.VisCode))
         {
@@ -69,37 +74,10 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
 
         for (var y = 0; y < mode.ImageHeight; y++)
         {
-            foreach (var lineSegment in mode.LineSegments)
+            foreach (var segment in lineEncoder.GenerateLine(mode, image, y))
             {
-                switch (lineSegment)
-                {
-                    case SyncSegment sync:
-                        yield return (sync.FrequencyHz, sync.DurationMs);
-                        break;
-
-                    case ScanSegment scan:
-                        var perPixelDurationMs = scan.DurationMs / mode.ImageWidth;
-                        for (var x = 0; x < mode.ImageWidth; x++)
-                        {
-                            // Re-fetched per pixel (not hoisted) because ReadOnlySpan<T> can't be
-                            // stored across a yield-return boundary in an iterator state machine.
-                            var value = GetChannelValue(image.GetScanline(y)[x], scan.ChannelName);
-                            var frequencyHz = mode.LuminanceMinHz
-                                + value / 255.0 * (mode.LuminanceMaxHz - mode.LuminanceMinHz);
-                            yield return (frequencyHz, perPixelDurationMs);
-                        }
-
-                        break;
-                }
+                yield return segment;
             }
         }
     }
-
-    internal static byte GetChannelValue(Rgb24 pixel, string channelName) => channelName switch
-    {
-        "R" => pixel.R,
-        "G" => pixel.G,
-        "B" => pixel.B,
-        _ => throw new NotSupportedException($"Unknown channel '{channelName}'."),
-    };
 }
