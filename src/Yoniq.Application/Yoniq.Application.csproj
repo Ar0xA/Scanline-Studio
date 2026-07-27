@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Yoniq.Abstractions\Yoniq.Abstractions.csproj" />
+    <ProjectReference Include="..\Yoniq.Settings\Yoniq.Settings.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Radio\Yoniq.Core.Radio.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Radio.Cat\Yoniq.Core.Radio.Cat.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Radio.Rigctld\Yoniq.Core.Radio.Rigctld.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Audio\Yoniq.Core.Audio.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Sstv\Yoniq.Core.Sstv.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Imaging\Yoniq.Core.Imaging.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Logbook\Yoniq.Core.Logbook.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Localization\Yoniq.Core.Localization.csproj" />
+  </ItemGroup>
+</Project>
