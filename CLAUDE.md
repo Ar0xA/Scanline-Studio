@@ -18,6 +18,7 @@ This is a full technology rewrite (C++Builder/VCL → C#/Avalonia), not an incre
 
 ## Primary objectives
 
+- **Port first, invent second — DSP/codec math specifically.** For SSTV encode/decode, filters, demodulators, and CAT protocol framing (`sstv.cpp`, `Fft.cpp`, `fir.cpp`, `cradio.cpp`) — the "complicated math" parts — read the corresponding legacy function(s) first and port that exact algorithm (same filter structure, same discriminator method, same constants), translated to idiomatic C#. Don't design a new DSP technique and tune it by trial and error, even when it seems mathematically reasonable: the legacy implementation is proven, shipped software; a freshly invented alternative starts with no track record. This does *not* extend to the GUI/architecture around the DSP (Avalonia vs. VCL, DI, async, project layout), which is intentionally being modernized per "What preserve behavior means here" above — this rule is narrower, and specifically about the math. This is the concrete workflow habit behind the behavioral-parity rule below.
 - Preserve behavior whenever practical (see above for what that means in a rewrite).
 - Keep commits small and reviewable.
 - Never remove existing radio support unless replaced — and if only partially replaced, it must be logged in `docs/removed-features.md`, not silently narrowed.
