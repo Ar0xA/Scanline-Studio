@@ -33,6 +33,15 @@ public class SstvRoundTripTests
         { SstvModeRegistry.Robot36, 150.0 },
         { SstvModeRegistry.Robot72, 300.0 },
         { SstvModeRegistry.Avt, 375.0 },
+        { SstvModeRegistry.Mr73, 286.3 },
+        { SstvModeRegistry.Mr90, 352.3 },
+        { SstvModeRegistry.Mr115, 450.3 },
+        { SstvModeRegistry.Mr140, 548.3 },
+        { SstvModeRegistry.Mr175, 684.3 },
+        { SstvModeRegistry.Ml180, 363.3 },
+        { SstvModeRegistry.Ml240, 483.3 },
+        { SstvModeRegistry.Ml280, 565.3 },
+        { SstvModeRegistry.Ml320, 645.3 },
     };
 
     [Theory]

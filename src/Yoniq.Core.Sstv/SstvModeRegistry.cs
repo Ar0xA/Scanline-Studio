@@ -197,7 +197,54 @@ public static class SstvModeRegistry
             new ScanSegment(ChannelName: "B", DurationMs: 125.0),
         ]);
 
-    public static readonly IReadOnlyList<SstvModeDefinition> All = [MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDx, Robot36, Robot72, Avt];
+    // MR (Robot-Martin hybrid, per-line full Y + full-width-but-half-duration R-Y and B-Y, no
+    // alternation) and ML (same shape, larger 640x496 bitmap per CSSTVSET::GetBitmapSize) families:
+    // read from TMmsstv::LineMR (Main.cpp). Uses the two-byte "extended VIS" mechanism (escape
+    // 0x23 + a second raw byte — see VisHeader.GenerateExtendedSegments), not a normal VIS code.
+    // The three 0.1ms "hold last frequency" segments after each scan (analog PLL settling in real
+    // hardware) are approximated here as brief 1900Hz pulses rather than modeling the actual
+    // repeated-last-sample behavior — negligible at 0.1ms out of a 200-700ms line, and not
+    // information-bearing, but noted as a simplification rather than silently assumed identical.
+    private static SstvModeDefinition CreateMrFamilyMode(string id, string displayName, int extendedCode, int width, int height, double scanDurationMs) => new(
+        Id: id,
+        DisplayName: displayName,
+        VisCode: 0,
+        ExtendedVisCode: extendedCode,
+        ImageWidth: width,
+        ImageHeight: height,
+        ColorEncoding: ColorEncoding.YCbCrSequential,
+        LineSegments:
+        [
+            new SyncSegment(DurationMs: 9.0, FrequencyHz: 1200),
+            new SyncSegment(DurationMs: 1.0, FrequencyHz: 1500), // porch
+            new ScanSegment(ChannelName: "Y", DurationMs: scanDurationMs),
+            new SyncSegment(DurationMs: 0.1, FrequencyHz: 1900), // hold, see note above
+            new ScanSegment(ChannelName: "RY", DurationMs: scanDurationMs / 2),
+            new SyncSegment(DurationMs: 0.1, FrequencyHz: 1900), // hold
+            new ScanSegment(ChannelName: "BY", DurationMs: scanDurationMs / 2),
+            new SyncSegment(DurationMs: 0.1, FrequencyHz: 1900), // hold
+        ]);
 
-    public static SstvModeDefinition? FindByVisCode(int visCode) => All.FirstOrDefault(m => m.VisCode == visCode);
+    public static readonly SstvModeDefinition Mr73 = CreateMrFamilyMode("mr73", "MR73", 0x45, 320, 256, 138.0);
+    public static readonly SstvModeDefinition Mr90 = CreateMrFamilyMode("mr90", "MR90", 0x46, 320, 256, 171.0);
+    public static readonly SstvModeDefinition Mr115 = CreateMrFamilyMode("mr115", "MR115", 0x49, 320, 256, 220.0);
+    public static readonly SstvModeDefinition Mr140 = CreateMrFamilyMode("mr140", "MR140", 0x4a, 320, 256, 269.0);
+    public static readonly SstvModeDefinition Mr175 = CreateMrFamilyMode("mr175", "MR175", 0x4c, 320, 256, 337.0);
+
+    public static readonly SstvModeDefinition Ml180 = CreateMrFamilyMode("ml180", "ML180", 0x85, 640, 496, 176.5);
+    public static readonly SstvModeDefinition Ml240 = CreateMrFamilyMode("ml240", "ML240", 0x86, 640, 496, 236.5);
+    public static readonly SstvModeDefinition Ml280 = CreateMrFamilyMode("ml280", "ML280", 0x89, 640, 496, 277.5);
+    public static readonly SstvModeDefinition Ml320 = CreateMrFamilyMode("ml320", "ML320", 0x8a, 640, 496, 317.5);
+
+    public static readonly IReadOnlyList<SstvModeDefinition> All =
+    [
+        MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDx, Robot36, Robot72, Avt,
+        Mr73, Mr90, Mr115, Mr140, Mr175, Ml180, Ml240, Ml280, Ml320,
+    ];
+
+    public static SstvModeDefinition? FindByVisCode(int visCode) =>
+        All.FirstOrDefault(m => m.ExtendedVisCode is null && m.VisCode == visCode);
+
+    public static SstvModeDefinition? FindByExtendedCode(int extendedCode) =>
+        All.FirstOrDefault(m => m.ExtendedVisCode == extendedCode);
 }
