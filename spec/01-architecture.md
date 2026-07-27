@@ -1,0 +1,108 @@
+# Architecture
+
+## Related
+
+[[00-project-overview]] · feeds → all other spec documents
+
+## Technology Stack
+
+| Concern | Choice | Rationale |
+|---|---|---|
+| Runtime | .NET 8 (LTS), C# 12 | Cross-platform (win-x64, linux-x64, osx-x64/arm64), long support window |
+| UI framework | Avalonia UI 11 (Fluent theme) | XAML + MVVM, true cross-platform desktop rendering, closest migration path from VCL forms |
+| MVVM toolkit | CommunityToolkit.Mvvm | Source-generated `ObservableProperty`/`RelayCommand`, no reflection overhead |
+| DI container | `Microsoft.Extensions.DependencyInjection` via generic `Host` | Constructor injection everywhere, no service locator |
+| Configuration | `Microsoft.Extensions.Configuration` + `System.Text.Json` | JSON files, layered (defaults → user → env) |
+| Logging (app diagnostics) | `Microsoft.Extensions.Logging` + Serilog file sink | Structured logs, rolling files, distinct from QSO logging ([[08-logging]]) |
+| Serial I/O | `System.IO.Ports`, wrapped | Cross-platform since .NET 8; wrapped behind `ISerialTransport` for testability (see [[02-radio-layer]]) |
+| Networking | `System.Net.Sockets`, wrapped | Used for rigctld and TCP-attached rigs ([[04-rigctld]]) |
+| Audio | Cross-platform native backend behind `IAudioEngine` | See [[05-audio-engine]] |
+| Testing | xUnit, NSubstitute, FluentAssertions, coverlet | See [[13-testing]] |
+| Packaging | `dotnet publish` self-contained, per-OS | No installer dependency on .NET being preinstalled |
+
+.NET (not Electron/web) was chosen because the DSP and audio paths are CPU- and latency-sensitive; a native runtime avoids the GC/JIT unpredictability of a JS engine for real-time sample processing.
+
+## Layering
+
+Strict one-directional dependency flow. Each layer only depends on layers below it and on abstractions (interfaces), never on concrete types from sibling or higher layers.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Yoniq.UI               (Avalonia views, ViewModels)          │  see 09-ui.md
+├─────────────────────────────────────────────────────────────┤
+│ Yoniq.Plugins           (plugin host, extension points)      │  see 11-plugin-system.md
+├─────────────────────────────────────────────────────────────┤
+│ Yoniq.Application       (use-case orchestration, services)   │
+│  ├─ Sstv session orchestration                               │
+│  ├─ Radio session orchestration                              │
+│  └─ Logbook orchestration                                    │
+├─────────────────────────────────────────────────────────────┤
+│ Yoniq.Core.Sstv    │ Yoniq.Core.Radio   │ Yoniq.Core.Logbook  │  see 06, 02/03/04, 08
+│ Yoniq.Core.Audio   │ Yoniq.Core.Imaging │ Yoniq.Core.Localization│ see 05, 07, 10
+├─────────────────────────────────────────────────────────────┤
+│ Yoniq.Abstractions       (interfaces + DTOs shared by all)   │
+├─────────────────────────────────────────────────────────────┤
+│ Yoniq.Settings           (config load/save/migrate)          │  see 12-settings.md
+└─────────────────────────────────────────────────────────────┘
+```
+
+Rule: `Yoniq.UI` never references `System.IO.Ports`, rig-specific protocol types, or audio backend types directly — only `Yoniq.Application` service interfaces and view-model-friendly DTOs. This directly encodes the CLAUDE.md rule "UI must never directly communicate with radio drivers."
+
+## Solution structure
+
+```
+/src
+  Yoniq.Abstractions/
+  Yoniq.Settings/
+  Yoniq.Core.Radio/
+  Yoniq.Core.Radio.Cat/            # per-rig protocol plugins (03)
+  Yoniq.Core.Radio.Rigctld/        # 04
+  Yoniq.Core.Audio/                # 05
+  Yoniq.Core.Sstv/                 # 06
+  Yoniq.Core.Imaging/              # 07
+  Yoniq.Core.Logbook/              # 08
+  Yoniq.Core.Localization/         # 10
+  Yoniq.Application/
+  Yoniq.Plugins/                   # 11
+  Yoniq.UI/                        # 09, Avalonia app + views + view-models
+  Yoniq.Host/                      # composition root: Program.cs, DI registration, hosting
+/tests
+  Yoniq.Core.Radio.Tests/
+  Yoniq.Core.Sstv.Tests/
+  Yoniq.Core.Audio.Tests/
+  Yoniq.Core.Logbook.Tests/
+  Yoniq.Application.Tests/
+  Yoniq.UI.Tests/                  # view-model tests, headless Avalonia
+/spec
+/tools
+  legacy-config-importer/          # one-shot INI → JSON migration CLI, see 12-settings.md
+```
+
+Each `Yoniq.Core.*` project is a bounded module: it may be extracted to its own NuGet package later without touching other modules. This is what "composition over inheritance" and SOLID look like structurally — modules compose via interfaces registered in the DI container, not via shared base classes.
+
+## Composition root
+
+`Yoniq.Host/Program.cs` is the only place allowed to call `new` on concrete infrastructure types (transports, audio backends, protocol implementations) or to register services. Everything else receives dependencies through constructor injection. No static mutable state or singletons accessed via static properties anywhere in the codebase — "current radio," "current settings," etc. are always resolved through DI, never through a `Program.CurrentRadio`-style global (this replaces the legacy pattern of `extern CRADIOPARA RADIO;` global structs throughout `cradio.h`/`Option.h`).
+
+## Concurrency model
+
+- All hardware I/O (serial, TCP, audio callbacks) is asynchronous (`async`/`await`, `Task`-based), never blocking the UI thread. This directly satisfies the CLAUDE.md rule "All hardware communication must be asynchronous."
+- Audio callback threads (see [[05-audio-engine]]) are real-time-priority and must not allocate or call into `async` machinery; they hand samples off to lock-free ring buffers consumed by the DSP pipeline on a dedicated processing thread.
+- Radio polling loops (see [[02-radio-layer]]) run on a background `Task` per connected radio, publishing state changes via `IObservable<RadioState>` (System.Reactive) or `IAsyncEnumerable<RadioState>` — TBD in [[02-radio-layer]], but never via raw thread + Win32 message posting (replacing `PostMessage`/`WM_*` pattern in `cradio.cpp`).
+- UI updates marshal back to the UI thread via Avalonia's `Dispatcher`, applied only in the `Yoniq.UI` layer.
+
+## Error handling
+
+- Infrastructure layers (radio, audio, serial) surface failures as typed results or exceptions specific to the operation (`RadioConnectException`, `AudioDeviceUnavailableException`), never silent failure or error codes returned as `int`.
+- The `Yoniq.Application` layer translates these into user-facing, localized notifications (see [[10-localization]]) — never a raw exception message shown to the user.
+- A disconnected or misbehaving radio must degrade gracefully: SSTV encode/decode and logging continue to function with radio control unavailable, mirroring "never remove existing radio support unless replaced" by never making radio control a hard dependency of the DSP/logging core.
+
+## Nullable reference types & warnings
+
+- `<Nullable>enable</Nullable>` and `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>` are set at the solution level (`Directory.Build.props`), non-negotiable per CLAUDE.md. New code must not use `!` null-forgiving operator except at documented FFI/interop boundaries (e.g. native audio backend P/Invoke).
+
+## Definition of done for this document
+
+- [ ] `Directory.Build.props` / `.editorconfig` created enforcing nullable + warnings-as-errors + analyzers.
+- [ ] Empty solution scaffolded matching the project list above, each project building with zero warnings.
+- [ ] `Yoniq.Host` boots, resolves an empty DI container, and shows a blank Avalonia window — the walking skeleton milestone referenced in [[14-roadmap]].
