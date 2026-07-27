@@ -42,6 +42,17 @@ public class SstvRoundTripTests
         { SstvModeRegistry.Ml240, 483.3 },
         { SstvModeRegistry.Ml280, 565.3 },
         { SstvModeRegistry.Ml320, 645.3 },
+        { SstvModeRegistry.Mp73, 570.0 },
+        { SstvModeRegistry.Mp115, 902.0 },
+        { SstvModeRegistry.Mp140, 1090.0 },
+        { SstvModeRegistry.Mp175, 1370.0 },
+        { SstvModeRegistry.Pd50, 388.16 },
+        { SstvModeRegistry.Pd90, 703.04 },
+        { SstvModeRegistry.Pd120, 508.48 },
+        { SstvModeRegistry.Pd160, 804.416 },
+        { SstvModeRegistry.Pd180, 754.24 },
+        { SstvModeRegistry.Pd240, 1000.00 },
+        { SstvModeRegistry.Pd290, 937.28 },
     };
 
     [Theory]

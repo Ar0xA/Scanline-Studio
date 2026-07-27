@@ -76,7 +76,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
             yield return segment;
         }
 
-        for (var y = 0; y < mode.ImageHeight; y++)
+        for (var y = 0; y < mode.ImageHeight; y += lineEncoder.RowsPerTransmissionLine)
         {
             foreach (var segment in lineEncoder.GenerateLine(mode, image, y))
             {
