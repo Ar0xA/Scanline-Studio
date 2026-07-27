@@ -11,23 +11,48 @@ namespace Yoniq.Core.Sstv.Tests;
 /// self-consistency proof of the DSP pipeline (encoder and decoder agree with each other) — it is
 /// NOT yet a golden-vector match against the legacy MMSSTV binary's actual output. See the parity
 /// caveat on <see cref="SstvModeDefinition"/> and spec/13-testing.md's golden-vector section.
+///
+/// <see cref="LineDuration_MatchesLegacyGetTiming"/> is a separate, independent check: every
+/// mode's <c>LineDurationMs</c> (computed by summing this port's <c>LineSegments</c>) is asserted
+/// against the legacy <c>CSSTVSET::GetTiming</c> function's return value (`sstv.cpp`), which was
+/// read directly and is not derived from anything this codebase computes — a real cross-check,
+/// not a tautology.
 /// </summary>
-public class MartinM1RoundTripTests
+public class SstvRoundTripTests
 {
-    [Fact]
-    public async Task EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance()
+    // Legacy CSSTVSET::GetTiming(mode) return values, sstv.cpp:1188-1277 — total line duration in
+    // ms, read directly from source. Used to independently verify each mode's LineSegments sum to
+    // the right total, per CLAUDE.md's "port first, invent second" rule for DSP/codec math.
+    public static readonly TheoryData<SstvModeDefinition, double> Modes = new()
     {
-        var mode = SstvModeRegistry.MartinM1;
+        { SstvModeRegistry.MartinM1, 446.446 },
+        { SstvModeRegistry.MartinM2, 226.798 },
+        { SstvModeRegistry.ScottieS1, 428.22 },
+        { SstvModeRegistry.ScottieS2, 277.692 },
+        { SstvModeRegistry.ScottieDx, 1050.3 },
+    };
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void LineDuration_MatchesLegacyGetTiming(SstvModeDefinition mode, double expectedLineDurationMs)
+    {
+        Assert.Equal(expectedLineDurationMs, mode.LineDurationMs, precision: 3);
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public async Task EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance(SstvModeDefinition mode, double _)
+    {
         var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
 
-        var encoder = new AnalogFmSstvEncoder();
+        var encoder = new AnalogFmSstvEncoder(44100);
         var samples = new List<float>();
         await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
         {
             samples.Add(sample);
         }
 
-        var wavPath = Path.Combine(Path.GetTempPath(), $"yoniq-martin-m1-{Guid.NewGuid():N}.wav");
+        var wavPath = Path.Combine(Path.GetTempPath(), $"yoniq-{mode.Id}-{Guid.NewGuid():N}.wav");
         try
         {
             WavFile.Write(wavPath, samples.ToArray(), encoder.SampleRate);
