@@ -53,6 +53,9 @@ public class SstvRoundTripTests
         { SstvModeRegistry.Pd180, 754.24 },
         { SstvModeRegistry.Pd240, 1000.00 },
         { SstvModeRegistry.Pd290, 937.28 },
+        { SstvModeRegistry.P3, 409.375 },
+        { SstvModeRegistry.P5, 614.0625 },
+        { SstvModeRegistry.P7, 818.75 },
     };
 
     [Theory]
