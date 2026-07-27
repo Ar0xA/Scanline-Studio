@@ -133,7 +133,29 @@ public static class SstvModeRegistry
             new ScanSegment(ChannelName: "R", DurationMs: 345.6),
         ]);
 
-    public static readonly IReadOnlyList<SstvModeDefinition> All = [MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDx];
+    // Robot36: read directly from the real TX line-generator TMmsstv::LineR36 (Main.cpp) — sync,
+    // porch, full-resolution Y scan, a color-select tone (1500Hz picks R-Y on even lines, 2300Hz
+    // picks B-Y on odd lines — legacy's own comment: "RY=1500, BY=2300"), a second porch, then the
+    // selected chroma channel's scan. Width/height/VIS code from CSSTVSET::GetBitmapSize/
+    // GetPictureSize and the VIS lookup switch (sstv.cpp).
+    public static readonly SstvModeDefinition Robot36 = new(
+        Id: "robot-36",
+        DisplayName: "Robot 36",
+        VisCode: 8,
+        ImageWidth: 320,
+        ImageHeight: 240,
+        ColorEncoding: ColorEncoding.YCbCrRobot,
+        LineSegments:
+        [
+            new SyncSegment(DurationMs: 9.0, FrequencyHz: 1200),
+            new SyncSegment(DurationMs: 3.0, FrequencyHz: 1500), // porch
+            new ScanSegment(ChannelName: "Y", DurationMs: 88.0),
+            new ToneSelectorSegment(DurationMs: 4.5, LowFrequencyHz: 1500, HighFrequencyHz: 2300), // 1500=R-Y, 2300=B-Y
+            new SyncSegment(DurationMs: 1.5, FrequencyHz: 1900), // porch
+            new ScanSegment(ChannelName: "C", DurationMs: 44.0), // R-Y or B-Y, selected by the tone above
+        ]);
+
+    public static readonly IReadOnlyList<SstvModeDefinition> All = [MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDx, Robot36];
 
     public static SstvModeDefinition? FindByVisCode(int visCode) => All.FirstOrDefault(m => m.VisCode == visCode);
 }
