@@ -1,0 +1,26 @@
+<Project>
+
+  <!--
+    Centralized settings for every project under src/, tests/, and tools/ — see spec/01-architecture.md.
+    Individual .csproj files should not repeat TargetFramework/Nullable/etc.; override only what a
+    specific project genuinely needs to differ (e.g. OutputType for Yoniq.Host).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>12.0</LangVersion>
+
+    <!-- CLAUDE.md: "Treat compiler warnings as errors." -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>Recommended</AnalysisMode>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

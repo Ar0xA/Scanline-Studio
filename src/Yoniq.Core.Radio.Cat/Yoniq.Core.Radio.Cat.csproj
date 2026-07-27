@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Yoniq.Core.Radio\Yoniq.Core.Radio.csproj" />
+    <ProjectReference Include="..\Yoniq.Abstractions\Yoniq.Abstractions.csproj" />
+  </ItemGroup>
+</Project>
