@@ -1,0 +1,28 @@
+# Legacy reference source — not part of this repo.
+# Upstream: https://github.com/w0eeemst/YONIQ
+# Spec documents reference it by relative path (e.g. `cradio.cpp`) assuming a local
+# clone at yoniq-old/YONIQ-main/ for convenience during development; it is intentionally
+# gitignored, not tracked, per LICENSES.md.
+yoniq-old/
+
+# Local Claude Code settings — machine/session-specific, not shared project config.
+.claude/settings.local.json
+
+# .NET build output
+bin/
+obj/
+out/
+artifacts/
+*.user
+*.suo
+.vs/
+
+# Test/coverage output
+TestResults/
+coverage*.json
+coverage*.xml
+coverage*.info
+
+# OS cruft
+.DS_Store
+Thumbs.db
