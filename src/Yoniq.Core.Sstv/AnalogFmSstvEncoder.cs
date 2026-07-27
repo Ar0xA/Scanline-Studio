@@ -67,7 +67,11 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         IImageSource image,
         IScanlineEncoder lineEncoder)
     {
-        foreach (var segment in VisHeader.GenerateSegments(mode.VisCode))
+        var headerSegments = mode.ExtendedVisCode is { } extendedCode
+            ? VisHeader.GenerateExtendedSegments(extendedCode)
+            : VisHeader.GenerateSegments(mode.VisCode);
+
+        foreach (var segment in headerSegments)
         {
             yield return segment;
         }
