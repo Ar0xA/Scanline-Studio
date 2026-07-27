@@ -18,6 +18,11 @@ public enum ColorEncoding
     /// decode time using this line's fresh chroma and the other channel's most recently decoded
     /// value. See <c>RobotScanlineEncoder</c>/<c>RobotScanlineDecoder</c>.</summary>
     YCbCrRobot,
+
+    /// <summary>Robot 72-style: Y, then R-Y, then B-Y, all scanned every line (no alternation, no
+    /// cross-line chroma persistence) — a fixed marker tone before each chroma scan, not an
+    /// information-bearing selector. See <c>YCbCrSequentialScanlineEncoder</c>/<c>Decoder</c>.</summary>
+    YCbCrSequential,
 }
 
 /// <summary>One timed segment of an SSTV scanline: a fixed-frequency sync/porch/separator pulse, a

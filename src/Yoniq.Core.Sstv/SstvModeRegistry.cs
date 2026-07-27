@@ -155,7 +155,33 @@ public static class SstvModeRegistry
             new ScanSegment(ChannelName: "C", DurationMs: 44.0), // R-Y or B-Y, selected by the tone above
         ]);
 
-    public static readonly IReadOnlyList<SstvModeDefinition> All = [MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDx, Robot36];
+    // Robot 72: read directly from TMmsstv::LineR72 (Main.cpp) — NOT the same shape as Robot 36
+    // despite the name (confirmed by reading the actual TX function, not by the RX switch's
+    // case-grouping, which had misleadingly grouped R72 with the MR/ML family for shared bitmap
+    // addressing only). Y, then R-Y, then B-Y, every line — no alternation, no cross-line
+    // persistence. The 1500/2300Hz tones before each chroma scan are fixed markers here, not an
+    // information-bearing selector like Robot 36's.
+    public static readonly SstvModeDefinition Robot72 = new(
+        Id: "robot-72",
+        DisplayName: "Robot 72",
+        VisCode: 12,
+        ImageWidth: 320,
+        ImageHeight: 240,
+        ColorEncoding: ColorEncoding.YCbCrSequential,
+        LineSegments:
+        [
+            new SyncSegment(DurationMs: 9.0, FrequencyHz: 1200),
+            new SyncSegment(DurationMs: 3.0, FrequencyHz: 1500), // porch
+            new ScanSegment(ChannelName: "Y", DurationMs: 138.0),
+            new SyncSegment(DurationMs: 4.5, FrequencyHz: 1500), // R-Y marker
+            new SyncSegment(DurationMs: 1.5, FrequencyHz: 1900), // porch
+            new ScanSegment(ChannelName: "RY", DurationMs: 69.0),
+            new SyncSegment(DurationMs: 4.5, FrequencyHz: 2300), // B-Y marker
+            new SyncSegment(DurationMs: 1.5, FrequencyHz: 1900), // porch
+            new ScanSegment(ChannelName: "BY", DurationMs: 69.0),
+        ]);
+
+    public static readonly IReadOnlyList<SstvModeDefinition> All = [MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDx, Robot36, Robot72];
 
     public static SstvModeDefinition? FindByVisCode(int visCode) => All.FirstOrDefault(m => m.VisCode == visCode);
 }
