@@ -236,10 +236,69 @@ public static class SstvModeRegistry
     public static readonly SstvModeDefinition Ml280 = CreateMrFamilyMode("ml280", "ML280", 0x89, 640, 496, 277.5);
     public static readonly SstvModeDefinition Ml320 = CreateMrFamilyMode("ml320", "ML320", 0x8a, 640, 496, 317.5);
 
+    // MP family: read from TMmsstv::LineMP (Main.cpp) -- NOT the same shape as MR/ML (name
+    // similarity again nearly misleading, per CLAUDE.md's "no assumptions" rule): it's line-paired
+    // like PD (Y-odd, R-Y, B-Y, Y-even sharing one chroma pair), not a per-line hold-then-half-scan
+    // shape. Also uses the extended VIS mechanism. ImageHeight = 2 x CSSTVSET's m_L (confirmed by
+    // cross-checking against GetBitmapSize for the PD-series, which shares this exact TX function
+    // shape and whose m_L values line up with half of GetBitmapSize's explicit heights).
+    private static SstvModeDefinition CreateMpFamilyMode(string id, string displayName, int extendedCode, int width, int transmissionUnits, double scanDurationMs) => new(
+        Id: id,
+        DisplayName: displayName,
+        VisCode: 0,
+        ExtendedVisCode: extendedCode,
+        ImageWidth: width,
+        ImageHeight: transmissionUnits * 2,
+        ColorEncoding: ColorEncoding.YCbCrLinePaired,
+        LineSegments:
+        [
+            new SyncSegment(DurationMs: 9.0, FrequencyHz: 1200),
+            new SyncSegment(DurationMs: 1.0, FrequencyHz: 1500), // porch
+            new ScanSegment(ChannelName: "Y1", DurationMs: scanDurationMs),
+            new ScanSegment(ChannelName: "RY", DurationMs: scanDurationMs),
+            new ScanSegment(ChannelName: "BY", DurationMs: scanDurationMs),
+            new ScanSegment(ChannelName: "Y2", DurationMs: scanDurationMs),
+        ]);
+
+    public static readonly SstvModeDefinition Mp73 = CreateMpFamilyMode("mp73", "MP73", 0x25, 320, 128, 140.0);
+    public static readonly SstvModeDefinition Mp115 = CreateMpFamilyMode("mp115", "MP115", 0x29, 320, 128, 223.0);
+    public static readonly SstvModeDefinition Mp140 = CreateMpFamilyMode("mp140", "MP140", 0x2a, 320, 128, 270.0);
+    public static readonly SstvModeDefinition Mp175 = CreateMpFamilyMode("mp175", "MP175", 0x2c, 320, 128, 340.0);
+
+    // PD-series: read from TMmsstv::LinePD (Main.cpp) -- structurally identical to LineMP (same
+    // Y1-RY-BY-Y2 shape) but with fixed 20ms/2.08ms sync/porch (hardcoded in LinePD, not a
+    // parameter) and normal (non-extended) VIS codes from sstv.cpp's VIS lookup switch.
+    private static SstvModeDefinition CreatePdMode(string id, string displayName, int visCode, int width, int transmissionUnits, double scanDurationMs) => new(
+        Id: id,
+        DisplayName: displayName,
+        VisCode: visCode,
+        ImageWidth: width,
+        ImageHeight: transmissionUnits * 2,
+        ColorEncoding: ColorEncoding.YCbCrLinePaired,
+        LineSegments:
+        [
+            new SyncSegment(DurationMs: 20.0, FrequencyHz: 1200),
+            new SyncSegment(DurationMs: 2.08, FrequencyHz: 1500), // porch
+            new ScanSegment(ChannelName: "Y1", DurationMs: scanDurationMs),
+            new ScanSegment(ChannelName: "RY", DurationMs: scanDurationMs),
+            new ScanSegment(ChannelName: "BY", DurationMs: scanDurationMs),
+            new ScanSegment(ChannelName: "Y2", DurationMs: scanDurationMs),
+        ]);
+
+    public static readonly SstvModeDefinition Pd50 = CreatePdMode("pd50", "PD50", 93, 320, 128, 91.520);
+    public static readonly SstvModeDefinition Pd90 = CreatePdMode("pd90", "PD90", 99, 320, 128, 170.240);
+    public static readonly SstvModeDefinition Pd120 = CreatePdMode("pd120", "PD120", 95, 640, 248, 121.600);
+    public static readonly SstvModeDefinition Pd160 = CreatePdMode("pd160", "PD160", 98, 512, 200, 195.584);
+    public static readonly SstvModeDefinition Pd180 = CreatePdMode("pd180", "PD180", 96, 640, 248, 183.040);
+    public static readonly SstvModeDefinition Pd240 = CreatePdMode("pd240", "PD240", 97, 640, 248, 244.480);
+    public static readonly SstvModeDefinition Pd290 = CreatePdMode("pd290", "PD290", 94, 800, 308, 228.800);
+
     public static readonly IReadOnlyList<SstvModeDefinition> All =
     [
         MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDx, Robot36, Robot72, Avt,
         Mr73, Mr90, Mr115, Mr140, Mr175, Ml180, Ml240, Ml280, Ml320,
+        Mp73, Mp115, Mp140, Mp175,
+        Pd50, Pd90, Pd120, Pd160, Pd180, Pd240, Pd290,
     ];
 
     public static SstvModeDefinition? FindByVisCode(int visCode) =>
