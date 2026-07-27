@@ -11,6 +11,7 @@ internal static class ScanlineCodecFactory
     {
         ColorEncoding.RgbSequential => new RgbSequentialScanlineEncoder(),
         ColorEncoding.YCbCrRobot => new RobotScanlineEncoder(),
+        ColorEncoding.YCbCrSequential => new YCbCrSequentialScanlineEncoder(),
         _ => throw new NotSupportedException($"No scanline encoder for {colorEncoding}."),
     };
 
@@ -18,6 +19,7 @@ internal static class ScanlineCodecFactory
     {
         ColorEncoding.RgbSequential => new RgbSequentialScanlineDecoder(),
         ColorEncoding.YCbCrRobot => new RobotScanlineDecoder(),
+        ColorEncoding.YCbCrSequential => new YCbCrSequentialScanlineDecoder(),
         _ => throw new NotSupportedException($"No scanline decoder for {colorEncoding}."),
     };
 }

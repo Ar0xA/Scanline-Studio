@@ -31,6 +31,7 @@ public class SstvRoundTripTests
         { SstvModeRegistry.ScottieS2, 277.692 },
         { SstvModeRegistry.ScottieDx, 1050.3 },
         { SstvModeRegistry.Robot36, 150.0 },
+        { SstvModeRegistry.Robot72, 300.0 },
     };
 
     [Theory]
