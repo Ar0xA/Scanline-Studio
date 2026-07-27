@@ -81,32 +81,67 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
     private bool TryDecodeVisHeader()
     {
-        var headerSampleCount = (int)Math.Round(VisHeader.TotalDurationMs / 1000.0 * _sampleRate);
-        if (_demodulatedFrequencies.Count - _consumedSamples < headerSampleCount)
+        // Prefix (leader/break/leader/start-bit + first 7 data bits) is the same length whether
+        // this is a normal single-byte VIS code or an "extended" MR/MP/ML one (see VisHeader) — we
+        // don't know which until those 7 bits are decoded, so read the prefix first, then decide.
+        var prefixSampleCount = (int)Math.Round(VisHeader.PrefixDurationMs / 1000.0 * _sampleRate);
+        if (_demodulatedFrequencies.Count - _consumedSamples < prefixSampleCount)
         {
             return false;
         }
 
         var headerStart = _consumedSamples;
-        _consumedSamples += headerSampleCount;
-
-        var idealSamplesSoFar = (VisHeader.LeaderDurationMs + VisHeader.BreakDurationMs + VisHeader.LeaderDurationMs + VisHeader.BitDurationMs)
-            / 1000.0 * _sampleRate;
-        var bits = new int[VisHeader.DataBitCount];
         var bitMidpointHz = (VisHeader.Bit1FrequencyHz + VisHeader.Bit0FrequencyHz) / 2;
+        var prefixIdealSamples = (VisHeader.LeaderDurationMs + VisHeader.BreakDurationMs + VisHeader.LeaderDurationMs + VisHeader.BitDurationMs)
+            / 1000.0 * _sampleRate;
 
+        var firstByteBits = new int[VisHeader.DataBitCount];
         for (var bitIndex = 0; bitIndex < VisHeader.DataBitCount; bitIndex++)
         {
-            var startSample = headerStart + (int)Math.Round(idealSamplesSoFar);
-            idealSamplesSoFar += VisHeader.BitDurationMs / 1000.0 * _sampleRate;
-            var endSample = headerStart + (int)Math.Round(idealSamplesSoFar);
+            var startSample = headerStart + (int)Math.Round(prefixIdealSamples);
+            prefixIdealSamples += VisHeader.BitDurationMs / 1000.0 * _sampleRate;
+            var endSample = headerStart + (int)Math.Round(prefixIdealSamples);
 
             var avgFreq = AverageFrequencyInWindow(startSample, endSample);
-            bits[bitIndex] = avgFreq < bitMidpointHz ? 1 : 0; // closer to Bit1FrequencyHz (1100) => 1
+            firstByteBits[bitIndex] = avgFreq < bitMidpointHz ? 1 : 0; // closer to Bit1FrequencyHz (1100) => 1
         }
 
-        var visCode = VisHeader.DecodeVisCode(bits);
-        var mode = SstvModeRegistry.FindByVisCode(visCode);
+        var firstByteValue = VisHeader.DecodeVisCode(firstByteBits);
+        var isExtended = firstByteValue == VisHeader.ExtendedVisEscapeCode;
+        var tailDurationMs = isExtended ? VisHeader.ExtendedTailDurationMs : VisHeader.NormalTailDurationMs;
+        var totalHeaderSampleCount = (int)Math.Round((VisHeader.PrefixDurationMs + tailDurationMs) / 1000.0 * _sampleRate);
+
+        if (_demodulatedFrequencies.Count - headerStart < totalHeaderSampleCount)
+        {
+            return false; // wait for the rest of the header before consuming/deciding
+        }
+
+        _consumedSamples = headerStart + totalHeaderSampleCount;
+
+        SstvModeDefinition? mode;
+        if (isExtended)
+        {
+            // 1 leftover bit from the escape byte (its bit 7, unused) + all 8 bits of the real
+            // extended-mode byte = 9 more bit-slots before the stop bit.
+            var remainingBits = new int[9];
+            for (var bitIndex = 0; bitIndex < remainingBits.Length; bitIndex++)
+            {
+                var startSample = headerStart + (int)Math.Round(prefixIdealSamples);
+                prefixIdealSamples += VisHeader.BitDurationMs / 1000.0 * _sampleRate;
+                var endSample = headerStart + (int)Math.Round(prefixIdealSamples);
+
+                var avgFreq = AverageFrequencyInWindow(startSample, endSample);
+                remainingBits[bitIndex] = avgFreq < bitMidpointHz ? 1 : 0;
+            }
+
+            var extendedCode = VisHeader.DecodeRawByte(remainingBits.AsSpan(1, 8));
+            mode = SstvModeRegistry.FindByExtendedCode(extendedCode);
+        }
+        else
+        {
+            mode = SstvModeRegistry.FindByVisCode(firstByteValue);
+        }
+
         if (mode is null)
         {
             // Unknown VIS code. A fuller implementation would keep scanning for a valid header

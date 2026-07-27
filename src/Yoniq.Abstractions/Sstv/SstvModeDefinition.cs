@@ -63,7 +63,12 @@ public sealed record SstvModeDefinition(
     ColorEncoding ColorEncoding,
     IReadOnlyList<LineSegment> LineSegments,
     double LuminanceMinHz = 1500,
-    double LuminanceMaxHz = 2300)
+    double LuminanceMaxHz = 2300,
+    /// <summary>Non-null for the MR/MP/ML family: this mode is identified by the two-byte
+    /// "extended VIS" mechanism (escape code 0x23 followed by this raw byte), not a normal
+    /// single-byte VIS code. <see cref="VisCode"/> is unused for these modes (set to a
+    /// placeholder). See <c>Yoniq.Core.Sstv.VisHeader.GenerateExtendedSegments</c>.</summary>
+    int? ExtendedVisCode = null)
 {
     public double LineDurationMs => LineSegments.Sum(s => s.DurationMs);
 }
