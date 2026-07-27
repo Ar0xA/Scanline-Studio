@@ -75,7 +75,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             _consumedSamples += lineSampleCount;
 
             LineDecoded?.Invoke(new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
-            _nextLine++;
+            _nextLine += lineDecoder.RowsPerTransmissionLine;
         }
     }
 

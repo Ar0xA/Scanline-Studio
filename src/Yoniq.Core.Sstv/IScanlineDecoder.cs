@@ -14,6 +14,9 @@ namespace Yoniq.Core.Sstv;
 /// </summary>
 internal interface IScanlineDecoder
 {
+    /// <summary>See <see cref="IScanlineEncoder.RowsPerTransmissionLine"/>.</summary>
+    int RowsPerTransmissionLine => 1;
+
     void DecodeLine(
         SstvModeDefinition mode,
         int sampleRate,

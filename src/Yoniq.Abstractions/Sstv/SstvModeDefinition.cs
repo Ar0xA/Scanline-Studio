@@ -23,6 +23,12 @@ public enum ColorEncoding
     /// cross-line chroma persistence) — a fixed marker tone before each chroma scan, not an
     /// information-bearing selector. See <c>YCbCrSequentialScanlineEncoder</c>/<c>Decoder</c>.</summary>
     YCbCrSequential,
+
+    /// <summary>MP/PD-family: Y(odd line), R-Y, B-Y, Y(even line) — one chroma pair shared between
+    /// two luma lines, so each transmission unit covers 2 image rows
+    /// (<c>IScanlineEncoder.RowsPerTransmissionLine</c> = 2). See
+    /// <c>YCbCrLinePairedScanlineEncoder</c>/<c>Decoder</c>.</summary>
+    YCbCrLinePaired,
 }
 
 /// <summary>One timed segment of an SSTV scanline: a fixed-frequency sync/porch/separator pulse, a
