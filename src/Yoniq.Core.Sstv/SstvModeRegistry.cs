@@ -197,6 +197,32 @@ public static class SstvModeRegistry
             new ScanSegment(ChannelName: "B", DurationMs: 125.0),
         ]);
 
+    // Pasokon P3/P5/P7: read from TMmsstv::LineP (Main.cpp) -- sync, then R/G/B each preceded by a
+    // porch, plus one trailing untagged porch. Fits the existing RgbSequential family (simple
+    // sequential channel scans), no new codec code needed. 640x496 per CSSTVSET::GetBitmapSize.
+    private static SstvModeDefinition CreatePasokonMode(string id, string displayName, int visCode, double syncMs, double porchMs, double scanMs) => new(
+        Id: id,
+        DisplayName: displayName,
+        VisCode: visCode,
+        ImageWidth: 640,
+        ImageHeight: 496,
+        ColorEncoding: ColorEncoding.RgbSequential,
+        LineSegments:
+        [
+            new SyncSegment(DurationMs: syncMs, FrequencyHz: 1200),
+            new SyncSegment(DurationMs: porchMs, FrequencyHz: 1500),
+            new ScanSegment(ChannelName: "R", DurationMs: scanMs),
+            new SyncSegment(DurationMs: porchMs, FrequencyHz: 1500),
+            new ScanSegment(ChannelName: "G", DurationMs: scanMs),
+            new SyncSegment(DurationMs: porchMs, FrequencyHz: 1500),
+            new ScanSegment(ChannelName: "B", DurationMs: scanMs),
+            new SyncSegment(DurationMs: porchMs, FrequencyHz: 1500), // trailing porch
+        ]);
+
+    public static readonly SstvModeDefinition P3 = CreatePasokonMode("p3", "Pasokon P3", 113, 5.208, 1.042, 133.333);
+    public static readonly SstvModeDefinition P5 = CreatePasokonMode("p5", "Pasokon P5", 114, 7.813, 1.562375, 200.000);
+    public static readonly SstvModeDefinition P7 = CreatePasokonMode("p7", "Pasokon P7", 115, 10.417, 2.083, 266.667);
+
     // MR (Robot-Martin hybrid, per-line full Y + full-width-but-half-duration R-Y and B-Y, no
     // alternation) and ML (same shape, larger 640x496 bitmap per CSSTVSET::GetBitmapSize) families:
     // read from TMmsstv::LineMR (Main.cpp). Uses the two-byte "extended VIS" mechanism (escape
@@ -299,6 +325,7 @@ public static class SstvModeRegistry
         Mr73, Mr90, Mr115, Mr140, Mr175, Ml180, Ml240, Ml280, Ml320,
         Mp73, Mp115, Mp140, Mp175,
         Pd50, Pd90, Pd120, Pd160, Pd180, Pd240, Pd290,
+        P3, P5, P7,
     ];
 
     public static SstvModeDefinition? FindByVisCode(int visCode) =>
