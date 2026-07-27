@@ -1,0 +1,12 @@
+<Project>
+  <Import Project="../Directory.Build.props" />
+
+  <PropertyGroup>
+    <!-- CA1707: xUnit's Method_Scenario_ExpectedResult naming convention is standard practice and
+         intentionally violates the general no-underscores rule. CA1859: "use concrete type for
+         perf" doesn't apply to test helpers that deliberately accept an abstraction so they can
+         compare two different IImageSource implementations. Both only make sense for production
+         code, so they're relaxed here rather than project-wide. -->
+    <NoWarn>$(NoWarn);CA1707;CA1859</NoWarn>
+  </PropertyGroup>
+</Project>

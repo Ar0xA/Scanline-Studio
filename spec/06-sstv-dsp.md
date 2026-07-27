@@ -48,9 +48,11 @@ Encode:  IImageSource → per-mode scanline sampler → FM/AFSK tone synthesizer
 Decode:  IAudioEngine.SamplesCaptured → FIR bandpass filter → FFT/Goertzel tone detector → sync detector → scanline reconstructor → DecodedImageUpdate
 ```
 
-- **FIR filtering** (`fir.cpp` equivalent): `Yoniq.Core.Sstv.Filters.FirFilter`, coefficient tables generated at startup (windowed-sinc design) rather than the legacy precomputed constant tables, so filter bandwidth is tunable without recompiling.
-- **Tone detection** (`Fft.cpp` equivalent): a hybrid approach — sliding-window Goertzel algorithm for the narrow-band sync/color-subcarrier tracking (cheaper than full FFT for a handful of known frequencies) plus a real FFT (via `System.Numerics.Tensors`-friendly library or a small dependency-free radix-2 FFT) for the waterfall display's full-spectrum view.
-- **Waterfall/scope** (`Scope.cpp` equivalent): `IWaterfallSource` produces rolling FFT magnitude frames independent of decode state, purely for visualization — decode does not depend on waterfall rendering being active, and waterfall rendering does not depend on a decode being in progress. This split fixes a legacy coupling where the scope view and the decoder shared buffer/timing state.
+- **Tone detection / FM demodulation** (`sstv.cpp`'s `CPLL`/`CVCO`/`CFQC` + `fir.cpp`'s `CIIR`/`MakeIIR` equivalent): **implemented, ported directly** — per CLAUDE.md's "port first, invent second" rule for DSP/codec math, `Yoniq.Core.Sstv` contains a faithful port of the legacy closed-loop PLL FM discriminator (`PllFmDemodulator`, `Vco`, `IirFilter`), not an invented alternative. An earlier attempt at a from-scratch open-loop quadrature-mixing discriminator with a hand-tuned smoothing constant was scrapped after review — it had no track record, needed trial-and-error tuning, and (unsurprisingly in hindsight) performed worse than the legacy design, which is specifically tuned around per-pixel windows as short as ~5 samples at 11025Hz. See `PllFmDemodulator`'s doc comment for the exact structure (AGC → loop IIR filter → VCO → multiplying phase detector → output IIR filter) and the Hz-conversion note (legacy returns an internal-scale value; this port converts to Hz for this codebase's own pixel-mapping, not yet cross-checked against a captured legacy golden vector — see [[13-testing]]).
+- **FIR filtering** (`fir.cpp`'s standalone `MakeIIR`/biquad-cascade application, distinct from the PLL's internal loop/output filters): ported as `IirFilter`, used directly by `PllFmDemodulator`; a separate general-purpose bandpass stage ahead of the demodulator (as opposed to the PLL's own internal filtering) is not yet implemented.
+- **Waterfall/scope** (`Scope.cpp` equivalent): not yet implemented. `IWaterfallSource` (rolling FFT magnitude frames, independent of decode state per the legacy-coupling fix described below) remains a Phase 3 UI-adjacent concern — see [[14-roadmap]].
+- **VIS auto-detection**: implemented (`VisHeader`), decoding the standard leader-break-leader/start-bit/7-data-bit/parity/stop-bit sequence: see the caveat below.
+- **Scanline reconstruction**: implemented for Martin M1 only (see [[14-roadmap]] for remaining modes), using the mode's *nominal* timing rather than independently re-detecting each line's sync pulse — the legacy AFC/sync state machine (`CSSTVDEM`) that does real sync-search and clock-drift tracking is a separate, larger piece of work not yet ported. Fine for a same-process, no-channel-noise proof; real captured audio needs that plus the slant correction below before this is usable on the air.
 
 ## Auto mode detection
 
@@ -111,7 +113,7 @@ Additional targeted tests: FIR filter frequency response (verify passband/stopba
 
 ## Definition of done
 
-- [ ] `SstvModeDefinition` table covers at minimum Martin M1/M2, Scottie S1/S2/DX, Robot 36, PD90/120 — the modes actually exercised by the legacy default mode list.
-- [ ] Encode → decode round-trip test passes for every mode in the table within defined tolerance.
-- [ ] Decoder sustains real-time throughput on a defined reference machine spec (documented, benchmarked in CI where feasible).
-- [ ] Waterfall rendering verified decoupled from decode (decode continues correctly with waterfall UI closed).
+- [x] `SstvModeDefinition` table covers Martin M1 — [ ] remaining modes (M2, Scottie S1/S2/DX, Robot 36, PD90/120) not yet added.
+- [x] Encode → decode round-trip test passes for Martin M1 within tolerance (10.0 average per-channel delta, file-based via `WavFile`, at the legacy-matching default 11025Hz sample rate) — [ ] remaining modes.
+- [ ] Decoder sustains real-time throughput on a defined reference machine spec (documented, benchmarked in CI where feasible) — not yet measured.
+- [ ] Waterfall rendering verified decoupled from decode (decode continues correctly with waterfall UI closed) — no waterfall implementation yet to verify against.
