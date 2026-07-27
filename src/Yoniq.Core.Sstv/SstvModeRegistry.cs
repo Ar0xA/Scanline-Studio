@@ -181,7 +181,23 @@ public static class SstvModeRegistry
             new ScanSegment(ChannelName: "BY", DurationMs: 69.0),
         ]);
 
-    public static readonly IReadOnlyList<SstvModeDefinition> All = [MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDx, Robot36, Robot72];
+    // AVT: read directly from TMmsstv::LineAVT (Main.cpp) — no sync/porch at all, just R,G,B
+    // scanned back to back. Simplest mode found so far.
+    public static readonly SstvModeDefinition Avt = new(
+        Id: "avt",
+        DisplayName: "AVT",
+        VisCode: 68,
+        ImageWidth: 320,
+        ImageHeight: 240,
+        ColorEncoding: ColorEncoding.RgbSequential,
+        LineSegments:
+        [
+            new ScanSegment(ChannelName: "R", DurationMs: 125.0),
+            new ScanSegment(ChannelName: "G", DurationMs: 125.0),
+            new ScanSegment(ChannelName: "B", DurationMs: 125.0),
+        ]);
+
+    public static readonly IReadOnlyList<SstvModeDefinition> All = [MartinM1, MartinM2, ScottieS1, ScottieS2, ScottieDx, Robot36, Robot72, Avt];
 
     public static SstvModeDefinition? FindByVisCode(int visCode) => All.FirstOrDefault(m => m.VisCode == visCode);
 }
