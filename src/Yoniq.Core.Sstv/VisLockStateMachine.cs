@@ -30,6 +30,24 @@ namespace Yoniq.Core.Sstv;
 /// thresholds (<c>m_SLvl</c>/<c>m_SLvl2</c>) on top of the relative comparisons ported below — a
 /// noise/squelch gate on legacy's internal AGC'd ±16384 scale this port doesn't model. This is the
 /// fourth documented instance of that same omission.
+///
+/// **This omission's real-world severity changed with piece 6c** (independent review; not caught
+/// when this class only ran pre-lock). Once <see cref="AnalogFmSstvDecoder"/> started running this
+/// per decoded line to support mid-reception re-verification, a false-positive lock candidate can
+/// destroy an in-progress *good* image, not just waste time scanning silence/noise before one starts
+/// — a materially higher-stakes failure mode than the one this omission was originally scoped
+/// against. Concretely demonstrated (not just theorized) for Robot36/R24: their 150ms lines are
+/// exactly 5×<see cref="BitDurationMs"/>-equivalent windows (30ms), so a bit window ending inside
+/// that line's own 1200Hz sync pulse recurs deterministically every 5th window — enough consecutive
+/// dark/sync-heavy image content can, in principle, assemble a byte identical to a real mode's VIS
+/// code (R24's `0x84` was hand-verified reachable this way). Two things bound the real risk without
+/// eliminating it: the `d11&lt;d19 &amp;&amp; d13&lt;d19` per-bit reject (`sstv.cpp:1981-1984`,
+/// ported below) kills any attempt whose bit window lands on bright/normal content, and the most
+/// likely garbage byte (`0x00`) matches no mode — so this is probabilistic and image-content-
+/// dependent, not a certainty, and neither of this port's own end-to-end tests (smooth synthetic
+/// gradients, close to the best case) has triggered it. Real mitigation needs the same `CLVL` AGC
+/// pipeline already blocking `m_sint1` (see `spec/14-roadmap.md`'s VIS/preamble-lock section) —
+/// tracked there, not fixed here with an invented substitute threshold.
 /// </summary>
 internal sealed class VisLockStateMachine
 {
