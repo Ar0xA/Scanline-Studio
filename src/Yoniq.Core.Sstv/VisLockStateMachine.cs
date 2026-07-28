@@ -101,10 +101,12 @@ internal sealed class VisLockStateMachine
         _isExtended = false;
     }
 
-    /// <summary>Feeds one raw sample. Returns the locked mode and the sample index (relative to the
-    /// very first sample ever passed to this instance, i.e. usable directly as an index into the
-    /// same raw-sample buffer this port's other per-sample detectors already use that convention
-    /// for) where transmission line 0 begins, or null if not yet locked.
+    /// <summary>Feeds one sample -- as of piece 7b, the caller (<c>AnalogFmSstvDecoder.AgcSampleAt</c>)
+    /// passes the shared AGC'd/scaled ±16384-ish signal (matching legacy's own d11/d12/d13/d19 input,
+    /// see <c>LevelAgc</c>'s doc comment), not a raw sample directly. Returns the locked mode and the
+    /// sample index (relative to the very first sample ever passed to this instance, i.e. usable
+    /// directly as an index into the same raw-sample buffer this port's other per-sample detectors
+    /// already use that convention for) where transmission line 0 begins, or null if not yet locked.
     ///
     /// The anchor is derived analytically, not detected: legacy's own case 3 completes 15ms +
     /// (8 or 16, depending on whether the extended-VIS escape byte was seen) x30ms + 30ms after the

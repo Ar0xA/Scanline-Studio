@@ -100,6 +100,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private int _avtTrainingProcessedUpTo;
     private int _avtTrainingFallbackDeadlineSample;
 
+    // CLVL (sstv.cpp:1834-1839, see LevelAgc's own doc comment) -- feeds only the sync/tone-envelope
+    // discriminators above, never reset mid-stream (legacy's Stop() doesn't touch m_lvl; the only
+    // Init() call sites are the PTT-transition ones, Sound.cpp:398/443, which for an RX-only decoder
+    // map to construction, not EndOfImage). _agcSamples/_levelAgcProcessedUpTo are therefore NOT
+    // origin-relative like the other detectors' cursors -- this advances monotonically over the whole
+    // _rawSamples stream regardless of EndOfImage's dead-time skip, matching that legacy keeps feeding
+    // m_lvl continuously even through cases 512/513's dead zone.
+    private readonly LevelAgc _levelAgc;
+    private readonly List<double> _agcSamples = [];
+    private int _levelAgcProcessedUpTo;
+
     public AnalogFmSstvDecoder(int sampleRate = 11025)
     {
         _sampleRate = sampleRate;
@@ -110,6 +121,29 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _syncBypassFskDetector = new SyncEnvelopeDetector(sampleRate, VisHeader.NarrowSpaceFrequencyHz);
         _syncBypassNarrowTracker = new SyncIntervalTracker(sampleRate, isNarrow: true, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _visLockStateMachine = new VisLockStateMachine(sampleRate);
+        _levelAgc = new LevelAgc(sampleRate);
+    }
+
+    // sstv.cpp:1834-1839: m_lvl.Do(d); ad = m_lvl.AGC(d); d = clamp(ad*32, +-16384). Scale bridge --
+    // see LevelAgc's own doc comment: legacy's d is int16-valued, this port's raw samples are float in
+    // [-1.0, 1.0] (spec/05-audio-engine.md:44) -- multiply by 32768.0 before handing to LevelAgc so
+    // every constant inside that class stays literally identical to legacy's own. Computed at most
+    // once per index regardless of call order between the several independent cursors that read this
+    // (TrySyncIntervalDetection's, TryVisLockStateMachine's, ApplySlantTracking's) -- each just asks
+    // for whatever index it's currently at; the cache fills forward monotonically the first time any
+    // of them reaches a new index.
+    private double AgcSampleAt(int index)
+    {
+        for (; _levelAgcProcessedUpTo <= index; _levelAgcProcessedUpTo++)
+        {
+            var scaled = _rawSamples[_levelAgcProcessedUpTo] * 32768.0;
+            _levelAgc.Do(scaled);
+            _levelAgc.Fix();
+            var ad = _levelAgc.Agc(scaled) * 32.0;
+            _agcSamples.Add(Math.Clamp(ad, -16384.0, 16384.0));
+        }
+
+        return _agcSamples[index];
     }
 
     public event Action<DecodedImageUpdate>? LineDecoded;
@@ -375,7 +409,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var bound = Math.Min(_rawSamples.Count, upperBoundSample);
         for (; _visLockProcessedUpTo < bound; _visLockProcessedUpTo++)
         {
-            var result = _visLockStateMachine.ProcessSample(_rawSamples[_visLockProcessedUpTo]);
+            var result = _visLockStateMachine.ProcessSample(AgcSampleAt(_visLockProcessedUpTo));
             if (result is null)
             {
                 continue;
@@ -411,15 +445,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // d12/d19 exactly once per real Do() call and feeds both independent checks from those same
     // values in the same iteration; running two separate passes over _rawSamples would recompute
     // the same resonator/lowpass state twice for no benefit and would diverge from legacy's actual
-    // single-pass structure. Simplification, flagged not silently absorbed: legacy's m_sint2/m_sint3
-    // conditions also check absolute amplitude thresholds (m_SLvl/m_SLvl2/m_SLvl3) on top of the
-    // relative comparisons used here -- a noise/squelch gate on legacy's internal AGC'd ±16384
-    // amplitude scale, which this port's SyncEnvelopeDetector doesn't model (same simplification
-    // already documented on AfcTracker's own omitted m_lvl.m_CurMax>16 gate, and on
-    // SyncEnvelopeDetector itself). Harmless for a clean synthetic signal; would need real AGC for
-    // reliable noise immunity against real captured audio. m_sint1 (VIS-leader-only detection,
-    // redundant with the header path below) is deliberately not ported here -- separately scoped,
-    // later work.
+    // single-pass structure. As of piece 7b, d12/d19/dsp are read from AgcSampleAt -- the same
+    // AGC'd/scaled ±16384-ish signal legacy's own d12/d19/dsp are computed from (see LevelAgc's doc
+    // comment) -- so the *scale* these values live on now matches legacy's. Simplification still
+    // flagged, not yet closed: legacy's m_sint2/m_sint3 conditions also check absolute amplitude
+    // thresholds (m_SLvl/m_SLvl2/m_SLvl3) on top of the relative comparisons used here -- a noise/
+    // squelch gate this port doesn't apply yet (piece 7c; same simplification already documented on
+    // AfcTracker's own omitted m_lvl.m_CurMax>16 gate, and on VisLockStateMachine). Harmless for a
+    // clean synthetic signal; would need the piece 7c gates for reliable noise immunity against real
+    // captured audio. m_sint1 (piece 7d, not yet ported here) piggybacks on this same loop's case-0
+    // trigger rather than scanning independently -- see spec/14-roadmap.md.
     //
     // Undocumented-until-now divergence, caught by independent review: legacy gates all of this
     // behind m_SyncMode's case 0 (m_sint2's SyncMax additionally continues in case 1, sstv.cpp:1954-
@@ -434,10 +469,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     {
         for (; _syncBypassProcessedUpTo < _rawSamples.Count; _syncBypassProcessedUpTo++)
         {
-            var raw = _rawSamples[_syncBypassProcessedUpTo];
-            var d12 = _syncBypass1200Detector.ProcessSample(raw);
-            var d19 = _syncBypass1900Detector.ProcessSample(raw);
-            var dsp = _syncBypassFskDetector.ProcessSample(raw);
+            var agcSample = AgcSampleAt(_syncBypassProcessedUpTo);
+            var d12 = _syncBypass1200Detector.ProcessSample(agcSample);
+            var d19 = _syncBypass1900Detector.ProcessSample(agcSample);
+            var dsp = _syncBypassFskDetector.ProcessSample(agcSample);
 
             _syncBypassTracker.Increment();
             _syncBypassNarrowTracker.Increment();
@@ -879,7 +914,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // trailing footer tone's non-image content) samples. See TryProcessBuffer's call site.
         for (; _slantProcessedUpTo < _consumedSamples; _slantProcessedUpTo++)
         {
-            var envelope = _syncEnvelopeDetector!.ProcessSample(_rawSamples[_slantProcessedUpTo]);
+            // Piece 7b2: legacy feeds this same envelope (m_B12[n] = d12, or d19 for narrow modes)
+            // from the AGC'd/scaled signal too (sstv.cpp:2292-2299, live branch since NARROW_SYNC==
+            // 1900) -- the exact same d12/d19 values already computed once per sample ahead of the
+            // switch(m_SyncMode) dispatch (sstv.cpp:1841-1853), not a separately-scaled reading.
+            var envelope = _syncEnvelopeDetector!.ProcessSample(AgcSampleAt(_slantProcessedUpTo));
 
             if (envelope > _slantLineMaxEnvelope)
             {
