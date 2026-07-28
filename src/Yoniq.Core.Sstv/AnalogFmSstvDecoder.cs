@@ -61,6 +61,24 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly SyncIntervalTracker _syncBypassTracker;
     private int _syncBypassProcessedUpTo;
 
+    // m_sint3 (sstv.cpp:1924-1946, sstv.h:702, m_fNarrow=TRUE set at sstv.cpp:1483) -- the narrow
+    // (MN73/110/140, MC110/140/180) counterpart to m_sint2 above, sharing the same d19 (1900Hz)
+    // envelope this port already computes for m_sint2's own condition, plus a dedicated dsp
+    // (2100Hz, FSKSPACE) envelope this trigger alone needs. Its calling-code shape genuinely
+    // differs from m_sint2's: legacy explicitly latches SyncTrig (unconditional, on first entry
+    // into the candidate band) then SyncMax (running max while still inside it), and calls
+    // SyncStart() exactly once, on the falling edge -- m_sint2's simpler "SyncMax while high, else
+    // SyncStart every sample" works too only because SyncStart is idempotent once its internal
+    // peak is consumed; m_sint3 is ported literally as legacy wrote it, not collapsed to the
+    // (provably equivalent) simpler shape, so the port stays a direct structural match. No trusted-
+    // mode allowlist is needed here (unlike m_sint2's SyncBypassTrustedModes): SyncCheckSub's own
+    // m_fNarrow gating (GetSyncIntervalMatchDepth(isNarrow: true)) already restricts every match to
+    // the 6 real narrow modes, and legacy's own case 0 branch (sstv.cpp:1937-1941) acts on whatever
+    // SyncStart() returns unconditionally, with no further switch/case filter.
+    private readonly SyncEnvelopeDetector _syncBypassFskDetector;
+    private readonly SyncIntervalTracker _syncBypassNarrowTracker;
+    private bool _syncBypassNarrowPhaseActive; // m_sint3.m_SyncPhase
+
     public AnalogFmSstvDecoder(int sampleRate = 11025)
     {
         _sampleRate = sampleRate;
@@ -68,6 +86,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _syncBypass1900Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
         _syncBypassTracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
+        _syncBypassFskDetector = new SyncEnvelopeDetector(sampleRate, VisHeader.NarrowSpaceFrequencyHz);
+        _syncBypassNarrowTracker = new SyncIntervalTracker(sampleRate, isNarrow: true, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
     }
 
     public event Action<DecodedImageUpdate>? LineDecoded;
@@ -199,15 +219,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         SstvModeRegistry.Sc2180,
     ];
 
-    // Direct port of m_sint2's trigger logic in the `case 0` / `!m_Sync` branch (sstv.cpp:1899-1911).
-    // Simplification, flagged not silently absorbed: legacy's condition also checks two absolute
-    // amplitude thresholds (d12 > m_SLvl2, (d12-d19) >= m_SLvl2) on top of the relative d12>d19
-    // comparison used here -- a noise/squelch gate on legacy's internal AGC'd ±16384 amplitude
-    // scale, which this port's SyncEnvelopeDetector doesn't model (same simplification already
-    // documented on AfcTracker's own omitted m_lvl.m_CurMax>16 gate, and on SyncEnvelopeDetector
-    // itself). Harmless for a clean synthetic signal; would need real AGC for reliable noise
-    // immunity against real captured audio. m_sint1 (VIS-leader-only detection, redundant with the
-    // header path below) is deliberately not ported here -- separately scoped, later work.
+    // Direct port of m_sint2's and m_sint3's trigger logic, both from the same `case 0` / `!m_Sync`
+    // branch (sstv.cpp:1899-1946) -- merged into one per-sample loop here because legacy computes
+    // d12/d19 exactly once per real Do() call and feeds both independent checks from those same
+    // values in the same iteration; running two separate passes over _rawSamples would recompute
+    // the same resonator/lowpass state twice for no benefit and would diverge from legacy's actual
+    // single-pass structure. Simplification, flagged not silently absorbed: legacy's m_sint2/m_sint3
+    // conditions also check absolute amplitude thresholds (m_SLvl/m_SLvl2/m_SLvl3) on top of the
+    // relative comparisons used here -- a noise/squelch gate on legacy's internal AGC'd ±16384
+    // amplitude scale, which this port's SyncEnvelopeDetector doesn't model (same simplification
+    // already documented on AfcTracker's own omitted m_lvl.m_CurMax>16 gate, and on
+    // SyncEnvelopeDetector itself). Harmless for a clean synthetic signal; would need real AGC for
+    // reliable noise immunity against real captured audio. m_sint1 (VIS-leader-only detection,
+    // redundant with the header path below) is deliberately not ported here -- separately scoped,
+    // later work.
     private bool TrySyncIntervalDetection()
     {
         for (; _syncBypassProcessedUpTo < _rawSamples.Count; _syncBypassProcessedUpTo++)
@@ -215,37 +240,69 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             var raw = _rawSamples[_syncBypassProcessedUpTo];
             var d12 = _syncBypass1200Detector.ProcessSample(raw);
             var d19 = _syncBypass1900Detector.ProcessSample(raw);
+            var dsp = _syncBypassFskDetector.ProcessSample(raw);
 
             _syncBypassTracker.Increment();
+            _syncBypassNarrowTracker.Increment();
 
+            // m_sint2 (sstv.cpp:1899-1911).
             if (d12 > d19)
             {
                 _syncBypassTracker.UpdateMax(d12);
-                continue;
             }
-
-            var matched = _syncBypassTracker.TryStart();
-            if (matched is null || !SyncBypassTrustedModes.Contains(matched))
+            else
             {
-                continue;
+                var matched = _syncBypassTracker.TryStart();
+                if (matched is not null && SyncBypassTrustedModes.Contains(matched))
+                {
+                    CommitSyncBypassMatch(matched, _syncBypassTracker.LastPeakPositionSamples);
+                    _syncBypassProcessedUpTo++;
+                    return true;
+                }
             }
 
-            var peakPosition = _syncBypassTracker.LastPeakPositionSamples;
-            var midpointOffsetSamples = SstvModeRegistry.GetSyncSegmentMidpointOffsetMs(matched) / 1000.0 * _sampleRate;
-            var lineStart = (int)Math.Round(peakPosition - midpointOffsetSamples);
-
-            _consumedSamples = Math.Max(0, lineStart);
-            _mode = matched;
-            _lineDecoder = ScanlineCodecFactory.CreateDecoder(matched.ColorEncoding);
-            _pixels = new Rgb24[matched.ImageWidth * matched.ImageHeight];
-            InitializeAfc(matched);
-            InitializeSlant(matched);
-            ModeDetected?.Invoke(matched);
-            _syncBypassProcessedUpTo++;
-            return true;
+            // m_sint3 (sstv.cpp:1924-1946) -- explicit SyncTrig-then-SyncMax edge latch, SyncStart
+            // called once on the falling edge only, matching legacy's own m_SyncPhase gating.
+            if (d19 > d12 && d19 > dsp)
+            {
+                if (_syncBypassNarrowPhaseActive)
+                {
+                    _syncBypassNarrowTracker.UpdateMax(d19);
+                }
+                else
+                {
+                    _syncBypassNarrowTracker.Trigger(d19);
+                    _syncBypassNarrowPhaseActive = true;
+                }
+            }
+            else if (_syncBypassNarrowPhaseActive)
+            {
+                _syncBypassNarrowPhaseActive = false;
+                var matchedNarrow = _syncBypassNarrowTracker.TryStart();
+                if (matchedNarrow is not null)
+                {
+                    CommitSyncBypassMatch(matchedNarrow, _syncBypassNarrowTracker.LastPeakPositionSamples);
+                    _syncBypassProcessedUpTo++;
+                    return true;
+                }
+            }
         }
 
         return false;
+    }
+
+    private void CommitSyncBypassMatch(SstvModeDefinition matched, double peakPosition)
+    {
+        var midpointOffsetSamples = SstvModeRegistry.GetSyncSegmentMidpointOffsetMs(matched) / 1000.0 * _sampleRate;
+        var lineStart = (int)Math.Round(peakPosition - midpointOffsetSamples);
+
+        _consumedSamples = Math.Max(0, lineStart);
+        _mode = matched;
+        _lineDecoder = ScanlineCodecFactory.CreateDecoder(matched.ColorEncoding);
+        _pixels = new Rgb24[matched.ImageWidth * matched.ImageHeight];
+        InitializeAfc(matched);
+        InitializeSlant(matched);
+        ModeDetected?.Invoke(matched);
     }
 
     private bool TryDecodeNarrowModeHeader()
