@@ -34,7 +34,7 @@ internal sealed class YCbCrLinePairedScanlineEncoder : IScanlineEncoder
                             "BY" => bMinusY,
                             _ => throw new NotSupportedException($"Unknown channel '{scan.ChannelName}'."),
                         };
-                        yield return (1500 + value * (2300 - 1500) / 256.0, perPixelDurationMs);
+                        yield return (mode.LuminanceMinHz + value * (mode.LuminanceMaxHz - mode.LuminanceMinHz) / 256.0, perPixelDurationMs);
                     }
 
                     break;
