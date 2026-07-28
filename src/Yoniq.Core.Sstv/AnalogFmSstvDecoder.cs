@@ -79,6 +79,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly SyncIntervalTracker _syncBypassNarrowTracker;
     private bool _syncBypassNarrowPhaseActive; // m_sint3.m_SyncPhase
 
+    // m_SyncMode cases 0(trigger)/1/2/9/3 (sstv.cpp:1946-2154) -- see VisLockStateMachine's own doc
+    // comment. Tried between the fixed-window header path and the sync-interval bypass detectors:
+    // it can locate any VIS-coded mode (not just the trusted subset those cover), but at a real,
+    // measured anchor-precision cost the fixed-window path doesn't have, so it's a fallback, not a
+    // replacement.
+    private readonly VisLockStateMachine _visLockStateMachine;
+    private int _visLockProcessedUpTo;
+
     public AnalogFmSstvDecoder(int sampleRate = 11025)
     {
         _sampleRate = sampleRate;
@@ -88,6 +96,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _syncBypassTracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypassFskDetector = new SyncEnvelopeDetector(sampleRate, VisHeader.NarrowSpaceFrequencyHz);
         _syncBypassNarrowTracker = new SyncIntervalTracker(sampleRate, isNarrow: true, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
+        _visLockStateMachine = new VisLockStateMachine(sampleRate);
     }
 
     public event Action<DecodedImageUpdate>? LineDecoded;
@@ -203,7 +212,37 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // documented on ApplySlantTracking above. It only ever actually resolves anything for a
         // transmission with no valid header to decode at all, which is the only case where it needs
         // to run.
+        //
+        // VisLockStateMachine is tried next, before the sync-interval bypass: unlike the fixed-window
+        // path above (which assumes the header starts exactly at _consumedSamples), it scans forward
+        // sample-by-sample and can find a header despite arbitrary leading silence/noise, for any
+        // VIS-coded mode -- not just the trusted subset TrySyncIntervalDetection covers. Tried before
+        // the bypass detectors since it identifies a mode from actual bit content, not periodicity
+        // alone, making it the more reliable of the two remaining fallbacks.
+        if (TryVisLockStateMachine())
+        {
+            return true;
+        }
+
         return TrySyncIntervalDetection();
+    }
+
+    private bool TryVisLockStateMachine()
+    {
+        for (; _visLockProcessedUpTo < _rawSamples.Count; _visLockProcessedUpTo++)
+        {
+            var result = _visLockStateMachine.ProcessSample(_rawSamples[_visLockProcessedUpTo]);
+            if (result is null)
+            {
+                continue;
+            }
+
+            Commit(result.Value.Mode, result.Value.LineStartSample);
+            _visLockProcessedUpTo++;
+            return true;
+        }
+
+        return false;
     }
 
     // Legacy's trusted subset for VIS-bypass mode switching (sstv.cpp:1912-1922) -- SyncIntervalTracker
@@ -295,8 +334,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     {
         var midpointOffsetSamples = SstvModeRegistry.GetSyncSegmentMidpointOffsetMs(matched) / 1000.0 * _sampleRate;
         var lineStart = (int)Math.Round(peakPosition - midpointOffsetSamples);
+        Commit(matched, lineStart);
+    }
 
-        _consumedSamples = Math.Max(0, lineStart);
+    private void Commit(SstvModeDefinition matched, int lineStartSample)
+    {
+        _consumedSamples = Math.Max(0, lineStartSample);
         _mode = matched;
         _lineDecoder = ScanlineCodecFactory.CreateDecoder(matched.ColorEncoding);
         _pixels = new Rgb24[matched.ImageWidth * matched.ImageHeight];
