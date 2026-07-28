@@ -298,6 +298,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // reliable noise immunity against real captured audio. m_sint1 (VIS-leader-only detection,
     // redundant with the header path below) is deliberately not ported here -- separately scoped,
     // later work.
+    //
+    // Undocumented-until-now divergence, caught by independent review: legacy gates all of this
+    // behind m_SyncMode's case 0 (m_sint2's SyncMax additionally continues in case 1, sstv.cpp:1954-
+    // 1956) -- once a real 1200Hz trigger fires and case 0 advances to case 1, both m_sint2's
+    // SyncStart calls and m_sint3's whole phase latch effectively freeze until legacy falls back to
+    // case 0. This port's merged loop has no equivalent gate and keeps feeding/evaluating both
+    // trackers on every sample regardless, so it can in principle call TryStart/release the phase
+    // latch at moments legacy's own state machine would not. Low severity in practice -- this path
+    // only ever runs when nothing else has already locked -- but a real, if narrow, structural
+    // difference from legacy, not silently absorbed now that it's been identified.
     private bool TrySyncIntervalDetection()
     {
         for (; _syncBypassProcessedUpTo < _rawSamples.Count; _syncBypassProcessedUpTo++)
@@ -532,11 +542,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // VisHeader.GenerateAvtSegments/ScottiePostVisPulseFrequencyHz), but AVT's is data-dependent
     // (see AvtTrainingLockStateMachine's doc comment for why a fixed skip alone leaves accuracy on
     // the table for real captured audio with clock drift): once headerStart + totalHeaderSampleCount
-    // + 2 more VIS repeats' worth of samples are available (the point legacy's own case 3 hands off
-    // to case 4), start feeding already-demodulated frequencies into a training-lock instance,
-    // keeping VisHeader.AvtExtraHeaderDurationMs's already-tested fixed duration as a hard ceiling
-    // (matching legacy's own real fallback: the training lock's own internal timeout, if it never
-    // confirms a lock, converges on very close to this same fixed duration anyway).
+    // + 2 more VIS repeats' worth of samples are available, start feeding already-demodulated
+    // frequencies into a training-lock instance -- NOT the same point legacy's own case 3 hands off
+    // to case 4 (that's right after the *first* VIS repeat, ~1835ms earlier; legacy's cases 4-8 then
+    // spend the 2nd/3rd repeats' own audio as failed marker-search noise before reaching real
+    // training content). This port instead skips straight past all 3 repeats before constructing
+    // AvtTrainingLockStateMachine at all, which is why that class's own internal timeout budget is
+    // scoped to just the training sequence's own duration, not legacy's full case-3 figure -- see
+    // that class's doc comment. VisHeader.AvtExtraHeaderDurationMs's already-tested fixed duration
+    // is kept as a hard ceiling here (matching legacy's own real fallback shape: if the training
+    // lock never confirms a lock, completion converges on very close to this same fixed duration).
     private bool TryStartAvtTraining(int headerStart, int totalHeaderSampleCount)
     {
         _avtTrainingOriginSample = headerStart + totalHeaderSampleCount + (int)Math.Round(2 * VisHeader.AvtVisBlockDurationMs / 1000.0 * _sampleRate);

@@ -32,6 +32,20 @@ namespace Yoniq.Core.Sstv;
 /// (last real block) transition, going straight to <c>WaitNextMarker</c> with case 8's real
 /// eventual destination state -- a documented simplification with no functional effect, since real
 /// case 8 is a single-sample pass-through (~0.09ms at 11025Hz) that never calls <c>Start()</c> either way.
+///
+/// This class's own instance is only ever constructed once <see cref="AnalogFmSstvDecoder"/> has
+/// already skipped past all 3 VIS repeats (see its <c>TryStartAvtTraining</c>) -- i.e. starting at
+/// the training sequence's own first marker, not legacy's real case-3-exit point (which is right
+/// after the *first* VIS repeat, ~1835ms earlier, with cases 4-8 then also processing the 2nd/3rd
+/// repeats' own audio as failed marker-search noise before ever reaching real training content).
+/// The initial overall-timeout budget below is therefore scoped to just the training sequence's own
+/// nominal duration (<see cref="VisHeader.AvtTrainingSequenceDurationMs"/>), not legacy's full
+/// `9 + 2xVIS-block + training` (`sstv.cpp:2140`) -- using the full legacy figure here would double-
+/// count the 2 VIS-repeat durations already skipped by the caller. This was a real bug caught by
+/// independent review: an earlier version used the full legacy figure, which (harmlessly, since
+/// <c>AnalogFmSstvDecoder</c>'s own separately-computed fallback deadline always fires first at the
+/// decoder level) meant this class's isolated internal timeout didn't reflect its own real starting
+/// point -- see <c>AvtTrainingLockStateMachineTests.NoTrainingSignalAtAll_CompletesAtTheFullNominalBudget</c>.
 /// </summary>
 internal sealed class AvtTrainingLockStateMachine
 {
@@ -61,7 +75,7 @@ internal sealed class AvtTrainingLockStateMachine
     public AvtTrainingLockStateMachine(double sampleRate)
     {
         _sampleRate = sampleRate;
-        _overallTimeoutCounter = MsToSamples(OverallTimeoutMarginMs + VisHeader.AvtExtraHeaderDurationMs);
+        _overallTimeoutCounter = MsToSamples(OverallTimeoutMarginMs + VisHeader.AvtTrainingSequenceDurationMs);
     }
 
     /// <summary>Feeds one already-demodulated frequency (Hz) sample -- this class reuses
@@ -155,13 +169,23 @@ internal sealed class AvtTrainingLockStateMachine
                             // sstv.cpp:2204-2209. Case 8's own single-sample pass-through is folded
                             // in here (see class doc comment) -- both branches end up waiting in
                             // WaitNextMarker either way, with no marker left to actually find.
-                            var lastBlockBudget = MsToSamples(LastBlockWaitMs);
+                            //
+                            // _phaseCounter is deliberately NOT touched here, matching legacy exactly:
+                            // sstv.cpp:2204-2209 only ever reassigns m_SyncTime, never m_SyncATime, in
+                            // this branch -- it's already at a full bit-window's worth from the
+                            // unconditional assignment at line 131 above (sstv.cpp:2191's own
+                            // unconditional `m_SyncATime = 9.7646*SampFreq/1000`, which runs for every
+                            // bit including this block's last one, before this validity check is ever
+                            // reached). An earlier version of this method overwrote it with
+                            // LastBlockWaitMs here -- a real bug (not part of the case-8-folding
+                            // decision at all), caught by independent review: it made this class
+                            // complete ~63 samples (~5.7ms at 11025Hz) earlier than legacy after a
+                            // clean 32-block lock, invisible to AvtTrainingLockStateMachineTests'
+                            // wide (+/-300ms) completion-time tolerance.
                             if (_overallTimeoutCounter == 0 || _overallTimeoutCounter >= MsToSamples(BitWindowMs))
                             {
-                                _overallTimeoutCounter = lastBlockBudget;
+                                _overallTimeoutCounter = MsToSamples(LastBlockWaitMs);
                             }
-
-                            _phaseCounter = lastBlockBudget;
                         }
                     }
                     else

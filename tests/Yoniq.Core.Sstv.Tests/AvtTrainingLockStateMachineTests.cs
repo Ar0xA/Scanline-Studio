@@ -45,7 +45,7 @@ public class AvtTrainingLockStateMachineTests
     [Fact]
     public void NoTrainingSignalAtAll_CompletesAtTheFullNominalBudget()
     {
-        var silence = new double[(int)(8 * SampleRate)]; // 8s of silence, longer than the ~7.1s budget
+        var silence = new double[(int)(8 * SampleRate)]; // 8s of silence, longer than the ~5.3s budget
 
         var machine = new AvtTrainingLockStateMachine(SampleRate);
         int? completedAt = null;
@@ -60,7 +60,11 @@ public class AvtTrainingLockStateMachineTests
 
         Assert.NotNull(completedAt);
 
-        var expected = (int)Math.Round((9.0 + VisHeader.AvtExtraHeaderDurationMs) / 1000.0 * SampleRate);
+        // This class is only ever constructed once AnalogFmSstvDecoder has already skipped past all
+        // 3 VIS repeats (see AvtTrainingLockStateMachine's own doc comment on why its internal budget
+        // is scoped to just the training sequence's own duration, not legacy's full case-3 figure,
+        // which would double-count those already-skipped repeats).
+        var expected = (int)Math.Round((9.0 + VisHeader.AvtTrainingSequenceDurationMs) / 1000.0 * SampleRate);
         Assert.InRange(completedAt!.Value, expected - 10, expected + 10);
     }
 
