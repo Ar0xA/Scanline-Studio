@@ -64,6 +64,25 @@ internal sealed class VisLockStateMachine
         _d19Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
     }
 
+    /// <summary>Resets the logical lock state (mirrors legacy's own <c>Stop()</c>, `sstv.cpp:1769-1791`,
+    /// resetting <c>m_SyncMode</c>/<c>m_sint1</c> but leaving the envelope resonators' own filter state
+    /// alone -- they're continuously-running filters, not reset on every image, and simply settle to
+    /// whatever new content follows). <see cref="_sampleCounter"/> also resets to 0 -- a port-specific
+    /// convention, not present in legacy, since this class's caller re-anchors its own absolute-index
+    /// bookkeeping via an origin offset whenever this is called (see
+    /// <c>AnalogFmSstvDecoder.EndOfImage</c>).</summary>
+    public void Reset()
+    {
+        _state = LockState.Search;
+        _sampleCounter = 0;
+        _syncTimeCounter = 0;
+        _visData = 0;
+        _visCount = 0;
+        _triggerFireSample = 0;
+        _resolvedMode = null;
+        _isExtended = false;
+    }
+
     /// <summary>Feeds one raw sample. Returns the locked mode and the sample index (relative to the
     /// very first sample ever passed to this instance, i.e. usable directly as an index into the
     /// same raw-sample buffer this port's other per-sample detectors already use that convention

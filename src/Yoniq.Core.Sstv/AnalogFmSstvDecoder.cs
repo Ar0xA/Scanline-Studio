@@ -40,6 +40,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private ZeroCrossingFrequencyCounter? _afcFrequencyCounter;
     private AfcTracker? _afcTracker;
     private int _afcProcessedUpTo;
+    private int _afcBoundSample; // see Commit -- never correct past this image's own generous nominal extent
 
     private SyncEnvelopeDetector? _syncEnvelopeDetector;
     private SlantTracker? _slantTracker;
@@ -60,6 +61,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly SyncEnvelopeDetector _syncBypass1900Detector;
     private readonly SyncIntervalTracker _syncBypassTracker;
     private int _syncBypassProcessedUpTo;
+    private int _syncBypassOriginSample; // see EndOfImage -- 0 until the first image completes and this tracker is Reset() past a dead zone
 
     // m_sint3 (sstv.cpp:1924-1946, sstv.h:702, m_fNarrow=TRUE set at sstv.cpp:1483) -- the narrow
     // (MN73/110/140, MC110/140/180) counterpart to m_sint2 above, sharing the same d19 (1900Hz)
@@ -86,6 +88,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // replacement.
     private readonly VisLockStateMachine _visLockStateMachine;
     private int _visLockProcessedUpTo;
+    private int _visLockOriginSample; // see EndOfImage -- 0 until the first image completes and this is Reset() past a dead zone
 
     // AVT training-sequence lock (sstv.cpp cases 4-7, see AvtTrainingLockStateMachine's own doc
     // comment) -- once TryDecodeVisHeader identifies AVT from its VIS byte, resolution moves into
@@ -125,57 +128,111 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         TryProcessBuffer();
     }
 
+    // Outer loop added for piece 6a (end-of-image reset, sstv.cpp's Stop()/cases 512-513): once an
+    // image completes, EndOfImage() clears _mode and this loops back to try detecting a *subsequent*
+    // transmission already sitting in the same pushed buffer, rather than requiring a separate
+    // PushSamples call to notice it. Terminates whenever there isn't yet enough data to either find
+    // a header or finish the line currently in progress.
     private void TryProcessBuffer()
     {
-        if (_mode is null && !TryDecodeHeader())
+        while (true)
         {
-            return;
-        }
-
-        ApplyAfcCorrections();
-
-        var mode = _mode!;
-        var lineDecoder = _lineDecoder!;
-        var pixels = _pixels!;
-
-        while (_nextLine < mode.ImageHeight)
-        {
-            // _effectiveSamplesPerLine reflects Auto Slant corrections from lines *before* this one
-            // only -- ApplySlantTracking() runs strictly after this same line's own decode below,
-            // never ahead of it. Matches legacy's real causal order exactly (Main.cpp's real-time
-            // loop): a transmission line is always decoded using whatever m_TW/m_SampFreq stood
-            // *before* it started, then that same line's own sync-envelope data feeds AutoStopJob,
-            // which may update m_TW/m_SampFreq for the *next* line. An earlier version of this method
-            // ran slant-tracking as a single bulk pass over the whole buffered stream before this
-            // loop even started -- fine for streaming callers where only a little data is ever
-            // available ahead of decode, but wrong (and, worse, silently wrong) for a caller that
-            // pushes everything at once: slant-tracking would run all the way through image data
-            // *and into the trailing footer tone*, corrupting the sync-position history with
-            // non-image content before the very first line was ever decoded. Caught by an end-to-end
-            // mistuned-rate test, not by any of the isolated or single-shot unit tests above.
-            var lineSampleCount = (int)Math.Round(_effectiveSamplesPerLine);
-            if (_demodulatedFrequencies.Count - _consumedSamples < lineSampleCount)
+            if (_mode is null && !TryDecodeHeader())
             {
-                break;
+                return;
             }
 
-            // mode.LineDurationMs/1000*effectiveSampleRate == _effectiveSamplesPerLine by
-            // construction: passing this adjusted rate into DecodeLine scales every per-segment
-            // sample calculation inside it proportionally, without IScanlineDecoder needing to know
-            // anything about slant correction at all.
-            var effectiveSampleRate = (int)Math.Round(_effectiveSamplesPerLine / (mode.LineDurationMs / 1000.0));
+            ApplyAfcCorrections();
 
-            lineDecoder.DecodeLine(mode, effectiveSampleRate, _consumedSamples, _nextLine, SampleFrequencyAt, pixels);
-            _consumedSamples += lineSampleCount;
+            var mode = _mode!;
+            var lineDecoder = _lineDecoder!;
+            var pixels = _pixels!;
 
-            LineDecoded?.Invoke(new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
-            _nextLine += lineDecoder.RowsPerTransmissionLine;
+            while (_nextLine < mode.ImageHeight)
+            {
+                // _effectiveSamplesPerLine reflects Auto Slant corrections from lines *before* this one
+                // only -- ApplySlantTracking() runs strictly after this same line's own decode below,
+                // never ahead of it. Matches legacy's real causal order exactly (Main.cpp's real-time
+                // loop): a transmission line is always decoded using whatever m_TW/m_SampFreq stood
+                // *before* it started, then that same line's own sync-envelope data feeds AutoStopJob,
+                // which may update m_TW/m_SampFreq for the *next* line. An earlier version of this method
+                // ran slant-tracking as a single bulk pass over the whole buffered stream before this
+                // loop even started -- fine for streaming callers where only a little data is ever
+                // available ahead of decode, but wrong (and, worse, silently wrong) for a caller that
+                // pushes everything at once: slant-tracking would run all the way through image data
+                // *and into the trailing footer tone*, corrupting the sync-position history with
+                // non-image content before the very first line was ever decoded. Caught by an end-to-end
+                // mistuned-rate test, not by any of the isolated or single-shot unit tests above.
+                var lineSampleCount = (int)Math.Round(_effectiveSamplesPerLine);
+                if (_demodulatedFrequencies.Count - _consumedSamples < lineSampleCount)
+                {
+                    return; // waiting for more samples to finish this image -- not done, don't reset
+                }
 
-            // Now that this line is fully decoded and _consumedSamples reflects it, let slant
-            // tracking catch up through exactly this line's raw samples -- never further ahead,
-            // and never for a line that hasn't been decoded yet.
-            ApplySlantTracking();
+                // mode.LineDurationMs/1000*effectiveSampleRate == _effectiveSamplesPerLine by
+                // construction: passing this adjusted rate into DecodeLine scales every per-segment
+                // sample calculation inside it proportionally, without IScanlineDecoder needing to know
+                // anything about slant correction at all.
+                var effectiveSampleRate = (int)Math.Round(_effectiveSamplesPerLine / (mode.LineDurationMs / 1000.0));
+
+                lineDecoder.DecodeLine(mode, effectiveSampleRate, _consumedSamples, _nextLine, SampleFrequencyAt, pixels);
+                _consumedSamples += lineSampleCount;
+
+                LineDecoded?.Invoke(new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
+                _nextLine += lineDecoder.RowsPerTransmissionLine;
+
+                // Now that this line is fully decoded and _consumedSamples reflects it, let slant
+                // tracking catch up through exactly this line's raw samples -- never further ahead,
+                // and never for a line that hasn't been decoded yet.
+                ApplySlantTracking();
+            }
+
+            EndOfImage();
         }
+    }
+
+    // Direct port of Stop() (sstv.cpp:1769-1791) + cases 512/513's 0.5s dead-time wait
+    // (sstv.cpp:2243-2252), called once _nextLine reaches mode.ImageHeight -- i.e. right where
+    // legacy's own `m_AY > SSTVSET.m_L` check calls Stop() (Main.cpp:5014-5017). Modeled as an
+    // analytic skip rather than a literal per-sample countdown (the same style already used for
+    // fixed-duration header skips): jump straight to _consumedSamples + 0.5s worth of samples,
+    // rather than simulating 0.5s of idle per-sample ticks that would have no detectable effect
+    // either way.
+    //
+    // Legacy's Stop() resets m_sint1 (not ported)/m_sint2/m_sint3 -- so does this, plus
+    // VisLockStateMachine's own equivalent of cases 0-9's logical state (case 0 is where
+    // m_SyncMode lands once cases 512/513 finish) -- clearing stale history/in-progress decode
+    // state from before this image locked, so it isn't mistaken for real content in the next
+    // transmission's search. Each reset detector also needs a new origin sample: they were
+    // previously always fed starting at absolute index 0, but now resume mid-buffer.
+    private void EndOfImage()
+    {
+        var resumeFrom = _consumedSamples + (int)Math.Round(0.5 * _sampleRate);
+
+        _mode = null;
+        _lineDecoder = null;
+        _pixels = null;
+        _nextLine = 0;
+
+        _afcFrequencyCounter = null;
+        _afcTracker = null;
+        _syncEnvelopeDetector = null;
+        _slantTracker = null;
+
+        _avtTrainingPending = false;
+        _avtTrainingLock = null;
+
+        _syncBypassTracker.Reset();
+        _syncBypassNarrowTracker.Reset();
+        _syncBypassNarrowPhaseActive = false;
+        _syncBypassProcessedUpTo = resumeFrom;
+        _syncBypassOriginSample = resumeFrom;
+
+        _visLockStateMachine.Reset();
+        _visLockProcessedUpTo = resumeFrom;
+        _visLockOriginSample = resumeFrom;
+
+        _consumedSamples = resumeFrom;
     }
 
     // Discriminates between a normal/extended-VIS header and an MN/MC narrow-mode-announce packet
@@ -263,7 +320,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 continue;
             }
 
-            Commit(result.Value.Mode, result.Value.LineStartSample);
+            Commit(result.Value.Mode, _visLockOriginSample + result.Value.LineStartSample);
             _visLockProcessedUpTo++;
             return true;
         }
@@ -369,7 +426,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private void CommitSyncBypassMatch(SstvModeDefinition matched, double peakPosition)
     {
         var midpointOffsetSamples = SstvModeRegistry.GetSyncSegmentMidpointOffsetMs(matched) / 1000.0 * _sampleRate;
-        var lineStart = (int)Math.Round(peakPosition - midpointOffsetSamples);
+        var lineStart = _syncBypassOriginSample + (int)Math.Round(peakPosition - midpointOffsetSamples);
         Commit(matched, lineStart);
     }
 
@@ -379,6 +436,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _mode = matched;
         _lineDecoder = ScanlineCodecFactory.CreateDecoder(matched.ColorEncoding);
         _pixels = new Rgb24[matched.ImageWidth * matched.ImageHeight];
+        _nextLine = 0;
+
+        // A generous (pre-slant-correction, nominal) upper bound on this image's own total audio
+        // extent -- see ApplyAfcCorrections' doc comment for why this bound exists: without it, a
+        // single TryProcessBuffer call can eagerly AFC-correct straight through this image's own
+        // footer/dead-zone and into a not-yet-detected *next* transmission's audio, using a
+        // correction tuned to this image's own frequency offset. A real bug caught by independent
+        // review once EndOfImage made a second Commit() within one decoder instance possible at all.
+        var totalTransmissionLines = matched.ImageHeight / _lineDecoder.RowsPerTransmissionLine;
+        _afcBoundSample = _consumedSamples + (int)Math.Round(totalTransmissionLines * matched.LineDurationMs / 1000.0 * _sampleRate);
+
         InitializeAfc(matched);
         InitializeSlant(matched);
         ModeDetected?.Invoke(matched);
@@ -625,6 +693,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // adaptation: the zero-crossing counter and AFC state machine below still see the exact same raw
     // samples in the exact same order, one at a time, that legacy's own would have -- only the wall-
     // clock timing of *when* that processing happens (relative to VIS decode) differs.
+    //
+    // Bounded by _afcBoundSample, NOT _demodulatedFrequencies.Count: never correct samples beyond
+    // this image's own generous nominal extent -- otherwise a single TryProcessBuffer call (a bulk
+    // PushSamples caller in particular) would eagerly correct straight through this image's footer/
+    // dead-zone and into a not-yet-detected *next* transmission's audio using a correction tuned to
+    // this image's own frequency offset, corrupting it before that transmission's own Commit() even
+    // runs -- the same category of bulk-vs-streaming ordering bug already documented on
+    // ApplySlantTracking, but for AFC specifically only became reachable once EndOfImage made a
+    // second Commit() within one decoder instance possible at all.
     private void ApplyAfcCorrections()
     {
         if (_afcTracker is null)
@@ -632,7 +709,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             return;
         }
 
-        for (; _afcProcessedUpTo < _demodulatedFrequencies.Count; _afcProcessedUpTo++)
+        var bound = Math.Min(_demodulatedFrequencies.Count, _afcBoundSample);
+        for (; _afcProcessedUpTo < bound; _afcProcessedUpTo++)
         {
             var measuredFrequencyHz = _afcFrequencyCounter!.ProcessSample(_rawSamples[_afcProcessedUpTo]);
             var correctionHz = _afcTracker.ProcessSample(measuredFrequencyHz);
