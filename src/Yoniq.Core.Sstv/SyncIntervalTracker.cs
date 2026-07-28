@@ -70,6 +70,21 @@ internal sealed class SyncIntervalTracker
         _maxIntervalSamples = 1390.0 * 3 / 1000.0 * sampleRate; // m_MSH, sstv.cpp:585
     }
 
+    /// <summary><c>CSYNCINT::Reset</c> (`sstv.cpp:576-582`) -- clears the rolling interval history and
+    /// all peak-tracking state. Legacy calls this from <c>Stop()</c> (`sstv.cpp:1782-1784`) at the end
+    /// of every image, so a subsequent transmission's periodicity is judged fresh, not against stale
+    /// history from before the previous lock. This port's decoder additionally has to track where the
+    /// *next* fed sample maps back to an absolute stream position once this resets <see cref="_sampleCounter"/>
+    /// to 0 again -- see <c>AnalogFmSstvDecoder.EndOfImage</c>'s origin-tracking fields.</summary>
+    public void Reset()
+    {
+        Array.Clear(_history);
+        _sampleCounter = 0;
+        _peakAmplitude = 0;
+        _peakPosition = 0;
+        _lastAcceptedPosition = 0;
+    }
+
     /// <summary><c>SyncInc</c> (`sstv.cpp:1376-1379`) -- advances the running sample counter every
     /// sample, regardless of whether a peak was seen.</summary>
     public void Increment() => _sampleCounter += 1;
