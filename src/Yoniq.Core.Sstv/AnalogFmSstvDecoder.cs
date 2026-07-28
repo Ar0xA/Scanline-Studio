@@ -87,6 +87,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly VisLockStateMachine _visLockStateMachine;
     private int _visLockProcessedUpTo;
 
+    // AVT training-sequence lock (sstv.cpp cases 4-7, see AvtTrainingLockStateMachine's own doc
+    // comment) -- once TryDecodeVisHeader identifies AVT from its VIS byte, resolution moves into
+    // this multi-call pending phase instead of committing atomically with a fixed-duration skip,
+    // since the training lock's completion point is data-dependent, not a fixed duration.
+    private bool _avtTrainingPending;
+    private AvtTrainingLockStateMachine? _avtTrainingLock;
+    private int _avtTrainingOriginSample;
+    private int _avtTrainingProcessedUpTo;
+    private int _avtTrainingFallbackDeadlineSample;
+
     public AnalogFmSstvDecoder(int sampleRate = 11025)
     {
         _sampleRate = sampleRate;
@@ -182,6 +192,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
     private bool TryDecodeHeader()
     {
+        // AVT's training-lock resolution spans multiple TryDecodeHeader calls once entered (its
+        // completion point is data-dependent, not a fixed duration) -- while pending, skip straight
+        // back into it rather than re-running header detection or falling through to the other
+        // fallbacks, which would be wrong once the mode is already known to be AVT.
+        if (_avtTrainingPending)
+        {
+            return TryResolveAvtTraining();
+        }
+
         var discriminatorEndSampleCount = (int)Math.Round(NarrowDiscriminatorWindowEndMs / 1000.0 * _sampleRate);
         if (_demodulatedFrequencies.Count - _consumedSamples >= discriminatorEndSampleCount)
         {
@@ -195,6 +214,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             if (decoded)
             {
                 return true;
+            }
+
+            if (_avtTrainingPending)
+            {
+                // AVT identified from its VIS byte this same call, but not yet resolved -- wait for
+                // more samples via the pending check above, don't fall through to the other fallbacks.
+                return false;
             }
         }
 
@@ -470,38 +496,81 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             return false;
         }
 
-        // AVT and Scottie both carry extra header material beyond one normal VIS transmission (see
-        // VisHeader.GenerateAvtSegments/ScottiePostVisPulseFrequencyHz) that this decoder never
-        // needed to read, only skip past, since the mode is already known from the VIS bits above.
-        var extraHeaderDurationMs = mode == SstvModeRegistry.Avt
-            ? VisHeader.AvtExtraHeaderDurationMs
-            : SstvModeRegistry.IsScottieFamily(mode)
-                ? VisHeader.ScottiePostVisPulseDurationMs
-                : 0.0;
+        // Scottie carries a small extra fixed pulse beyond one normal VIS transmission (see
+        // VisHeader.ScottiePostVisPulseFrequencyHz) that this decoder never needed to read, only
+        // skip past, since the mode is already known from the VIS bits above. AVT is handled
+        // separately below: its extra header material (2 more VIS repeats + a data-dependent
+        // training sequence, see AvtTrainingLockStateMachine) can't be skipped with a fixed count
+        // the same way.
+        if (mode == SstvModeRegistry.Avt)
+        {
+            return TryStartAvtTraining(headerStart, totalHeaderSampleCount);
+        }
+
+        var extraHeaderDurationMs = SstvModeRegistry.IsScottieFamily(mode) ? VisHeader.ScottiePostVisPulseDurationMs : 0.0;
         var extraSampleCount = extraHeaderDurationMs > 0
             ? (int)Math.Round(extraHeaderDurationMs / 1000.0 * _sampleRate)
             : 0;
 
         // Single atomic commit point: _consumedSamples (and _mode) must not change unless the FULL
-        // header -- base VIS plus any AVT/Scottie extra -- is already available. Splitting this
-        // into two separate advances (base header now, extra later) was a real bug caught by
-        // independent review: a chunked/streaming PushSamples caller could see the base-header
-        // advance committed, then hit "not enough samples yet" for the extra part and return false
-        // with _mode still null -- so the next call would restart header detection from the middle
-        // of AVT's training sequence or Scottie's post-VIS pulse instead of skipping past it.
+        // header -- base VIS plus any Scottie extra -- is already available. Splitting this into two
+        // separate advances (base header now, extra later) was a real bug caught by independent
+        // review: a chunked/streaming PushSamples caller could see the base-header advance
+        // committed, then hit "not enough samples yet" for the extra part and return false with
+        // _mode still null -- so the next call would restart header detection from the middle of
+        // Scottie's post-VIS pulse instead of skipping past it.
         if (_demodulatedFrequencies.Count - headerStart < totalHeaderSampleCount + extraSampleCount)
         {
-            return false; // wait for the rest of the header (including any AVT/Scottie extra) before committing
+            return false; // wait for the rest of the header (including any Scottie extra) before committing
         }
 
-        _consumedSamples = headerStart + totalHeaderSampleCount + extraSampleCount;
-        _mode = mode;
-        _lineDecoder = ScanlineCodecFactory.CreateDecoder(mode.ColorEncoding);
-        _pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
-        InitializeAfc(mode);
-        InitializeSlant(mode);
-        ModeDetected?.Invoke(mode);
+        Commit(mode, headerStart + totalHeaderSampleCount + extraSampleCount);
         return true;
+    }
+
+    // AVT and Scottie both carry extra header material beyond one normal VIS transmission (see
+    // VisHeader.GenerateAvtSegments/ScottiePostVisPulseFrequencyHz), but AVT's is data-dependent
+    // (see AvtTrainingLockStateMachine's doc comment for why a fixed skip alone leaves accuracy on
+    // the table for real captured audio with clock drift): once headerStart + totalHeaderSampleCount
+    // + 2 more VIS repeats' worth of samples are available (the point legacy's own case 3 hands off
+    // to case 4), start feeding already-demodulated frequencies into a training-lock instance,
+    // keeping VisHeader.AvtExtraHeaderDurationMs's already-tested fixed duration as a hard ceiling
+    // (matching legacy's own real fallback: the training lock's own internal timeout, if it never
+    // confirms a lock, converges on very close to this same fixed duration anyway).
+    private bool TryStartAvtTraining(int headerStart, int totalHeaderSampleCount)
+    {
+        _avtTrainingOriginSample = headerStart + totalHeaderSampleCount + (int)Math.Round(2 * VisHeader.AvtVisBlockDurationMs / 1000.0 * _sampleRate);
+        _avtTrainingFallbackDeadlineSample = headerStart + totalHeaderSampleCount
+            + (int)Math.Round(VisHeader.AvtExtraHeaderDurationMs / 1000.0 * _sampleRate);
+        _avtTrainingLock = new AvtTrainingLockStateMachine(_sampleRate);
+        _avtTrainingProcessedUpTo = _avtTrainingOriginSample;
+        _avtTrainingPending = true;
+        return TryResolveAvtTraining();
+    }
+
+    private bool TryResolveAvtTraining()
+    {
+        while (_avtTrainingProcessedUpTo < _demodulatedFrequencies.Count)
+        {
+            var completedAt = _avtTrainingLock!.ProcessSample(_demodulatedFrequencies[_avtTrainingProcessedUpTo]);
+            _avtTrainingProcessedUpTo++;
+
+            if (completedAt is not null)
+            {
+                _avtTrainingPending = false;
+                Commit(SstvModeRegistry.Avt, _avtTrainingOriginSample + completedAt.Value);
+                return true;
+            }
+
+            if (_avtTrainingProcessedUpTo >= _avtTrainingFallbackDeadlineSample)
+            {
+                _avtTrainingPending = false;
+                Commit(SstvModeRegistry.Avt, _avtTrainingFallbackDeadlineSample);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Direct port of CSSTVDEM::SyncFreq's setup (InitAFC/SetSampFreq, sstv.cpp) -- legacy explicitly
