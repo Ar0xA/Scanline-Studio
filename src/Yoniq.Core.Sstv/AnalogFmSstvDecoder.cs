@@ -116,6 +116,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
     public event Action<SstvModeDefinition>? ModeDetected;
 
+    public event Action<SstvModeDefinition>? DecodeRestarted;
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
         var span = samples.Span;
@@ -147,6 +149,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             var mode = _mode!;
             var lineDecoder = _lineDecoder!;
             var pixels = _pixels!;
+            var restarted = false;
 
             while (_nextLine < mode.ImageHeight)
             {
@@ -185,9 +188,40 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // tracking catch up through exactly this line's raw samples -- never further ahead,
                 // and never for a line that hasn't been decoded yet.
                 ApplySlantTracking();
+
+                // Piece 6c: legacy's case-0 trigger (sstv.cpp:1946-1950) is ungated -- it keeps
+                // running even while m_Sync is true, so a stronger/cleaner new lock found mid-
+                // reception aborts and restarts on it (Start() resets m_SyncMode back to 0
+                // unconditionally). Checked once per decoded line, not once per TryProcessBuffer
+                // call: for a bulk-pushed buffer containing a whole (possibly truncated)
+                // transmission followed immediately by a second one, the loop above would otherwise
+                // just keep decoding every available sample as if it were more lines of the *first*
+                // transmission -- it has no notion of "this content doesn't actually belong to this
+                // image" -- and would never return control to notice the second transmission's real
+                // header at all. Only VisLockStateMachine runs here, not the fixed-window path (which
+                // assumes _consumedSamples is a header start, not mid-image) or TrySyncIntervalDetection
+                // (both m_sint2 and m_sint3 are hard-gated behind !m_Sync at every call site in
+                // legacy, sstv.cpp:1899/1949/1953/1959 -- they must not run while locked). Bounded to
+                // _consumedSamples (the current decode position), NOT the whole buffer -- see
+                // TryVisLockStateMachine's own doc comment for the bulk-vs-streaming bug this bound fixes.
+                if (TryVisLockStateMachine(_consumedSamples))
+                {
+                    restarted = true;
+                    DecodeRestarted?.Invoke(_mode!);
+                    break;
+                }
             }
 
-            EndOfImage();
+            if (restarted)
+            {
+                continue; // TryVisLockStateMachine already Commit()-ed the new transmission -- decode it from scratch
+            }
+
+            if (_nextLine >= mode.ImageHeight)
+            {
+                EndOfImage();
+                continue;
+            }
         }
     }
 
@@ -302,7 +336,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // VIS-coded mode -- not just the trusted subset TrySyncIntervalDetection covers. Tried before
         // the bypass detectors since it identifies a mode from actual bit content, not periodicity
         // alone, making it the more reliable of the two remaining fallbacks.
-        if (TryVisLockStateMachine())
+        if (TryVisLockStateMachine(_rawSamples.Count))
         {
             return true;
         }
@@ -310,9 +344,21 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         return TrySyncIntervalDetection();
     }
 
-    private bool TryVisLockStateMachine()
+    // Bounded by upperBoundSample, NOT always _rawSamples.Count: pre-lock (called from
+    // TryDecodeHeader), there's no "current decode position" to bound against, so the caller passes
+    // _rawSamples.Count and this scans everything available, same as always. While already locked
+    // (piece 6c, called from inside the per-line loop below), the caller passes _consumedSamples --
+    // never letting this run ahead into not-yet-decoded content. Without that bound, a single bulk
+    // PushSamples call containing a whole transmission followed by a second, genuinely valid one
+    // would let this method discover the *real* second header on its very first call (mid-decode of
+    // the first transmission's very first line) and "restart" onto it immediately, abandoning a
+    // transmission this port had every ability to finish -- the same category of bulk-vs-streaming
+    // ordering bug already documented on ApplySlantTracking and the original TrySyncIntervalDetection
+    // fix, caught here by this port's own end-to-end test, not by a theoretical review.
+    private bool TryVisLockStateMachine(int upperBoundSample)
     {
-        for (; _visLockProcessedUpTo < _rawSamples.Count; _visLockProcessedUpTo++)
+        var bound = Math.Min(_rawSamples.Count, upperBoundSample);
+        for (; _visLockProcessedUpTo < bound; _visLockProcessedUpTo++)
         {
             var result = _visLockStateMachine.ProcessSample(_rawSamples[_visLockProcessedUpTo]);
             if (result is null)
@@ -446,6 +492,24 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // review once EndOfImage made a second Commit() within one decoder instance possible at all.
         var totalTransmissionLines = matched.ImageHeight / _lineDecoder.RowsPerTransmissionLine;
         _afcBoundSample = _consumedSamples + (int)Math.Round(totalTransmissionLines * matched.LineDurationMs / 1000.0 * _sampleRate);
+
+        // Piece 6c prerequisite, a real bug caught by this port's own end-to-end test: whichever
+        // path found this match, VisLockStateMachine must never re-examine samples already accounted
+        // for by the time reception is locked, or its now-continuously-running re-verification scan
+        // (see TryProcessBuffer) immediately rediscovers the very header that just committed and
+        // fires a spurious mid-reception "restart" against itself. When TryVisLockStateMachine itself
+        // triggered this Commit(), _visLockProcessedUpTo already sits at (or fractionally before, via
+        // the anchor's own +15ms correction) _consumedSamples -- Math.Max leaves it alone. When any
+        // other path (fixed-window, narrow, AVT) triggered it, _visLockProcessedUpTo may still be at
+        // its initial 0 (never touched, since TryDecodeHeader only falls through to
+        // TryVisLockStateMachine when the faster paths fail) -- this fast-forwards it past the header
+        // those paths already resolved. Always Reset(), even when self-triggered (already resets
+        // itself internally on a match) or already fast-forwarded (Reset() only clears logical state,
+        // not the origin) -- cheap, and guarantees no stale in-progress bit accumulation survives into
+        // the new transmission if a different path pre-empted an in-progress VisLockStateMachine scan.
+        _visLockStateMachine.Reset();
+        _visLockProcessedUpTo = Math.Max(_visLockProcessedUpTo, _consumedSamples);
+        _visLockOriginSample = _visLockProcessedUpTo;
 
         InitializeAfc(matched);
         InitializeSlant(matched);
