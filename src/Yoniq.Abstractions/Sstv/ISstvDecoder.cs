@@ -17,6 +17,13 @@ public interface ISstvDecoder
     /// is ungated -- it keeps running even while already locked). Distinct from <see cref="ModeDetected"/>,
     /// which fires for both a fresh detection and a mid-reception restart: callers displaying an
     /// in-progress image need this to know specifically that the partial image should be discarded,
-    /// not just that a mode was (re-)identified. Argument is the newly-detected mode.</summary>
+    /// not just that a mode was (re-)identified.
+    ///
+    /// Argument is the *abandoned* mode (what was being decoded before the restart), not the newly-
+    /// detected one -- <see cref="ModeDetected"/> for the new mode always fires first, before this
+    /// event, since the implementation must already know the new mode to have decided a restart is
+    /// happening at all. A caller that allocates a display buffer on <see cref="ModeDetected"/> and
+    /// discards on this event needs the abandoned mode here specifically, not the new one it just
+    /// allocated for.</summary>
     event Action<SstvModeDefinition>? DecodeRestarted;
 }

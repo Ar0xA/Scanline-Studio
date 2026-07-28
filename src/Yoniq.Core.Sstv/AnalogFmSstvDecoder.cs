@@ -207,7 +207,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 if (TryVisLockStateMachine(_consumedSamples))
                 {
                     restarted = true;
-                    DecodeRestarted?.Invoke(_mode!);
+                    // The abandoned (local `mode`, captured at the top of this outer-loop iteration),
+                    // not the new one -- TryVisLockStateMachine already called Commit(), which fired
+                    // ModeDetected for the *new* mode before we get here. Passing that same new mode
+                    // to DecodeRestarted too (an earlier version did, via `_mode!`) is a trap review
+                    // caught: a caller that allocates a buffer on ModeDetected and discards on
+                    // DecodeRestarted would discard the buffer it just allocated for the new mode,
+                    // not the old one it actually needs to throw away.
+                    DecodeRestarted?.Invoke(mode);
                     break;
                 }
             }
@@ -230,8 +237,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // legacy's own `m_AY > SSTVSET.m_L` check calls Stop() (Main.cpp:5014-5017). Modeled as an
     // analytic skip rather than a literal per-sample countdown (the same style already used for
     // fixed-duration header skips): jump straight to _consumedSamples + 0.5s worth of samples,
-    // rather than simulating 0.5s of idle per-sample ticks that would have no detectable effect
-    // either way.
+    // rather than simulating 0.5s of idle per-sample ticks.
+    //
+    // Not literally "no detectable effect either way" (an earlier version of this comment overclaimed
+    // this, caught by independent review): the skip advances the resonator-fed detectors'
+    // (SyncEnvelopeDetector inside SyncIntervalTracker/VisLockStateMachine) processed-up-to cursors
+    // without feeding them the skipped samples, so their filter state carries over from the previous
+    // image's tail rather than the 0.5s of real dead-time content legacy's own filters would have
+    // settled against. In practice this resettles within ~10-30ms of resumed scanning against a
+    // 300ms leader, so it's a real but small divergence, not a functional problem -- described
+    // honestly rather than as literally undetectable.
     //
     // Legacy's Stop() resets m_sint1 (not ported)/m_sint2/m_sint3 -- so does this, plus
     // VisLockStateMachine's own equivalent of cases 0-9's logical state (case 0 is where
@@ -366,8 +381,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 continue;
             }
 
+            // No manual _visLockProcessedUpTo++ here (an earlier version had one): Commit() itself
+            // already sets both _visLockProcessedUpTo and _visLockOriginSample to the same
+            // Math.Max()-derived value, so incrementing afterward would desync them by exactly 1
+            // sample, biasing every subsequent anchor from this instance 1 sample (~0.09ms at
+            // 11025Hz) early -- cosmetic, but caught and removed by independent review.
             Commit(result.Value.Mode, _visLockOriginSample + result.Value.LineStartSample);
-            _visLockProcessedUpTo++;
             return true;
         }
 
@@ -484,12 +503,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _pixels = new Rgb24[matched.ImageWidth * matched.ImageHeight];
         _nextLine = 0;
 
-        // A generous (pre-slant-correction, nominal) upper bound on this image's own total audio
-        // extent -- see ApplyAfcCorrections' doc comment for why this bound exists: without it, a
-        // single TryProcessBuffer call can eagerly AFC-correct straight through this image's own
-        // footer/dead-zone and into a not-yet-detected *next* transmission's audio, using a
-        // correction tuned to this image's own frequency offset. A real bug caught by independent
-        // review once EndOfImage made a second Commit() within one decoder instance possible at all.
+        // An upper bound on this image's own total audio extent -- exactly the *nominal* (pre-slant-
+        // correction) duration, not a deliberately generous margin (corrected wording, caught by
+        // independent review: with Auto Slant active on a slow clock, actual elapsed samples can
+        // exceed this nominal figure by a small amount, meaning the image's last lines are AFC-
+        // corrected against slightly stale state -- bounded by ~0.1% of image length in practice,
+        // well under one line at realistic drift, not fixed further here). See ApplyAfcCorrections'
+        // doc comment for why this bound exists at all: without it, a single TryProcessBuffer call
+        // can eagerly AFC-correct straight through this image's own footer/dead-zone and into a not-
+        // yet-detected *next* transmission's audio, using a correction tuned to this image's own
+        // frequency offset. A real bug caught by independent review once EndOfImage made a second
+        // Commit() within one decoder instance possible at all.
         var totalTransmissionLines = matched.ImageHeight / _lineDecoder.RowsPerTransmissionLine;
         _afcBoundSample = _consumedSamples + (int)Math.Round(totalTransmissionLines * matched.LineDurationMs / 1000.0 * _sampleRate);
 
@@ -497,16 +521,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // path found this match, VisLockStateMachine must never re-examine samples already accounted
         // for by the time reception is locked, or its now-continuously-running re-verification scan
         // (see TryProcessBuffer) immediately rediscovers the very header that just committed and
-        // fires a spurious mid-reception "restart" against itself. When TryVisLockStateMachine itself
-        // triggered this Commit(), _visLockProcessedUpTo already sits at (or fractionally before, via
-        // the anchor's own +15ms correction) _consumedSamples -- Math.Max leaves it alone. When any
-        // other path (fixed-window, narrow, AVT) triggered it, _visLockProcessedUpTo may still be at
-        // its initial 0 (never touched, since TryDecodeHeader only falls through to
-        // TryVisLockStateMachine when the faster paths fail) -- this fast-forwards it past the header
-        // those paths already resolved. Always Reset(), even when self-triggered (already resets
-        // itself internally on a match) or already fast-forwarded (Reset() only clears logical state,
-        // not the origin) -- cheap, and guarantees no stale in-progress bit accumulation survives into
-        // the new transmission if a different path pre-empted an in-progress VisLockStateMachine scan.
+        // fires a spurious mid-reception "restart" against itself. When any path other than
+        // TryVisLockStateMachine itself (fixed-window, narrow, AVT) triggered this Commit(),
+        // _visLockProcessedUpTo may still be at its initial 0 (never touched, since TryDecodeHeader
+        // only falls through to TryVisLockStateMachine when the faster paths fail) -- Math.Max fast-
+        // forwards it past the header those paths already resolved. When TryVisLockStateMachine
+        // itself triggered this Commit(), Math.Max still *advances* it (not a no-op): re-derived
+        // independently by review, walking VisLockStateMachine's own anchor formula against how many
+        // samples ProcessSample actually consumed to return a match shows the anchor is always
+        // slightly *later* (~15ms/164 samples at 11025Hz, for every candidate mode, normal or
+        // extended) than where the state machine itself stopped needing samples -- an earlier version
+        // of this comment claimed Math.Max "leaves it alone" here, which was backwards, though
+        // harmless (the skipped samples are header tail, never re-examined either way). Always
+        // Reset(), even when self-triggered (already resets itself internally on a match) or already
+        // fast-forwarded (Reset() only clears logical state, not the origin) -- cheap, and guarantees
+        // no stale in-progress bit accumulation survives into the new transmission if a different
+        // path pre-empted an in-progress VisLockStateMachine scan.
         _visLockStateMachine.Reset();
         _visLockProcessedUpTo = Math.Max(_visLockProcessedUpTo, _consumedSamples);
         _visLockOriginSample = _visLockProcessedUpTo;
@@ -561,12 +591,34 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             return false;
         }
 
-        _mode = mode;
-        _lineDecoder = ScanlineCodecFactory.CreateDecoder(mode.ColorEncoding);
-        _pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
-        InitializeAfc(mode);
-        InitializeSlant(mode);
-        ModeDetected?.Invoke(mode);
+        // Direct port of a real regression caught by independent review: this used to duplicate
+        // Commit()'s body inline instead of calling it, which meant _afcBoundSample (added when
+        // Commit() gained it, see ApplyAfcCorrections' doc comment) was never assigned for a narrow
+        // transmission -- staying at its default 0, silently disabling AFC entirely for every
+        // MN/MC mode (Math.Min(_demodulatedFrequencies.Count, 0) == 0, so ApplyAfcCorrections'
+        // loop never ran). No existing test caught this: nothing in this suite exercises a
+        // mistuned-audio narrow-mode decode end to end. Routing through the same Commit() every
+        // other detection path already uses closes this and keeps future Commit()-side fixes from
+        // needing to be duplicated a second time here.
+        // Direct port of a real regression caught by independent review: this used to duplicate
+        // Commit()'s body inline instead of calling it, which meant _afcBoundSample (added when
+        // Commit() gained it, see ApplyAfcCorrections' doc comment) was never assigned for a narrow
+        // transmission -- staying at its default 0, silently disabling AFC entirely for every
+        // MN/MC mode (Math.Min(_demodulatedFrequencies.Count, 0) == 0, so ApplyAfcCorrections'
+        // loop never ran). No existing test caught this: nothing in this suite exercises a
+        // mistuned-audio narrow-mode decode end to end. Routing through the same Commit() every
+        // other detection path already uses closes this and keeps future Commit()-side fixes from
+        // needing to be duplicated a second time here.
+        // Direct port of a real regression caught by independent review: this used to duplicate
+        // Commit()'s body inline instead of calling it, which meant _afcBoundSample (added when
+        // Commit() gained it, see ApplyAfcCorrections' doc comment) was never assigned for a narrow
+        // transmission -- staying at its default 0, silently disabling AFC entirely for every
+        // MN/MC mode (Math.Min(_demodulatedFrequencies.Count, 0) == 0, so ApplyAfcCorrections'
+        // loop never ran). No existing test caught this: nothing in this suite exercises a
+        // mistuned-audio narrow-mode decode end to end. Routing through the same Commit() every
+        // other detection path already uses closes this and keeps future Commit()-side fixes from
+        // needing to be duplicated a second time here.
+        Commit(mode, _consumedSamples);
         return true;
     }
 
