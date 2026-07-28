@@ -33,6 +33,10 @@ public class SstvRoundTripTests
         { SstvModeRegistry.Robot36, 150.0 },
         { SstvModeRegistry.Robot72, 300.0 },
         { SstvModeRegistry.Avt, 375.0 },
+        // R24 uses YCbCrSequential's normal (default) 1500/2300Hz range, so unlike MN it is not
+        // affected by that family's tracked LuminanceMinHz/MaxHz hardcoding bug -- safe to
+        // full-round-trip here.
+        { SstvModeRegistry.R24, 200.0 },
         { SstvModeRegistry.Mr73, 286.3 },
         { SstvModeRegistry.Mr90, 352.3 },
         { SstvModeRegistry.Mr115, 450.3 },
@@ -56,6 +60,41 @@ public class SstvRoundTripTests
         { SstvModeRegistry.P3, 409.375 },
         { SstvModeRegistry.P5, 614.0625 },
         { SstvModeRegistry.P7, 818.75 },
+        // MC: RgbSequential already reads LuminanceMinHz/MaxHz correctly (unlike YCbCrLinePaired),
+        // so unlike MN below, MC's full pixel round-trip is not blocked by any known bug.
+        { SstvModeRegistry.Mc110, 428.5 },
+        { SstvModeRegistry.Mc140, 548.5 },
+        { SstvModeRegistry.Mc180, 704.5 },
+        // SC2-180/120/60: plain RgbSequential at the normal 1500/2300Hz range (the source's
+        // "+0x1000"-style values are a TX-gain tag masked off before use as frequency, not part of
+        // the waveform -- see CreateSc2Mode's doc comment) -- safe to full-round-trip here.
+        { SstvModeRegistry.Sc2180, 711.0437 },
+        { SstvModeRegistry.Sc2120, 475.52248 },
+        { SstvModeRegistry.Sc260, 240.3846 },
+        // MN: previously duration-only (see git history) because YCbCrLinePairedScanlineEncoder/
+        // Decoder hardcoded 1500/2300Hz instead of reading LuminanceMinHz/MaxHz, so MN's narrow
+        // 2044-2300Hz pixel data decoded with the wrong frequency mapping even though its
+        // narrow-mode-announce header/mode-detection was already correct. Fixed (all three
+        // YCbCr*ScanlineEncoder/Decoder families and RobotScanlineEncoder/Decoder now read the
+        // mode's own fields) -- full round-trip now passes here, proving the fix.
+        { SstvModeRegistry.Mn73, 570.0 },
+        { SstvModeRegistry.Mn110, 858.0 },
+        { SstvModeRegistry.Mn140, 1090.0 },
+    };
+
+    // RM8/RM12 are genuinely monochrome (no chroma channels at all -- see
+    // CreateMonoAveragedMode's doc comment), so the shared full-color gradient image above
+    // (independently-varying R/G, fixed B) is not a fair round-trip fixture for them: a true
+    // monochrome decode collapses to a single R=G=B luminance value, which cannot track two
+    // independently-varying channels, and comparing against it under the same per-channel
+    // tolerance used for real-chroma modes produced ~42 average delta on first attempt -- not a
+    // codec bug, just an unfair test for what the mode can actually represent. Duration is still
+    // cross-checked here against GetTiming; the actual pixel round-trip uses a matching grayscale
+    // fixture instead, see EncodeThenDecode_RoundTripsWithinTolerance_MonoFamily below.
+    public static readonly TheoryData<SstvModeDefinition, double> MonoFamilyLineDurationsOnly = new()
+    {
+        { SstvModeRegistry.Rm8, 66.89709 },
+        { SstvModeRegistry.Rm12, 100.0 },
     };
 
     [Theory]
@@ -66,11 +105,105 @@ public class SstvRoundTripTests
     }
 
     [Theory]
+    [MemberData(nameof(MonoFamilyLineDurationsOnly))]
+    public void LineDuration_MatchesLegacyGetTiming_MonoFamily(SstvModeDefinition mode, double expectedLineDurationMs)
+    {
+        Assert.Equal(expectedLineDurationMs, mode.LineDurationMs, precision: 3);
+    }
+
+    [Fact]
+    public async Task NarrowModeHeader_IsDetected_ForMnFamily()
+    {
+        // Verifies the narrow-mode-announce packet (VisHeader.GenerateNarrowModeSegments) itself --
+        // leader/guard/start-bit + [0x2d][0x15][modeCode][modeCode^0x15] -- in isolation, as a
+        // focused header-mechanism check independent of pixel decoding (now also covered by MN's
+        // full entry in Modes above, since the LuminanceMinHz/MaxHz bug that used to block it is
+        // fixed). Mn73 chosen arbitrarily; the mechanism is shared across the whole MN/MC family.
+        var mode = SstvModeRegistry.Mn73;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(44100);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        SstvModeDefinition? detectedMode = null;
+        decoder.ModeDetected += m => detectedMode = m;
+
+        decoder.PushSamples(samples.ToArray());
+
+        Assert.NotNull(detectedMode);
+        Assert.Equal(mode.Id, detectedMode!.Id);
+    }
+
+    [Theory]
+    [InlineData("avt")]
+    [InlineData("scottie-s1")]
+    public async Task ModeWithMultiPartHeader_IsStillDetected_WhenSamplesArriveInChunks(string modeId)
+    {
+        // Regression test for a real bug an independent review caught: AVT (3x VIS + ~7s training
+        // sequence) and Scottie (VIS + a 9ms post-VIS pulse) both carry header material beyond one
+        // normal VIS transmission (see VisHeader.GenerateAvtSegments/ScottiePostVisPulseFrequencyHz).
+        // AnalogFmSstvDecoder.TryDecodeVisHeader used to advance its internal _consumedSamples past
+        // the base VIS header as soon as that much was available, then separately check whether the
+        // extra AVT/Scottie material had arrived yet -- so a caller pushing samples in chunks (not
+        // all at once, unlike every other test in this file) could see the base-header advance
+        // commit, then get "not enough samples yet" for the extra part, leaving _mode null and
+        // _consumedSamples pointing into the *middle* of the remaining preamble. The next chunk
+        // would then restart header detection from there instead of resuming correctly -- for AVT
+        // this reliably corrupted alignment by a full 910ms VIS block; for Scottie it typically made
+        // the mode undetectable outright. Fixed by making the whole header (base + any extra) a
+        // single atomic commit. Every other test in this file pushes all samples in one call and so
+        // could never have caught this.
+        var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(44100);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        SstvModeDefinition? detectedMode = null;
+        decoder.ModeDetected += m => detectedMode = m;
+
+        const int chunkSize = 500; // deliberately small and not aligned to any header segment boundary
+        for (var offset = 0; offset < samples.Count; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, samples.Count - offset);
+            decoder.PushSamples(samples.GetRange(offset, length).ToArray());
+        }
+
+        Assert.NotNull(detectedMode);
+        Assert.Equal(mode.Id, detectedMode!.Id);
+    }
+
+    [Theory]
     [MemberData(nameof(Modes))]
     public async Task EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance(SstvModeDefinition mode, double _)
     {
         var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: 10.0);
+    }
 
+    [Theory]
+    [MemberData(nameof(MonoFamilyLineDurationsOnly))]
+    public async Task EncodeThenDecode_RoundTripsWithinTolerance_MonoFamily(SstvModeDefinition mode, double _)
+    {
+        // Grayscale fixture (R=G=B), not the shared multi-channel gradient -- see
+        // MonoFamilyLineDurationsOnly's doc comment for why: RM8/RM12 have no chroma at all, so a
+        // fixture varying R and G independently can't meaningfully round-trip through them.
+        var sourceImage = CreateGrayscaleGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: 10.0);
+    }
+
+    private static async Task AssertEncodeThenDecodeRoundTrip(SstvModeDefinition mode, IImageSource sourceImage, double maxAveragePerChannelDelta)
+    {
         var encoder = new AnalogFmSstvEncoder(44100);
         var samples = new List<float>();
         await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
@@ -98,7 +231,7 @@ public class SstvRoundTripTests
             Assert.Equal(mode.Id, detectedMode!.Id);
             Assert.NotNull(decodedImage);
 
-            AssertImagesMatchWithinTolerance(sourceImage, decodedImage!, maxAveragePerChannelDelta: 10.0);
+            AssertImagesMatchWithinTolerance(sourceImage, decodedImage!, maxAveragePerChannelDelta);
         }
         finally
         {
@@ -117,6 +250,24 @@ public class SstvRoundTripTests
                     R: (byte)(x * 255 / Math.Max(1, width - 1)),
                     G: (byte)(y * 255 / Math.Max(1, height - 1)),
                     B: 128);
+            }
+        }
+
+        return new ArrayImageSource(width, height, pixels);
+    }
+
+    private static ArrayImageSource CreateGrayscaleGradientTestImage(int width, int height)
+    {
+        // Varies by both x and y (not just x) so RM8/RM12's row-averaging encode step and
+        // row-duplicating decode step both get meaningfully exercised, not just horizontal scan
+        // fidelity.
+        var pixels = new Rgb24[width * height];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var value = (byte)((x + y) * 255 / Math.Max(1, width + height - 2));
+                pixels[y * width + x] = new Rgb24(value, value, value);
             }
         }
 

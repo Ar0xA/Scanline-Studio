@@ -10,7 +10,7 @@ internal sealed class RgbSequentialScanlineDecoder : IScanlineDecoder
         int sampleRate,
         int lineStartSample,
         int lineIndex,
-        Func<int, int, double> averageFrequencyInWindow,
+        Func<int, int, double> sampleFrequencyAt,
         Rgb24[] pixels)
     {
         // Mirrors the encoder's running-accumulator approach (see AnalogFmSstvEncoder) so pixel
@@ -29,9 +29,10 @@ internal sealed class RgbSequentialScanlineDecoder : IScanlineDecoder
                     idealSamplesSoFar += perPixelDurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
 
-                    var avgFreq = averageFrequencyInWindow(startSample, endSample);
+                    var freq = sampleFrequencyAt(startSample, endSample);
+                    // Divisor is 256, not 255 -- matches the encoder and legacy's ColorToFreq inverse.
                     var value = (byte)Math.Clamp(
-                        (avgFreq - mode.LuminanceMinHz) / (mode.LuminanceMaxHz - mode.LuminanceMinHz) * 255.0,
+                        (freq - mode.LuminanceMinHz) / (mode.LuminanceMaxHz - mode.LuminanceMinHz) * 256.0,
                         0,
                         255);
 

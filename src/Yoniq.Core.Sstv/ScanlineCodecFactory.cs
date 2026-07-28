@@ -13,6 +13,7 @@ internal static class ScanlineCodecFactory
         ColorEncoding.YCbCrRobot => new RobotScanlineEncoder(),
         ColorEncoding.YCbCrSequential => new YCbCrSequentialScanlineEncoder(),
         ColorEncoding.YCbCrLinePaired => new YCbCrLinePairedScanlineEncoder(),
+        ColorEncoding.MonoAveragedPaired => new MonoAveragedPairedScanlineEncoder(),
         _ => throw new NotSupportedException($"No scanline encoder for {colorEncoding}."),
     };
 
@@ -22,6 +23,7 @@ internal static class ScanlineCodecFactory
         ColorEncoding.YCbCrRobot => new RobotScanlineDecoder(),
         ColorEncoding.YCbCrSequential => new YCbCrSequentialScanlineDecoder(),
         ColorEncoding.YCbCrLinePaired => new YCbCrLinePairedScanlineDecoder(),
+        ColorEncoding.MonoAveragedPaired => new MonoAveragedPairedScanlineDecoder(),
         _ => throw new NotSupportedException($"No scanline decoder for {colorEncoding}."),
     };
 }

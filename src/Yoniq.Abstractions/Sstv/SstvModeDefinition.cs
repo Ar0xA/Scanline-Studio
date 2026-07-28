@@ -29,6 +29,14 @@ public enum ColorEncoding
     /// (<c>IScanlineEncoder.RowsPerTransmissionLine</c> = 2). See
     /// <c>YCbCrLinePairedScanlineEncoder</c>/<c>Decoder</c>.</summary>
     YCbCrLinePaired,
+
+    /// <summary>RM8/RM12: monochrome only, no chroma channels at all. One transmitted line
+    /// averages the luminance of two consecutive source rows into a single scanned value; on
+    /// decode, that one value is written back into both of those rows (grayscale, R=G=B), so each
+    /// transmission unit also covers 2 image rows (<c>RowsPerTransmissionLine</c> = 2) — but unlike
+    /// <see cref="YCbCrLinePaired"/>, those 2 rows are never independently distinguishable, only a
+    /// shared average. See <c>MonoAveragedPairedScanlineEncoder</c>/<c>Decoder</c>.</summary>
+    MonoAveragedPaired,
 }
 
 /// <summary>One timed segment of an SSTV scanline: a fixed-frequency sync/porch/separator pulse, a
@@ -43,22 +51,37 @@ public sealed record ScanSegment(string ChannelName, double DurationMs) : LineSe
 /// <summary>Robot-family "which chroma channel follows" indicator tone. Encoder/decoder agree on
 /// <paramref name="LowFrequencyHz"/>/<paramref name="HighFrequencyHz"/> as the two possible tones;
 /// which one is sent for a given line is alternated by <c>RobotScanlineEncoder</c>, not fixed here.
-/// These two frequencies are standards-informed, not traced from legacy source — the legacy RX
-/// code makes this decision on a calibrated amplitude scale (<c>GetPixelLevel</c>'s output), not a
-/// raw Hz comparison, so there's no source Hz constant to read directly. See
-/// <see cref="SstvModeDefinition"/>'s parity note.</summary>
+/// CORRECTION (an independent Opus-driven verification pass caught this): an earlier version of
+/// this comment claimed these two frequencies were "standards-informed, not traced from legacy
+/// source... no source Hz constant to read directly" — that was false, and false for exactly the
+/// reason CLAUDE.md's rules warn about: the RX decode path (which really does use a calibrated
+/// amplitude comparison, not a raw Hz threshold) was checked instead of the TX line-generator
+/// function, which has the literal value in plain sight. <c>TMmsstv::LineR36</c>
+/// (<c>Main.cpp:6568</c>): <c>mp-&gt;Write(short(mp-&gt;m_wLine &amp; 1 ? 2300 : 1500), 4.5); //
+/// RY=1500, BY=2300</c> — both frequencies below are the real, traced legacy TX values.</summary>
 public sealed record ToneSelectorSegment(double DurationMs, double LowFrequencyHz, double HighFrequencyHz) : LineSegment(DurationMs);
 
 /// <summary>
 /// Data-driven mode description — see spec/06-sstv-dsp.md: "Mode timing/frequency tables are data,
 /// not code." Adding a mode is adding a new <see cref="SstvModeDefinition"/>, not a new class.
 ///
-/// Timing/frequency constants below are taken from public SSTV protocol documentation, not from
-/// the legacy MMSSTV/YONIQ binary directly — golden-vector cross-validation against that binary
-/// (CLAUDE.md's behavioral-parity rule, spec/13-testing.md) has not been done yet, since it
-/// requires building/running the original C++Builder application, which isn't available in this
-/// environment. Treat these constants as "internally consistent and standards-informed," not yet
-/// "verified to match legacy MMSSTV output bit-for-bit."
+/// CORRECTION (an independent Opus-driven verification pass caught this): an earlier version of
+/// this comment claimed timing/frequency constants here were "taken from public SSTV protocol
+/// documentation, not from the legacy MMSSTV/YONIQ binary directly" — that was false, and directly
+/// contradicted <c>SstvModeRegistry</c>'s own (accurate) doc comment on the very same data. Per
+/// CLAUDE.md: legacy source is the ground truth, not general SSTV domain knowledge or public
+/// protocol write-ups — if the two ever disagreed, legacy wins. Every constant below is read
+/// directly from the legacy TX line-generator functions (<c>Main.cpp</c>'s <c>Line*</c> family) and
+/// the VIS/timing tables (<c>sstv.cpp</c>'s <c>GetTiming</c>/VIS-decode switch), per-mode, cross
+/// checked against <c>GetTiming</c> in <c>SstvRoundTripTests</c> — see <c>SstvModeRegistry</c>'s
+/// class doc comment for the full sourcing story and its record of near-misses caught this way.
+///
+/// The one caveat that *is* still real and unresolved: golden-vector cross-validation against
+/// captured *output* from the actual running legacy binary (CLAUDE.md's behavioral-parity rule,
+/// spec/13-testing.md) hasn't been done yet, since it requires building/running the original
+/// C++Builder application, which isn't available in this environment. That's a narrower gap than
+/// the one this comment used to (wrongly) claim — "read correctly from source code" and "verified
+/// bit-for-bit against a real captured recording" are different, and only the second is still open.
 /// </summary>
 public sealed record SstvModeDefinition(
     string Id,
@@ -74,7 +97,19 @@ public sealed record SstvModeDefinition(
     /// "extended VIS" mechanism (escape code 0x23 followed by this raw byte), not a normal
     /// single-byte VIS code. <see cref="VisCode"/> is unused for these modes (set to a
     /// placeholder). See <c>Yoniq.Core.Sstv.VisHeader.GenerateExtendedSegments</c>.</summary>
-    int? ExtendedVisCode = null)
+    int? ExtendedVisCode = null,
+    /// <summary>Non-null for the MN/MC ("narrow") family: confirmed by reading both stages of
+    /// <c>sstv.cpp</c>'s VIS-decode switch directly that these modes have <em>no</em> standard or
+    /// extended VIS code at all. Legacy identifies them with a completely different, fixed 4-byte
+    /// FSK packet sent instead of a VIS header (<c>TMmsstv::ToTX</c>, <c>Main.cpp:7395-7424</c>):
+    /// <c>[0x2d][0x15][modeCode][modeCode^0x15]</c>, each byte sent 6-bit LSB-first via
+    /// <c>CSSTVMOD::WriteFSK</c> (<c>sstv.cpp:2942</c>). This is a small, self-contained
+    /// mode-announce packet — not the general station-ID FSK subsystem (the separate
+    /// 0x2a-prefixed callsign packet decoded by the same <c>DecodeFSK</c> state machine,
+    /// <c>sstv.cpp</c>, still not ported — see spec/06-sstv-dsp.md's FSK/CW station ID item).
+    /// <see cref="VisCode"/>/<see cref="ExtendedVisCode"/> are unused for these modes. See
+    /// <c>Yoniq.Core.Sstv.VisHeader.GenerateNarrowModeSegments</c>.</summary>
+    int? NarrowModeCode = null)
 {
     public double LineDurationMs => LineSegments.Sum(s => s.DurationMs);
 }
