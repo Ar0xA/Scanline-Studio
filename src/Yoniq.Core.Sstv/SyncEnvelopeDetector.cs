@@ -15,15 +15,16 @@ namespace Yoniq.Core.Sstv;
 /// what Auto Slant measures drift against — entirely separate from the PLL-based main demodulator
 /// and from AFC's zero-crossing counter.
 ///
-/// Simplification, flagged not silently absorbed: legacy's real input here is the AGC-scaled
-/// signal shared by every demodulator/detector (<c>CLVL</c>'s single AGC pipeline, `sstv.cpp`'s
-/// <c>Do()</c>: <c>d = ad*32</c>, clipped to +/-16384), not the raw sample. This port's
-/// <see cref="PllFmDemodulator"/> has its own independent, simpler per-demodulator AGC instead of
-/// legacy's one shared <c>CLVL</c> instance (an existing, separately-documented Phase 1
-/// simplification) — with no shared AGC'd signal to reuse, this detector runs on the raw input
-/// directly. Harmless for this port's synthetic round-trip fixtures (constant full amplitude
-/// throughout, so amplitude-dependent peak detection behaves the same either way) but would need
-/// real AGC for reliable peak position tracking against real captured audio with varying volume.
+/// Piece 7a/7b/7b2 closed a previously-documented simplification here: legacy's real input is the
+/// AGC-scaled signal shared by every sync/tone-envelope detector (<c>CLVL</c>'s single AGC pipeline,
+/// `sstv.cpp`'s <c>Do()</c>: <c>d = ad*32</c>, clipped to +/-16384). Every instance of this class is
+/// now fed that same shared AGC'd signal by its caller (<c>AnalogFmSstvDecoder.AgcSampleAt</c> /
+/// <c>LevelAgc</c>), not a raw sample directly -- this class itself stays scale-agnostic (a plain
+/// resonate-rectify-smooth filter with no assumptions about its input's amplitude), so no change was
+/// needed here, only at the call sites. Unrelated: <see cref="PllFmDemodulator"/>'s own independent,
+/// simpler per-demodulator AGC (an existing, separately-documented Phase 1 simplification, still
+/// true) feeds the *pixel*-demodulation path, not this one -- matching legacy's own split between
+/// <c>m_lvl.m_Cur</c> (pixel/AFC, pre-AGC) and <c>m_lvl.AGC(d)*32</c> (sync detectors, this class).
 /// </summary>
 internal sealed class SyncEnvelopeDetector
 {
