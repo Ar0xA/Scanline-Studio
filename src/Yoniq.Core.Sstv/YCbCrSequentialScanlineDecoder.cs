@@ -10,7 +10,7 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
         int sampleRate,
         int lineStartSample,
         int lineIndex,
-        Func<int, int, double> averageFrequencyInWindow,
+        Func<int, int, double> sampleFrequencyAt,
         Rgb24[] pixels)
     {
         var y = new double[mode.ImageWidth];
@@ -37,8 +37,8 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
                     idealSamplesSoFar += perPixelDurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
 
-                    var avgFreq = averageFrequencyInWindow(startSample, endSample);
-                    destination[x] = (avgFreq - 1500) * 256.0 / (2300 - 1500);
+                    var freq = sampleFrequencyAt(startSample, endSample);
+                    destination[x] = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
                 }
             }
             else

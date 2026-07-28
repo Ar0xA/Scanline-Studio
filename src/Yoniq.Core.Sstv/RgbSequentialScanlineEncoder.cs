@@ -24,8 +24,10 @@ internal sealed class RgbSequentialScanlineEncoder : IScanlineEncoder
                         // Re-fetched per pixel (not hoisted) because ReadOnlySpan<T> can't be
                         // stored across a yield-return boundary in an iterator state machine.
                         var value = GetChannelValue(image.GetScanline(lineIndex)[x], scan.ChannelName);
+                        // Divisor is 256, not 255 -- matches legacy's ColorToFreq(int d) (ComLib.cpp)
+                        // and every other scanline codec family in this port.
                         var frequencyHz = mode.LuminanceMinHz
-                            + value / 255.0 * (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+                            + value / 256.0 * (mode.LuminanceMaxHz - mode.LuminanceMinHz);
                         yield return (frequencyHz, perPixelDurationMs);
                     }
 

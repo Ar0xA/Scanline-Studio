@@ -67,13 +67,44 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         IImageSource image,
         IScanlineEncoder lineEncoder)
     {
-        var headerSegments = mode.ExtendedVisCode is { } extendedCode
-            ? VisHeader.GenerateExtendedSegments(extendedCode)
-            : VisHeader.GenerateSegments(mode.VisCode);
-
-        foreach (var segment in headerSegments)
+        // Mirrors legacy's own branching (Main.cpp:7429-7578) exactly: AVT gets a wholly different
+        // header (3x VIS + training sequence, no post-VIS pulse); Scottie gets a normal single VIS
+        // plus an extra 9ms/1200Hz pulse; RM12's VIS byte needs a forced (non-computed) parity bit
+        // because legacy's own assigned byte for it doesn't follow the even-parity convention every
+        // other normal VIS code does; everyone else gets a normal single VIS transmission.
+        if (mode == SstvModeRegistry.Avt)
         {
-            yield return segment;
+            foreach (var segment in VisHeader.GenerateAvtSegments(mode.VisCode))
+            {
+                yield return segment;
+            }
+        }
+        else if (mode.NarrowModeCode is { } narrowCode)
+        {
+            foreach (var segment in VisHeader.GenerateNarrowModeSegments(narrowCode))
+            {
+                yield return segment;
+            }
+        }
+        else if (mode.ExtendedVisCode is { } extendedCode)
+        {
+            foreach (var segment in VisHeader.GenerateExtendedSegments(extendedCode))
+            {
+                yield return segment;
+            }
+        }
+        else
+        {
+            var forcedParityBit = mode == SstvModeRegistry.Rm12 ? VisHeader.Rm12ForcedParityBit : (int?)null;
+            foreach (var segment in VisHeader.GenerateSegments(mode.VisCode, forcedParityBit))
+            {
+                yield return segment;
+            }
+
+            if (SstvModeRegistry.IsScottieFamily(mode))
+            {
+                yield return (VisHeader.ScottiePostVisPulseFrequencyHz, VisHeader.ScottiePostVisPulseDurationMs);
+            }
         }
 
         for (var y = 0; y < mode.ImageHeight; y += lineEncoder.RowsPerTransmissionLine)
@@ -82,6 +113,49 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
             {
                 yield return segment;
             }
+        }
+
+        foreach (var segment in GenerateFooterSegments(mode))
+        {
+            yield return segment;
+        }
+    }
+
+    // Main.cpp:6994-7013 (TMmsstv::SendSSTV, "MMSSTV フッター" -- footer): legacy always appends
+    // this immediately after the last image line. This is specifically the `!sys.m_TXFSKID` branch
+    // (no FSK station ID configured) -- the only branch implementable right now, since FSK/CW
+    // station ID is a deliberately deferred, separately-scoped feature (see spec/06-sstv-dsp.md's
+    // station-ID task list). The alternate branch, `mp->Write(fTxNarrow ? 1900 : 1500, 300)`, only
+    // runs when FSK ID *is* configured, so it isn't reachable yet either way and is left for that
+    // future work to add alongside the ID packet itself, not invented here as a guess.
+    //
+    // `sys.m_VOX` isn't modeled anywhere in this port (no radio/PTT layer exists yet, per
+    // spec/14-roadmap's phase ordering) -- defaults to legacy's own default, off (`Main.cpp:822`),
+    // which is the more common case for typical (non-VOX-triggered) transmit anyway. If VOX support
+    // is ever added, this condition needs `|| isVoxEnabled` alongside the narrow-mode check below;
+    // flagged here rather than silently baked in as "always off" forever.
+    internal const double FooterAlternatingToneDurationMs = 100.0;
+
+    // SSTVSET.m_TW (`sstv.cpp:1109`) is one line's duration *in samples*; the footer's trailing
+    // carrier is capped at `min(m_TW, SampFreq/2)` samples (`Main.cpp:6998-7000`) -- expressed here
+    // in milliseconds (sample-rate-independent) as `min(LineDurationMs, 500ms)`.
+    internal const double FooterMaxTrailingCarrierMs = 500.0;
+
+    internal static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFooterSegments(SstvModeDefinition mode)
+    {
+        var trailingCarrierMs = Math.Min(mode.LineDurationMs, FooterMaxTrailingCarrierMs);
+
+        if (mode.NarrowModeCode is null)
+        {
+            yield return (1500, trailingCarrierMs);
+            yield return (1900, FooterAlternatingToneDurationMs);
+            yield return (1500, FooterAlternatingToneDurationMs);
+            yield return (1900, FooterAlternatingToneDurationMs);
+            yield return (1500, FooterAlternatingToneDurationMs);
+        }
+        else
+        {
+            yield return (1900, trailingCarrierMs);
         }
     }
 }
