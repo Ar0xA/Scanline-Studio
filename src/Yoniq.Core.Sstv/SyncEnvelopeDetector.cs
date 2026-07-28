@@ -30,9 +30,13 @@ internal sealed class SyncEnvelopeDetector
     private readonly TankFilter _resonator = new();
     private readonly IirFilter _smoother = new();
 
-    public SyncEnvelopeDetector(double sampleRate, double centerFrequencyHz)
+    /// <param name="bandwidthHz">Resonator bandwidth -- 100Hz for every existing use (<c>m_iir12</c>/
+    /// <c>m_iir19</c>/<c>m_iirfsk</c>, `sstv.cpp:1447/1449/1450`), but the VIS-bit tone-race detectors
+    /// (<c>m_iir11</c>/<c>m_iir13</c>, 1080/1320Hz) use a narrower 80Hz band (`sstv.cpp:1446/1448`) --
+    /// confirmed by direct comparison against those four <c>SetFreq</c> calls, not assumed to match.</param>
+    public SyncEnvelopeDetector(double sampleRate, double centerFrequencyHz, double bandwidthHz = 100.0)
     {
-        _resonator.SetFreq(centerFrequencyHz, sampleRate, 100.0);
+        _resonator.SetFreq(centerFrequencyHz, sampleRate, bandwidthHz);
         _smoother.Design(50, sampleRate, 2);
     }
 
