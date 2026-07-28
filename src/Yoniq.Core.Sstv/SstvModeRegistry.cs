@@ -655,6 +655,44 @@ public static class SstvModeRegistry
     public static SstvModeDefinition? FindByExtendedCode(int extendedCode) =>
         All.FirstOrDefault(m => m.ExtendedVisCode == extendedCode);
 
+    /// <summary>Matches the *full* legacy VIS byte -- 7 data bits plus the even-parity bit as bit 7
+    /// (e.g. R36's real case is <c>0x88</c>, not the parity-stripped <c>8</c> <see cref="FindByVisCode"/>
+    /// matches) -- the way legacy's own real-time bit-decode actually compares it
+    /// (`sstv.cpp:1993-2074`'s `switch(m_VisData)`, a `default:` rejects any byte with the wrong
+    /// parity bit outright). Reuses <see cref="VisHeader.GenerateSegments"/>'s own parity computation
+    /// (including <see cref="VisHeader.Rm12ForcedParityBit"/> for RM12's real anomalous byte) as the
+    /// single source of truth, rather than re-transcribing a second copy of the mode-code table --
+    /// verified to reproduce every one of the 24 real legacy bytes at `sstv.cpp:1993-2074` byte-for-byte.
+    /// Only used by <see cref="VisLockStateMachine"/>, which (unlike <see cref="FindByVisCode"/>'s
+    /// windowed-average-frequency callers) actually reads the parity bit as part of its own byte
+    /// accumulation.</summary>
+    internal static SstvModeDefinition? FindByFullVisByte(int fullByte)
+    {
+        foreach (var mode in All)
+        {
+            if (mode.ExtendedVisCode is not null || mode.NarrowModeCode is not null)
+            {
+                continue;
+            }
+
+            var parity = 0;
+            for (var bitIndex = 0; bitIndex < 7; bitIndex++)
+            {
+                parity ^= (mode.VisCode >> bitIndex) & 1;
+            }
+
+            var parityBit = mode == Rm12 ? VisHeader.Rm12ForcedParityBit : parity;
+            var expectedByte = mode.VisCode | (parityBit << 7);
+
+            if (expectedByte == fullByte)
+            {
+                return mode;
+            }
+        }
+
+        return null;
+    }
+
     public static SstvModeDefinition? FindByNarrowCode(int narrowCode) =>
         All.FirstOrDefault(m => m.NarrowModeCode == narrowCode);
 
