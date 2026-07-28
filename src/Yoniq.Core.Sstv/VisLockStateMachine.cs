@@ -15,10 +15,15 @@ namespace Yoniq.Core.Sstv;
 ///
 /// Deliberately excludes case 0's <c>m_sint1</c>/<c>m_sint2</c>/<c>m_sint3</c> branches (those
 /// already live in <c>AnalogFmSstvDecoder.TrySyncIntervalDetection</c>) and cases 4-8 (AVT's
-/// separate, PLL-based training-sequence lock — its own, later roadmap piece). When the decoded
-/// byte identifies AVT, this class deliberately does *not* report a lock (see <see cref="ProcessSample"/>) —
-/// legacy's own case 3 (`sstv.cpp:2139-2144`) doesn't call <c>Start()</c> for AVT either; it
-/// diverts into the training-lock state machine (case 4) instead, which this port doesn't have yet.
+/// separate, PLL-based training-sequence lock, now ported as <see cref="AvtTrainingLockStateMachine"/>).
+/// When the decoded byte identifies AVT, this class deliberately does *not* report a lock (see
+/// <see cref="ProcessSample"/>) — legacy's own case 3 (`sstv.cpp:2139-2144`) doesn't call
+/// <c>Start()</c> for AVT either; it diverts into the training-lock state machine (case 4) instead.
+/// This is a real, if narrow, scope choice rather than a missing dependency: AVT still can't be
+/// located via this class's own noise-tolerant sample-by-sample scanning (only via the fixed-window
+/// <c>TryDecodeVisHeader</c> path, which then hands off to <c>AvtTrainingLockStateMachine</c> for
+/// the header's own remainder) — extending this class to dispatch into the training lock on an AVT
+/// match is a possible future refinement, not attempted here.
 ///
 /// Simplifications, flagged not silently absorbed (same pattern already used for AFC/Slant/
 /// <c>m_sint2</c>/<c>m_sint3</c>): every legacy condition here also checks absolute-amplitude
