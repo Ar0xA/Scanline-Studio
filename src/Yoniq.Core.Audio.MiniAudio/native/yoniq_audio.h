@@ -87,6 +87,40 @@ int yoniq_audio_ring_write(yoniq_audio_ring *ring, const float *data, int frame_
  * count. Returns -1 on error. */
 int yoniq_audio_ring_read(yoniq_audio_ring *ring, float *out_data, int frame_count);
 
+/*
+ * Piece Audio 5: the real capture path. A real-time native callback (never entering managed
+ * code, see LevelAgc-style reasoning already established for the ring itself in piece Audio 3)
+ * writes captured frames into an internal yoniq_audio_ring; a managed drain thread/loop reads
+ * from it via yoniq_audio_capture_session_read. Requests mono f32 at the caller's chosen sample
+ * rate -- miniaudio's own data converter handles resample/downmix from whatever the device's
+ * real native format is, transparently.
+ */
+
+typedef struct yoniq_audio_capture_session yoniq_audio_capture_session;
+
+/* Opens and starts capturing from the named device. ring_capacity_frames sizes the internal
+ * buffer between the real-time callback and the managed drain side -- if the drain side falls
+ * behind and this fills, the real-time callback drops the newest incoming frames (never blocks,
+ * matching IAudioEngine's documented overrun policy, piece Audio 2). Returns NULL on failure. */
+yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device_id, int sample_rate, int ring_capacity_frames);
+
+/* Stops and destroys the session. Safe to call on a session that failed to fully start (i.e. a
+ * partially-initialized state yoniq_audio_capture_session_open itself cleans up on its own error
+ * paths -- this is for a session that DID open successfully and is now done with). */
+void yoniq_audio_capture_session_close(yoniq_audio_capture_session *session);
+
+/* Reads up to frame_count frames of already-captured mono f32 audio into out_data. Never blocks;
+ * returns the number of frames actually available (0..frame_count), or -1 on error. Call this
+ * repeatedly from a managed drain thread/loop, never from the real-time callback itself. */
+int yoniq_audio_capture_session_read(yoniq_audio_capture_session *session, float *out_data, int frame_count);
+
+/* Returns nonzero (and clears the flag) if the device's own notification callback reported the
+ * stream stopped since the session was opened or this was last checked. The notification
+ * callback must be wired in at ma_device_config/ma_device_init time (this is why it lives here,
+ * in piece Audio 5, rather than bolted on later) -- piece Audio 8 is what actually exercises this
+ * against a real device disappearing mid-capture. */
+int yoniq_audio_capture_session_check_and_clear_stopped(yoniq_audio_capture_session *session);
+
 #ifdef __cplusplus
 }
 #endif
