@@ -25,11 +25,14 @@ namespace Yoniq.Core.Sstv;
 /// the header's own remainder) — extending this class to dispatch into the training lock on an AVT
 /// match is a possible future refinement, not attempted here.
 ///
-/// Simplifications, flagged not silently absorbed (same pattern already used for AFC/Slant/
-/// <c>m_sint2</c>/<c>m_sint3</c>): every legacy condition here also checks absolute-amplitude
-/// thresholds (<c>m_SLvl</c>/<c>m_SLvl2</c>) on top of the relative comparisons ported below — a
-/// noise/squelch gate on legacy's internal AGC'd ±16384 scale this port doesn't model. This is the
-/// fourth documented instance of that same omission.
+/// Piece 7c closed the simplification previously documented here (same pattern as AFC/Slant/
+/// <c>m_sint2</c>/<c>m_sint3</c>, all closed the same piece): every legacy condition below now also
+/// checks the absolute-amplitude thresholds (<c>m_SLvl</c>/<c>m_SLvl2</c>) legacy checks on top of
+/// the relative comparisons, using the caller-supplied <c>slvl</c>/<c>slvl2</c> (see
+/// <c>AnalogFmSstvDecoder</c>'s <c>SLvl</c>/<c>SLvl2</c> constants for where those values come from
+/// and why). This mitigates, without fully eliminating, the false-positive risk documented below --
+/// the risk was never really "no AGC", it was "no absolute floor on what counts as a real tone
+/// peak", and that floor is now in place.
 ///
 /// **This omission's real-world severity changed with piece 6c** (independent review; not caught
 /// when this class only ran pre-lock). Once <see cref="AnalogFmSstvDecoder"/> started running this
@@ -40,14 +43,15 @@ namespace Yoniq.Core.Sstv;
 /// exactly 5×<see cref="BitDurationMs"/>-equivalent windows (30ms), so a bit window ending inside
 /// that line's own 1200Hz sync pulse recurs deterministically every 5th window — enough consecutive
 /// dark/sync-heavy image content can, in principle, assemble a byte identical to a real mode's VIS
-/// code (R24's `0x84` was hand-verified reachable this way). Two things bound the real risk without
-/// eliminating it: the `d11&lt;d19 &amp;&amp; d13&lt;d19` per-bit reject (`sstv.cpp:1981-1984`,
-/// ported below) kills any attempt whose bit window lands on bright/normal content, and the most
-/// likely garbage byte (`0x00`) matches no mode — so this is probabilistic and image-content-
-/// dependent, not a certainty, and neither of this port's own end-to-end tests (smooth synthetic
-/// gradients, close to the best case) has triggered it. Real mitigation needs the same `CLVL` AGC
-/// pipeline already blocking `m_sint1` (see `spec/14-roadmap.md`'s VIS/preamble-lock section) —
-/// tracked there, not fixed here with an invented substitute threshold.
+/// code (R24's `0x84` was hand-verified reachable this way). Three things bound the real risk without
+/// fully eliminating it: the per-bit reject (`sstv.cpp:1981-1984`, ported below, now including the
+/// `fabs(d11-d13) &lt; m_SLvl2` "too close to call" branch that was previously missing entirely, not
+/// just unthresholded) kills any attempt whose bit window lands on bright/normal content or is
+/// genuinely ambiguous, the most likely garbage byte (`0x00`) matches no mode, and the new absolute
+/// floor now rejects any candidate whose amplitude never reaches legacy's own real-tone threshold in
+/// the first place -- so this remains probabilistic and image-content-dependent, not a certainty, and
+/// neither of this port's own end-to-end tests (smooth synthetic gradients, close to the best case)
+/// has triggered it.
 /// </summary>
 internal sealed class VisLockStateMachine
 {
@@ -59,6 +63,8 @@ internal sealed class VisLockStateMachine
     private enum LockState { Search, ConfirmLock, DecodeVis, DecodeExtendedVis, Verify }
 
     private readonly double _sampleRate;
+    private readonly double _slvl; // m_SLvl -- see AnalogFmSstvDecoder.SLvl for value/citation
+    private readonly double _slvl2; // m_SLvl2 -- see AnalogFmSstvDecoder.SLvl2
     private readonly SyncEnvelopeDetector _d11Detector; // m_iir11/m_lpf11, 1080Hz/80Hz BW (sstv.cpp:1446/1451)
     private readonly SyncEnvelopeDetector _d12Detector; // m_iir12/m_lpf12, 1200Hz/100Hz BW (sstv.cpp:1447/1452)
     private readonly SyncEnvelopeDetector _d13Detector; // m_iir13/m_lpf13, 1320Hz/80Hz BW (sstv.cpp:1448/1453) -- only stepped in DecodeVis/DecodeExtendedVis, see ProcessSample
@@ -73,9 +79,11 @@ internal sealed class VisLockStateMachine
     private SstvModeDefinition? _resolvedMode;
     private bool _isExtended;
 
-    public VisLockStateMachine(double sampleRate)
+    public VisLockStateMachine(double sampleRate, double slvl, double slvl2)
     {
         _sampleRate = sampleRate;
+        _slvl = slvl;
+        _slvl2 = slvl2;
         _d11Detector = new SyncEnvelopeDetector(sampleRate, 1080.0, bandwidthHz: 80.0);
         _d12Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _d13Detector = new SyncEnvelopeDetector(sampleRate, 1320.0, bandwidthHz: 80.0);
@@ -139,8 +147,8 @@ internal sealed class VisLockStateMachine
         switch (_state)
         {
             case LockState.Search:
-                // sstv.cpp:1946-1950 (relative half of the condition only, see class doc comment)
-                if (d12 > d19)
+                // sstv.cpp:1946-1950 -- full 3-term condition as of piece 7c.
+                if (d12 > d19 && d12 > _slvl && d12 - d19 >= _slvl)
                 {
                     _state = LockState.ConfirmLock;
                     _syncTimeCounter = MsToSamples(ConfirmLockDurationMs);
@@ -151,8 +159,9 @@ internal sealed class VisLockStateMachine
 
             case LockState.ConfirmLock:
                 // sstv.cpp:1952-1973 -- ANY single failing sample resets to Search immediately;
-                // the hold must be sustained for the full window, not just met once.
-                if (d12 > d19)
+                // the hold must be sustained for the full window, not just met once. Full 3-term
+                // condition as of piece 7c (sstv.cpp:1958).
+                if (d12 > d19 && d12 > _slvl && d12 - d19 >= _slvl)
                 {
                     if (--_syncTimeCounter == 0)
                     {
@@ -180,8 +189,10 @@ internal sealed class VisLockStateMachine
                 // matters once it reaches zero.
                 if (--_syncTimeCounter == 0)
                 {
-                    // sstv.cpp:1981-1984, relative half only (see class doc comment)
-                    if (d11 < d19 && d13 < d19)
+                    // sstv.cpp:1981-1984 -- as of piece 7c, includes the second OR'd reject branch
+                    // (fabs(d11-d13) < m_SLvl2, "too close to call") that was previously missing
+                    // entirely, not just unthresholded.
+                    if ((d11 < d19 && d13 < d19) || Math.Abs(d11 - d13) < _slvl2)
                     {
                         _state = LockState.Search;
                         break;
@@ -237,10 +248,13 @@ internal sealed class VisLockStateMachine
 
             case LockState.Verify:
                 // sstv.cpp:2127-2154 -- unconditional countdown (unlike ConfirmLock's sustained-hold
-                // requirement), condition checked once at the end of the fixed 30ms window.
+                // requirement), condition checked once at the end of the fixed 30ms window. Only a
+                // 2-term condition here (sstv.cpp:2133: `(d12>d19) && (d12>m_SLvl)`) -- confirmed by
+                // reading the literal source, NOT the same 3-term shape as Search/ConfirmLock; there
+                // is no (d12-d19)>=SLvl difference gate at this specific site.
                 if (--_syncTimeCounter == 0)
                 {
-                    if (d12 > d19)
+                    if (d12 > d19 && d12 > _slvl)
                     {
                         var mode = _resolvedMode!;
                         var anchorOffsetMs = ConfirmLockDurationMs
