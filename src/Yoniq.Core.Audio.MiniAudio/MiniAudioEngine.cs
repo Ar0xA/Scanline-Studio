@@ -23,18 +23,29 @@ namespace Yoniq.Core.Audio.MiniAudio;
 /// the process-wide native context (PulseAudio context init/teardown churn is exactly what pushed
 /// this project off PortAudio originally, see spec/05-audio-engine.md's Backend choice section).
 ///
-/// Concurrency note: this piece does not yet close the TOCTOU between "check nothing is started"
-/// and "record the new session" in <see cref="StartCaptureAsync"/> -- two concurrent
-/// <see cref="StartCaptureAsync"/> calls can both pass the check before either publishes its
-/// session. Deliberately deferred to piece Engine 3, which adds a `SemaphoreSlim(1,1)` per
-/// lifecycle -- this piece is proven happy-path/translation/self-join correct first, in isolation,
-/// matching this project's own established "layer correctness across pieces" precedent (the
-/// session classes' own Dispose-vs-concurrent-use races were likewise closed in a later, dedicated
-/// pass, not the piece that first introduced Dispose).
+/// Piece Engine 3: lifecycle-transition correctness under concurrency. One `SemaphoreSlim(1,1)`
+/// per lifecycle (capture, playback -- independent, so a slow capture open never blocks a playback
+/// stop), chosen over a `ReaderWriterLockSlim` specifically because `Start*Async` needs to `await`
+/// (the `Task.Run` wrapping each session's blocking constructor) while holding it, and
+/// `ReaderWriterLockSlim` cannot have its lock scope span an `await`. Neither semaphore is ever
+/// disposed -- same reasoning as every session/ring type's own never-disposed
+/// `ReaderWriterLockSlim` (a second call's `WaitAsync` must not throw on the semaphore object
+/// itself before reaching this class's own idempotency checks). <see cref="DisposeAsync"/> never
+/// holds both semaphores at once (capture teardown fully released before playback teardown
+/// begins), so there is no ABBA case to order against.
 /// </summary>
 public sealed class MiniAudioEngine : IAudioEngine
 {
-    private MiniAudioCaptureSession? _captureSession;
+    // Piece Engine 3: guards Start/StopCaptureAsync's multi-step "check nothing started, open,
+    // publish" as one atomic critical section, closing the TOCTOU an earlier piece deliberately
+    // left open (two concurrent StartCaptureAsync calls could otherwise both pass the check before
+    // either published its session). `volatile` on the session fields themselves is still needed
+    // independent of this lock -- see EnqueuePlaybackSamples's own doc comment for the one reader
+    // that deliberately does not take a lock at all.
+    private readonly SemaphoreSlim _captureLock = new(1, 1);
+    private readonly SemaphoreSlim _playbackLock = new(1, 1);
+
+    private volatile MiniAudioCaptureSession? _captureSession;
 
     // Piece Engine 1: records which managed thread is currently running the capture forwarder
     // (MiniAudioCaptureSession's own drain thread) below, so StopCaptureAsync/DisposeAsync can
@@ -71,31 +82,52 @@ public sealed class MiniAudioEngine : IAudioEngine
     public async Task StartCaptureAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        ct.ThrowIfCancellationRequested();
 
-        if (Volatile.Read(ref _captureSession) is not null)
+        // ct only prevents this call from starting/proceeding while waiting for the lock -- once
+        // the native open below is actually running, there is no way to cancel it partway through
+        // (mirrors MiniAudioDeviceEnumerator.RefreshAsync's own documented ct semantics).
+        await _captureLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            throw new InvalidOperationException("Capture is already started -- call StopCaptureAsync first.");
-        }
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
-        // MiniAudioCaptureSession's constructor blocks synchronously (opens the native device,
-        // starts a managed drain thread) -- confirmed by reading it, not assumed. Task.Run keeps
-        // that off the caller's thread, matching CLAUDE.md's "all hardware communication must be
-        // asynchronous" rule.
-        var session = await Task.Run(() => OpenCaptureSession(device, sampleRate), ct).ConfigureAwait(false);
-        session.SamplesAvailable += OnCaptureSamplesAvailable;
-        Volatile.Write(ref _captureSession, session);
+            if (_captureSession is not null)
+            {
+                throw new InvalidOperationException("Capture is already started -- call StopCaptureAsync first.");
+            }
+
+            // MiniAudioCaptureSession's constructor blocks synchronously (opens the native device,
+            // starts a managed drain thread) -- confirmed by reading it, not assumed. Task.Run
+            // keeps that off the caller's thread, matching CLAUDE.md's "all hardware communication
+            // must be asynchronous" rule.
+            var session = await Task.Run(() => OpenCaptureSession(device, sampleRate), ct).ConfigureAwait(false);
+            session.SamplesAvailable += OnCaptureSamplesAvailable;
+            _captureSession = session;
+        }
+        finally
+        {
+            _captureLock.Release();
+        }
     }
 
     public async Task StopCaptureAsync()
     {
-        var session = Interlocked.Exchange(ref _captureSession, null);
-        if (session is null)
+        await _captureLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            return; // idempotent no-op, matching every session type's own Dispose convention
-        }
+            var session = _captureSession;
+            _captureSession = null;
+            if (session is null)
+            {
+                return; // idempotent no-op, matching every session type's own Dispose convention
+            }
 
-        await DisposeCaptureSessionAsync(session).ConfigureAwait(false);
+            await DisposeCaptureSessionAsync(session).ConfigureAwait(false);
+        }
+        finally
+        {
+            _captureLock.Release();
+        }
     }
 
     /// <summary>Fires on <see cref="MiniAudioCaptureSession"/>'s own drain thread -- see
@@ -171,22 +203,31 @@ public sealed class MiniAudioEngine : IAudioEngine
     // by MiniAudioEngineTests, not trusted blind.
     private static readonly TimeSpan DrainTailMargin = TimeSpan.FromMilliseconds(200);
 
-    private MiniAudioPlaybackSession? _playbackSession;
+    private volatile MiniAudioPlaybackSession? _playbackSession;
 
     public async Task StartPlaybackAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        ct.ThrowIfCancellationRequested();
 
-        if (Volatile.Read(ref _playbackSession) is not null)
+        await _playbackLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            throw new InvalidOperationException("Playback is already started -- call StopPlaybackAsync first.");
-        }
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
-        // MiniAudioPlaybackSession's constructor blocks synchronously (opens the native device),
-        // confirmed by reading it -- same reasoning as StartCaptureAsync's Task.Run.
-        var session = await Task.Run(() => OpenPlaybackSession(device, sampleRate), ct).ConfigureAwait(false);
-        Volatile.Write(ref _playbackSession, session);
+            if (_playbackSession is not null)
+            {
+                throw new InvalidOperationException("Playback is already started -- call StopPlaybackAsync first.");
+            }
+
+            // MiniAudioPlaybackSession's constructor blocks synchronously (opens the native
+            // device), confirmed by reading it -- same reasoning as StartCaptureAsync's Task.Run.
+            var session = await Task.Run(() => OpenPlaybackSession(device, sampleRate), ct).ConfigureAwait(false);
+            _playbackSession = session;
+        }
+        finally
+        {
+            _playbackLock.Release();
+        }
     }
 
     /// <summary>Enqueues samples for playback -- the direct backing for
@@ -194,14 +235,16 @@ public sealed class MiniAudioEngine : IAudioEngine
     /// if playback was never started (returning 0 would make a caller's contract-compliant
     /// partial-acceptance retry loop spin forever, per <see cref="IAudioEngine.EnqueuePlaybackSamples"/>'s
     /// own doc comment). This is a synchronous interface member -- it cannot take an async lock, so
-    /// (unlike Start/Stop) it is not yet covered by piece Engine 3's concurrency hardening: a
-    /// concurrent <see cref="StopPlaybackAsync"/> racing this call can still surface the
-    /// underlying session's own <see cref="ObjectDisposedException"/> if it wins the race,
-    /// deliberately left untranslated here (a genuine, narrow, documented gap -- not silently
-    /// swallowed).</summary>
+    /// unlike Start/Stop it is deliberately NOT covered by piece Engine 3's `_playbackLock`: a
+    /// concurrent <see cref="StopPlaybackAsync"/> racing this call can still surface the underlying
+    /// session's own <see cref="ObjectDisposedException"/> if it wins the race, left untranslated
+    /// here (a genuine, narrow, documented gap -- not silently swallowed). Reads the `volatile`
+    /// <see cref="_playbackSession"/> field directly, which is sufficient for this method's own
+    /// correctness (a torn read is impossible for a reference-type field, and `volatile` guarantees
+    /// this thread observes the most recent publish from <see cref="StartPlaybackAsync"/>).</summary>
     public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples)
     {
-        var session = Volatile.Read(ref _playbackSession);
+        var session = _playbackSession;
         if (session is null)
         {
             throw new InvalidOperationException("Playback is not started -- call StartPlaybackAsync first.");
@@ -212,13 +255,22 @@ public sealed class MiniAudioEngine : IAudioEngine
 
     public async Task StopPlaybackAsync()
     {
-        var session = Interlocked.Exchange(ref _playbackSession, null);
-        if (session is null)
+        await _playbackLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            return; // idempotent no-op, matching every session type's own Dispose convention
-        }
+            var session = _playbackSession;
+            _playbackSession = null;
+            if (session is null)
+            {
+                return; // idempotent no-op, matching every session type's own Dispose convention
+            }
 
-        await DrainAndDisposePlaybackSessionAsync(session).ConfigureAwait(false);
+            await DrainAndDisposePlaybackSessionAsync(session).ConfigureAwait(false);
+        }
+        finally
+        {
+            _playbackLock.Release();
+        }
     }
 
     /// <summary>Drains, then disposes, a playback session -- shared by <see cref="StopPlaybackAsync"/>
@@ -270,27 +322,50 @@ public sealed class MiniAudioEngine : IAudioEngine
             return; // idempotent
         }
 
-        var captureSession = Interlocked.Exchange(ref _captureSession, null);
-        if (captureSession is not null)
+        // Piece Engine 3: takes each lifecycle's own lock in turn (never both at once -- see this
+        // class's own doc comment on why that rules out an ABBA deadlock by construction), so a
+        // Start*Async call that's already in flight when DisposeAsync begins is waited out rather
+        // than raced.
+        await _captureLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            await DisposeCaptureSessionAsync(captureSession).ConfigureAwait(false);
+            var captureSession = _captureSession;
+            _captureSession = null;
+            if (captureSession is not null)
+            {
+                await DisposeCaptureSessionAsync(captureSession).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _captureLock.Release();
         }
 
-        var playbackSession = Interlocked.Exchange(ref _playbackSession, null);
-        if (playbackSession is not null)
+        await _playbackLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            try
+            var playbackSession = _playbackSession;
+            _playbackSession = null;
+            if (playbackSession is not null)
             {
-                await DrainAndDisposePlaybackSessionAsync(playbackSession).ConfigureAwait(false);
+                try
+                {
+                    await DrainAndDisposePlaybackSessionAsync(playbackSession).ConfigureAwait(false);
+                }
+                catch (AudioDeviceUnavailableException)
+                {
+                    // Best-effort cleanup, unlike StopPlaybackAsync's own explicit-caller-request
+                    // path (which surfaces this) -- DrainAndDisposePlaybackSessionAsync already
+                    // disposed the session on this path before throwing, so there is nothing left
+                    // to clean up here. A caller that cares whether playback actually finished
+                    // draining should call StopPlaybackAsync explicitly before disposing, not rely
+                    // on DisposeAsync for that.
+                }
             }
-            catch (AudioDeviceUnavailableException)
-            {
-                // Best-effort cleanup, unlike StopPlaybackAsync's own explicit-caller-request path
-                // (which surfaces this) -- DrainAndDisposePlaybackSessionAsync already disposed the
-                // session on this path before throwing, so there is nothing left to clean up here.
-                // A caller that cares whether playback actually finished draining should call
-                // StopPlaybackAsync explicitly before disposing, not rely on DisposeAsync for that.
-            }
+        }
+        finally
+        {
+            _playbackLock.Release();
         }
 
         MiniAudioContext.Release();
