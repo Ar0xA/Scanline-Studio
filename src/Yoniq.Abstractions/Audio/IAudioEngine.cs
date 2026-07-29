@@ -19,6 +19,13 @@ namespace Yoniq.Abstractions.Audio;
 /// (never blocks, never overwrites older undrained data) — RX samples are lost, not corrupted or
 /// reordered, and this is counted as an overrun for diagnostics (exposed once piece Audio 5/6
 /// implements the capture/playback paths; not yet surfaced as of this interface-only piece).
+///
+/// Memory lifetime: the <see cref="ReadOnlyMemory{T}"/> handed to each invocation is a fresh,
+/// independently-owned array, safe to store or process asynchronously — never a view into a
+/// buffer a future invocation might overwrite. `FakeAudioEngine` already satisfies this trivially
+/// (it hands out caller-owned memory), and the real `Yoniq.Core.Audio.MiniAudio` implementation's
+/// drain thread makes a fresh copy per callback specifically to match this contract (an
+/// opus-review fix — its first cut handed out a view into a reused scratch buffer instead).
 /// </summary>
 public interface IAudioEngine : IAsyncDisposable
 {

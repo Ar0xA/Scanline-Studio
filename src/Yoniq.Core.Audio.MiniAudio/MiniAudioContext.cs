@@ -3,11 +3,26 @@ namespace Yoniq.Core.Audio.MiniAudio;
 /// <summary>
 /// The native shim's audio context (`yoniq_audio_context_init`/`_uninit`) is a process-wide
 /// singleton -- calling init twice without an uninit in between fails. But
-/// <see cref="MiniAudioDeviceEnumerator"/> and the future capture/playback engine (piece Audio 5/6)
-/// each need it independently, and neither should have to know or care whether the other is also
-/// using it. This reference-counts acquisition in managed code so any number of consumers can each
-/// construct/dispose on their own schedule: the native context is only actually initialized on the
-/// first acquire and only actually torn down on the last release.
+/// <see cref="MiniAudioDeviceEnumerator"/>, <see cref="MiniAudioCaptureSession"/>, and
+/// <see cref="MiniAudioPlaybackSession"/> each need it independently, and neither should have to
+/// know or care whether the others are also using it. This reference-counts acquisition in managed
+/// code so any number of consumers can each construct/dispose on their own schedule: the native
+/// context is only actually initialized on the first acquire and only actually torn down on the
+/// last release.
+///
+/// Deliberate exception to CLAUDE.md's "avoid static mutable state" rule, recorded here rather
+/// than left as a silent violation (per an opus-driven review's own suggested resolution): the
+/// thing being modeled -- a single OS-level native library context that generically cannot be
+/// initialized twice in one process -- is a hard constraint of `miniaudio`/PulseAudio/WASAPI/
+/// CoreAudio themselves, not an arbitrary architectural choice this codebase made. A DI-registered
+/// singleton wrapping the same ref-count would be equivalent in every way that matters (one
+/// instance, shared by everything that resolves it) except needing a composition root to register
+/// it with -- which doesn't exist yet, since nothing yet composes <see cref="MiniAudioCaptureSession"/>/
+/// <see cref="MiniAudioPlaybackSession"/> into a full `IAudioEngine` implementation (still an open
+/// piece). Revisit this as a constructor-injected singleton once that composition root exists,
+/// rather than adding one prematurely for a consumer that doesn't exist yet. All access below is
+/// already serialized under <see cref="Lock"/>, so this is not merely "shared mutable state with
+/// no synchronization" -- concurrent Acquire/Release from any number of threads is safe today.
 /// </summary>
 internal static class MiniAudioContext
 {

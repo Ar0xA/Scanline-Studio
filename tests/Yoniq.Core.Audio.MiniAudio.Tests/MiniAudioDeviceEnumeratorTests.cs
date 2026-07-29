@@ -55,14 +55,14 @@ public class MiniAudioDeviceEnumeratorTests
     public async Task TwoEnumeratorInstances_CanBeUsedConcurrently()
     {
         // Exercises MiniAudioContext's ref-counting directly: two independent
-        // MiniAudioDeviceEnumerator instances (matching how a device enumerator and a separate
-        // capture/playback engine will each own their own reference in piece Audio 5/6) must not
-        // fight over the process-wide native context. Deliberately does NOT assert the two see an
-        // identical device count -- xunit can run other test classes concurrently in the same
-        // process (confirmed: this test itself intermittently observed a real device-count
-        // difference from a virtual sink another test created/destroyed mid-run), so the only
-        // thing genuinely guaranteed here is that neither instance throws or corrupts the other's
-        // view -- not that the system's real device list is frozen for the duration of the test.
+        // MiniAudioDeviceEnumerator instances (matching how a device enumerator and a capture/
+        // playback session each own their own reference -- opus-review fix confirmed the sessions
+        // actually do this now too) must not fight over the process-wide native context.
+        // Deliberately does NOT assert the two see an identical device count -- this was originally
+        // observed intermittently failing under xunit's default cross-class parallelization before
+        // AssemblyInfo.cs disabled it; kept loose regardless, since the only thing this test is
+        // actually meant to guarantee is that neither instance throws or corrupts the other's view,
+        // not that the system's real device list is frozen for the duration of the test.
         using var first = new MiniAudioDeviceEnumerator();
         using var second = new MiniAudioDeviceEnumerator();
 
@@ -75,6 +75,12 @@ public class MiniAudioDeviceEnumeratorTests
         Assert.True(second.InputDevices.Count > 0);
     }
 
+    // Opus-review fix: reading only stdout via ReadToEnd() before WaitForExit(), while stderr is
+    // also redirected but never drained, is the classic pipe-buffer deadlock -- if pactl ever
+    // writes enough to stderr to fill its OS pipe buffer, it blocks writing to a stream nobody is
+    // reading, while this thread blocks reading a stream (stdout) that will never produce more
+    // data because the child is stuck. Reading both streams concurrently (not sequentially) avoids
+    // it regardless of which stream fills first.
     private static void RunPactl(string arguments, out string output)
     {
         var startInfo = new ProcessStartInfo
@@ -86,7 +92,10 @@ public class MiniAudioDeviceEnumeratorTests
         };
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start pactl.");
-        output = process.StandardOutput.ReadToEnd();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        Task.WaitAll(stdoutTask, stderrTask);
         process.WaitForExit();
+        output = stdoutTask.Result;
     }
 }

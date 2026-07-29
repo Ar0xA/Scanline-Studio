@@ -44,7 +44,10 @@ public class HotplugDisposeTests
 
             session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100);
             long totalReceived = 0;
-            var receivedSome = new TaskCompletionSource();
+            // See MiniAudioCaptureSessionTests' identical fix and comment: without
+            // RunContinuationsAsynchronously, a synchronous TrySetResult from the drain thread
+            // could run this await's continuation on that same thread, risking a self-join hang.
+            var receivedSome = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             session.SamplesAvailable += chunk =>
             {
                 if (System.Threading.Interlocked.Add(ref totalReceived, chunk.Length) > 0)
@@ -185,6 +188,12 @@ public class HotplugDisposeTests
         return process;
     }
 
+    // Opus-review fix: reading only stdout via ReadToEnd() before WaitForExit(), while stderr is
+    // also redirected but never drained, is the classic pipe-buffer deadlock -- if pactl ever
+    // writes enough to stderr to fill its OS pipe buffer, it blocks writing to a stream nobody is
+    // reading, while this thread blocks reading a stream (stdout) that will never produce more
+    // data because the child is stuck. Reading both streams concurrently (not sequentially) avoids
+    // it regardless of which stream fills first.
     private static void RunPactl(string arguments, out string output)
     {
         var startInfo = new ProcessStartInfo
@@ -196,7 +205,10 @@ public class HotplugDisposeTests
         };
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start pactl.");
-        output = process.StandardOutput.ReadToEnd();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        Task.WaitAll(stdoutTask, stderrTask);
         process.WaitForExit();
+        output = stdoutTask.Result;
     }
 }

@@ -32,7 +32,16 @@ public class MiniAudioCaptureSessionTests
             toneProcess = StartToneIntoSink(sinkName, durationSeconds: 5);
 
             var receivedChunks = new List<float[]>();
-            var allReceived = new TaskCompletionSource();
+            // RunContinuationsAsynchronously: a real, reproduced bug found during an opus-review
+            // fix pass, not a hypothetical -- without this, TrySetResult below (called from inside
+            // SamplesAvailable's drain-thread callback) runs this await's continuation
+            // synchronously on that same drain thread. That continuation falls through to this
+            // method's `using var session` disposal, whose Dispose() used to unconditionally call
+            // _drainThread.Join() -- a thread joining itself, which blocks forever with no timeout
+            // (confirmed: reproduced as an unresponsive test process only SIGKILL could stop).
+            // MiniAudioCaptureSession.Dispose now also guards against this defensively, but this
+            // fix belongs here too rather than relying solely on that guard.
+            var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
             using var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100);
             session.SamplesAvailable += chunk =>
@@ -91,6 +100,12 @@ public class MiniAudioCaptureSessionTests
         return process;
     }
 
+    // Opus-review fix: reading only stdout via ReadToEnd() before WaitForExit(), while stderr is
+    // also redirected but never drained, is the classic pipe-buffer deadlock -- if pactl ever
+    // writes enough to stderr to fill its OS pipe buffer, it blocks writing to a stream nobody is
+    // reading, while this thread blocks reading a stream (stdout) that will never produce more
+    // data because the child is stuck. Reading both streams concurrently (not sequentially) avoids
+    // it regardless of which stream fills first.
     private static void RunPactl(string arguments, out string output)
     {
         var startInfo = new ProcessStartInfo
@@ -102,7 +117,10 @@ public class MiniAudioCaptureSessionTests
         };
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start pactl.");
-        output = process.StandardOutput.ReadToEnd();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        Task.WaitAll(stdoutTask, stderrTask);
         process.WaitForExit();
+        output = stdoutTask.Result;
     }
 }

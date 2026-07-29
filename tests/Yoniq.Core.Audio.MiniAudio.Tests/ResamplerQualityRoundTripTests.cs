@@ -45,13 +45,17 @@ public class ResamplerQualityRoundTripTests
         // Measured on this machine: baseline (no resampling) average per-channel delta is ~3.1;
         // after a real 44100->48000->44100 round trip through miniaudio's default linear
         // resampler (lpfOrder left at its own default of 4), delta only rises to ~3.2 -- the
-        // resampler adds negligible degradation of its own on top of the existing analog-FM
-        // decode noise floor. Per the staged plan (measure first, escalate only if needed), this
-        // result means no lpfOrder bump or external resampler is warranted. Asserted two ways: the
-        // resampler must not meaningfully worsen the baseline, and the result must stay well
-        // within the existing round-trip suite's own tolerance (10.0, see SstvRoundTripTests).
+        // resampler adds negligible (~0.07) degradation of its own on top of the existing
+        // analog-FM decode noise floor. Per the staged plan (measure first, escalate only if
+        // needed), this result means no lpfOrder bump or external resampler is warranted.
+        //
+        // Opus-review fix: the tolerance here used to be baselineDelta + 2.0 -- nearly 30x the
+        // actual measured gap, loose enough that a real quality regression (e.g. the resampler
+        // degrading to +1.0 or more) would still pass silently. Tightened to a margin with real
+        // headroom above measurement noise but that still catches a genuine regression; if this
+        // needs raising again, replace the number with a freshly measured one, not a guess.
         Assert.True(
-            resampledDelta <= baselineDelta + 2.0,
+            resampledDelta <= baselineDelta + 0.5,
             $"Resampled round trip's average per-channel delta ({resampledDelta:F2}) rose more than " +
             $"expected above the no-resampling baseline ({baselineDelta:F2}) -- the default linear " +
             $"resampler may be degrading the signal more than previously measured.");

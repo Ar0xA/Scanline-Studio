@@ -32,11 +32,30 @@ public sealed class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposa
 
     public IReadOnlyList<AudioDeviceInfo> OutputDevices { get; private set; }
 
+    /// <summary>Opus-review fix: this used to do all its work synchronously on the calling thread
+    /// (per spec this is the UI thread) and return an already-completed <see cref="Task"/> --
+    /// violating CLAUDE.md's "all hardware communication must be asynchronous" rule outright, not
+    /// just in spirit. Now runs on the thread pool via <see cref="Task.Run(Action)"/>.
+    /// <paramref name="ct"/> only prevents the work from *starting* if already cancelled -- once
+    /// running, there is no way to cancel it partway through, because the underlying native calls
+    /// (<c>yoniq_audio_get_native_formats</c> in particular) are themselves blocking with no
+    /// cancellation or timeout of their own. Those same native calls share the process-wide
+    /// context's PulseAudio mainloop with <c>ma_wait_for_operation__pulse</c> -- the exact call
+    /// Piece Audio 8 found can block forever if the server never responds (see
+    /// <see cref="MiniAudioCaptureSession.CloseTimeout"/>'s doc comment) -- so a wedged
+    /// server can still hang this call's background thread indefinitely; moving it off the
+    /// calling thread bounds the blast radius to that one thread pool thread rather than the
+    /// caller, but does not eliminate the underlying unbounded wait. A native-side timeout on
+    /// enumeration/probing would be needed to close that gap fully; not yet done.</summary>
     public Task RefreshAsync(CancellationToken ct = default)
     {
-        InputDevices = Enumerate(isCapture: true);
-        OutputDevices = Enumerate(isCapture: false);
-        return Task.CompletedTask;
+        return Task.Run(
+            () =>
+            {
+                InputDevices = Enumerate(isCapture: true);
+                OutputDevices = Enumerate(isCapture: false);
+            },
+            ct);
     }
 
     private static List<AudioDeviceInfo> Enumerate(bool isCapture)
