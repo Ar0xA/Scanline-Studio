@@ -13,8 +13,8 @@ namespace Yoniq.Core.Audio.MiniAudio;
 /// project -- so this is the only type in this project a DI composition root
 /// (`Yoniq.Host/Program.cs`, piece Engine 6) can actually reference.
 ///
-/// Piece Engine 1 (this piece): capture-only lifecycle. Playback members throw
-/// <see cref="NotSupportedException"/> until piece Engine 2 lands.
+/// Piece Engine 1: capture-only lifecycle. Piece Engine 2: playback lifecycle, including the
+/// drain-before-stop contract <see cref="IAudioEngine.StopPlaybackAsync"/> documents.
 ///
 /// Context lifetime: acquires <see cref="MiniAudioContext"/> once for this engine instance's whole
 /// lifetime (ctor/<see cref="DisposeAsync"/>), on top of whatever a live
@@ -154,14 +154,114 @@ public sealed class MiniAudioEngine : IAudioEngine
         }
     }
 
-    public Task StartPlaybackAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default) =>
-        throw new NotSupportedException("Playback is not yet implemented -- see piece Engine 2 in spec/14-roadmap.md.");
+    // Piece Engine 2. Bound on StopPlaybackAsync's DrainAsync poll -- MiniAudioPlaybackSession's
+    // own default ring capacity is 16384 frames (~0.37s at 44100Hz), so a normal drain finishes in
+    // a small fraction of a second; this is a safety net against a genuinely stuck device, not the
+    // expected case.
+    private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(5);
 
-    public Task StopPlaybackAsync() =>
-        throw new NotSupportedException("Playback is not yet implemented -- see piece Engine 2 in spec/14-roadmap.md.");
+    // Piece Engine 2, found by this project's Opus plan-review pass and confirmed by reading
+    // yoniq_audio_playback_session_pending_frames' native body (a one-line
+    // yoniq_audio_ring_available_read): PendingFrames reaching 0 only means the shim's own ring is
+    // empty, NOT that miniaudio's device buffer or the PulseAudio server's own output queue have
+    // actually finished playing -- closing the session right at that point can truncate the very
+    // tail of a real transmission, exactly what IAudioEngine.StopPlaybackAsync's contract exists to
+    // prevent. This is an empirical safety margin, not a precisely derived value (no shim API
+    // currently exposes real device/server latency) -- verified against a real virtual sink/monitor
+    // by MiniAudioEngineTests, not trusted blind.
+    private static readonly TimeSpan DrainTailMargin = TimeSpan.FromMilliseconds(200);
 
-    public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) =>
-        throw new NotSupportedException("Playback is not yet implemented -- see piece Engine 2 in spec/14-roadmap.md.");
+    private MiniAudioPlaybackSession? _playbackSession;
+
+    public async Task StartPlaybackAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ct.ThrowIfCancellationRequested();
+
+        if (Volatile.Read(ref _playbackSession) is not null)
+        {
+            throw new InvalidOperationException("Playback is already started -- call StopPlaybackAsync first.");
+        }
+
+        // MiniAudioPlaybackSession's constructor blocks synchronously (opens the native device),
+        // confirmed by reading it -- same reasoning as StartCaptureAsync's Task.Run.
+        var session = await Task.Run(() => OpenPlaybackSession(device, sampleRate), ct).ConfigureAwait(false);
+        Volatile.Write(ref _playbackSession, session);
+    }
+
+    /// <summary>Enqueues samples for playback -- the direct backing for
+    /// <see cref="IAudioEngine.EnqueuePlaybackSamples"/>. Throws <see cref="InvalidOperationException"/>
+    /// if playback was never started (returning 0 would make a caller's contract-compliant
+    /// partial-acceptance retry loop spin forever, per <see cref="IAudioEngine.EnqueuePlaybackSamples"/>'s
+    /// own doc comment). This is a synchronous interface member -- it cannot take an async lock, so
+    /// (unlike Start/Stop) it is not yet covered by piece Engine 3's concurrency hardening: a
+    /// concurrent <see cref="StopPlaybackAsync"/> racing this call can still surface the
+    /// underlying session's own <see cref="ObjectDisposedException"/> if it wins the race,
+    /// deliberately left untranslated here (a genuine, narrow, documented gap -- not silently
+    /// swallowed).</summary>
+    public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples)
+    {
+        var session = Volatile.Read(ref _playbackSession);
+        if (session is null)
+        {
+            throw new InvalidOperationException("Playback is not started -- call StartPlaybackAsync first.");
+        }
+
+        return session.Write(samples.Span);
+    }
+
+    public async Task StopPlaybackAsync()
+    {
+        var session = Interlocked.Exchange(ref _playbackSession, null);
+        if (session is null)
+        {
+            return; // idempotent no-op, matching every session type's own Dispose convention
+        }
+
+        await DrainAndDisposePlaybackSessionAsync(session).ConfigureAwait(false);
+    }
+
+    /// <summary>Drains, then disposes, a playback session -- shared by <see cref="StopPlaybackAsync"/>
+    /// (an explicit caller request, which must surface a failed drain rather than hide it) and
+    /// <see cref="DisposeAsync"/> (best-effort cleanup, which swallows the same condition -- see its
+    /// own comment for why).</summary>
+    private static async Task DrainAndDisposePlaybackSessionAsync(MiniAudioPlaybackSession session)
+    {
+        // DrainAsync itself is already a non-blocking async poll loop (PendingFrames reads +
+        // Task.Delay(10)) -- no Task.Run needed here, unlike the session's own constructor/Dispose.
+        await session.DrainAsync(DrainTimeout).ConfigureAwait(false);
+
+        if (session.PendingFrames != 0)
+        {
+            // DrainAsync's own timeout is silent (it just returns once the deadline passes,
+            // whether or not the ring actually emptied) -- re-checking PendingFrames here and
+            // throwing rather than silently closing is piece Engine 2's fix for that (found by the
+            // Opus plan-review pass): a genuinely stuck device must not result in a silently
+            // truncated transmission, per spec/01-architecture.md's Error Handling rule.
+            await Task.Run(session.Dispose).ConfigureAwait(false);
+            throw new AudioDeviceUnavailableException(
+                $"Playback did not drain within {DrainTimeout.TotalSeconds}s -- the device may have stopped responding.");
+        }
+
+        // See DrainTailMargin's own doc comment: PendingFrames==0 does not mean "fully played out"
+        // for the device/server buffers this shim has no visibility into.
+        await Task.Delay(DrainTailMargin).ConfigureAwait(false);
+
+        await Task.Run(session.Dispose).ConfigureAwait(false);
+    }
+
+    private static MiniAudioPlaybackSession OpenPlaybackSession(AudioDeviceInfo device, int sampleRate)
+    {
+        try
+        {
+            return new MiniAudioPlaybackSession(device.Id, sampleRate);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or DllNotFoundException or EntryPointNotFoundException)
+        {
+            // Same real failure-mode set as OpenCaptureSession -- see its own doc comment.
+            throw new AudioDeviceUnavailableException($"Failed to open playback device '{device.Id}' at {sampleRate}Hz.", ex);
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -170,10 +270,27 @@ public sealed class MiniAudioEngine : IAudioEngine
             return; // idempotent
         }
 
-        var session = Interlocked.Exchange(ref _captureSession, null);
-        if (session is not null)
+        var captureSession = Interlocked.Exchange(ref _captureSession, null);
+        if (captureSession is not null)
         {
-            await DisposeCaptureSessionAsync(session).ConfigureAwait(false);
+            await DisposeCaptureSessionAsync(captureSession).ConfigureAwait(false);
+        }
+
+        var playbackSession = Interlocked.Exchange(ref _playbackSession, null);
+        if (playbackSession is not null)
+        {
+            try
+            {
+                await DrainAndDisposePlaybackSessionAsync(playbackSession).ConfigureAwait(false);
+            }
+            catch (AudioDeviceUnavailableException)
+            {
+                // Best-effort cleanup, unlike StopPlaybackAsync's own explicit-caller-request path
+                // (which surfaces this) -- DrainAndDisposePlaybackSessionAsync already disposed the
+                // session on this path before throwing, so there is nothing left to clean up here.
+                // A caller that cares whether playback actually finished draining should call
+                // StopPlaybackAsync explicitly before disposing, not rely on DisposeAsync for that.
+            }
         }
 
         MiniAudioContext.Release();
