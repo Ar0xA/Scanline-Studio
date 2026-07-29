@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Yoniq.Core.Audio.MiniAudio\Yoniq.Core.Audio.MiniAudio.csproj" />
+  </ItemGroup>
+
+  <!--
+    Piece Audio 1 scope only, same caveat as the referenced project's own build target: a plain
+    copy so this test's own output directory has the native library P/Invoke needs to find at
+    runtime. The real, robust cross-platform packaging (runtimes/<rid>/native/ layout that
+    propagates transitively through ProjectReference the way a NuGet native-asset package would)
+    is piece Audio 1b's job, still pending.
+  -->
+  <Target Name="CopyNativeShimLinux" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)/../../src/Yoniq.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.so" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+</Project>
