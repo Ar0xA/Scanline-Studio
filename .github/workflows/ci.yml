@@ -22,6 +22,14 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      # Piece Audio 1b: cl.exe is not on PATH by default on GitHub's windows-latest runners
+      # outside a Developer Command Prompt -- Yoniq.Core.Audio.MiniAudio's BuildNativeShimWindows
+      # MSBuild target needs it. No equivalent step is needed for macOS (clang/Xcode command line
+      # tools are already on PATH on macos-latest) or Linux (gcc likewise).
+      - name: Set up MSVC dev environment (Windows only)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Restore
         run: dotnet restore Yoniq.sln
 
