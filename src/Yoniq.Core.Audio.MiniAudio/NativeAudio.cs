@@ -89,6 +89,9 @@ internal static class NativeAudio
     internal static extern int yoniq_audio_capture_session_check_and_clear_stopped(IntPtr session);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int yoniq_audio_capture_session_overrun_count(IntPtr session);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern IntPtr yoniq_audio_playback_session_open(byte[] deviceId, int sampleRate, int ringCapacityFrames);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

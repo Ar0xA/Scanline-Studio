@@ -544,6 +544,12 @@ struct yoniq_audio_capture_session
                             * from the other needs no separate lock (no ordering dependency on
                             * anything else, a torn write of an int-sized value isn't a real
                             * concern on any platform this project targets). */
+    volatile int overrun_count; /* Piece Engine 0: same single-writer (real-time callback)/
+                                  * single-reader (managed) reasoning as `stopped` above -- no lock
+                                  * needed. Mirrors yoniq_audio_playback_session's underrun_count:
+                                  * an event counter (incremented once per callback that dropped
+                                  * frames), not a dropped-frame counter, for the same reason --
+                                  * this is a raw signal for the caller to interpret, not a verdict. */
 };
 
 static void capture_session_data_callback(ma_device *pDevice, void *pOutput, const void *pInput, ma_uint32 frameCount)
@@ -555,7 +561,11 @@ static void capture_session_data_callback(ma_device *pDevice, void *pOutput, con
      * only as many frames as currently fit) -- exactly IAudioEngine's documented overrun policy
      * (piece Audio 2): if the managed drain side has fallen behind, the newest incoming frames are
      * dropped here, never corrupting or reordering what's already buffered. */
-    yoniq_audio_ring_write(session->ring, (const float *)pInput, (int)frameCount);
+    int frames_written = yoniq_audio_ring_write(session->ring, (const float *)pInput, (int)frameCount);
+    if (frames_written < 0 || (ma_uint32)frames_written < frameCount)
+    {
+        session->overrun_count++;
+    }
 }
 
 static void capture_session_notification_callback(const ma_device_notification *pNotification)
@@ -599,6 +609,7 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
     }
 
     session->stopped = 0;
+    session->overrun_count = 0;
     session->ring = yoniq_audio_ring_create(ring_capacity_frames, 1);
     if (session->ring == NULL)
     {
@@ -676,6 +687,16 @@ int yoniq_audio_capture_session_check_and_clear_stopped(yoniq_audio_capture_sess
     int was_stopped = session->stopped;
     session->stopped = 0;
     return was_stopped;
+}
+
+int yoniq_audio_capture_session_overrun_count(yoniq_audio_capture_session *session)
+{
+    if (session == NULL)
+    {
+        return -1;
+    }
+
+    return session->overrun_count;
 }
 
 /*
