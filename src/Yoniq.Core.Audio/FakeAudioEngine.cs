@@ -8,21 +8,23 @@ namespace Yoniq.Core.Audio;
 /// <see cref="PushCapturedSamples"/>, and inspect whatever was enqueued for playback via
 /// <see cref="PlaybackSamples"/>. No real device, no threads, no native dependency.
 ///
-/// Round-1-engine-review note: deliberately does NOT enforce the Lifecycle-error contract
-/// <see cref="IAudioEngine"/>'s own doc comment documents (double-Start throwing, Enqueue-before-
-/// Start throwing, post-dispose throwing) -- <see cref="MiniAudioEngine"/> in
-/// `Yoniq.Core.Audio.MiniAudio` enforces all of that for real. Kept permissive here on purpose:
-/// `FakeAudioEngineRoundTripTests` (`Yoniq.Core.Audio.Tests`) already calls
-/// <see cref="EnqueuePlaybackSamples"/> before ever calling <see cref="StartPlaybackAsync"/>, since
-/// that test only cares about exercising the DSP round trip through the interface's data-shape
-/// contract (chunking, memory lifetime), not engine lifecycle discipline. Tightening this fake to
-/// match would break that pre-existing, unrelated test for no benefit -- a caller that needs to
-/// verify lifecycle-error behavior should test against the real engine (see
-/// `Yoniq.Core.Audio.MiniAudio.Tests.MiniAudioEngineTests`), not this one.
+/// Round-2-engine-review correction: round 1 left this deliberately permissive (not enforcing
+/// <see cref="IAudioEngine"/>'s own documented Lifecycle-error contract) specifically because
+/// `FakeAudioEngineRoundTripTests` called <see cref="EnqueuePlaybackSamples"/> before
+/// <see cref="StartPlaybackAsync"/>. On reflection that reasoning was backwards: this fake is the
+/// only <see cref="IAudioEngine"/> a future `Yoniq.Application` TX pump will be unit-tested
+/// against, and a test double more permissive than the real contract can't catch the exact
+/// contract violations that contract exists to catch -- code that passes its tests against a
+/// permissive fake and then throws on real hardware defeats the point of writing the contract down
+/// at all. Fixed properly instead: this now enforces the same contract
+/// `Yoniq.Core.Audio.MiniAudio.MiniAudioEngine` does, and the one test that relied on the old
+/// permissive behavior was updated to call <see cref="StartPlaybackAsync"/> first (a one-line
+/// change, not a rewrite).
 /// </summary>
 public sealed class FakeAudioEngine : IAudioEngine
 {
     private readonly List<float> _playbackSamples = [];
+    private bool _disposed;
 
     public bool IsCapturing { get; private set; }
 
@@ -34,6 +36,12 @@ public sealed class FakeAudioEngine : IAudioEngine
 
     public Task StartCaptureAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (IsCapturing)
+        {
+            throw new InvalidOperationException("Capture is already started -- call StopCaptureAsync first.");
+        }
+
         IsCapturing = true;
         return Task.CompletedTask;
     }
@@ -46,6 +54,12 @@ public sealed class FakeAudioEngine : IAudioEngine
 
     public Task StartPlaybackAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (IsPlaying)
+        {
+            throw new InvalidOperationException("Playback is already started -- call StopPlaybackAsync first.");
+        }
+
         IsPlaying = true;
         return Task.CompletedTask;
     }
@@ -61,6 +75,12 @@ public sealed class FakeAudioEngine : IAudioEngine
     /// even though this fake never actually applies back-pressure.</summary>
     public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!IsPlaying)
+        {
+            throw new InvalidOperationException("Playback is not started -- call StartPlaybackAsync first.");
+        }
+
         _playbackSamples.AddRange(samples.Span);
         return samples.Length;
     }
@@ -68,5 +88,9 @@ public sealed class FakeAudioEngine : IAudioEngine
     /// <summary>Test-only: simulates a capture callback firing with the given samples.</summary>
     public void PushCapturedSamples(ReadOnlyMemory<float> samples) => SamplesCaptured?.Invoke(samples);
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        return ValueTask.CompletedTask;
+    }
 }
