@@ -129,7 +129,11 @@ public class AvtTrainingLockStateMachineTests
         var trainingStartIndex = samples.Count - trainingSamples.Count;
         for (var i = 0; i < samples.Count; i++)
         {
-            var f = demodulator.ProcessSample(samples[i]);
+            // Scale bridge -- see PllFmDemodulator's own doc comment. A no-op at this test's own
+            // full-scale amplitude (both scaled and unscaled paths converge to the same AGC gain),
+            // kept for consistency with the production call site rather than leaving a stray
+            // unscaled usage that could mislead a future reader into thinking raw samples are fine.
+            var f = demodulator.ProcessSample(samples[i] * 32768.0);
             if (i >= trainingStartIndex)
             {
                 result[i - trainingStartIndex] = f;
