@@ -17,8 +17,10 @@ namespace Yoniq.Abstractions.Audio;
 /// must say what happens under a slow consumer): if the drain thread falls behind and the
 /// underlying ring buffer fills, the real-time capture callback drops the newest incoming frames
 /// (never blocks, never overwrites older undrained data) — RX samples are lost, not corrupted or
-/// reordered, and this is counted as an overrun for diagnostics (exposed once piece Audio 5/6
-/// implements the capture/playback paths; not yet surfaced as of this interface-only piece).
+/// reordered. Counted as an overrun for diagnostics (piece Engine 0/5a) — exposed as a
+/// implementation-specific diagnostic member (e.g. `MiniAudioEngine.CaptureOverrunCount`), not part
+/// of this interface itself, since no other backend implementation exists yet to confirm the same
+/// shape generalizes.
 ///
 /// Memory lifetime: the <see cref="ReadOnlyMemory{T}"/> handed to each invocation is a fresh,
 /// independently-owned array, safe to store or process asynchronously — never a view into a
@@ -26,6 +28,23 @@ namespace Yoniq.Abstractions.Audio;
 /// (it hands out caller-owned memory), and the real `Yoniq.Core.Audio.MiniAudio` implementation's
 /// drain thread makes a fresh copy per callback specifically to match this contract (an
 /// opus-review fix — its first cut handed out a view into a reused scratch buffer instead).
+///
+/// Lifecycle-error contract (round-1-engine-review addition, since a prior revision left this
+/// entirely to each implementation to decide, and the real and fake implementations disagreed):
+/// <list type="bullet">
+/// <item>Calling <see cref="StartCaptureAsync"/>/<see cref="StartPlaybackAsync"/> while that same
+/// lifecycle is already started throws <see cref="InvalidOperationException"/> — silently ignoring
+/// the second call (or the second device) would be the exact silent-failure spec/01-architecture.md's
+/// Error Handling rule forbids.</item>
+/// <item>Calling <see cref="StopCaptureAsync"/>/<see cref="StopPlaybackAsync"/> when that lifecycle
+/// was never started (or already stopped) is an idempotent no-op.</item>
+/// <item>Calling <see cref="EnqueuePlaybackSamples"/> before <see cref="StartPlaybackAsync"/> (or
+/// after <see cref="StopPlaybackAsync"/>) throws <see cref="InvalidOperationException"/> — returning
+/// 0 would make a caller's contract-compliant partial-acceptance retry loop (see below) spin
+/// forever instead of surfacing the real problem.</item>
+/// <item>Calling any member after <see cref="IAsyncDisposable.DisposeAsync"/> has completed throws
+/// <see cref="ObjectDisposedException"/>.</item>
+/// </list>
 /// </summary>
 public interface IAudioEngine : IAsyncDisposable
 {
@@ -50,6 +69,8 @@ public interface IAudioEngine : IAsyncDisposable
     /// call. A ~114-second SSTV transmission is on the order of megabytes of samples; a caller
     /// (the TX pump) that ignored a partial-acceptance return would silently drop the tail of a
     /// real transmission into an already-full buffer. Callers must check the return value and
-    /// retry/wait for the remainder rather than assuming everything was accepted.</summary>
+    /// retry/wait for the remainder rather than assuming everything was accepted. See the class doc
+    /// comment's Lifecycle-error contract for what happens before <see cref="StartPlaybackAsync"/>
+    /// has been called.</summary>
     int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples);
 }

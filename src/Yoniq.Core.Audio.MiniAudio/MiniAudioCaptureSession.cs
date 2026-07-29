@@ -125,6 +125,15 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
         }
     }
 
+    /// <summary>Round-1-engine-review fix: whether the calling thread is this session's own drain
+    /// thread. Exposed so <see cref="MiniAudioEngine"/> can decide whether to dispose this specific
+    /// session inline (matching its self-join guard, see <see cref="Dispose"/>'s own comment)
+    /// without relying on an engine-wide "which thread is currently forwarding" field, which cannot
+    /// tell one session's drain thread apart from another's across a stop-then-restart within the
+    /// same callback invocation. No lock needed -- <c>_drainThread</c> is assigned once in the
+    /// constructor and never reassigned.</summary>
+    internal bool IsRunningOnDrainThread => Thread.CurrentThread == _drainThread;
+
     /// <summary>Piece Engine 0: cumulative count of real-time callbacks in which the ring could not
     /// hold everything captured (the managed drain side fell behind, and the newest incoming
     /// frames were dropped -- see the class doc comment's overrun policy). Mirrors
