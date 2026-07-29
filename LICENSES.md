@@ -28,6 +28,16 @@ The legacy tree also contains `Terms.txt`/`License.TXT`, which state MMSSTV is n
 
 If either Chilkat or FastReport turns out to back a real feature once someone can build and run the legacy binary directly (not verifiable from source alone), re-evaluate before assuming they're safe to drop — see the corresponding open item in [[spec/14-roadmap]].
 
+## Third-party libraries bundled in Yoniq v2 (not legacy YONIQ/MMSSTV assets)
+
+Distinct from the legacy-asset audit above: these are new third-party dependencies introduced by
+the rewrite itself (see [[spec/05-audio-engine]]), not anything ported from `yoniq-old/`. Still
+covered by the same license-audit rule in `CLAUDE.md` — recorded here for the same reason.
+
+| Asset | Source | License | Notes |
+|---|---|---|---|
+| `miniaudio.h` v0.11.25 | [github.com/mackron/miniaudio](https://github.com/mackron/miniaudio), pinned at tag `0.11.25`, vendored at `src/Yoniq.Core.Audio.MiniAudio/native/miniaudio.h` | Dual-licensed by the author (David Reid): Unlicense (public domain) **or** MIT-0 (MIT No Attribution), author's choice granted to users. Yoniq v2 elects **MIT-0** — a clearer, better-recognized statement of the same permissive terms than an unlicense/public-domain dedication, which doesn't hold the same legal weight in every jurisdiction. | Used as the native audio backend (device enumeration, capture, playback) behind a hand-written C shim (`native/yoniq_audio.c`/`.h`) — see [[spec/05-audio-engine]]'s Backend choice section for why PortAudio was rejected in favor of this. The single-header amalgamation also contains `dr_wav`/`dr_flac`/`dr_mp3` (same author, same dual license) — disclosed here even though this project compiles them out via `MA_NO_DECODING`/`MA_NO_ENCODING` (see the shim's own `#define`s), since their source text is still physically present in the vendored file. |
+
 ## Process going forward
 
 Per the license-audit rule in `CLAUDE.md`: no legacy asset (source file, data table, bitmap, `.mtm` template, prefix table) may be ported or bundled into Yoniq v2 without a new row in this document recording what it is, where it came from, and under what license it's being included.
