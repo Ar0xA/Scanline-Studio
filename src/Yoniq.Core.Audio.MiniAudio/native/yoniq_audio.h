@@ -39,6 +39,20 @@ void yoniq_audio_context_uninit(void);
  * it does not open/probe any device. */
 int yoniq_audio_enumerate_devices(int is_capture, yoniq_audio_device_info *out_devices, int max_count);
 
+typedef struct
+{
+    int channels;    /* 0 means "any channel count supported", matching miniaudio's own convention */
+    int sample_rate; /* 0 means "any sample rate supported", matching miniaudio's own convention */
+} yoniq_audio_native_format;
+
+/* Probes the named device's native format capabilities -- unlike yoniq_audio_enumerate_devices,
+ * this opens/queries the device briefly, which is slower and can fail on a busy or
+ * exclusive-mode device. On backends that resample/mix server-side (PulseAudio/PipeWire in
+ * particular), the reported format(s) may just be the server's own current format, not a real
+ * capability list -- callers must not treat this as authoritative for filtering devices. Returns
+ * the number of entries written to out_formats (0..max_count), or -1 on error. */
+int yoniq_audio_get_native_formats(const char *device_id, int is_capture, yoniq_audio_native_format *out_formats, int max_count);
+
 /* Spike/gate test only (not the production capture path -- see piece Audio 5 for that): opens
  * the named capture device (by the id string yoniq_audio_enumerate_devices returned), captures
  * for duration_ms milliseconds, and writes the peak absolute sample value observed to *peak_out.
