@@ -18,7 +18,9 @@ A native cross-platform audio library is used behind the abstraction below rathe
 
 `miniaudio` addresses all three directly: PulseAudio is its highest-priority Linux backend (dlopen'd at runtime, reaching PipeWire via `pipewire-pulse` the same way `pavucontrol` does — virtual sinks and monitor sources included); one backend is selected per context, so Windows enumerates WASAPI's device list once each rather than the same physical device 3-5 times across MME/DirectSound/WASAPI/WDM-KS; its WASAPI backend uses `IAudioClient3` low-latency shared mode on Windows 10+ (this *is* the "native WASAPI backend" escape hatch the older revision of this section held open, without needing COM interop in `Yoniq.Core.*`); and requesting mono `f32` at any rate lets its own data converter handle resampling/downmixing from whatever the device's native format is.
 
-Real costs, accepted knowingly: no official prebuilt native binaries (built from a pinned upstream tag via a small CI matrix instead — see [[13-testing]]/build docs), and a larger, more failure-prone P/Invoke surface than PortAudio's tiny flat structs would have been (`ma_device_config`/`ma_device_info` are large, and there is no `ma_device_sizeof()` to allocate against safely — mitigated by vendoring known-good generated struct layouts pinned to the exact miniaudio version used, plus deliberate over-allocation for `ma_device` itself).
+Real costs, accepted knowingly: no official prebuilt native binaries (built from a pinned upstream tag via a small CI matrix instead — see [[13-testing]]/build docs), and a real P/Invoke design constraint that shaped the implementation: `ma_device`'s layout varies both by platform *and* by which `MA_NO_*` compile-time flags this port uses, so no C# struct marshaled directly against miniaudio's own types could ever be safely pinned to a layout (confirmed: there is no `ma_device_sizeof()` to allocate against even if one tried). Resolved by never marshaling miniaudio's structs at all — `Yoniq.Core.Audio.MiniAudio` builds a small C shim (`native/yoniq_audio.c`) alongside the vendored, pinned `miniaudio.h`, exposing this project's own designed ABI (opaque handles, flat POD structs whose offsets the C compiler computes) — P/Invoke targets only that.
+
+`miniaudio`'s real default backend-selection behavior is *not* safe to rely on either, confirmed directly against the pinned header rather than assumed from documentation: the default per-platform priority list tries `sndio`/`audio4`/`oss` *before* `pulseaudio` on some platforms, and always includes a silent `ma_backend_null` as the lowest-priority fallback — meaning an unspecified "default" backend list can silently succeed against the wrong backend, or a fake device that never produces real audio, with no error at all. The shim always passes an explicit, per-platform backend list to `ma_context_init` and exposes the resolved backend's name for diagnostics.
 
 ## Core abstractions
 
@@ -39,26 +41,36 @@ public interface IAudioEngine : IAsyncDisposable
     Task StartCaptureAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct);
     Task StopCaptureAsync();
     Task StartPlaybackAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct);
+
+    // Blocks (asynchronously) until every previously-enqueued sample has actually played out --
+    // not immediate. A caller that stopped mid-buffer would truncate the last scanlines of a real
+    // on-air transmission.
     Task StopPlaybackAsync();
 
-    // Real-time callback: fires on the audio thread. Must not allocate or block.
+    // Fires on a normal-priority drain thread, NOT the audio backend's real-time callback thread --
+    // that callback runs entirely inside the native miniaudio shim, writing into a lock-free ring
+    // buffer there (see Real-time constraint below). Overrun policy: if this drain thread falls
+    // behind and the ring fills, the real-time callback drops the newest incoming frames (never
+    // blocks, never overwrites undrained data) -- RX samples are lost, not corrupted or reordered.
     event Action<ReadOnlyMemory<float>>? SamplesCaptured;
 
     // Pull-based playback: DSP layer enqueues samples; engine drains them on its own callback.
-    void EnqueuePlaybackSamples(ReadOnlyMemory<float> samples);
+    // Returns how many samples were actually accepted (0..samples.Length) as a synchronous
+    // back-pressure signal (same shape as Stream.Write's return) -- callers must retry/wait for
+    // the remainder, not assume everything was accepted.
+    int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples);
 }
 ```
 
-Samples are always `float` in `[-1.0, 1.0]`, mono, at a DSP-chosen sample rate (default 11025 Hz to match legacy SSTV processing rate, configurable up to 48000 Hz) — format conversion from whatever the device natively supports happens inside the engine, never in `Yoniq.Core.Sstv`.
+Samples are always `float` in `[-1.0, 1.0]`, mono, at a DSP-chosen sample rate. **Default is 44100 Hz, not legacy's 11025 Hz** — corrected from an earlier revision of this section during piece Audio 2's contract review: [[14-roadmap]] documents that roughly a third of the SSTV mode table still fails the standard round-trip tolerance at 11025Hz (a pixel-readout/demodulator-settling gap, tracked separately, not this engine's concern), and the existing `Yoniq.Core.Sstv.Tests` suite already runs at 44100Hz as a stated "pragmatic Phase 1 accommodation" for exactly that reason — this section's stated default should match the rate that actually ships, not legacy's rate on principle alone. 11025Hz stays available (any rate up to 48000Hz is) and remains the legacy-authentic choice once the underlying DSP gap closes. Format conversion from whatever the device natively supports happens inside the engine, never in `Yoniq.Core.Sstv`.
+
+`AudioDeviceInfo.Id` stays a plain string despite `miniaudio`'s own device id being a large backend-specific union (a wide string for WASAPI, a GUID for DirectSound, a plain integer for JACK, etc.) — the native shim converts every backend's id into a stable string at the boundary (see Backend choice above), so this interface itself needs no change. The remaining open question is settings persistence ([[12-settings]]): a stored device id is not guaranteed stable across reboots on every backend, so the settings layer should store the device's name alongside its id and fall back to matching by name if the stored id no longer resolves -- not yet implemented, a Phase 3 (UI/settings) concern, not this piece's.
 
 ## Real-time constraint
 
-Per [[01-architecture]]'s concurrency model: the `SamplesCaptured` callback and the internal playback-drain callback run on audio-backend-owned real-time threads. Handlers must:
-- not allocate (no LINQ, no boxing, no new arrays per callback — reuse pooled buffers)
-- not call `async`/`await` or block on any `Task`
-- only ever write into a lock-free single-producer/single-consumer ring buffer (`System.Threading.Channels` bounded channel configured for this, or a hand-rolled ring buffer if `Channels` overhead proves too high) that a normal-priority processing thread drains
+Per [[01-architecture]]'s concurrency model: the actual real-time audio callback runs entirely inside the native `miniaudio` shim (`Yoniq.Core.Audio.MiniAudio`), never inside managed code — no C# delegate is ever invoked from the backend's own real-time thread, sidestepping the GC-transition-on-every-callback hazard a direct P/Invoke callback would otherwise introduce. The callback writes into `miniaudio`'s own lock-free single-producer/single-consumer ring buffer (`ma_pcm_rb`, already implemented and used internally by the library), owned by the shim; a separate, normal-priority managed thread drains that ring and raises `SamplesCaptured`/pulls from the playback ring on `EnqueuePlaybackSamples`'s behalf. Handlers of `SamplesCaptured` should still avoid needless allocation/blocking as good practice (a slow handler still delays RX processing), but the *hard* real-time constraint (no GC transitions, no blocking, ever) applies only to the native callback, which no managed code — including event handlers — runs on.
 
-This is the mechanism by which "all hardware communication must be asynchronous" is reconciled with audio's hard real-time constraints: the *callback* is synchronous by necessity (that's how every native audio API works), but nothing downstream of the ring buffer blocks it, and all actual processing happens off that thread.
+This is the mechanism by which "all hardware communication must be asynchronous" is reconciled with audio's hard real-time constraints: the *callback* is synchronous by necessity (that's how every native audio API works), but nothing downstream of the ring buffer blocks it, and all actual processing happens off that thread, in managed code, outside the native callback entirely.
 
 ## Device hot-plug
 
@@ -80,6 +92,6 @@ TX/RX audio level metering (VU-meter style, visible in the legacy `Scope`/level 
 
 - [ ] `IAudioEngine`/`IAudioDeviceEnumerator` implemented against `miniaudio` on Windows, Linux, macOS; manually verified capture+playback round-trip on each OS (Linux verified via a real PipeWire null-sink loopback in CI/dev sandboxes; Windows/macOS need a human on that OS — this environment cannot close those out).
 - [ ] Native `miniaudio` binaries built from a pinned upstream tag with a documented, reproducible build recipe (not opaque prebuilt blobs of unrecorded provenance) — recorded in [LICENSES.md](../LICENSES.md).
-- [ ] Ring-buffer hand-off verified allocation-free (`GC.GetAllocatedBytesForCurrentThread()` deltas around the callback body at steady state, after JIT/tiering warm-up — a real profiler if one becomes available in the build environment, this measurement otherwise).
+- [ ] Ring-buffer hand-off verified allocation-free on the *drain* side (the managed thread that raises `SamplesCaptured`/pulls playback samples) — reworded from an earlier revision of this bullet, which assumed a managed real-time callback; there isn't one (see Real-time constraint above), so the native callback itself has no managed allocations to measure by construction. Measure via `GC.GetAllocatedBytesForCurrentThread()` deltas around the drain thread's own steady-state work, after JIT/tiering warm-up.
 - [x] `FakeAudioEngine` implemented and used by at least one [[06-sstv-dsp]] round-trip test.
 - [ ] Device hot-plug (unplug during active capture) verified not to crash the app — partially verifiable here via `pactl unload-module` mid-capture; not equivalent to a real USB unplug on Windows/macOS.
