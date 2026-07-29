@@ -75,6 +75,40 @@ public class MiniAudioDeviceEnumeratorTests
         Assert.True(second.InputDevices.Count > 0);
     }
 
+    // Third-opus-review fix: exercises the exact race a fresh review found in the second-opus-review
+    // fix -- RefreshAsync's disposed-check and Dispose's flip-and-capture used to run under two
+    // independent locks, so Dispose could fully complete (release the native context) while a
+    // RefreshAsync call that had already passed its disposed-check went on to start a brand-new
+    // background enumeration against a torn-down context. Both now share one lock (see
+    // MiniAudioDeviceEnumerator's own _gate doc comment), which this stresses directly rather than
+    // just asserting by reading the code.
+    [RequiresPipeWireFact]
+    public async Task DisposeAsync_RacingConcurrentRefreshAsync_NeverThrowsUnexpectedlyOrCorruptsState()
+    {
+        for (var i = 0; i < 20; i++)
+        {
+            var enumerator = new MiniAudioDeviceEnumerator();
+            var refreshTask = enumerator.RefreshAsync();
+
+            // Deliberately not awaiting refreshTask first -- races DisposeAsync against whatever
+            // stage the in-flight refresh happens to be at.
+            await enumerator.DisposeAsync();
+
+            // Whatever became of the raced refresh, awaiting it here must not surface anything
+            // beyond a normal completion -- the point of this test is that neither this nor the
+            // disposal itself corrupts process state or crashes, not pinning down a specific
+            // benign outcome for the raced task.
+            await Record.ExceptionAsync(() => refreshTask);
+
+            // After disposal, every further call must consistently throw ObjectDisposedException
+            // -- never silently succeed against a torn-down context, and never crash with
+            // something else. RefreshAsync throws this synchronously (before ever returning a
+            // Task), so a void-returning lambda is used here rather than Assert.ThrowsAsync, which
+            // xunit's own analyzer otherwise insists on for any Func<Task>-shaped delegate.
+            Assert.Throws<ObjectDisposedException>(() => { _ = enumerator.RefreshAsync(); });
+        }
+    }
+
     // Opus-review fix: reading only stdout via ReadToEnd() before WaitForExit(), while stderr is
     // also redirected but never drained, is the classic pipe-buffer deadlock -- if pactl ever
     // writes enough to stderr to fill its OS pipe buffer, it blocks writing to a stream nobody is

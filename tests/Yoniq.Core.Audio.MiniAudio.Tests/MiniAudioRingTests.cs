@@ -214,4 +214,66 @@ public class MiniAudioRingTests
 
         Assert.Null(exception);
     }
+
+    // Third-opus-review fix: the previous round's "idempotent Dispose" test only exercised
+    // Dispose-vs-Dispose, which the Interlocked.Exchange fix already handled -- it did not exercise
+    // Dispose racing a concurrent Write/Read on another thread at all (the ReaderWriterLockSlim
+    // fix's actual target, and the more reachable of the two races). This hammers both from real
+    // concurrent threads across many iterations: the only acceptable outcome on the writer/reader
+    // side is either a normal successful call or an ObjectDisposedException -- anything else
+    // (a crash, a native-level use-after-free, a hang) fails the test.
+    [Fact]
+    public void ConcurrentWriteAndDispose_NeverThrowsAnythingOtherThanObjectDisposedException()
+    {
+        for (var iteration = 0; iteration < 200; iteration++)
+        {
+            using var ring = new MiniAudioRing(capacityFrames: 256, channels: 1);
+            var buffer = new float[16];
+            var readBuffer = new float[16];
+            using var start = new Barrier(3);
+
+            var writerThread = new Thread(() =>
+            {
+                start.SignalAndWait();
+                try
+                {
+                    while (true)
+                    {
+                        ring.Write(buffer);
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Expected once Dispose wins the race -- the only acceptable outcome besides
+                    // the loop simply being interrupted by the disposing thread finishing first.
+                }
+            });
+
+            var readerThread = new Thread(() =>
+            {
+                start.SignalAndWait();
+                try
+                {
+                    while (true)
+                    {
+                        ring.Read(readBuffer);
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            });
+
+            writerThread.IsBackground = true;
+            readerThread.IsBackground = true;
+            writerThread.Start();
+            readerThread.Start();
+
+            start.SignalAndWait();
+            ring.Dispose();
+
+            Assert.True(writerThread.Join(TimeSpan.FromSeconds(5)), "Writer thread did not observe Dispose within the expected bound.");
+            Assert.True(readerThread.Join(TimeSpan.FromSeconds(5)), "Reader thread did not observe Dispose within the expected bound.");
+        }
+    }
 }
