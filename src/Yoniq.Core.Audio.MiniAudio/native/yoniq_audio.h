@@ -142,6 +142,14 @@ YONIQ_AUDIO_API int yoniq_audio_capture_session_read(yoniq_audio_capture_session
  * on the C# side for the full finding and what callers should watch instead. */
 YONIQ_AUDIO_API int yoniq_audio_capture_session_check_and_clear_stopped(yoniq_audio_capture_session *session);
 
+/* Piece Engine 0: returns the cumulative count of real-time callbacks in which the capture side
+ * could not write all of the frames it received into the ring (i.e. an overrun -- the managed
+ * drain side fell behind and the newest frames were dropped, matching IAudioEngine's documented
+ * overrun policy above). Mirrors yoniq_audio_playback_session_underrun_count's own shape and
+ * caveat exactly: a raw counter for the caller to interpret (a nonzero count after a session ends
+ * cleanly is not itself an error), not a verdict. */
+YONIQ_AUDIO_API int yoniq_audio_capture_session_overrun_count(yoniq_audio_capture_session *session);
+
 /*
  * Piece Audio 6: the real playback path -- the mirror image of piece Audio 5's capture session.
  * Managed code writes samples into an internal ring via yoniq_audio_playback_session_write; the
