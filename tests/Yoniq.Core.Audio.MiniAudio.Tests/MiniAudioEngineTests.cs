@@ -103,6 +103,100 @@ public class MiniAudioEngineTests
         }
     }
 
+    // Piece Engine 3: proves the TOCTOU an earlier piece deliberately left open ("check nothing
+    // started, open, publish" as three separate steps) is now actually closed by _captureLock --
+    // several concurrent StartCaptureAsync calls racing the same engine must yield exactly one
+    // success and the rest InvalidOperationException, never two sessions silently opened against
+    // the same engine instance.
+    [RequiresPipeWireFact]
+    public async Task StartCaptureAsync_ConcurrentCalls_OnlyOneSucceeds()
+    {
+        var sinkName = $"sstv_engine_capture_race_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Engine_Capture_Race_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator();
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            await using var engine = new MiniAudioEngine();
+
+            var attempts = Enumerable.Range(0, 8)
+                .Select(async _ =>
+                {
+                    try
+                    {
+                        await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
+                        return true;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        return false;
+                    }
+                })
+                .ToArray();
+
+            var results = await Task.WhenAll(attempts);
+
+            Assert.Equal(1, results.Count(succeeded => succeeded));
+            await engine.StopCaptureAsync();
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    // Piece Engine 3: playback's own mirror of the capture concurrency test above.
+    [RequiresPipeWireFact]
+    public async Task StartPlaybackAsync_ConcurrentCalls_OnlyOneSucceeds()
+    {
+        var sinkName = $"sstv_engine_playback_race_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Engine_Playback_Race_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator();
+            await enumerator.RefreshAsync();
+            var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
+            Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
+
+            await using var engine = new MiniAudioEngine();
+
+            var attempts = Enumerable.Range(0, 8)
+                .Select(async _ =>
+                {
+                    try
+                    {
+                        await engine.StartPlaybackAsync(sink!, sampleRate: 44100);
+                        return true;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        return false;
+                    }
+                })
+                .ToArray();
+
+            var results = await Task.WhenAll(attempts);
+
+            Assert.Equal(1, results.Count(succeeded => succeeded));
+            await engine.StopPlaybackAsync();
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
     [Fact]
     public async Task StopCaptureAsync_WhenNeverStarted_IsIdempotentNoOp()
     {
