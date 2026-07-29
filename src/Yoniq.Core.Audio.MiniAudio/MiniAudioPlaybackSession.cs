@@ -17,10 +17,20 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
 
     private readonly IntPtr _handle;
 
-    // Second-opus-review fix: an int, not a bool -- see MiniAudioCaptureSession's identical field
-    // and doc comment for why (Interlocked.Exchange makes "check and mark disposed" atomic,
-    // preventing a double-Dispose race that would otherwise double-free/double-release).
-    private int _disposed;
+    // Third-opus-review fix: second-opus-review's Interlocked.Exchange on _disposed only made
+    // Dispose-vs-Dispose safe -- it did nothing for Dispose racing an in-progress Write/
+    // PendingFrames/etc. call on another thread, which could still read _disposed as 0, pass the
+    // guard, and then use _handle after Dispose's close thread has already freed it (a genuine
+    // use-after-free, not just an exception). A ReaderWriterLockSlim closes both races at once:
+    // every public member below takes the read lock around its _disposed check and native call;
+    // Dispose takes the write lock, which cannot be granted until every in-flight call has
+    // released its read lock, and blocks any new one from starting until the close (bounded by
+    // CloseTimeout below) finishes. The cost is a lock acquisition per call instead of a bare field
+    // read -- fine here: this managed-code path is explicitly not the hard-real-time one (see the
+    // class doc comment's Real-time constraint reasoning), and Write's own natural call cadence
+    // (per audio buffer, not per sample) makes the overhead negligible.
+    private readonly ReaderWriterLockSlim _lifetimeLock = new(LockRecursionPolicy.NoRecursion);
+    private bool _disposed;
 
     /// <param name="deviceId">A playback device id, as returned by
     /// <see cref="MiniAudioDeviceEnumerator"/>.</param>
@@ -56,10 +66,18 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     /// (piece Audio 2). Never blocks.</summary>
     public unsafe int Write(ReadOnlySpan<float> data)
     {
-        ObjectDisposedException.ThrowIf(_disposed != 0, this);
-        fixed (float* ptr = data)
+        _lifetimeLock.EnterReadLock();
+        try
         {
-            return NativeAudio.yoniq_audio_playback_session_write(_handle, ptr, data.Length);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            fixed (float* ptr = data)
+            {
+                return NativeAudio.yoniq_audio_playback_session_write(_handle, ptr, data.Length);
+            }
+        }
+        finally
+        {
+            _lifetimeLock.ExitReadLock();
         }
     }
 
@@ -72,8 +90,16 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     {
         get
         {
-            ObjectDisposedException.ThrowIf(_disposed != 0, this);
-            return NativeAudio.yoniq_audio_playback_session_pending_frames(_handle);
+            _lifetimeLock.EnterReadLock();
+            try
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return NativeAudio.yoniq_audio_playback_session_pending_frames(_handle);
+            }
+            finally
+            {
+                _lifetimeLock.ExitReadLock();
+            }
         }
     }
 
@@ -86,8 +112,16 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     {
         get
         {
-            ObjectDisposedException.ThrowIf(_disposed != 0, this);
-            return NativeAudio.yoniq_audio_playback_session_underrun_count(_handle);
+            _lifetimeLock.EnterReadLock();
+            try
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return NativeAudio.yoniq_audio_playback_session_underrun_count(_handle);
+            }
+            finally
+            {
+                _lifetimeLock.ExitReadLock();
+            }
         }
     }
 
@@ -101,8 +135,16 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     {
         get
         {
-            ObjectDisposedException.ThrowIf(_disposed != 0, this);
-            return NativeAudio.yoniq_audio_playback_session_check_and_clear_stopped(_handle) != 0;
+            _lifetimeLock.EnterReadLock();
+            try
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return NativeAudio.yoniq_audio_playback_session_check_and_clear_stopped(_handle) != 0;
+            }
+            finally
+            {
+                _lifetimeLock.ExitReadLock();
+            }
         }
     }
 
@@ -121,7 +163,8 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     /// dead device) must not hang the caller indefinitely.</summary>
     public async Task DrainAsync(TimeSpan timeout, CancellationToken ct = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed != 0, this);
+        // PendingFrames' own getter re-enters _lifetimeLock and re-checks disposal on every poll,
+        // so no separate guard is needed here.
         var deadline = DateTime.UtcNow + timeout;
         while (PendingFrames > 0 && DateTime.UtcNow < deadline)
         {
@@ -131,28 +174,45 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
 
     public void Dispose()
     {
-        // See _disposed's own doc comment for why this is Interlocked.Exchange, not a plain
-        // `if (!_disposed)` check.
-        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        // Third-opus-review fix: _lifetimeLock is deliberately never disposed -- see
+        // MiniAudioRing.Dispose's identical fix and comment for why (a second Dispose call's
+        // EnterWriteLock would otherwise throw on the lock object itself, before ever reaching the
+        // _disposed idempotency check below, which is exactly the bug a new concurrent stress test
+        // caught). A ReaderWriterLockSlim left for the GC to finalize is a harmless, tiny cost.
+        _lifetimeLock.EnterWriteLock();
+        try
         {
-            // See MiniAudioCaptureSession.Dispose's identical pattern and doc comment: the native
-            // close can hang indefinitely if the underlying device disappeared, so it runs on its
-            // own thread with a bounded join instead of being awaited directly.
-            var handle = _handle;
-            var closeThread = new Thread(() => NativeAudio.yoniq_audio_playback_session_close(handle))
+            if (!_disposed)
             {
-                IsBackground = true,
-                Name = "MiniAudioPlaybackClose",
-            };
-            closeThread.Start();
-            TimedOutDuringClose = !closeThread.Join(CloseTimeout);
+                _disposed = true;
 
-            // Only release our context reference on a clean close -- see TimedOutDuringClose's own
-            // doc comment for why releasing after a timeout would be unsafe.
-            if (!TimedOutDuringClose)
-            {
-                MiniAudioContext.Release();
+                // See MiniAudioCaptureSession.Dispose's identical pattern and doc comment: the
+                // native close can hang indefinitely if the underlying device disappeared, so it
+                // runs on its own thread with a bounded join instead of being awaited directly.
+                // Holding the write lock for this entire bounded wait is deliberate: it's what
+                // guarantees no reader can be mid-native-call when the close actually frees
+                // _handle, at the cost of blocking new callers for up to CloseTimeout in the rare
+                // case a close is actually slow.
+                var handle = _handle;
+                var closeThread = new Thread(() => NativeAudio.yoniq_audio_playback_session_close(handle))
+                {
+                    IsBackground = true,
+                    Name = "MiniAudioPlaybackClose",
+                };
+                closeThread.Start();
+                TimedOutDuringClose = !closeThread.Join(CloseTimeout);
+
+                // Only release our context reference on a clean close -- see TimedOutDuringClose's
+                // own doc comment for why releasing after a timeout would be unsafe.
+                if (!TimedOutDuringClose)
+                {
+                    MiniAudioContext.Release();
+                }
             }
+        }
+        finally
+        {
+            _lifetimeLock.ExitWriteLock();
         }
     }
 }
