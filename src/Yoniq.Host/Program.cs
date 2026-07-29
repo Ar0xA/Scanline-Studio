@@ -1,5 +1,9 @@
 using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Microsoft.Extensions.DependencyInjection;
+using Yoniq.Abstractions.Audio;
+using Yoniq.Core.Audio.MiniAudio;
 using Yoniq.Settings;
 using Yoniq.UI;
 using Yoniq.UI.ViewModels;
@@ -20,10 +24,34 @@ internal static class Program
         hostBuilder.Services.AddSingleton<ISettingsStore>(new JsonSettingsStore());
         hostBuilder.Services.AddTransient<MainViewModel>();
 
+        // Piece Engine 6. Registered by type, not an eagerly-constructed instance (unlike
+        // ISettingsStore above) -- MiniAudioEngine's constructor initializes the native miniaudio
+        // context for real, which must not run at process start on a machine with no audio server.
+        // Nothing resolves these from the UI yet (Yoniq.Application has no real source files today,
+        // confirmed via this project's own Opus plan-review pass) -- this registration exists so
+        // the composition root is ready once something does, not because a consumer exists now.
+        // Neither type may be referenced from Yoniq.UI directly per spec/01-architecture.md's
+        // layering rule (UI only talks to Yoniq.Application service interfaces); resolving them
+        // here, in Yoniq.Host, does not violate that.
+        hostBuilder.Services.AddSingleton<IAudioEngine, MiniAudioEngine>();
+        hostBuilder.Services.AddSingleton<IAudioDeviceEnumerator, MiniAudioDeviceEnumerator>();
+
         var host = hostBuilder.Build();
         App.Services = host.Services;
 
-        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        var lifetime = new ClassicDesktopStyleApplicationLifetime { Args = args };
+        BuildAvaloniaApp().SetupWithLifetime(lifetime);
+
+        // IAudioEngine is IAsyncDisposable-only (no IDisposable) -- the built-in ServiceProvider's
+        // synchronous Dispose() throws for a singleton shaped that way ("type only implements
+        // IAsyncDisposable"), so this must go through DisposeAsync, not host.Dispose(). IHost
+        // itself only declares IDisposable; the concrete Host type Microsoft.Extensions.Hosting
+        // returns also implements IAsyncDisposable (confirmed by test-compiling the cast below,
+        // not assumed), which disposes every singleton actually resolved during this run that
+        // implements IAsyncDisposable/IDisposable -- nothing extra to do here if IAudioEngine was
+        // never resolved at all.
+        lifetime.Exit += (_, _) => ((IAsyncDisposable)host).DisposeAsync().AsTask().GetAwaiter().GetResult();
+        lifetime.Start(args);
     }
 
     // Avalonia configuration, don't remove; also used by the visual designer.
