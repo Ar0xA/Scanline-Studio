@@ -44,7 +44,14 @@ public sealed class FakeAudioEngine : IAudioEngine
         return Task.CompletedTask;
     }
 
-    public void EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) => _playbackSamples.AddRange(samples.Span);
+    /// <summary>Unbounded in-memory buffer -- always accepts everything, matching a real backend's
+    /// contract of returning the accepted count (see <see cref="IAudioEngine.EnqueuePlaybackSamples"/>)
+    /// even though this fake never actually applies back-pressure.</summary>
+    public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples)
+    {
+        _playbackSamples.AddRange(samples.Span);
+        return samples.Length;
+    }
 
     /// <summary>Test-only: simulates a capture callback firing with the given samples.</summary>
     public void PushCapturedSamples(ReadOnlyMemory<float> samples) => SamplesCaptured?.Invoke(samples);
