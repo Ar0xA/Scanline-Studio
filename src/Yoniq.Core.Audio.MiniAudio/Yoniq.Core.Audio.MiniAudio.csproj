@@ -11,12 +11,24 @@
   </ItemGroup>
 
   <!--
-    Piece Audio 1 scope only: builds the native shim for Linux (this dev sandbox), via a plain
-    gcc invocation. This is deliberately NOT the real cross-platform build: per-RID matrix
-    (win-x64/arm64, linux-x64/arm64, osx universal), platform-specific link flags (CoreAudio/
-    AudioToolbox/AudioUnit frameworks on macOS), and the committed-binaries-vs-build-from-source
-    decision are piece Audio 1b's job, still pending. Gated to Linux only so this doesn't break
-    a build on any other OS before that piece lands.
+    Piece Audio 1b: one MSBuild target per OS in the CI matrix (.github/workflows/ci.yml:
+    windows-latest, ubuntu-latest, macos-latest), each building the native shim with that
+    platform's own toolchain, gated so it only runs on the matching OS. Link flags/compiler choice
+    per platform follow miniaudio's own documented build requirements (native/miniaudio.h,
+    "2.1 Windows" / "2.2 macOS and iOS" / "2.3 Linux" sections) directly, not guessed:
+      - Windows: "should compile cleanly on all popular compilers without the need to configure
+        any include paths nor link to any libraries": WASAPI/WinMM are loaded via LoadLibrary at
+        runtime, not linked at compile time. Uses cl.exe (present on windows-latest GitHub Actions
+        runners); redirects intermediate .obj/.exp/.lib into the output dir to avoid littering the
+        source tree.
+      - macOS: "should compile cleanly without the need to download any dependencies nor link to
+        any libraries or frameworks" (command-line, non-notarized build; CoreAudio/AudioToolbox
+        are loaded at runtime, not link time, since MA_NO_RUNTIME_LINKING is not defined here).
+        Uses clang, producing a .dylib via -dynamiclib.
+      - Linux: unchanged from piece Audio 1: "only requires linking to -ldl, -lpthread and -lm."
+    The Windows and macOS targets are unverified in this project's own dev sandbox (Linux-only);
+    real verification is the CI matrix itself once these commits reach it. See [[05-audio-engine]]
+    and spec/14-roadmap.md's Audio 1b entry for the same caveat already recorded for Audio 9.
   -->
   <Target Name="BuildNativeShimLinux" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
     <PropertyGroup>
@@ -26,5 +38,26 @@
     </PropertyGroup>
     <Exec Command="gcc -c -O2 -fPIC &quot;$(NativeDir)yoniq_audio.c&quot; -o &quot;$(NativeObjPath)&quot;" />
     <Exec Command="gcc -shared -o &quot;$(NativeLibPath)&quot; &quot;$(NativeObjPath)&quot; -ldl -lpthread -lm" />
+  </Target>
+
+  <Target Name="BuildNativeShimWindows" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <PropertyGroup>
+      <NativeDir>$(MSBuildProjectDirectory)\native\</NativeDir>
+      <NativeObjPath>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)yoniq_audio.obj</NativeObjPath>
+      <NativeLibPath>$(MSBuildProjectDirectory)\$(OutDir)yoniqaudio.dll</NativeLibPath>
+      <NativeImpLibPath>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)yoniqaudio.lib</NativeImpLibPath>
+      <NativeExpPath>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)yoniqaudio.exp</NativeExpPath>
+    </PropertyGroup>
+    <Exec Command="cl.exe /nologo /O2 /MD /LD /Fo:&quot;$(NativeObjPath)&quot; /Fe:&quot;$(NativeLibPath)&quot; &quot;$(NativeDir)yoniq_audio.c&quot; /link /IMPLIB:&quot;$(NativeImpLibPath)&quot;" />
+  </Target>
+
+  <Target Name="BuildNativeShimMacOS" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <PropertyGroup>
+      <NativeDir>$(MSBuildProjectDirectory)/native/</NativeDir>
+      <NativeObjPath>$(MSBuildProjectDirectory)/$(IntermediateOutputPath)yoniq_audio.o</NativeObjPath>
+      <NativeLibPath>$(MSBuildProjectDirectory)/$(OutDir)libyoniqaudio.dylib</NativeLibPath>
+    </PropertyGroup>
+    <Exec Command="clang -c -O2 -fPIC &quot;$(NativeDir)yoniq_audio.c&quot; -o &quot;$(NativeObjPath)&quot;" />
+    <Exec Command="clang -dynamiclib -o &quot;$(NativeLibPath)&quot; &quot;$(NativeObjPath)&quot;" />
   </Target>
 </Project>
