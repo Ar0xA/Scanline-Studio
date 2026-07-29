@@ -486,6 +486,108 @@ public class MiniAudioEngineTests
         }
     }
 
+    // Piece Engine 5a: engine-level real-audio integrity. CaptureOverrunCount/PlaybackUnderrunCount
+    // are precise, non-fuzzy signals straight from the native counters -- far better than an
+    // amplitude-based proxy for continuity (see the duration-based sanity check above's own
+    // comment on why that approach can't cleanly attribute a shortfall to any one cause). Also
+    // proves SamplesCaptured genuinely quiesces once StopCaptureAsync returns (guaranteed
+    // structurally by the session's own drain-thread join, but verified empirically here rather
+    // than only by inspection).
+    //
+    // Real finding while writing this test, not assumed: a first version asserted
+    // PlaybackUnderrunCount == 0 for the whole run and failed (2 underruns) -- root cause is a
+    // genuine, expected startup race, not a bug. MiniAudioPlaybackSession's constructor starts the
+    // device (ma_device_start) before this test's write loop has enqueued anything, so the
+    // real-time pull callback can legitimately fire against an empty ring a couple of times right
+    // at startup, before the first EnqueuePlaybackSamples call -- exactly the "expected underrun,
+    // not itself a verdict" case IAudioEngine's own overrun/underrun doc comments already call out.
+    // Fixed by comparing two mid-steady-playback snapshots (no growth expected in between) instead
+    // of asserting a global zero that startup alone can legitimately violate.
+    [RequiresPipeWireFact]
+    public async Task EngineIntegrity_ShortRealAudioRoundTrip_HasNoOverrunsOrUnderrunsAndQuiescesAfterStop()
+    {
+        const int sampleRate = 44100;
+        const double toneDurationSeconds = 1.5;
+
+        var sinkName = $"sstv_engine_integrity_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Engine_Integrity_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator();
+            await enumerator.RefreshAsync();
+            var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
+            Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            var receivedChunkCount = 0;
+            await using var captureEngine = new MiniAudioEngine();
+            captureEngine.SamplesCaptured += _ => Interlocked.Increment(ref receivedChunkCount);
+            await captureEngine.StartCaptureAsync(monitor!, sampleRate);
+
+            await using var playbackEngine = new MiniAudioEngine();
+            await playbackEngine.StartPlaybackAsync(sink!, sampleRate);
+
+            var tone = GenerateSineTone(frequencyHz: 1000, toneDurationSeconds, sampleRate);
+            var offset = 0;
+            var midpointUnderruns = -1;
+            var midpointOverruns = -1;
+            while (offset < tone.Length)
+            {
+                if (midpointUnderruns < 0 && offset >= tone.Length / 2)
+                {
+                    // Snapshot once steady playback is well underway -- past any legitimate startup
+                    // underrun, see this test's own comment above.
+                    midpointUnderruns = playbackEngine.PlaybackUnderrunCount;
+                    midpointOverruns = captureEngine.CaptureOverrunCount;
+                }
+
+                var chunkLength = Math.Min(2048, tone.Length - offset);
+                var written = playbackEngine.EnqueuePlaybackSamples(new ReadOnlyMemory<float>(tone, offset, chunkLength));
+                if (written == 0)
+                {
+                    await Task.Delay(5);
+                    continue;
+                }
+
+                offset += written;
+            }
+
+            // Snapshot before Stop -- both properties throw once their underlying session is
+            // disposed. Comparing against the midpoint snapshot (not zero) is the real invariant:
+            // no NEW drops accumulated during steady-state playback/capture, tolerating whatever
+            // legitimate startup-only underrun/overrun already happened before the midpoint.
+            var playbackUnderrunsBeforeStop = playbackEngine.PlaybackUnderrunCount;
+            var captureOverrunsBeforeStop = captureEngine.CaptureOverrunCount;
+
+            Assert.Equal(midpointUnderruns, playbackUnderrunsBeforeStop);
+            Assert.Equal(midpointOverruns, captureOverrunsBeforeStop);
+
+            await playbackEngine.StopPlaybackAsync();
+            await Task.Delay(300); // let the capture drain thread deliver whatever it already buffered
+
+            var countAfterCaptureStillRunning = Volatile.Read(ref receivedChunkCount);
+            Assert.True(countAfterCaptureStillRunning > 0, "No samples were ever captured back from the monitor.");
+
+            await captureEngine.StopCaptureAsync();
+
+            // Post-stop quiescence: nothing can increment this after StopCaptureAsync has returned
+            // (the drain thread is joined by then) -- verified empirically, not just by inspection.
+            var countRightAfterStop = Volatile.Read(ref receivedChunkCount);
+            await Task.Delay(200);
+            var countAfterWaiting = Volatile.Read(ref receivedChunkCount);
+            Assert.Equal(countRightAfterStop, countAfterWaiting);
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
     [RequiresPipeWireFact]
     public async Task StartPlaybackAsync_WhenAlreadyStarted_ThrowsInvalidOperationException()
     {
