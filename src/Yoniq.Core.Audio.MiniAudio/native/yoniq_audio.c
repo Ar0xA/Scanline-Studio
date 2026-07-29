@@ -698,3 +698,60 @@ int yoniq_audio_playback_session_check_and_clear_stopped(yoniq_audio_playback_se
     session->stopped = 0;
     return was_stopped;
 }
+
+int yoniq_audio_resample_f32(const float *input, int input_frame_count, int sample_rate_in,
+                              int sample_rate_out, int lpf_order, float *output, int output_capacity_frames)
+{
+    if (input == NULL || output == NULL || input_frame_count < 0 || output_capacity_frames < 0)
+    {
+        return -1;
+    }
+
+    ma_resampler_config config = ma_resampler_config_init(
+        ma_format_f32, 1, (ma_uint32)sample_rate_in, (ma_uint32)sample_rate_out, ma_resample_algorithm_linear);
+    if (lpf_order >= 0)
+    {
+        config.linear.lpfOrder = (ma_uint32)lpf_order;
+    }
+
+    ma_resampler resampler;
+    if (ma_resampler_init(&config, NULL, &resampler) != MA_SUCCESS)
+    {
+        return -1;
+    }
+
+    ma_uint64 total_frames_in = (ma_uint64)input_frame_count;
+    ma_uint64 in_consumed = 0;
+    ma_uint64 total_frames_out = 0;
+
+    while (in_consumed < total_frames_in && total_frames_out < (ma_uint64)output_capacity_frames)
+    {
+        ma_uint64 frames_in = total_frames_in - in_consumed;
+        ma_uint64 frames_out = (ma_uint64)output_capacity_frames - total_frames_out;
+
+        ma_result result = ma_resampler_process_pcm_frames(
+            &resampler, input + in_consumed, &frames_in, output + total_frames_out, &frames_out);
+        if (result != MA_SUCCESS)
+        {
+            ma_resampler_uninit(&resampler, NULL);
+            return -1;
+        }
+
+        in_consumed += frames_in;
+        total_frames_out += frames_out;
+
+        if (frames_in == 0 && frames_out == 0)
+        {
+            break; /* no progress possible -- avoid spinning forever */
+        }
+    }
+
+    ma_resampler_uninit(&resampler, NULL);
+
+    if (in_consumed < total_frames_in)
+    {
+        return -1; /* output_capacity_frames was too small to hold the full result */
+    }
+
+    return (int)total_frames_out;
+}
