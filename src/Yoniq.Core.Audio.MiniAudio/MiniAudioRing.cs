@@ -15,7 +15,10 @@ internal sealed unsafe class MiniAudioRing : IDisposable
 {
     private readonly IntPtr _handle;
     private readonly int _channels;
-    private bool _disposed;
+
+    // Second-opus-review fix: an int, not a bool -- see MiniAudioCaptureSession's identical field
+    // and doc comment for why (Interlocked.Exchange makes "check and mark disposed" atomic).
+    private int _disposed;
 
     /// <param name="capacityFrames">Ring capacity in frames (not samples) -- each frame is
     /// <paramref name="channels"/> interleaved float samples.</param>
@@ -35,7 +38,7 @@ internal sealed unsafe class MiniAudioRing : IDisposable
     /// <c>IAudioEngine.EnqueuePlaybackSamples</c> (piece Audio 2).</summary>
     public int Write(ReadOnlySpan<float> data)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
         // Opus-review fix: a caller passing a span whose length isn't a whole number of frames
         // (e.g. an odd sample count for a stereo ring) previously had the trailing partial frame
         // silently dropped by this integer division, with no signal that anything was wrong.
@@ -56,7 +59,7 @@ internal sealed unsafe class MiniAudioRing : IDisposable
     /// count), which may be less than requested if the ring doesn't have that much buffered.</summary>
     public int Read(Span<float> destination)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
         if (destination.Length % _channels != 0)
         {
             throw new ArgumentException($"Destination length {destination.Length} is not a whole number of {_channels}-channel frames.", nameof(destination));
@@ -71,10 +74,11 @@ internal sealed unsafe class MiniAudioRing : IDisposable
 
     public void Dispose()
     {
-        if (!_disposed)
+        // See _disposed's own doc comment for why this is Interlocked.Exchange, not a plain
+        // `if (!_disposed)` check.
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
         {
             NativeAudio.yoniq_audio_ring_destroy(_handle);
-            _disposed = true;
         }
     }
 }
