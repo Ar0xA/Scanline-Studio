@@ -13,6 +13,37 @@
     <ProjectReference Include="..\Yoniq.UI\Yoniq.UI.csproj" />
     <ProjectReference Include="..\Yoniq.Application\Yoniq.Application.csproj" />
     <ProjectReference Include="..\Yoniq.Settings\Yoniq.Settings.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Audio.MiniAudio\Yoniq.Core.Audio.MiniAudio.csproj" />
   </ItemGroup>
+
+  <!--
+    Piece Engine 6, same pattern and reasoning as
+    Yoniq.Core.Audio.MiniAudio.Tests.csproj's own CopyNativeShim* targets: .NET does not
+    automatically propagate a ProjectReference's native build artifacts (confirmed directly in
+    this project during piece Audio 1), so the real IAudioEngine registration above would throw
+    DllNotFoundException on first resolve without an explicit copy here too.
+  -->
+  <Target Name="CopyNativeShimLinux" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)/../Yoniq.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.so" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+  <!-- Unverified in this project's own dev sandbox (Linux-only); see the referenced project's own
+       build target doc comment. -->
+  <Target Name="CopyNativeShimWindows" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)\..\Yoniq.Core.Audio.MiniAudio\$(OutDir)yoniqaudio.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+  <Target Name="CopyNativeShimMacOS" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)/../Yoniq.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.dylib" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
 
 </Project>
