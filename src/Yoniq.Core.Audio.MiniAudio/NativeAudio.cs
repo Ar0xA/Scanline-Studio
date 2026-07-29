@@ -16,7 +16,7 @@ internal static class NativeAudio
     private const string LibraryName = "yoniqaudio";
 
     internal const int BackendNameSize = 32;
-    private const int IdSize = 256;
+    internal const int IdSize = 256;
     private const int NameSize = 256;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -31,6 +31,13 @@ internal static class NativeAudio
         public int IsDefault;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeFormat
+    {
+        public int Channels;   // 0 means "any channel count supported"
+        public int SampleRate; // 0 means "any sample rate supported"
+    }
+
     [DllImport(LibraryName)]
     internal static extern int yoniq_audio_context_init(byte[] backendNameOut);
 
@@ -42,6 +49,9 @@ internal static class NativeAudio
 
     [DllImport(LibraryName)]
     internal static extern int yoniq_audio_spike_capture_test(byte[] deviceId, int durationMs, out float peakOut);
+
+    [DllImport(LibraryName)]
+    internal static extern int yoniq_audio_get_native_formats(byte[] deviceId, int isCapture, [Out] NativeFormat[] outFormats, int maxCount);
 
     [DllImport(LibraryName)]
     internal static extern IntPtr yoniq_audio_ring_create(int capacityFrames, int channels);

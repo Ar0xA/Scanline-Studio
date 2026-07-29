@@ -110,6 +110,26 @@ static void device_id_to_string(ma_backend backend, const ma_device_id *id, char
     buf[buf_size - 1] = '\0';
 }
 
+/* The reverse of device_id_to_string -- converts a string (in our own ABI's convention) back into
+ * a backend-native ma_device_id for the CURRENTLY resolved backend. Returns 0 on success, nonzero
+ * if the current backend isn't one this shim's explicit backend list can ever select (a
+ * programming error, not a runtime condition). */
+static int string_to_device_id(ma_backend backend, const char *device_id, ma_device_id *out_id)
+{
+    memset(out_id, 0, sizeof(*out_id));
+    switch (backend)
+    {
+    case ma_backend_pulseaudio:
+        strncpy(out_id->pulse, device_id, sizeof(out_id->pulse) - 1);
+        return 0;
+    case ma_backend_alsa:
+        strncpy(out_id->alsa, device_id, sizeof(out_id->alsa) - 1);
+        return 0;
+    default:
+        return -1; /* unsupported backend for this shim's current scope */
+    }
+}
+
 typedef struct
 {
     ma_device_type wanted_type;
@@ -174,6 +194,41 @@ int yoniq_audio_enumerate_devices(int is_capture, yoniq_audio_device_info *out_d
     return state.count;
 }
 
+int yoniq_audio_get_native_formats(const char *device_id, int is_capture, yoniq_audio_native_format *out_formats, int max_count)
+{
+    if (!g_context_initialized)
+    {
+        return -1;
+    }
+
+    ma_device_id id;
+    if (string_to_device_id(g_context.backend, device_id, &id) != 0)
+    {
+        return -1;
+    }
+
+    ma_device_info info;
+    ma_result result = ma_context_get_device_info(&g_context, is_capture ? ma_device_type_capture : ma_device_type_playback, &id, &info);
+    if (result != MA_SUCCESS)
+    {
+        return -1;
+    }
+
+    int count = (int)info.nativeDataFormatCount;
+    if (count > max_count)
+    {
+        count = max_count;
+    }
+
+    for (int i = 0; i < count; i++)
+    {
+        out_formats[i].channels = (int)info.nativeDataFormats[i].channels;
+        out_formats[i].sample_rate = (int)info.nativeDataFormats[i].sampleRate;
+    }
+
+    return count;
+}
+
 typedef struct
 {
     float peak;
@@ -206,16 +261,8 @@ int yoniq_audio_spike_capture_test(const char *device_id, int duration_ms, float
     }
 
     ma_device_id id;
-    memset(&id, 0, sizeof(id));
-    switch (g_context.backend)
+    if (string_to_device_id(g_context.backend, device_id, &id) != 0)
     {
-    case ma_backend_pulseaudio:
-        strncpy(id.pulse, device_id, sizeof(id.pulse) - 1);
-        break;
-    case ma_backend_alsa:
-        strncpy(id.alsa, device_id, sizeof(id.alsa) - 1);
-        break;
-    default:
         return -2; /* unsupported backend for this spike */
     }
 

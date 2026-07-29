@@ -43,13 +43,15 @@ public class MiniAudioSpikeGateTests
         {
             toneProcess = StartToneIntoSink(sinkName, durationSeconds: 5);
 
-            var backendNameBuffer = new byte[NativeAudio.BackendNameSize];
-            var initResult = NativeAudio.yoniq_audio_context_init(backendNameBuffer);
-            Assert.Equal(0, initResult);
+            // Via MiniAudioContext's ref-counted acquire, not the raw native call directly: the
+            // native context is a process-wide singleton, and xunit can run different test classes
+            // concurrently in the same process by default -- going through the same acquire/release
+            // path every other consumer (MiniAudioDeviceEnumerator, the future capture/playback
+            // engine) uses is what keeps this test safe to run alongside them, not a coincidence.
+            var backendName = MiniAudioContext.Acquire();
 
             try
             {
-                var backendName = NativeAudio.DecodeFixedString(backendNameBuffer);
                 Assert.Equal("PulseAudio", backendName);
 
                 var playbackDevices = new NativeAudio.DeviceInfo[64];
@@ -66,14 +68,14 @@ public class MiniAudioSpikeGateTests
                 var monitorFound = FindDeviceContaining(captureDevices, captureCount, $"{sinkName}.monitor");
                 Assert.True(monitorFound is not null, $"Virtual sink's monitor was not found among {captureCount} enumerated capture devices.");
 
-                var monitorIdBytes = NativeAudio.EncodeFixedString(monitorFound!, 256);
+                var monitorIdBytes = NativeAudio.EncodeFixedString(monitorFound!, NativeAudio.IdSize);
                 var captureResult = NativeAudio.yoniq_audio_spike_capture_test(monitorIdBytes, durationMs: 2000, out var peak);
                 Assert.Equal(0, captureResult);
                 Assert.True(peak > 0.0f, $"Captured audio from the virtual cable's monitor was silent (peak={peak}) -- device opened but no real audio flowed.");
             }
             finally
             {
-                NativeAudio.yoniq_audio_context_uninit();
+                MiniAudioContext.Release();
             }
         }
         finally
