@@ -291,6 +291,65 @@ public class MiniAudioEngineTests
         await engine.DisposeAsync();
     }
 
+    // Piece Engine 4: DisposeAsync's real scope -- stop capture AND drain-then-stop playback if
+    // both are active at once, not just whichever one happens to have been exercised by an earlier,
+    // narrower test. Real virtual sink/monitor, real sessions on both sides simultaneously.
+    [RequiresPipeWireFact]
+    public async Task DisposeAsync_WithBothCaptureAndPlaybackActive_StopsBothCleanly()
+    {
+        var sinkName = $"sstv_engine_dispose_both_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Engine_Dispose_Both_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator();
+            await enumerator.RefreshAsync();
+            var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
+            Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            var engine = new MiniAudioEngine();
+            await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
+            await engine.StartPlaybackAsync(sink!, sampleRate: 44100);
+            engine.EnqueuePlaybackSamples(GenerateSineTone(frequencyHz: 1000, durationSeconds: 0.2, sampleRate: 44100));
+
+            var disposeTask = engine.DisposeAsync().AsTask();
+            var completed = await Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromSeconds(15)));
+            Assert.Same(disposeTask, completed); // else DisposeAsync hung tearing down one of the two live sessions
+
+            // Idempotent even with both having been live.
+            await engine.DisposeAsync();
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    [Fact]
+    public async Task StartCaptureAsync_AfterDisposeAsync_ThrowsObjectDisposedException()
+    {
+        var engine = new MiniAudioEngine();
+        await engine.DisposeAsync();
+
+        var device = new AudioDeviceInfo("id", "name", MaxInputChannels: 1, MaxOutputChannels: 0, SupportedSampleRates: []);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => engine.StartCaptureAsync(device, sampleRate: 44100));
+    }
+
+    [Fact]
+    public async Task StartPlaybackAsync_AfterDisposeAsync_ThrowsObjectDisposedException()
+    {
+        var engine = new MiniAudioEngine();
+        await engine.DisposeAsync();
+
+        var device = new AudioDeviceInfo("id", "name", MaxInputChannels: 0, MaxOutputChannels: 1, SupportedSampleRates: []);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => engine.StartPlaybackAsync(device, sampleRate: 44100));
+    }
+
     // Piece Engine 2: proves StopPlaybackAsync actually waits out DrainTailMargin's real wall-clock
     // delay rather than it being dead code -- deterministic and fast (a tiny burst, not a multi-
     // second tone), unlike the companion audible round-trip test below, which can't cleanly
