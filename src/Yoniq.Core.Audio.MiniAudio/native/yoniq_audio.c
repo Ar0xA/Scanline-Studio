@@ -17,6 +17,7 @@
 
 #include "yoniq_audio.h"
 #include <string.h>
+#include <stdlib.h>
 
 static ma_context g_context;
 static int g_context_initialized = 0;
@@ -251,4 +252,107 @@ int yoniq_audio_spike_capture_test(const char *device_id, int duration_ms, float
     }
 
     return 0;
+}
+
+/*
+ * Piece Audio 3: standalone SPSC ring buffer, built on miniaudio's own ma_pcm_rb -- see this
+ * function's own doc comment in yoniq_audio.h for why this exists independent of any real device.
+ */
+
+struct yoniq_audio_ring
+{
+    ma_pcm_rb rb;
+    int channels;
+};
+
+yoniq_audio_ring *yoniq_audio_ring_create(int capacity_frames, int channels)
+{
+    if (capacity_frames <= 0 || channels <= 0)
+    {
+        return NULL;
+    }
+
+    yoniq_audio_ring *ring = (yoniq_audio_ring *)malloc(sizeof(yoniq_audio_ring));
+    if (ring == NULL)
+    {
+        return NULL;
+    }
+
+    ring->channels = channels;
+    ma_result result = ma_pcm_rb_init(ma_format_f32, (ma_uint32)channels, (ma_uint32)capacity_frames, NULL, NULL, &ring->rb);
+    if (result != MA_SUCCESS)
+    {
+        free(ring);
+        return NULL;
+    }
+
+    return ring;
+}
+
+void yoniq_audio_ring_destroy(yoniq_audio_ring *ring)
+{
+    if (ring != NULL)
+    {
+        ma_pcm_rb_uninit(&ring->rb);
+        free(ring);
+    }
+}
+
+int yoniq_audio_ring_write(yoniq_audio_ring *ring, const float *data, int frame_count)
+{
+    if (ring == NULL || data == NULL || frame_count < 0)
+    {
+        return -1;
+    }
+
+    int total_written = 0;
+    while (total_written < frame_count)
+    {
+        /* acquire_write is an in/out parameter: we ask for the remaining amount, it tells us how
+         * much room actually is contiguously available (which can be less, e.g. right up against
+         * the end of the underlying buffer before it wraps) -- looping here, not just acquiring
+         * once, is what makes a write spanning a wrap boundary actually complete instead of
+         * silently dropping the tail. */
+        ma_uint32 frames_to_write = (ma_uint32)(frame_count - total_written);
+        void *write_buffer;
+        ma_result result = ma_pcm_rb_acquire_write(&ring->rb, &frames_to_write, &write_buffer);
+        if (result != MA_SUCCESS || frames_to_write == 0)
+        {
+            break; /* ring is full (or an error) -- stop, report what was actually written */
+        }
+
+        memcpy(write_buffer, data + (size_t)total_written * ring->channels, (size_t)frames_to_write * ring->channels * sizeof(float));
+        ma_pcm_rb_commit_write(&ring->rb, frames_to_write);
+
+        total_written += (int)frames_to_write;
+    }
+
+    return total_written;
+}
+
+int yoniq_audio_ring_read(yoniq_audio_ring *ring, float *out_data, int frame_count)
+{
+    if (ring == NULL || out_data == NULL || frame_count < 0)
+    {
+        return -1;
+    }
+
+    int total_read = 0;
+    while (total_read < frame_count)
+    {
+        ma_uint32 frames_to_read = (ma_uint32)(frame_count - total_read);
+        void *read_buffer;
+        ma_result result = ma_pcm_rb_acquire_read(&ring->rb, &frames_to_read, &read_buffer);
+        if (result != MA_SUCCESS || frames_to_read == 0)
+        {
+            break; /* ring is empty (or an error) -- stop, report what was actually read */
+        }
+
+        memcpy(out_data + (size_t)total_read * ring->channels, read_buffer, (size_t)frames_to_read * ring->channels * sizeof(float));
+        ma_pcm_rb_commit_read(&ring->rb, frames_to_read);
+
+        total_read += (int)frames_to_read;
+    }
+
+    return total_read;
 }

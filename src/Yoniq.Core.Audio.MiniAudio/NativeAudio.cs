@@ -43,6 +43,22 @@ internal static class NativeAudio
     [DllImport(LibraryName)]
     internal static extern int yoniq_audio_spike_capture_test(byte[] deviceId, int durationMs, out float peakOut);
 
+    [DllImport(LibraryName)]
+    internal static extern IntPtr yoniq_audio_ring_create(int capacityFrames, int channels);
+
+    [DllImport(LibraryName)]
+    internal static extern void yoniq_audio_ring_destroy(IntPtr ring);
+
+    // Pointer-based, not float[]: marshaling an array parameter copies on every call, which for a
+    // ring buffer written/read on every audio buffer would allocate/copy continuously -- exactly
+    // what piece Audio 3 exists to avoid. Callers pin their own Span/array via `fixed` and pass the
+    // raw pointer instead (see MiniAudioRing).
+    [DllImport(LibraryName)]
+    internal static extern unsafe int yoniq_audio_ring_write(IntPtr ring, float* data, int frameCount);
+
+    [DllImport(LibraryName)]
+    internal static extern unsafe int yoniq_audio_ring_read(IntPtr ring, float* outData, int frameCount);
+
     /// <summary>Decodes a null-terminated, fixed-size native byte buffer (UTF-8, matching this
     /// shim's own convention for device ids/names) into a C# string.</summary>
     internal static string DecodeFixedString(byte[] buffer)

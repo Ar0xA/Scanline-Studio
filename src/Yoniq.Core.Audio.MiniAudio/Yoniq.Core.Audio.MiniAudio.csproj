@@ -1,4 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Needed for pointer-based ring buffer P/Invoke (MiniAudioRing): pinning a Span/array via
+         `fixed` and passing the raw pointer is the allocation-free path; marshaling a `float[]`
+         parameter on every call would allocate/copy on every single audio buffer, defeating the
+         entire point of piece Audio 3. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Yoniq.Abstractions\Yoniq.Abstractions.csproj" />
   </ItemGroup>
