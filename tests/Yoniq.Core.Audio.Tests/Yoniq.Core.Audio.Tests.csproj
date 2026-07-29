@@ -19,6 +19,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Yoniq.Core.Audio\Yoniq.Core.Audio.csproj" />
+    <ProjectReference Include="..\..\src\Yoniq.Core.Sstv\Yoniq.Core.Sstv.csproj" />
+    <ProjectReference Include="..\..\src\Yoniq.Core.Imaging\Yoniq.Core.Imaging.csproj" />
   </ItemGroup>
 
 </Project>
