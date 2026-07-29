@@ -36,6 +36,14 @@ internal sealed unsafe class MiniAudioRing : IDisposable
     public int Write(ReadOnlySpan<float> data)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        // Opus-review fix: a caller passing a span whose length isn't a whole number of frames
+        // (e.g. an odd sample count for a stereo ring) previously had the trailing partial frame
+        // silently dropped by this integer division, with no signal that anything was wrong.
+        if (data.Length % _channels != 0)
+        {
+            throw new ArgumentException($"Data length {data.Length} is not a whole number of {_channels}-channel frames.", nameof(data));
+        }
+
         var frameCount = data.Length / _channels;
         fixed (float* ptr = data)
         {
@@ -49,6 +57,11 @@ internal sealed unsafe class MiniAudioRing : IDisposable
     public int Read(Span<float> destination)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (destination.Length % _channels != 0)
+        {
+            throw new ArgumentException($"Destination length {destination.Length} is not a whole number of {_channels}-channel frames.", nameof(destination));
+        }
+
         var frameCount = destination.Length / _channels;
         fixed (float* ptr = destination)
         {

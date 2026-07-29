@@ -34,7 +34,13 @@ public class MiniAudioPlaybackSessionTests
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
 
             var receivedChunks = new List<float[]>();
-            var allReceived = new TaskCompletionSource();
+            // RunContinuationsAsynchronously: without it, TrySetResult below (called from inside
+            // MiniAudioCaptureSession's own drain-thread callback) would run this await's
+            // continuation synchronously on that drain thread -- and if that continuation ever
+            // called back into disposing that same session, it would self-join and hang forever.
+            // See MiniAudioCaptureSession.Dispose's own defensive fix for the production-code side
+            // of this; found via this exact test hanging during an opus-review fix pass.
+            var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
             using var captureSession = new MiniAudioCaptureSession(monitor!.Id, SampleRate);
             captureSession.SamplesAvailable += chunk =>
@@ -113,6 +119,12 @@ public class MiniAudioPlaybackSessionTests
         return samples;
     }
 
+    // Opus-review fix: reading only stdout via ReadToEnd() before WaitForExit(), while stderr is
+    // also redirected but never drained, is the classic pipe-buffer deadlock -- if pactl ever
+    // writes enough to stderr to fill its OS pipe buffer, it blocks writing to a stream nobody is
+    // reading, while this thread blocks reading a stream (stdout) that will never produce more
+    // data because the child is stuck. Reading both streams concurrently (not sequentially) avoids
+    // it regardless of which stream fills first.
     private static void RunPactl(string arguments, out string output)
     {
         var startInfo = new ProcessStartInfo
@@ -124,7 +136,10 @@ public class MiniAudioPlaybackSessionTests
         };
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start pactl.");
-        output = process.StandardOutput.ReadToEnd();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        Task.WaitAll(stdoutTask, stderrTask);
         process.WaitForExit();
+        output = stdoutTask.Result;
     }
 }

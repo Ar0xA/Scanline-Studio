@@ -61,7 +61,24 @@ internal static class PipeWireProbe
             // (e.g. no PULSE_SERVER, socket doesn't exist) fails fast too -- this timeout exists
             // only to guarantee test discovery itself can never hang, not to tolerate a slow server.
             var exited = process.WaitForExit(2000);
-            return exited && process.ExitCode == 0;
+            if (!exited)
+            {
+                // Opus-review fix: a timed-out pactl process was previously left running
+                // (WaitForExit(timeout) just stops waiting, it doesn't kill anything) -- a leaked
+                // process per test-discovery run against a wedged server. Kill it explicitly.
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best-effort: the process may have exited between the check above and here.
+                }
+
+                return false;
+            }
+
+            return process.ExitCode == 0;
         }
         catch
         {

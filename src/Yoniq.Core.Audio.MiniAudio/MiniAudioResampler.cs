@@ -17,8 +17,20 @@ internal static class MiniAudioResampler
         // Generous capacity: expected output length plus slack for the resampler's own latency
         // and rounding, so a single native call always has room -- if it didn't, the shim itself
         // reports failure (-1) rather than silently truncating.
-        var expectedOutputFrames = (long)Math.Ceiling(input.Length * (double)sampleRateOut / sampleRateIn);
-        var capacity = (int)expectedOutputFrames + 4096;
+        var expectedOutputFrames = (long)Math.Ceiling(input.Length * (double)sampleRateOut / sampleRateIn) + 4096;
+        // Opus-review fix: the previous `(int)expectedOutputFrames + 4096` truncated the long to
+        // int *before* adding the slack, so a sufficiently long upsampled input (beyond ~2^31
+        // output frames -- not reachable at any SSTV size today, but a silent wraparound-to-negative
+        // is a much worse failure mode than a clear, actionable exception) would wrap negative and
+        // throw an opaque OverflowException from `new float[...]` instead of this explicit check.
+        if (expectedOutputFrames > int.MaxValue)
+        {
+            throw new ArgumentException(
+                $"Resampling {input.Length} frames from {sampleRateIn}Hz to {sampleRateOut}Hz would require an output buffer larger than a .NET array can hold ({expectedOutputFrames} frames).",
+                nameof(input));
+        }
+
+        var capacity = (int)expectedOutputFrames;
         var output = new float[capacity];
 
         int written;
