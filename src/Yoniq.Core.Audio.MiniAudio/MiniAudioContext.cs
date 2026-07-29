@@ -17,12 +17,22 @@ namespace Yoniq.Core.Audio.MiniAudio;
 /// CoreAudio themselves, not an arbitrary architectural choice this codebase made. A DI-registered
 /// singleton wrapping the same ref-count would be equivalent in every way that matters (one
 /// instance, shared by everything that resolves it) except needing a composition root to register
-/// it with -- which doesn't exist yet, since nothing yet composes <see cref="MiniAudioCaptureSession"/>/
-/// <see cref="MiniAudioPlaybackSession"/> into a full `IAudioEngine` implementation (still an open
-/// piece). Revisit this as a constructor-injected singleton once that composition root exists,
-/// rather than adding one prematurely for a consumer that doesn't exist yet. All access below is
-/// already serialized under <see cref="Lock"/>, so this is not merely "shared mutable state with
-/// no synchronization" -- concurrent Acquire/Release from any number of threads is safe today.
+/// it with. All access below is already serialized under <see cref="Lock"/>, so this is not merely
+/// "shared mutable state with no synchronization" -- concurrent Acquire/Release from any number of
+/// threads is safe today.
+///
+/// Round-1-engine-review update: the composition root this doc comment used to say "doesn't exist
+/// yet" now does (`Yoniq.Host/Program.cs`, piece Engine 6), and `MiniAudioEngine` calls
+/// `Acquire`/`Release` directly rather than through DI. Not converted to an injected singleton in
+/// that same review pass, deliberately: doing so would mean threading a context handle through
+/// three already-shipped, already-3-times-reviewed constructors
+/// (<see cref="MiniAudioCaptureSession"/>, <see cref="MiniAudioPlaybackSession"/>,
+/// <see cref="MiniAudioDeviceEnumerator"/>) for a refactor with no behavioral payoff -- the
+/// ref-counting semantics this class provides are identical either way, and re-opening three
+/// stable, thoroughly-reviewed classes for a pattern change alone is exactly the kind of
+/// unnecessary scope creep this project's own review process has previously reverted (see the
+/// native shim's own g_context_mutex history). Left as a static with this comment kept honest
+/// about why, rather than silently leaving the original "doesn't exist yet" claim to go stale.
 /// </summary>
 internal static class MiniAudioContext
 {

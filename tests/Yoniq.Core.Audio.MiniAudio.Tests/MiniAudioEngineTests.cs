@@ -283,12 +283,98 @@ public class MiniAudioEngineTests
         }
     }
 
+    // Round-1-engine-review finding: the self-join guard above only ever exercised the UNCONTENDED
+    // path (one Stop caller, no lock contention). If a second, external StopCaptureAsync call
+    // raced the in-callback one for _captureLock, the previous implementation could deadlock: the
+    // external caller could win the lock and dispatch the session's Dispose() to a pool thread
+    // (Task.Run), which blocks on the session's own unbounded _drainThread.Join() -- while the
+    // drain thread itself (running the callback, mid-way through its own StopCaptureAsync call) is
+    // blocked waiting for the very same lock the external caller holds. Fixed by releasing
+    // _captureLock as soon as the session reference is claimed (see
+    // MiniAudioEngine.ClaimCaptureSessionAsync's own doc comment), before ever calling Dispose --
+    // this test reproduces the exact race rather than trusting the fix by inspection.
+    [RequiresPipeWireFact]
+    public async Task StopCaptureAsync_ContendedByExternalCallerWhileSelfDisposing_DoesNotDeadlock()
+    {
+        var sinkName = $"sstv_engine_selfjoin_race_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Engine_SelfJoin_Race_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        Process? toneProcess = null;
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator();
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            toneProcess = StartToneIntoSink(sinkName, durationSeconds: 5);
+
+            var selfStopReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var externalStopStarting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var alreadyStoppedFromCallback = 0;
+
+            await using var engine = new MiniAudioEngine();
+            engine.SamplesCaptured += chunk =>
+            {
+                if (chunk.Length > 0 && Interlocked.Exchange(ref alreadyStoppedFromCallback, 1) == 0)
+                {
+                    // Let the external caller start racing for _captureLock right as we begin our
+                    // own (blocking, from-the-drain-thread) StopCaptureAsync call.
+                    externalStopStarting.TrySetResult();
+                    engine.StopCaptureAsync().GetAwaiter().GetResult();
+                    selfStopReturned.TrySetResult();
+                }
+            };
+
+            await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
+
+            var externalStopTask = Task.Run(async () =>
+            {
+                await externalStopStarting.Task.ConfigureAwait(false);
+                await engine.StopCaptureAsync().ConfigureAwait(false);
+            });
+
+            var allDone = Task.WhenAll(selfStopReturned.Task, externalStopTask);
+            var completed = await Task.WhenAny(allDone, Task.Delay(TimeSpan.FromSeconds(15)));
+            Assert.Same(allDone, completed); // else one of the two Stop calls hung -- the contended-lock deadlock regressed
+        }
+        finally
+        {
+            if (toneProcess is not null && !toneProcess.HasExited)
+            {
+                toneProcess.Kill(entireProcessTree: true);
+            }
+
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
     [Fact]
     public async Task DisposeAsync_IsIdempotent_WhenCalledTwice()
     {
         var engine = new MiniAudioEngine();
         await engine.DisposeAsync();
         await engine.DisposeAsync();
+    }
+
+    // Round-1-engine-review finding: a second concurrent DisposeAsync caller used to return
+    // immediately once _disposed was latched, before the first caller's teardown had necessarily
+    // finished. Fixed with a TaskCompletionSource the second caller awaits instead. This test
+    // exercises genuine concurrency (not the sequential calls DisposeAsync_IsIdempotent makes)
+    // to prove the fix doesn't introduce a hang of its own.
+    [Fact]
+    public async Task DisposeAsync_CalledConcurrentlyTwice_BothCompleteWithoutHanging()
+    {
+        var engine = new MiniAudioEngine();
+        var dispose1 = engine.DisposeAsync().AsTask();
+        var dispose2 = engine.DisposeAsync().AsTask();
+
+        var allDone = Task.WhenAll(dispose1, dispose2);
+        var completed = await Task.WhenAny(allDone, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.Same(allDone, completed);
     }
 
     // Piece Engine 4: DisposeAsync's real scope -- stop capture AND drain-then-stop playback if
@@ -630,6 +716,19 @@ public class MiniAudioEngineTests
     {
         await using var engine = new MiniAudioEngine();
         Assert.Throws<InvalidOperationException>(() => engine.EnqueuePlaybackSamples(new float[10]));
+    }
+
+    // Round-1-engine-review finding: EnqueuePlaybackSamples had no disposed check at all -- after
+    // DisposeAsync, _playbackSession is null regardless, so this used to throw
+    // InvalidOperationException ("call StartPlaybackAsync first"), which would then itself throw
+    // ObjectDisposedException -- a confusing, indirect error. Fixed with an explicit check.
+    [Fact]
+    public async Task EnqueuePlaybackSamples_AfterDisposeAsync_ThrowsObjectDisposedException()
+    {
+        var engine = new MiniAudioEngine();
+        await engine.DisposeAsync();
+
+        Assert.Throws<ObjectDisposedException>(() => engine.EnqueuePlaybackSamples(new float[10]));
     }
 
     [Fact]

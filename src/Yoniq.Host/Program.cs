@@ -50,7 +50,27 @@ internal static class Program
         // not assumed), which disposes every singleton actually resolved during this run that
         // implements IAsyncDisposable/IDisposable -- nothing extra to do here if IAudioEngine was
         // never resolved at all.
-        lifetime.Exit += (_, _) => ((IAsyncDisposable)host).DisposeAsync().AsTask().GetAwaiter().GetResult();
+        //
+        // Round-1-engine-review fix: this used to call DisposeAsync unconditionally and
+        // synchronously with no bound and no try/catch. MiniAudioEngine.DisposeAsync is not fully
+        // bounded (MiniAudioCaptureSession.Dispose's own _drainThread.Join() has no timeout at
+        // all if a SamplesCaptured subscriber never returns -- that class's own doc comment
+        // documents this as a known hazard), so an unbounded wait here could hang the whole
+        // shutdown sequence; and DisposeAsync can throw (e.g. MiniAudioContext.Release() on a
+        // refcount imbalance). Bounded and swallowed here -- there is no logger in this project
+        // yet to report through, and a teardown failure at process exit must not prevent the
+        // process from actually exiting.
+        lifetime.Exit += (_, _) =>
+        {
+            try
+            {
+                var disposeTask = ((IAsyncDisposable)host).DisposeAsync().AsTask();
+                Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromSeconds(10))).GetAwaiter().GetResult();
+            }
+            catch
+            {
+            }
+        };
         lifetime.Start(args);
     }
 
