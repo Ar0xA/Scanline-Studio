@@ -44,6 +44,12 @@ public class FakeAudioEngineRoundTripTests
 
         await using var engine = new FakeAudioEngine();
 
+        // Round-2-engine-review fix: FakeAudioEngine now enforces the same Enqueue-before-Start
+        // contract MiniAudioEngine does, so this call is required, not optional -- see
+        // FakeAudioEngine's own doc comment for why the fake was tightened rather than left
+        // permissive.
+        await engine.StartPlaybackAsync(FakeDevice, encoder.SampleRate, CancellationToken.None);
+
         // TX side: the encoder's own output is what a real caller would hand to
         // EnqueuePlaybackSamples for the engine to play out. Verifies that path is a faithful
         // pass-through, not just assumed.
