@@ -8,6 +8,11 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <!-- Piece Engine 6 only: MiniAudioEngineDiRegistrationTests exercises the same real
+         Microsoft.Extensions.DependencyInjection ServiceProvider Yoniq.Host/Program.cs uses,
+         proving the IAsyncDisposable-only singleton disposal path actually works at runtime, not
+         just that it compiles. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
