@@ -12,7 +12,7 @@ namespace Yoniq.Core.Audio.MiniAudio.Tests;
 /// </summary>
 public class MiniAudioCaptureSessionTests
 {
-    [Fact]
+    [RequiresPipeWireFact]
     public async Task SamplesAvailable_FiresWithRealNonSilentAudio_FromVirtualCableMonitor()
     {
         var sinkName = $"sstv_capture_test_{Guid.NewGuid():N}";

@@ -21,14 +21,14 @@ namespace Yoniq.Core.Audio.MiniAudio.Tests;
 ///    samples -- visibility alone doesn't prove usability.
 ///
 /// Requires a real PulseAudio/PipeWire-pulse server and `pactl`/`ffmpeg`/`paplay` on PATH --
-/// true in this project's dev sandbox and in any Linux CI image with PipeWire, but not universal.
-/// A proper conditional-skip mechanism (xunit 2.5.3 has none built in) is explicitly piece Audio
-/// 7/8's scope, not duplicated here for a piece 1 spike; this test will simply fail loudly with a
-/// clear reason if run somewhere without a real audio server, rather than silently skip.
+/// true in this project's dev sandbox, but not universal (Windows/macOS CI runners have no pactl
+/// at all, and even a Linux runner isn't guaranteed a running audio server). Uses
+/// <see cref="RequiresPipeWireFactAttribute"/> (piece Audio 7) so those environments report an
+/// honest skip instead of a hard CI failure.
 /// </summary>
 public class MiniAudioSpikeGateTests
 {
-    [Fact]
+    [RequiresPipeWireFact]
     public void MiniAudio_ResolvesPulseAudioAndSeesRealVirtualCable()
     {
         var sinkName = $"sstv_gate_test_{Guid.NewGuid():N}";

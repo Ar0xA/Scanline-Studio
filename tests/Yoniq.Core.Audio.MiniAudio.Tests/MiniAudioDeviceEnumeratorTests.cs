@@ -11,7 +11,7 @@ namespace Yoniq.Core.Audio.MiniAudio.Tests;
 /// </summary>
 public class MiniAudioDeviceEnumeratorTests
 {
-    [Fact]
+    [RequiresPipeWireFact]
     public async Task RefreshAsync_FindsRealVirtualCable_AsDistinctPlaybackAndCaptureDevices()
     {
         var sinkName = $"sstv_enum_test_{Guid.NewGuid():N}";
@@ -51,7 +51,7 @@ public class MiniAudioDeviceEnumeratorTests
         }
     }
 
-    [Fact]
+    [RequiresPipeWireFact]
     public async Task TwoEnumeratorInstances_CanBeUsedConcurrently()
     {
         // Exercises MiniAudioContext's ref-counting directly: two independent
