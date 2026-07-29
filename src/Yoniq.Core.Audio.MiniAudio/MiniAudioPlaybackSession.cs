@@ -9,6 +9,12 @@ namespace Yoniq.Core.Audio.MiniAudio;
 /// </summary>
 internal sealed class MiniAudioPlaybackSession : IDisposable
 {
+    // Piece Audio 8: the capture session's mirror-image fix. Both sessions close through the same
+    // shared native path (miniaudio's PulseAudio ma_device_uninit__pulse), so the same confirmed
+    // hang risk applies here too -- see MiniAudioCaptureSession.CloseTimeout's doc comment for the
+    // full root-cause explanation (ma_wait_for_operation__pulse's unconditional wait loop).
+    private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(5);
+
     private readonly IntPtr _handle;
     private bool _disposed;
 
@@ -56,8 +62,17 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     public int UnderrunCount => NativeAudio.yoniq_audio_playback_session_underrun_count(_handle);
 
     /// <summary>True if the underlying device's own notification callback reported the stream
-    /// stopped since this was last checked (clears the flag on read).</summary>
+    /// stopped since this was last checked (clears the flag on read). Per the same real finding
+    /// documented on <see cref="MiniAudioCaptureSession.HasStopped"/> (piece Audio 8): on the
+    /// PulseAudio backend this only fires from an actual server-side suspend/resume, not from the
+    /// device disappearing outright -- callers needing to detect the latter should watch
+    /// <see cref="UnderrunCount"/> climbing instead.</summary>
     public bool HasStopped => NativeAudio.yoniq_audio_playback_session_check_and_clear_stopped(_handle) != 0;
+
+    /// <summary>True if the most recent <see cref="Dispose"/> call's native close timed out
+    /// rather than completing normally -- see <see cref="MiniAudioCaptureSession.CloseTimeout"/>'s
+    /// doc comment for the full root-cause explanation shared by both session types.</summary>
+    public bool TimedOutDuringClose { get; private set; }
 
     /// <summary>Blocks (asynchronously) until <see cref="PendingFrames"/> reaches zero or
     /// <paramref name="timeout"/> elapses -- the drain-on-stop mechanism
@@ -78,7 +93,18 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     {
         if (!_disposed)
         {
-            NativeAudio.yoniq_audio_playback_session_close(_handle);
+            // See MiniAudioCaptureSession.Dispose's identical pattern and doc comment: the native
+            // close can hang indefinitely if the underlying device disappeared, so it runs on its
+            // own thread with a bounded join instead of being awaited directly.
+            var handle = _handle;
+            var closeThread = new Thread(() => NativeAudio.yoniq_audio_playback_session_close(handle))
+            {
+                IsBackground = true,
+                Name = "MiniAudioPlaybackClose",
+            };
+            closeThread.Start();
+            TimedOutDuringClose = !closeThread.Join(CloseTimeout);
+
             _disposed = true;
         }
     }

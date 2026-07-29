@@ -121,8 +121,11 @@ int yoniq_audio_capture_session_read(yoniq_audio_capture_session *session, float
 /* Returns nonzero (and clears the flag) if the device's own notification callback reported the
  * stream stopped since the session was opened or this was last checked. The notification
  * callback must be wired in at ma_device_config/ma_device_init time (this is why it lives here,
- * in piece Audio 5, rather than bolted on later) -- piece Audio 8 is what actually exercises this
- * against a real device disappearing mid-capture. */
+ * in piece Audio 5, rather than bolted on later). Piece Audio 8 verified this against a real
+ * device disappearing mid-capture (a virtual sink unloaded while its monitor was open) and found
+ * this does NOT become nonzero in that case on the PulseAudio backend -- only an actual
+ * server-side suspend/resume raises it. See MiniAudioCaptureSession.HasStopped's own doc comment
+ * on the C# side for the full finding and what callers should watch instead. */
 int yoniq_audio_capture_session_check_and_clear_stopped(yoniq_audio_capture_session *session);
 
 /*
