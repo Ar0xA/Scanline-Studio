@@ -10,7 +10,15 @@ Cross-platform capture/playback of the audio stream that carries SSTV (and, inci
 
 ## Backend choice
 
-A native cross-platform audio library is used behind the abstraction below rather than P/Invoking OS-specific APIs three times. Candidates evaluated: **PortAudio** (mature, C, has maintained .NET bindings, genuinely cross-platform low-latency I/O) vs. NAudio (Windows-only) vs. per-OS native (WASAPI/ALSA/CoreAudio) triple implementation. PortAudio is the recommended default — it satisfies "cross-platform" without a triple-maintenance burden — with the door left open to a native WASAPI backend later if PortAudio's latency on Windows proves insufficient for real-time waterfall display.
+A native cross-platform audio library is used behind the abstraction below rather than P/Invoking OS-specific APIs three times. **`miniaudio`** (public domain / MIT-0, single-file C library, actively maintained) is the chosen backend — reached by process, not by default: PortAudio was the original candidate, but was rejected after direct, independent verification found it fails this spec's own requirements, not just a style preference:
+
+- **No real device-change API.** `PaDevicesChangedCallback` has never shipped in any PortAudio release (it exists only as an unimplemented design proposal); the only way to refresh the device list is `Pa_Terminate()`/`Pa_Initialize()`, which tears down every open stream — incompatible with "device hot-plug must not crash an active capture," and (per [PortAudio issue #564](https://github.com/PortAudio/portaudio/issues/564)) `Pa_Initialize()` alone has been observed disrupting audio in *other* running applications on Windows.
+- **No PulseAudio/PipeWire host API, confirmed by direct experiment, not just documentation.** PortAudio 19.x's Linux support is ALSA (+ JACK) only. Verified concretely: a virtual sink was created (`pactl load-module module-null-sink sink_name=sstv_test_cable`), clearly visible via `pactl list short sinks` — and a PortAudio device probe against the exact same system saw no trace of it at all, exposing only a single generic `pipewire`/`pulse` catch-all ALSA PCM alias with no way to select that specific cable. This is the *literal, explicitly-required* virtual-audio-cable workflow (see below) failing in practice, not in theory.
+- **No sample-rate conversion.** With PortAudio, "format conversion happens inside the engine" (below) would mean hand-writing a resampler; WASAPI shared mode won't open at 11025Hz without a Windows-specific `PaWasapiStreamInfo` extension (a second platform-specific binding beyond ordinary host-API work), or falling back to legacy MME's much higher latency — precisely the failure mode this section's older revision worried about.
+
+`miniaudio` addresses all three directly: PulseAudio is its highest-priority Linux backend (dlopen'd at runtime, reaching PipeWire via `pipewire-pulse` the same way `pavucontrol` does — virtual sinks and monitor sources included); one backend is selected per context, so Windows enumerates WASAPI's device list once each rather than the same physical device 3-5 times across MME/DirectSound/WASAPI/WDM-KS; its WASAPI backend uses `IAudioClient3` low-latency shared mode on Windows 10+ (this *is* the "native WASAPI backend" escape hatch the older revision of this section held open, without needing COM interop in `Yoniq.Core.*`); and requesting mono `f32` at any rate lets its own data converter handle resampling/downmixing from whatever the device's native format is.
+
+Real costs, accepted knowingly: no official prebuilt native binaries (built from a pinned upstream tag via a small CI matrix instead — see [[13-testing]]/build docs), and a larger, more failure-prone P/Invoke surface than PortAudio's tiny flat structs would have been (`ma_device_config`/`ma_device_info` are large, and there is no `ma_device_sizeof()` to allocate against safely — mitigated by vendoring known-good generated struct layouts pinned to the exact miniaudio version used, plus deliberate over-allocation for `ma_device` itself).
 
 ## Core abstractions
 
@@ -54,7 +62,7 @@ This is the mechanism by which "all hardware communication must be asynchronous"
 
 ## Device hot-plug
 
-`IAudioDeviceEnumerator.RefreshAsync` is called on a device-change notification from the backend (PortAudio supports device change callbacks on Windows/macOS; Linux/ALSA hot-plug detection is best-effort). UI ([[09-ui]]) subscribes to device list changes and marks the current device unavailable rather than crashing if it disappears mid-session — replacing the legacy behavior of `Sound.cpp` failing silently or requiring app restart on device changes.
+Corrected from an earlier revision of this section, which claimed "PortAudio supports device change callbacks on Windows/macOS" — false for any released PortAudio (see Backend choice above); this section originally described a capability the chosen backend at the time didn't actually have. With `miniaudio`: the currently-open device's own notification callback (`ma_device_notification_proc`) fires `stopped`/`rerouted`/interruption events on the live device without needing to tear down the stream, covering "device disappeared mid-session" and default-device changes directly. A full `IAudioDeviceEnumerator.RefreshAsync` (re-enumerating the whole device list, not just reacting to the current device) can be called at any time without disrupting an active stream — unlike PortAudio, this genuinely doesn't require restarting anything. UI ([[09-ui]]) subscribes to device list changes and marks the current device unavailable rather than crashing if it disappears mid-session — replacing the legacy behavior of `Sound.cpp` failing silently or requiring app restart on device changes.
 
 ## Loopback / virtual cable support
 
@@ -70,7 +78,8 @@ TX/RX audio level metering (VU-meter style, visible in the legacy `Scope`/level 
 
 ## Definition of done
 
-- [ ] `IAudioEngine`/`IAudioDeviceEnumerator` implemented against PortAudio on Windows, Linux, macOS; manually verified capture+playback round-trip on each OS.
-- [ ] Ring-buffer hand-off verified allocation-free under a profiler (no Gen0 allocations during steady-state capture).
-- [ ] `FakeAudioEngine` implemented and used by at least one [[06-sstv-dsp]] round-trip test.
-- [ ] Device hot-plug (unplug during active capture) verified not to crash the app.
+- [ ] `IAudioEngine`/`IAudioDeviceEnumerator` implemented against `miniaudio` on Windows, Linux, macOS; manually verified capture+playback round-trip on each OS (Linux verified via a real PipeWire null-sink loopback in CI/dev sandboxes; Windows/macOS need a human on that OS — this environment cannot close those out).
+- [ ] Native `miniaudio` binaries built from a pinned upstream tag with a documented, reproducible build recipe (not opaque prebuilt blobs of unrecorded provenance) — recorded in [LICENSES.md](../LICENSES.md).
+- [ ] Ring-buffer hand-off verified allocation-free (`GC.GetAllocatedBytesForCurrentThread()` deltas around the callback body at steady state, after JIT/tiering warm-up — a real profiler if one becomes available in the build environment, this measurement otherwise).
+- [x] `FakeAudioEngine` implemented and used by at least one [[06-sstv-dsp]] round-trip test.
+- [ ] Device hot-plug (unplug during active capture) verified not to crash the app — partially verifiable here via `pactl unload-module` mid-capture; not equivalent to a real USB unplug on Windows/macOS.
