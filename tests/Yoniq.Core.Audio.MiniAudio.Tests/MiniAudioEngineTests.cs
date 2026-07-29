@@ -284,15 +284,28 @@ public class MiniAudioEngineTests
     }
 
     // Round-1-engine-review finding: the self-join guard above only ever exercised the UNCONTENDED
-    // path (one Stop caller, no lock contention). If a second, external StopCaptureAsync call
-    // raced the in-callback one for _captureLock, the previous implementation could deadlock: the
-    // external caller could win the lock and dispatch the session's Dispose() to a pool thread
-    // (Task.Run), which blocks on the session's own unbounded _drainThread.Join() -- while the
-    // drain thread itself (running the callback, mid-way through its own StopCaptureAsync call) is
-    // blocked waiting for the very same lock the external caller holds. Fixed by releasing
-    // _captureLock as soon as the session reference is claimed (see
-    // MiniAudioEngine.ClaimCaptureSessionAsync's own doc comment), before ever calling Dispose --
-    // this test reproduces the exact race rather than trusting the fix by inspection.
+    // path (one Stop caller, no lock contention). If a second, external StopCaptureAsync call won
+    // _captureLock BEFORE the in-callback one asked for it, the previous implementation could
+    // deadlock: the external caller would claim the session and dispatch its Dispose() to a pool
+    // thread (Task.Run), which blocks on the session's own unbounded _drainThread.Join() -- while
+    // the drain thread itself (running the callback, mid-way through its own StopCaptureAsync
+    // call) is blocked waiting for the very same lock the external caller already holds. Fixed by
+    // releasing _captureLock as soon as the session reference is claimed (see
+    // MiniAudioEngine.ClaimCaptureSessionAsync's own doc comment), before ever calling Dispose.
+    //
+    // Round-2-engine-review fix: an earlier version of this test signaled the external caller and
+    // then called StopCaptureAsync immediately, which let the drain thread reliably win the lock
+    // race in practice (queuing/dispatching the external Task.Run's continuation takes longer than
+    // a few field reads) -- meaning this test could pass identically whether or not the fix above
+    // actually worked. The Thread.Sleep(100) in the callback below deliberately gives the external
+    // caller time to win the lock first, so this test genuinely forces the external-caller-holds-
+    // the-lock interleaving rather than relying on scheduling luck to exercise it.
+    //
+    // This does NOT cover the narrower, still-open race documented on MiniAudioEngine's own class
+    // doc comment (a contended WaitAsync itself resuming this call's continuation on a different
+    // thread than the one it started on) -- that requires forcing contention at the exact moment
+    // of the DRAIN THREAD's own lock wait, not the external caller's, which this interleaving
+    // doesn't produce.
     [RequiresPipeWireFact]
     public async Task StopCaptureAsync_ContendedByExternalCallerWhileSelfDisposing_DoesNotDeadlock()
     {
@@ -321,9 +334,16 @@ public class MiniAudioEngineTests
             {
                 if (chunk.Length > 0 && Interlocked.Exchange(ref alreadyStoppedFromCallback, 1) == 0)
                 {
-                    // Let the external caller start racing for _captureLock right as we begin our
-                    // own (blocking, from-the-drain-thread) StopCaptureAsync call.
+                    // Round-2-engine-review fix: signal-then-immediately-call left the two Stop
+                    // calls' actual arrival at _captureLock effectively unraced in practice (the
+                    // drain thread reliably won, since queuing the external Task.Run's continuation
+                    // takes longer than a few field reads) -- so this test could pass identically
+                    // whether or not the deadlock it's named for was actually fixed. A short,
+                    // deliberate delay here gives the external caller time to actually acquire
+                    // _captureLock FIRST, so this call genuinely contends for it instead of finding
+                    // it free.
                     externalStopStarting.TrySetResult();
+                    Thread.Sleep(100);
                     engine.StopCaptureAsync().GetAwaiter().GetResult();
                     selfStopReturned.TrySetResult();
                 }
@@ -362,19 +382,49 @@ public class MiniAudioEngineTests
 
     // Round-1-engine-review finding: a second concurrent DisposeAsync caller used to return
     // immediately once _disposed was latched, before the first caller's teardown had necessarily
-    // finished. Fixed with a TaskCompletionSource the second caller awaits instead. This test
-    // exercises genuine concurrency (not the sequential calls DisposeAsync_IsIdempotent makes)
-    // to prove the fix doesn't introduce a hang of its own.
-    [Fact]
+    // finished. Fixed with a TaskCompletionSource the second caller awaits instead.
+    //
+    // Round-2-engine-review fix: an earlier version of this test used an engine with nothing ever
+    // started, so the first DisposeAsync call never actually suspended (SemaphoreSlim.WaitAsync
+    // completes synchronously when uncontended, MiniAudioContext.Release() is synchronous) --
+    // dispose2 simply observed an already-completed ValueTask, exercising zero real concurrency
+    // despite the test's own name and comment. Using a real, started capture session instead
+    // (native close runs on its own background thread, bounded by CloseTimeout) guarantees the
+    // first DisposeAsync call genuinely suspends, so the second caller's wait on _disposedSignal is
+    // actually exercised rather than trivially satisfied.
+    [RequiresPipeWireFact]
     public async Task DisposeAsync_CalledConcurrentlyTwice_BothCompleteWithoutHanging()
     {
-        var engine = new MiniAudioEngine();
-        var dispose1 = engine.DisposeAsync().AsTask();
-        var dispose2 = engine.DisposeAsync().AsTask();
+        var sinkName = $"sstv_engine_concurrent_dispose_test_{Guid.NewGuid():N}";
 
-        var allDone = Task.WhenAll(dispose1, dispose2);
-        var completed = await Task.WhenAny(allDone, Task.Delay(TimeSpan.FromSeconds(10)));
-        Assert.Same(allDone, completed);
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Engine_Concurrent_Dispose_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator();
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            var engine = new MiniAudioEngine();
+            await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
+
+            var dispose1 = engine.DisposeAsync().AsTask();
+            var dispose2 = engine.DisposeAsync().AsTask();
+
+            var allDone = Task.WhenAll(dispose1, dispose2);
+            var completed = await Task.WhenAny(allDone, Task.Delay(TimeSpan.FromSeconds(15)));
+            Assert.Same(allDone, completed);
+
+            // Both callers must observe a genuinely torn-down engine, not just "returned".
+            await Assert.ThrowsAsync<ObjectDisposedException>(() => engine.StartCaptureAsync(monitor!, sampleRate: 44100));
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
     }
 
     // Piece Engine 4: DisposeAsync's real scope -- stop capture AND drain-then-stop playback if

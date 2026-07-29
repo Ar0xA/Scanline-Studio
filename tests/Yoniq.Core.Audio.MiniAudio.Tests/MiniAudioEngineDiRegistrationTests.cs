@@ -12,8 +12,13 @@ namespace Yoniq.Core.Audio.MiniAudio.Tests;
 /// real thing this project's own Opus plan-review pass specifically flagged as unverified:
 /// <see cref="IAudioEngine"/> is <see cref="IAsyncDisposable"/>-only (no <see cref="IDisposable"/>),
 /// and <see cref="ServiceProvider"/>'s synchronous <c>Dispose()</c> throws for a singleton shaped
-/// that way -- this test uses <c>DisposeAsync</c>, matching the fix applied to
-/// <c>Program.cs</c> itself, and would fail here first if that fix ever regressed.
+/// that way -- this test uses <c>DisposeAsync</c>, matching the fix applied to `Program.cs` itself.
+///
+/// Round-2-engine-review correction: an earlier revision of this comment claimed this test "would
+/// fail here first if that fix ever regressed" in `Program.cs` -- not true, since neither test here
+/// references `Program.cs` at all. What this file actually proves is the underlying *failure mode*
+/// `Program.cs`'s fix avoids (see <see cref="SynchronousDispose_OnServiceProviderWithResolvedAudioEngine_Throws"/>
+/// below), not a guard against a regression in that specific file.
 /// </summary>
 public class MiniAudioEngineDiRegistrationTests
 {

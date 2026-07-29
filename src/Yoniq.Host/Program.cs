@@ -60,12 +60,23 @@ internal static class Program
         // refcount imbalance). Bounded and swallowed here -- there is no logger in this project
         // yet to report through, and a teardown failure at process exit must not prevent the
         // process from actually exiting.
+        //
+        // Round-2-engine-review fix: Task.WhenAny's own result never rethrows the winning task's
+        // fault -- a faulted DisposeAsync used to be silently discarded by WhenAny itself, never
+        // even reaching the try/catch below despite this handler's own comment implying otherwise.
+        // If disposeTask is the one that completed (as opposed to the 10s Delay winning instead),
+        // re-observing it via GetAwaiter().GetResult() is a no-op on success and rethrows -- into
+        // the catch below -- on fault, actually giving the try/catch something to do.
         lifetime.Exit += (_, _) =>
         {
             try
             {
                 var disposeTask = ((IAsyncDisposable)host).DisposeAsync().AsTask();
-                Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromSeconds(10))).GetAwaiter().GetResult();
+                var completed = Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromSeconds(10))).GetAwaiter().GetResult();
+                if (completed == disposeTask)
+                {
+                    disposeTask.GetAwaiter().GetResult();
+                }
             }
             catch
             {

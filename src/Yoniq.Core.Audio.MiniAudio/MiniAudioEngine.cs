@@ -33,6 +33,28 @@ namespace Yoniq.Core.Audio.MiniAudio;
 /// itself before reaching this class's own idempotency checks). <see cref="DisposeAsync"/> never
 /// holds both semaphores at once (capture teardown fully released before playback teardown
 /// begins), so there is no ABBA case to order against.
+///
+/// Round-2-engine-review: a known, narrow, deliberately NOT fixed residual race, documented
+/// honestly rather than left silently open. `_captureLock`'s wait (in
+/// <see cref="ClaimCaptureSessionAsync"/>) is only guaranteed to keep a caller on its own original
+/// thread when the lock is uncontended -- when contended, the `await` can resume on a different
+/// (pool) thread once the lock becomes available. If that happens to a
+/// <see cref="SamplesCaptured"/> subscriber's own re-entrant self-dispose call (see
+/// <see cref="DisposeCaptureSessionAsync"/>'s doc comment for that supported pattern) at the exact
+/// moment it's racing another Start/Stop call for the lock, the session's own
+/// <see cref="MiniAudioCaptureSession.IsRunningOnDrainThread"/> check can then run on the wrong
+/// (post-hop) thread and dispatch to <c>Task.Run</c> instead of inline -- reintroducing the same
+/// class of self-join deadlock this whole mechanism exists to avoid, just gated behind a much
+/// narrower trigger window (lock contention landing on that specific call) than the case actually
+/// fixed. The only correct fix found for this needs to live in
+/// <see cref="MiniAudioCaptureSession"/> itself (bounding its own `_drainThread.Join()` the way its
+/// native close is already bounded by `CloseTimeout`) -- not applied here, deliberately: doing so
+/// naively means proceeding to the native close call while the drain thread might still be
+/// concurrently reading from the same native handle the close call frees, trading a rare (if
+/// serious) managed-code hang for a rarer but worse native use-after-free. Left open rather than
+/// risk introducing that, pending a dedicated look at restructuring the drain loop's shutdown
+/// signaling (e.g. away from thread-Join-based synchronization entirely) rather than a rushed
+/// patch to already-three-times-reviewed session code.
 /// </summary>
 public sealed class MiniAudioEngine : IAudioEngine
 {
@@ -148,6 +170,22 @@ public sealed class MiniAudioEngine : IAudioEngine
         {
             var session = _captureSession;
             _captureSession = null;
+
+            // Round-2-engine-review fix: unsubscribe as soon as a session is claimed, not only
+            // once Dispose() actually finishes closing it. Without this, a claimed-but-not-yet-
+            // disposed S1 (its native close can take up to CloseTimeout, run on a background
+            // thread) could still be forwarding SamplesAvailable while a StartCaptureAsync racing
+            // in right behind this claim opens S2 -- interleaving two devices' audio on one
+            // SamplesCaptured event with no marker between them, silent stream corruption for
+            // whatever's downstream (the SSTV decoder). Safe to call concurrently with an
+            // in-flight SamplesAvailable invocation: C# multicast delegate invocation captures its
+            // own snapshot of the list, so `-=` here cannot affect a call already in progress, only
+            // ones that haven't started yet.
+            if (session is not null)
+            {
+                session.SamplesAvailable -= OnCaptureSamplesAvailable;
+            }
+
             return session;
         }
         finally
@@ -365,42 +403,58 @@ public sealed class MiniAudioEngine : IAudioEngine
 
         try
         {
-            var captureSession = await ClaimCaptureSessionAsync().ConfigureAwait(false);
-            if (captureSession is not null)
+            // Round-2-engine-review fix: this used to be one try/finally spanning both teardown
+            // steps -- if DisposeCaptureSessionAsync threw, the entire block (including the
+            // playback teardown below) was skipped, permanently leaking the playback session's
+            // native handle and its own MiniAudioContext reference. Each lifecycle now gets its own
+            // try/finally so a failure in one never prevents the other from being attempted.
+            try
             {
-                await DisposeCaptureSessionAsync(captureSession).ConfigureAwait(false);
-            }
-
-            var playbackSession = await ClaimPlaybackSessionAsync().ConfigureAwait(false);
-            if (playbackSession is not null)
-            {
-                try
+                var captureSession = await ClaimCaptureSessionAsync().ConfigureAwait(false);
+                if (captureSession is not null)
                 {
-                    await DrainAndDisposePlaybackSessionAsync(playbackSession).ConfigureAwait(false);
+                    await DisposeCaptureSessionAsync(captureSession).ConfigureAwait(false);
                 }
-                catch (AudioDeviceUnavailableException)
+            }
+            finally
+            {
+                var playbackSession = await ClaimPlaybackSessionAsync().ConfigureAwait(false);
+                if (playbackSession is not null)
                 {
-                    // Best-effort cleanup, unlike StopPlaybackAsync's own explicit-caller-request
-                    // path (which surfaces this) -- DrainAndDisposePlaybackSessionAsync already
-                    // disposed the session on this path before throwing, so there is nothing left
-                    // to clean up here. A caller that cares whether playback actually finished
-                    // draining should call StopPlaybackAsync explicitly before disposing, not rely
-                    // on DisposeAsync for that.
+                    try
+                    {
+                        await DrainAndDisposePlaybackSessionAsync(playbackSession).ConfigureAwait(false);
+                    }
+                    catch (AudioDeviceUnavailableException)
+                    {
+                        // Best-effort cleanup, unlike StopPlaybackAsync's own explicit-caller-request
+                        // path (which surfaces this) -- DrainAndDisposePlaybackSessionAsync already
+                        // disposed the session on this path before throwing, so there is nothing left
+                        // to clean up here. A caller that cares whether playback actually finished
+                        // draining should call StopPlaybackAsync explicitly before disposing, not rely
+                        // on DisposeAsync for that.
+                    }
                 }
             }
         }
         finally
         {
-            // Round-1-engine-review fix: MiniAudioContext.Release() used to be the last, unguarded
-            // statement after both teardown blocks -- an exception from the capture teardown above
-            // (e.g. a LockRecursionException from a session's own ReaderWriterLockSlim) would skip
-            // the playback teardown AND this release entirely, permanently leaking this engine's
-            // context reference (and, on that path, the playback session's native handle too).
-            // Wrapping the whole teardown in try/finally guarantees this always runs exactly once,
-            // and the completion signal always fires so a second concurrent DisposeAsync caller
-            // (awaited above) is never left waiting forever even if teardown itself faulted.
-            MiniAudioContext.Release();
-            _disposedSignal.TrySetResult();
+            // Round-2-engine-review fix: MiniAudioContext.Release() and _disposedSignal.TrySetResult()
+            // used to be two statements in a row with no synchronization between them -- if Release()
+            // itself threw (it does, on a refcount imbalance -- exactly the failure mode
+            // Yoniq.Host/Program.cs's own Exit handler comment names as a real possibility), the
+            // signal was never set, and any second concurrent DisposeAsync caller waiting on it
+            // (see the branch above) would hang forever -- the exact class of bug this signal
+            // exists to prevent. The signal must fire regardless of whether Release() itself
+            // succeeds.
+            try
+            {
+                MiniAudioContext.Release();
+            }
+            finally
+            {
+                _disposedSignal.TrySetResult();
+            }
         }
     }
 }

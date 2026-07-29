@@ -37,12 +37,19 @@ namespace Yoniq.Abstractions.Audio;
 /// the second call (or the second device) would be the exact silent-failure spec/01-architecture.md's
 /// Error Handling rule forbids.</item>
 /// <item>Calling <see cref="StopCaptureAsync"/>/<see cref="StopPlaybackAsync"/> when that lifecycle
-/// was never started (or already stopped) is an idempotent no-op.</item>
+/// was never started (or already stopped) is an idempotent no-op -- including after
+/// <see cref="IAsyncDisposable.DisposeAsync"/> has completed (round-2-engine-review correction: an
+/// earlier revision of this doc comment claimed every member throws post-dispose, which was never
+/// actually true of <c>Stop*Async</c> and was corrected here rather than tightening the real
+/// implementation to match an overly-broad claim -- an idempotent no-op is the more useful
+/// behavior for a caller doing teardown, matching every session type's own Dispose convention).</item>
 /// <item>Calling <see cref="EnqueuePlaybackSamples"/> before <see cref="StartPlaybackAsync"/> (or
-/// after <see cref="StopPlaybackAsync"/>) throws <see cref="InvalidOperationException"/> — returning
-/// 0 would make a caller's contract-compliant partial-acceptance retry loop (see below) spin
-/// forever instead of surfacing the real problem.</item>
-/// <item>Calling any member after <see cref="IAsyncDisposable.DisposeAsync"/> has completed throws
+/// after <see cref="StopPlaybackAsync"/> or <see cref="IAsyncDisposable.DisposeAsync"/>) throws
+/// <see cref="InvalidOperationException"/> or <see cref="ObjectDisposedException"/> respectively —
+/// returning 0 would make a caller's contract-compliant partial-acceptance retry loop (see below)
+/// spin forever instead of surfacing the real problem.</item>
+/// <item>Calling <see cref="StartCaptureAsync"/>/<see cref="StartPlaybackAsync"/> after
+/// <see cref="IAsyncDisposable.DisposeAsync"/> has completed throws
 /// <see cref="ObjectDisposedException"/>.</item>
 /// </list>
 /// </summary>
