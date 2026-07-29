@@ -26,11 +26,23 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     /// real-time pull callback.</param>
     public MiniAudioPlaybackSession(string deviceId, int sampleRate, int ringCapacityFrames = 16384)
     {
-        var deviceIdBytes = NativeAudio.EncodeFixedString(deviceId, NativeAudio.IdSize);
-        _handle = NativeAudio.yoniq_audio_playback_session_open(deviceIdBytes, sampleRate, ringCapacityFrames);
-        if (_handle == IntPtr.Zero)
+        // See MiniAudioCaptureSession's identical fix and doc comment: this session must hold its
+        // own reference to the native context, not rely on some unrelated enumerator instance
+        // happening to still be undisposed.
+        MiniAudioContext.Acquire();
+        try
         {
-            throw new InvalidOperationException($"Failed to open playback device '{deviceId}' at {sampleRate}Hz.");
+            var deviceIdBytes = NativeAudio.EncodeFixedString(deviceId, NativeAudio.IdSize);
+            _handle = NativeAudio.yoniq_audio_playback_session_open(deviceIdBytes, sampleRate, ringCapacityFrames);
+            if (_handle == IntPtr.Zero)
+            {
+                throw new InvalidOperationException($"Failed to open playback device '{deviceId}' at {sampleRate}Hz.");
+            }
+        }
+        catch
+        {
+            MiniAudioContext.Release();
+            throw;
         }
     }
 
@@ -52,14 +64,28 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     /// <c>IAudioEngine.StopPlaybackAsync</c>'s own documented contract (piece Audio 2) requires
     /// before it's safe to stop, since closing early would truncate the tail of a real
     /// transmission.</summary>
-    public int PendingFrames => NativeAudio.yoniq_audio_playback_session_pending_frames(_handle);
+    public int PendingFrames
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return NativeAudio.yoniq_audio_playback_session_pending_frames(_handle);
+        }
+    }
 
     /// <summary>Cumulative count of times the real-time callback had to pad output with silence
     /// because nothing was buffered. Not itself a verdict of "something went wrong" -- an
     /// underrun after the last real sample has genuinely played is expected and harmless; only the
     /// caller (which knows how many frames it actually enqueued and expected to play) can tell an
     /// expected end-of-transmission underrun apart from an unwanted mid-transmission one.</summary>
-    public int UnderrunCount => NativeAudio.yoniq_audio_playback_session_underrun_count(_handle);
+    public int UnderrunCount
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return NativeAudio.yoniq_audio_playback_session_underrun_count(_handle);
+        }
+    }
 
     /// <summary>True if the underlying device's own notification callback reported the stream
     /// stopped since this was last checked (clears the flag on read). Per the same real finding
@@ -67,11 +93,21 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     /// PulseAudio backend this only fires from an actual server-side suspend/resume, not from the
     /// device disappearing outright -- callers needing to detect the latter should watch
     /// <see cref="UnderrunCount"/> climbing instead.</summary>
-    public bool HasStopped => NativeAudio.yoniq_audio_playback_session_check_and_clear_stopped(_handle) != 0;
+    public bool HasStopped
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return NativeAudio.yoniq_audio_playback_session_check_and_clear_stopped(_handle) != 0;
+        }
+    }
 
     /// <summary>True if the most recent <see cref="Dispose"/> call's native close timed out
     /// rather than completing normally -- see <see cref="MiniAudioCaptureSession.CloseTimeout"/>'s
-    /// doc comment for the full root-cause explanation shared by both session types.</summary>
+    /// doc comment for the full root-cause explanation shared by both session types. When true,
+    /// this session's <see cref="MiniAudioContext"/> reference is also deliberately never
+    /// released, for the same reason documented on
+    /// <see cref="MiniAudioCaptureSession.TimedOutDuringClose"/>.</summary>
     public bool TimedOutDuringClose { get; private set; }
 
     /// <summary>Blocks (asynchronously) until <see cref="PendingFrames"/> reaches zero or
@@ -104,6 +140,13 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
             };
             closeThread.Start();
             TimedOutDuringClose = !closeThread.Join(CloseTimeout);
+
+            // Only release our context reference on a clean close -- see TimedOutDuringClose's own
+            // doc comment for why releasing after a timeout would be unsafe.
+            if (!TimedOutDuringClose)
+            {
+                MiniAudioContext.Release();
+            }
 
             _disposed = true;
         }

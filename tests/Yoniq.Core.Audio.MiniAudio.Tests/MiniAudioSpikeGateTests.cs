@@ -44,10 +44,14 @@ public class MiniAudioSpikeGateTests
             toneProcess = StartToneIntoSink(sinkName, durationSeconds: 5);
 
             // Via MiniAudioContext's ref-counted acquire, not the raw native call directly: the
-            // native context is a process-wide singleton, and xunit can run different test classes
-            // concurrently in the same process by default -- going through the same acquire/release
-            // path every other consumer (MiniAudioDeviceEnumerator, the future capture/playback
-            // engine) uses is what keeps this test safe to run alongside them, not a coincidence.
+            // native context is a process-wide singleton, and every other consumer
+            // (MiniAudioDeviceEnumerator, MiniAudioCaptureSession, MiniAudioPlaybackSession) goes
+            // through this same acquire/release path (opus-review fix confirmed all three actually
+            // do now, closing a real gap where the sessions previously didn't). Note this project's
+            // AssemblyInfo.cs disables xunit's cross-class parallelization, so concurrent test
+            // classes are not actually the risk this guards against day to day -- a genuinely
+            // concurrent caller (e.g. a UI thread opening a session while a settings page
+            // refreshes the device list) is.
             var backendName = MiniAudioContext.Acquire();
 
             try
@@ -125,6 +129,12 @@ public class MiniAudioSpikeGateTests
         return process;
     }
 
+    // Opus-review fix: reading only stdout via ReadToEnd() before WaitForExit(), while stderr is
+    // also redirected but never drained, is the classic pipe-buffer deadlock -- if pactl ever
+    // writes enough to stderr to fill its OS pipe buffer, it blocks writing to a stream nobody is
+    // reading, while this thread blocks reading a stream (stdout) that will never produce more
+    // data because the child is stuck. Reading both streams concurrently (not sequentially) avoids
+    // it regardless of which stream fills first.
     private static void RunPactl(string arguments, out string output)
     {
         var startInfo = new ProcessStartInfo
@@ -136,7 +146,10 @@ public class MiniAudioSpikeGateTests
         };
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start pactl.");
-        output = process.StandardOutput.ReadToEnd();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        Task.WaitAll(stdoutTask, stderrTask);
         process.WaitForExit();
+        output = stdoutTask.Result;
     }
 }
