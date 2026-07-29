@@ -64,6 +64,24 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private double _slantLineMaxEnvelope;
     private double _slantLinePeakPosition;
 
+    // m_sint1 (sstv.cpp:1899-1904/1946-1972, sstv.h:700, isNarrow:false -- SyncCheckSub's own
+    // m_fNarrow gating restricts it to non-narrow candidates, same as m_sint2) -- piece 7d, the last
+    // of the 7-piece VIS/preamble-lock breakdown. Same CSYNCINT class as m_sint2/m_sint3, but wired
+    // completely differently: checked FIRST every sample (top priority, no SyncBypassTrustedModes-
+    // style allowlist -- legacy acts on *any* mode SyncStart returns, sstv.cpp:1900-1904), and never
+    // independently scans -- it only ever gets new peak data from the SAME primary threshold
+    // (d12>d19 && d12>SLvl && (d12-d19)>=SLvl) that also drives VisLockStateMachine's own Search/
+    // ConfirmLock (sstv.cpp:1946-1950/1958-1972), via SyncTrig on that threshold's rising edge and
+    // SyncMax while it holds -- not a lower, always-checked threshold like m_sint2/m_sint3's own.
+    // _syncBypass1PrimaryHeld is this port's own local case-0/case-1 latch for that same threshold,
+    // a deliberate second copy of what VisLockStateMachine already tracks internally: enforcing
+    // "m_sint1 checked before m_sint2/m_sint3, every sample" requires evaluating it inside this same
+    // loop, and this loop has no access to VisLockStateMachine's separate instance/cursor (they run
+    // over the same raw samples from the same origin, so the two latches necessarily agree sample-
+    // for-sample -- documented duplication, not an invented shortcut).
+    private readonly SyncIntervalTracker _syncBypass1Tracker;
+    private bool _syncBypass1PrimaryHeld;
+
     // m_sint2 (sstv.cpp:1899-1924, sstv.h:701) -- recognizes Scottie1/Martin1/Martin2/SC2-180 from
     // sync-pulse periodicity alone, without ever decoding a VIS code. Unlike AFC/Slant's detectors,
     // this one has to run *before* the mode is known (that's its entire purpose), so it's
@@ -129,6 +147,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     {
         _sampleRate = sampleRate;
         _demodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz);
+        _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _syncBypass1900Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
         _syncBypassTracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
@@ -309,7 +328,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // 300ms leader, so it's a real but small divergence, not a functional problem -- described
     // honestly rather than as literally undetectable.
     //
-    // Legacy's Stop() resets m_sint1 (not ported)/m_sint2/m_sint3 -- so does this, plus
+    // Legacy's Stop() resets m_sint1/m_sint2/m_sint3 -- so does this, plus
     // VisLockStateMachine's own equivalent of cases 0-9's logical state (case 0 is where
     // m_SyncMode lands once cases 512/513 finish) -- clearing stale history/in-progress decode
     // state from before this image locked, so it isn't mistaken for real content in the next
@@ -332,6 +351,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _avtTrainingPending = false;
         _avtTrainingLock = null;
 
+        _syncBypass1Tracker.Reset();
+        _syncBypass1PrimaryHeld = false;
         _syncBypassTracker.Reset();
         _syncBypassNarrowTracker.Reset();
         _syncBypassNarrowPhaseActive = false;
@@ -477,9 +498,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // comment). As of piece 7c, the absolute amplitude thresholds (m_SLvl/m_SLvl2/m_SLvl3) legacy
     // also checks on top of the relative comparisons are applied too -- closing a simplification
     // documented since m_sint2/m_sint3 were first ported (same simplification closed on
-    // AfcTracker's m_lvl.m_CurMax>16 gate and VisLockStateMachine, same piece). m_sint1 (piece 7d,
-    // not yet ported here) piggybacks on this same loop's case-0 trigger rather than scanning
-    // independently -- see spec/14-roadmap.md.
+    // AfcTracker's m_lvl.m_CurMax>16 gate and VisLockStateMachine, same piece). Piece 7d: m_sint1
+    // piggybacks on this same loop's primary threshold rather than scanning independently -- see
+    // spec/14-roadmap.md and _syncBypass1Tracker's own doc comment.
     //
     // Undocumented-until-now divergence, caught by independent review: legacy gates all of this
     // behind m_SyncMode's case 0 (m_sint2's SyncMax additionally continues in case 1, sstv.cpp:1954-
@@ -490,6 +511,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // latch at moments legacy's own state machine would not. Low severity in practice -- this path
     // only ever runs when nothing else has already locked -- but a real, if narrow, structural
     // difference from legacy, not silently absorbed now that it's been identified.
+    //
+    // Second, related divergence from piece 7d: legacy's case-0 body is straight-line code -- m_sint1
+    // winning and calling Start() (sstv.cpp:1717-1747) does NOT stop the sibling m_sint3 block
+    // (sstv.cpp:1925-1944) from also evaluating in that same sample, since Start() doesn't early-
+    // return out of Do(). This port's per-sample loop returns immediately on any match (m_sint1,
+    // then m_sint2, then m_sint3, matching legacy's real source order for which one is checked
+    // first), so a same-sample m_sint1-then-m_sint3 double-fire can't happen here. Accepted as the
+    // same low-severity category as the divergence above, not fixed: legacy's own same-sample
+    // second fire is close to a no-op in practice (m_Sync is already 1 by the time it would matter),
+    // and this port's Commit() already fully supersedes whichever tracker's match is acted on first.
     private bool TrySyncIntervalDetection()
     {
         for (; _syncBypassProcessedUpTo < _rawSamples.Count; _syncBypassProcessedUpTo++)
@@ -499,8 +530,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             var d19 = _syncBypass1900Detector.ProcessSample(agcSample);
             var dsp = _syncBypassFskDetector.ProcessSample(agcSample);
 
+            // SyncInc (sstv.cpp:1890-1892) -- unconditional for all three trackers, every sample,
+            // before the case-0 body below.
+            _syncBypass1Tracker.Increment();
             _syncBypassTracker.Increment();
             _syncBypassNarrowTracker.Increment();
+
+            // m_sint1 (sstv.cpp:1900-1904) -- checked FIRST every sample, top priority, no mode
+            // allowlist. See _syncBypass1Tracker's own doc comment for why it's fed differently from
+            // m_sint2/m_sint3 below.
+            var sint1Matched = _syncBypass1Tracker.TryStart();
+            if (sint1Matched is not null)
+            {
+                CommitSyncBypassMatch(sint1Matched, _syncBypass1Tracker.LastPeakPositionSamples);
+                _syncBypassProcessedUpTo++;
+                return true;
+            }
 
             // m_sint2 (sstv.cpp:1899-1911). Piece 7c: full 3-term condition (sstv.cpp:1905), not just
             // the relative d12>d19 -- d12>SLvl2 and the difference gate (d12-d19)>=SLvl2 are what
@@ -546,6 +591,29 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                     _syncBypassProcessedUpTo++;
                     return true;
                 }
+            }
+
+            // sstv.cpp:1946-1950/1958-1972 -- the primary VIS-leader threshold, a sibling statement
+            // to the m_sint1/m_sint2/m_sint3 blocks above (not nested inside any of them). This is
+            // the ONLY place _syncBypass1Tracker gets new peak data: SyncTrig on the rising edge,
+            // SyncMax while held (mirroring VisLockStateMachine's own Search/ConfirmLock condition
+            // exactly -- see _syncBypass1Tracker's own doc comment for why this is a deliberate
+            // second copy, not a shared instance).
+            if (d12 > d19 && d12 > SLvl && d12 - d19 >= SLvl)
+            {
+                if (_syncBypass1PrimaryHeld)
+                {
+                    _syncBypass1Tracker.UpdateMax(d12);
+                }
+                else
+                {
+                    _syncBypass1Tracker.Trigger(d12);
+                    _syncBypass1PrimaryHeld = true;
+                }
+            }
+            else
+            {
+                _syncBypass1PrimaryHeld = false;
             }
         }
 
