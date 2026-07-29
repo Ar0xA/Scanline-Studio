@@ -31,7 +31,15 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     private readonly IntPtr _handle;
     private readonly Thread _drainThread;
     private volatile bool _stopping;
-    private bool _disposed;
+
+    // Second-opus-review fix: an int, not a bool, so Dispose can use Interlocked.Exchange to make
+    // "check and mark disposed" a single atomic step -- a plain `if (!_disposed) {...}` lets two
+    // concurrent Dispose calls both pass the check and both run the teardown (double native
+    // close, double free, double MiniAudioContext.Release -- an underflowed refcount). This
+    // matters more now that the self-join fix legitimizes disposing from inside a
+    // SamplesAvailable callback, which makes "the subscriber disposes, and the owner's `using`
+    // also disposes" a realistic shape, not just a theoretical one.
+    private int _disposed;
 
     /// <param name="deviceId">A capture device id, as returned by
     /// <see cref="MiniAudioDeviceEnumerator"/>.</param>
@@ -94,7 +102,7 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     {
         get
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ObjectDisposedException.ThrowIf(_disposed != 0, this);
             return NativeAudio.yoniq_audio_capture_session_check_and_clear_stopped(_handle) != 0;
         }
     }
@@ -131,7 +139,31 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
                 // reasoning).
                 var samples = new float[framesRead];
                 Array.Copy(buffer, samples, framesRead);
-                SamplesAvailable?.Invoke(samples);
+
+                // Second-opus-review fix: an unhandled exception on this thread (a plain
+                // background Thread, not a thread-pool work item) would terminate the whole
+                // process -- one throwing subscriber must not be able to do that. Swallowed
+                // deliberately: this class has no logger of its own to report through, and adding
+                // one now would be scope creep beyond what this fix needs; subscribers are
+                // expected not to throw, this is a last-resort backstop, not a reporting channel.
+                try
+                {
+                    SamplesAvailable?.Invoke(samples);
+                }
+                catch
+                {
+                }
+
+                // Second-opus-review fix: defends the invariant Dispose's self-join guard relies
+                // on -- nothing in this loop may touch _handle after SamplesAvailable fires,
+                // because a subscriber is allowed to call Dispose() synchronously from inside that
+                // callback (see Dispose's own comment). Returning immediately if _stopping was set
+                // during the callback (rather than falling through to the `while` condition after
+                // more loop-body code) keeps that true even if code is added below in the future.
+                if (_stopping)
+                {
+                    return;
+                }
             }
             else
             {
@@ -145,7 +177,9 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
 
     public void Dispose()
     {
-        if (!_disposed)
+        // See _disposed's own doc comment for why this is Interlocked.Exchange, not a plain
+        // `if (!_disposed)` check.
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
         {
             _stopping = true;
 
@@ -186,8 +220,6 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
             {
                 MiniAudioContext.Release();
             }
-
-            _disposed = true;
         }
     }
 }

@@ -19,18 +19,27 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* Second-opus-review fix: the mutex itself is now statically initialized and NEVER destroyed --
+ * SRWLOCK_INIT/PTHREAD_MUTEX_INITIALIZER are valid, lockable states with no init/destroy call
+ * needed at all. The previous version called yoniq_mutex_init/_destroy from
+ * yoniq_audio_context_init/_uninit, which meant: (1) every other entry point below checked
+ * g_context_initialized *before* locking, a TOCTOU window where a concurrent
+ * yoniq_audio_context_uninit could destroy a mutex this thread was about to lock (locking a
+ * destroyed pthread_mutex_t/CRITICAL_SECTION is undefined behavior), and (2)
+ * pthread_mutex_destroy/DeleteCriticalSection on a currently-locked mutex is itself undefined
+ * behavior. Making the mutex permanently valid removes both problems at once: every entry point
+ * below now locks FIRST and checks g_context_initialized *while holding the lock*, so the flag
+ * check and the context-uninit that clears it can never interleave. */
 #if defined(_WIN32)
 #include <windows.h>
-typedef CRITICAL_SECTION yoniq_mutex;
-static void yoniq_mutex_init(yoniq_mutex *m) { InitializeCriticalSection(m); }
-static void yoniq_mutex_destroy(yoniq_mutex *m) { DeleteCriticalSection(m); }
-static void yoniq_mutex_lock(yoniq_mutex *m) { EnterCriticalSection(m); }
-static void yoniq_mutex_unlock(yoniq_mutex *m) { LeaveCriticalSection(m); }
+typedef SRWLOCK yoniq_mutex;
+#define YONIQ_MUTEX_INIT SRWLOCK_INIT
+static void yoniq_mutex_lock(yoniq_mutex *m) { AcquireSRWLockExclusive(m); }
+static void yoniq_mutex_unlock(yoniq_mutex *m) { ReleaseSRWLockExclusive(m); }
 #else
 #include <pthread.h>
 typedef pthread_mutex_t yoniq_mutex;
-static void yoniq_mutex_init(yoniq_mutex *m) { pthread_mutex_init(m, NULL); }
-static void yoniq_mutex_destroy(yoniq_mutex *m) { pthread_mutex_destroy(m); }
+#define YONIQ_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
 static void yoniq_mutex_lock(yoniq_mutex *m) { pthread_mutex_lock(m); }
 static void yoniq_mutex_unlock(yoniq_mutex *m) { pthread_mutex_unlock(m); }
 #endif
@@ -48,13 +57,30 @@ static int g_context_initialized = 0;
  * an unsynchronized concurrent pa_mainloop_iterate. Once a device is actually running it has its
  * own separate per-device mainloop/context (confirmed in ma_device_uninit__pulse, which only ever
  * touches pDevice->pulse.pPulseContext/pMainLoop, never the shared g_context) -- so this mutex
- * only needs to guard the context-level entry points below, never a session's read/write/close. */
-static yoniq_mutex g_context_mutex;
+ * only needs to guard the context-level entry points below, never a session's read/write/close.
+ *
+ * Second-opus-review note: ma_device_init's own source/sink-info lookup goes through the exact
+ * same unbounded ma_wait_for_operation__pulse loop Piece Audio 8 root-caused for session close --
+ * so a device that vanishes in the narrow window between being enumerated and being opened could
+ * still wedge this mutex forever, blocking every other enumerate/probe/session-open in the
+ * process until the server responds (which, per Audio 8, it may never do). This is a real,
+ * accepted, narrow residual risk, not a full fix: ma_device_start is deliberately excluded from
+ * every critical section below (it only touches the *device's own* mainloop once init succeeds,
+ * confirmed directly against miniaudio.h), which shrinks the exposure to init alone, but doesn't
+ * eliminate it. A full fix would need the same background-thread-plus-timeout treatment
+ * MiniAudioCaptureSession/PlaybackSession's CloseTimeout gives close -- except abandoning a
+ * thread that still holds this *shared* mutex is worse than abandoning one that holds only its
+ * own session's handle, so that isn't a drop-in port of the same pattern. Revisit if this ever
+ * becomes a real-world problem, not a hypothetical one. */
+static yoniq_mutex g_context_mutex = YONIQ_MUTEX_INIT;
 
 int yoniq_audio_context_init(char *backend_name_out)
 {
+    yoniq_mutex_lock(&g_context_mutex);
+
     if (g_context_initialized)
     {
+        yoniq_mutex_unlock(&g_context_mutex);
         return -1; /* misuse: already initialized */
     }
 
@@ -76,13 +102,10 @@ int yoniq_audio_context_init(char *backend_name_out)
     ma_result result = ma_context_init(backends, backend_count, &config, &g_context);
     if (result != MA_SUCCESS)
     {
+        yoniq_mutex_unlock(&g_context_mutex);
         return (int)result;
     }
 
-    /* Only initialized on a real success -- a failed attempt must be retryable (the caller may
-     * call this again after fixing whatever went wrong) without double-initializing or leaking
-     * the previous OS mutex object. */
-    yoniq_mutex_init(&g_context_mutex);
     g_context_initialized = 1;
 
     if (backend_name_out != NULL)
@@ -97,17 +120,19 @@ int yoniq_audio_context_init(char *backend_name_out)
         backend_name_out[len] = '\0';
     }
 
+    yoniq_mutex_unlock(&g_context_mutex);
     return 0;
 }
 
 void yoniq_audio_context_uninit(void)
 {
+    yoniq_mutex_lock(&g_context_mutex);
     if (g_context_initialized)
     {
         ma_context_uninit(&g_context);
         g_context_initialized = 0;
-        yoniq_mutex_destroy(&g_context_mutex);
     }
+    yoniq_mutex_unlock(&g_context_mutex);
 }
 
 /* Converts a backend-native ma_device_id into our own ABI's plain string convention. Only the
@@ -226,11 +251,6 @@ static ma_bool32 enum_callback(ma_context *pContext, ma_device_type deviceType, 
 
 int yoniq_audio_enumerate_devices(int is_capture, yoniq_audio_device_info *out_devices, int max_count)
 {
-    if (!g_context_initialized)
-    {
-        return -1;
-    }
-
     /* ma_context_enumerate_devices (callback-based) chosen over ma_context_get_devices
      * deliberately: the latter returns context-owned memory invalidated by the next call to it,
      * guarded by a lock that (per independent review) supports but doesn't by itself prove safety
@@ -242,9 +262,18 @@ int yoniq_audio_enumerate_devices(int is_capture, yoniq_audio_device_info *out_d
     state.max_count = max_count;
     state.count = 0;
 
-    /* See g_context_mutex's own doc comment: this shares the context's mainloop with
-     * get_native_formats/session-open, none of which are individually thread-safe. */
+    /* Second-opus-review fix: lock FIRST, check g_context_initialized while holding the lock --
+     * see g_context_mutex's own doc comment for why the previous check-then-lock ordering was a
+     * real TOCTOU race against a concurrent yoniq_audio_context_uninit. Also shares the mutex with
+     * get_native_formats/session-open, none of which are individually thread-safe against each
+     * other either. */
     yoniq_mutex_lock(&g_context_mutex);
+    if (!g_context_initialized)
+    {
+        yoniq_mutex_unlock(&g_context_mutex);
+        return -1;
+    }
+
     ma_result result = ma_context_enumerate_devices(&g_context, enum_callback, &state);
     yoniq_mutex_unlock(&g_context_mutex);
     if (result != MA_SUCCESS)
@@ -257,19 +286,24 @@ int yoniq_audio_enumerate_devices(int is_capture, yoniq_audio_device_info *out_d
 
 int yoniq_audio_get_native_formats(const char *device_id, int is_capture, yoniq_audio_native_format *out_formats, int max_count)
 {
+    ma_device_info info;
+
+    yoniq_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
+        yoniq_mutex_unlock(&g_context_mutex);
         return -1;
     }
 
+    /* g_context.backend must also be read only while holding the lock: it's part of the same
+     * context state a concurrent uninit could otherwise be tearing down mid-read. */
     ma_device_id id;
     if (string_to_device_id(g_context.backend, device_id, &id) != 0)
     {
+        yoniq_mutex_unlock(&g_context_mutex);
         return -1;
     }
 
-    ma_device_info info;
-    yoniq_mutex_lock(&g_context_mutex);
     ma_result result = ma_context_get_device_info(&g_context, is_capture ? ma_device_type_capture : ma_device_type_playback, &id, &info);
     yoniq_mutex_unlock(&g_context_mutex);
     if (result != MA_SUCCESS)
@@ -318,19 +352,28 @@ static void spike_capture_data_callback(ma_device *pDevice, void *pOutput, const
 
 int yoniq_audio_spike_capture_test(const char *device_id, int duration_ms, float *peak_out)
 {
+    spike_capture_state state;
+    state.peak = 0.0f;
+
+    /* ma_device_init's own source/sink-info lookup touches the shared context's mainloop (see
+     * g_context_mutex's doc comment), so both the flag check and string_to_device_id's read of
+     * g_context.backend must happen under the same lock as init -- ma_device_start is
+     * deliberately excluded (see g_context_mutex's second-opus-review note): once init succeeds,
+     * the device has its own separate mainloop/context and start doesn't touch the shared one. */
+    ma_device_id id;
+    ma_device device;
+    yoniq_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
+        yoniq_mutex_unlock(&g_context_mutex);
         return -1;
     }
 
-    ma_device_id id;
     if (string_to_device_id(g_context.backend, device_id, &id) != 0)
     {
+        yoniq_mutex_unlock(&g_context_mutex);
         return -2; /* unsupported backend for this spike */
     }
-
-    spike_capture_state state;
-    state.peak = 0.0f;
 
     ma_device_config config = ma_device_config_init(ma_device_type_capture);
     config.capture.pDeviceID = &id;
@@ -340,20 +383,14 @@ int yoniq_audio_spike_capture_test(const char *device_id, int duration_ms, float
     config.dataCallback = spike_capture_data_callback;
     config.pUserData = &state;
 
-    /* ma_device_init's own source/sink-info lookup touches the shared context's mainloop (see
-     * g_context_mutex's doc comment) -- locked only around init+start, not the whole function:
-     * once running, the device has its own separate mainloop/context and no longer needs this. */
-    ma_device device;
-    yoniq_mutex_lock(&g_context_mutex);
     ma_result init_result = ma_device_init(&g_context, &config, &device);
+    yoniq_mutex_unlock(&g_context_mutex);
     if (init_result != MA_SUCCESS)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
         return -3;
     }
 
     ma_result start_result = ma_device_start(&device);
-    yoniq_mutex_unlock(&g_context_mutex);
     if (start_result != MA_SUCCESS)
     {
         ma_device_uninit(&device);
@@ -525,13 +562,21 @@ static void capture_session_notification_callback(const ma_device_notification *
 
 yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device_id, int sample_rate, int ring_capacity_frames)
 {
+    /* Second-opus-review fix: flag check + g_context.backend read both moved inside the lock (see
+     * g_context_mutex's doc comment) -- two short critical sections (id resolution, then init)
+     * rather than one long one, each re-checking g_context_initialized since a concurrent uninit
+     * could run in the gap between them. */
+    ma_device_id id;
+    yoniq_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
+        yoniq_mutex_unlock(&g_context_mutex);
         return NULL;
     }
 
-    ma_device_id id;
-    if (string_to_device_id(g_context.backend, device_id, &id) != 0)
+    int id_result = string_to_device_id(g_context.backend, device_id, &id);
+    yoniq_mutex_unlock(&g_context_mutex);
+    if (id_result != 0)
     {
         return NULL;
     }
@@ -563,10 +608,11 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
     config.pUserData = session;
 
     /* See g_context_mutex's doc comment: init's own source-info lookup touches the shared
-     * context's mainloop, concurrently with any enumeration/probing/other session opens. */
+     * context's mainloop, concurrently with any enumeration/probing/other session opens.
+     * ma_device_start is deliberately NOT covered -- it only touches this device's own separate
+     * mainloop once init has succeeded. */
     yoniq_mutex_lock(&g_context_mutex);
-    ma_result init_result = ma_device_init(&g_context, &config, &session->device);
-    if (init_result != MA_SUCCESS)
+    if (!g_context_initialized)
     {
         yoniq_mutex_unlock(&g_context_mutex);
         yoniq_audio_ring_destroy(session->ring);
@@ -574,8 +620,16 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
         return NULL;
     }
 
-    ma_result start_result = ma_device_start(&session->device);
+    ma_result init_result = ma_device_init(&g_context, &config, &session->device);
     yoniq_mutex_unlock(&g_context_mutex);
+    if (init_result != MA_SUCCESS)
+    {
+        yoniq_audio_ring_destroy(session->ring);
+        free(session);
+        return NULL;
+    }
+
+    ma_result start_result = ma_device_start(&session->device);
     if (start_result != MA_SUCCESS)
     {
         ma_device_uninit(&session->device);
@@ -668,13 +722,18 @@ static void playback_session_notification_callback(const ma_device_notification 
 
 yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *device_id, int sample_rate, int ring_capacity_frames)
 {
+    /* See yoniq_audio_capture_session_open's identical pattern and comment. */
+    ma_device_id id;
+    yoniq_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
+        yoniq_mutex_unlock(&g_context_mutex);
         return NULL;
     }
 
-    ma_device_id id;
-    if (string_to_device_id(g_context.backend, device_id, &id) != 0)
+    int id_result = string_to_device_id(g_context.backend, device_id, &id);
+    yoniq_mutex_unlock(&g_context_mutex);
+    if (id_result != 0)
     {
         return NULL;
     }
@@ -705,10 +764,10 @@ yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *devi
     config.notificationCallback = playback_session_notification_callback;
     config.pUserData = session;
 
-    /* See g_context_mutex's doc comment. */
+    /* See g_context_mutex's doc comment. ma_device_start deliberately not covered -- see the
+     * capture session's identical comment. */
     yoniq_mutex_lock(&g_context_mutex);
-    ma_result init_result = ma_device_init(&g_context, &config, &session->device);
-    if (init_result != MA_SUCCESS)
+    if (!g_context_initialized)
     {
         yoniq_mutex_unlock(&g_context_mutex);
         yoniq_audio_ring_destroy(session->ring);
@@ -716,8 +775,16 @@ yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *devi
         return NULL;
     }
 
-    ma_result start_result = ma_device_start(&session->device);
+    ma_result init_result = ma_device_init(&g_context, &config, &session->device);
     yoniq_mutex_unlock(&g_context_mutex);
+    if (init_result != MA_SUCCESS)
+    {
+        yoniq_audio_ring_destroy(session->ring);
+        free(session);
+        return NULL;
+    }
+
+    ma_result start_result = ma_device_start(&session->device);
     if (start_result != MA_SUCCESS)
     {
         ma_device_uninit(&session->device);
