@@ -13,7 +13,7 @@ public class MiniAudioPlaybackSessionTests
 {
     private const int SampleRate = 44100;
 
-    [Fact]
+    [RequiresPipeWireFact]
     public async Task Write_PlaysRealAudibleTone_CapturedBackViaMonitor()
     {
         var sinkName = $"sstv_playback_test_{Guid.NewGuid():N}";
