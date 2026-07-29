@@ -125,6 +125,28 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
         }
     }
 
+    /// <summary>Piece Engine 0: cumulative count of real-time callbacks in which the ring could not
+    /// hold everything captured (the managed drain side fell behind, and the newest incoming
+    /// frames were dropped -- see the class doc comment's overrun policy). Mirrors
+    /// <see cref="MiniAudioPlaybackSession.UnderrunCount"/>'s own shape: a raw counter for the
+    /// caller to interpret, not itself a verdict.</summary>
+    public int OverrunCount
+    {
+        get
+        {
+            _lifetimeLock.EnterReadLock();
+            try
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return NativeAudio.yoniq_audio_capture_session_overrun_count(_handle);
+            }
+            finally
+            {
+                _lifetimeLock.ExitReadLock();
+            }
+        }
+    }
+
     /// <summary>True if the most recent <see cref="Dispose"/> call's native close timed out
     /// (see <see cref="CloseTimeout"/>'s doc comment) rather than completing normally. Exposed so
     /// callers/tests can detect and report this rare condition instead of it silently vanishing --

@@ -69,6 +69,13 @@ public class MiniAudioCaptureSessionTests
             var peak = allSamples.Max(Math.Abs);
             Assert.True(peak > 0.0f, $"Captured audio was silent (peak={peak}) -- session opened but no real audio flowed through the drain path.");
             Assert.False(session.HasStopped, "Session should not report stopped while the device is still active.");
+
+            // Piece Engine 0: the default 16384-frame ring against a 5s tone at 44100Hz has no
+            // reason to overflow in this short, clean run -- matches this codebase's existing
+            // convention of not trying to deterministically force a hardware-timing-dependent
+            // counter (see UnderrunCount, exercised the same way), just proving the counter is
+            // reachable and sane during real, real-time-callback-driven capture.
+            Assert.Equal(0, session.OverrunCount);
         }
         finally
         {
