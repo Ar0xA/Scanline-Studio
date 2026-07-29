@@ -99,6 +99,9 @@ internal static class NativeAudio
     [DllImport(LibraryName)]
     internal static extern int yoniq_audio_playback_session_check_and_clear_stopped(IntPtr session);
 
+    [DllImport(LibraryName)]
+    internal static extern unsafe int yoniq_audio_resample_f32(float* input, int inputFrameCount, int sampleRateIn, int sampleRateOut, int lpfOrder, float* output, int outputCapacityFrames);
+
     /// <summary>Decodes a null-terminated, fixed-size native byte buffer (UTF-8, matching this
     /// shim's own convention for device ids/names) into a C# string.</summary>
     internal static string DecodeFixedString(byte[] buffer)

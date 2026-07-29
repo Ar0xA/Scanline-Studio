@@ -163,6 +163,25 @@ int yoniq_audio_playback_session_underrun_count(yoniq_audio_playback_session *se
 
 int yoniq_audio_playback_session_check_and_clear_stopped(yoniq_audio_playback_session *session);
 
+/*
+ * Piece Audio 6b: device-free, one-shot batch resampling using miniaudio's own ma_resampler --
+ * exists purely to let a CI-safe test measure whether the default linear resampler (the same one
+ * miniaudio's own data converter uses internally for capture/playback sample-rate conversion,
+ * pieces Audio 5/6) meaningfully degrades the existing SSTV encode/decode round trip when a
+ * signal is forced through an upsample-then-downsample pair, simulating "encoded at 44100Hz,
+ * played to/captured from a 48000Hz native device." No device is opened here at all.
+ */
+
+/* Resamples input (input_frame_count mono f32 frames at sample_rate_in) to sample_rate_out,
+ * writing up to output_capacity_frames frames into output. lpf_order selects the linear
+ * resampler's low-pass filter order: pass -1 for miniaudio's own default (4), 0 to disable
+ * filtering entirely, or an explicit order. Internally loops
+ * ma_resampler_process_pcm_frames until all of input_frame_count has been consumed. Returns the
+ * number of output frames actually written, or -1 on error (including output_capacity_frames
+ * being too small to hold the fully resampled result). */
+int yoniq_audio_resample_f32(const float *input, int input_frame_count, int sample_rate_in,
+                              int sample_rate_out, int lpf_order, float *output, int output_capacity_frames);
+
 #ifdef __cplusplus
 }
 #endif

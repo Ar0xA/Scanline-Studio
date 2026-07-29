@@ -19,6 +19,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Yoniq.Core.Audio.MiniAudio\Yoniq.Core.Audio.MiniAudio.csproj" />
+    <!-- Audio 6b only: the resampler-quality round trip reuses the SSTV encoder/decoder as its
+         real-world signal source. No other test in this project needs these. -->
+    <ProjectReference Include="..\..\src\Yoniq.Core.Sstv\Yoniq.Core.Sstv.csproj" />
+    <ProjectReference Include="..\..\src\Yoniq.Core.Imaging\Yoniq.Core.Imaging.csproj" />
+    <ProjectReference Include="..\..\src\Yoniq.Core.Audio\Yoniq.Core.Audio.csproj" />
   </ItemGroup>
 
   <!--
