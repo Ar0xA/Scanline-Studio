@@ -79,6 +79,19 @@ public sealed class MiniAudioEngine : IAudioEngine
 
     public event Action<ReadOnlyMemory<float>>? SamplesCaptured;
 
+    /// <summary>Piece Engine 5a: diagnostic pass-through to the active capture session's own
+    /// <see cref="MiniAudioCaptureSession.OverrunCount"/> (piece Engine 0) -- not part of
+    /// <see cref="IAudioEngine"/> itself (no interface change), same pattern as the session types'
+    /// own extra diagnostic members (e.g. <c>TimedOutDuringClose</c>) that go beyond what any
+    /// interface requires. 0 when capture isn't started, matching "nothing to report" rather than
+    /// throwing.</summary>
+    public int CaptureOverrunCount => _captureSession?.OverrunCount ?? 0;
+
+    /// <summary>Piece Engine 5a: diagnostic pass-through to the active playback session's own
+    /// <see cref="MiniAudioPlaybackSession.UnderrunCount"/>. See <see cref="CaptureOverrunCount"/>'s
+    /// own doc comment for the same reasoning.</summary>
+    public int PlaybackUnderrunCount => _playbackSession?.UnderrunCount ?? 0;
+
     public async Task StartCaptureAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
