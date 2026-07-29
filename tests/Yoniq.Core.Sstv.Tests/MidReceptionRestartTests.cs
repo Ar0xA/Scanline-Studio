@@ -61,12 +61,14 @@ public class MidReceptionRestartTests
         Assert.Equal(mode.Id, detectedModes[1].Id);
         Assert.Equal(1, restartCount);
 
-        // Measured, not assumed: 9.81. Resolved via VisLockStateMachine's own anchor (the same
-        // ~7ms-lag mechanism documented on that class), not the exact fixed-window path -- close to
-        // but under the standard 10.0 tolerance, consistent with that already-known, already-measured
-        // cost rather than a new imprecision introduced by piece 6c/6d specifically.
+        // Measured, not assumed: 11.84 (re-measured after piece 7c; was 9.81 before it). Resolved via
+        // VisLockStateMachine's own anchor -- as of 7c, that anchor's own tolerance grew from 10.0 to
+        // 13.0 (see VisLockStateMachineDecoderTests' doc comment for why: CLVL's AGC now correctly
+        // hard-clips a full-amplitude tone, adding real, legacy-faithful noise to the exact trigger
+        // sample). 14.0 gives the same kind of headroom here, not a new imprecision introduced by
+        // piece 6c/6d specifically.
         var delta = MeasureDelta(sourceImage2, decodedImages[1]);
-        Assert.True(delta <= 10.0, $"Second (real) transmission average per-channel delta {delta:F2} exceeded tolerance.");
+        Assert.True(delta <= 14.0, $"Second (real) transmission average per-channel delta {delta:F2} exceeded tolerance.");
     }
 
     private static ArrayImageSource CreateGradientTestImage(int width, int height, int offset)

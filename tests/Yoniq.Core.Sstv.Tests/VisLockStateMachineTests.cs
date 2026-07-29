@@ -118,10 +118,21 @@ public class VisLockStateMachineTests
 
     private static (SstvModeDefinition Mode, int LineStartSample)? FeedUntilLocked(float[] samples)
     {
-        var machine = new VisLockStateMachine(SampleRate);
+        // As of piece 7c, ProcessSample expects the shared AGC'd/scaled signal (see its own doc
+        // comment), not a raw sample -- mirrors AnalogFmSstvDecoder.AgcSampleAt exactly (same scale
+        // bridge, same LevelAgc.Do/Fix/Agc call order) so this isolated test still exercises the
+        // real absolute-threshold conditions rather than silently reverting to the pre-7c relative-
+        // only ones.
+        var machine = new VisLockStateMachine(SampleRate, AnalogFmSstvDecoder.SLvl, AnalogFmSstvDecoder.SLvl2);
+        var agc = new LevelAgc(SampleRate);
         foreach (var sample in samples)
         {
-            var result = machine.ProcessSample(sample);
+            var scaled = sample * 32768.0;
+            agc.Do(scaled);
+            agc.Fix();
+            var agcSample = Math.Clamp(agc.Agc(scaled) * 32.0, -16384.0, 16384.0);
+
+            var result = machine.ProcessSample(agcSample);
             if (result is not null)
             {
                 return result;
