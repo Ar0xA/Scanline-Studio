@@ -46,6 +46,33 @@ int yoniq_audio_enumerate_devices(int is_capture, yoniq_audio_device_info *out_d
  * success, nonzero if the device could not be opened or started. */
 int yoniq_audio_spike_capture_test(const char *device_id, int duration_ms, float *peak_out);
 
+/*
+ * Piece Audio 3: a standalone lock-free single-producer/single-consumer ring buffer, built on
+ * miniaudio's own ma_pcm_rb (already implemented and battle-tested in the library, not
+ * reinvented). Deliberately independent of any real audio device here -- proving the ring's own
+ * produce/consume/wraparound correctness in isolation, before piece Audio 5 wires a real capture
+ * device's native callback to write into one of these and a managed drain thread to read from it.
+ */
+
+typedef struct yoniq_audio_ring yoniq_audio_ring;
+
+/* Creates a ring buffer holding up to capacity_frames frames of `channels` channels each (f32).
+ * Returns NULL on allocation/init failure. */
+yoniq_audio_ring *yoniq_audio_ring_create(int capacity_frames, int channels);
+
+void yoniq_audio_ring_destroy(yoniq_audio_ring *ring);
+
+/* Writes up to frame_count frames from data (channels*frame_count floats, interleaved) into the
+ * ring. Never blocks: if the ring doesn't have room for all of frame_count, writes as many as fit
+ * and returns that (possibly smaller) count -- the same "may not accept everything" shape as
+ * IAudioEngine.EnqueuePlaybackSamples on the C# side (see piece Audio 2). Returns -1 on error. */
+int yoniq_audio_ring_write(yoniq_audio_ring *ring, const float *data, int frame_count);
+
+/* Reads up to frame_count frames from the ring into out_data. Never blocks: if fewer than
+ * frame_count frames are available, reads as many as are and returns that (possibly smaller)
+ * count. Returns -1 on error. */
+int yoniq_audio_ring_read(yoniq_audio_ring *ring, float *out_data, int frame_count);
+
 #ifdef __cplusplus
 }
 #endif
