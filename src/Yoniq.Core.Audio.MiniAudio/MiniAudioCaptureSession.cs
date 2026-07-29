@@ -19,6 +19,15 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     // asks for per poll.
     private const int DrainBufferFrames = 4096;
 
+    // Piece Audio 8: measured directly in this project's own dev sandbox -- disposing a capture
+    // session whose virtual sink had already been unloaded (a real hot-unplug) can hang the
+    // closing call indefinitely (observed past 8 minutes with no timeout of its own). Root cause,
+    // confirmed by reading the pinned miniaudio.h directly: the PulseAudio backend's blocking
+    // ma_wait_for_operation__pulse loops on `pa_operation_get_state(...) != RUNNING` with no
+    // timeout of its own, and the server never transitions that operation out of RUNNING once its
+    // backing sink is gone. See Dispose's own comment for the mitigation.
+    private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(5);
+
     private readonly IntPtr _handle;
     private readonly Thread _drainThread;
     private volatile bool _stopping;
@@ -53,9 +62,24 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     public event Action<ReadOnlyMemory<float>>? SamplesAvailable;
 
     /// <summary>True if the underlying device's own notification callback reported the stream
-    /// stopped since this was last checked (clears the flag on read) -- piece Audio 8 is what
-    /// actually exercises this against a real device disappearing mid-capture.</summary>
+    /// stopped since this was last checked (clears the flag on read). Piece Audio 8 verified this
+    /// against a real device disappearing mid-capture (a virtual sink unloaded while its monitor
+    /// was open) and found this does NOT become true in that case: on the PulseAudio backend, the
+    /// "stopped" notification is only ever raised from the stream's suspend callback (a literal
+    /// server-side suspend/resume, e.g. `pa_stream_is_suspended`), never from the stream silently
+    /// dying because its backing device is gone -- confirmed directly against the pinned
+    /// miniaudio.h (`ma_device_on_suspended__pulse` is the only caller of
+    /// `ma_device__on_notification_stopped` for this backend). Real hot-unplug on Linux instead
+    /// shows up as <see cref="SamplesAvailable"/> simply going quiet forever -- callers needing to
+    /// detect that should track time since their last received chunk, not rely on this flag.</summary>
     public bool HasStopped => NativeAudio.yoniq_audio_capture_session_check_and_clear_stopped(_handle) != 0;
+
+    /// <summary>True if the most recent <see cref="Dispose"/> call's native close timed out
+    /// (see <see cref="CloseTimeout"/>'s doc comment) rather than completing normally. Exposed so
+    /// callers/tests can detect and report this rare condition instead of it silently vanishing --
+    /// the close call itself is abandoned on its own background thread when this happens, a
+    /// deliberate, accepted leak far preferable to hanging the disposing thread forever.</summary>
+    public bool TimedOutDuringClose { get; private set; }
 
     private void DrainLoop()
     {
@@ -88,7 +112,22 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
         {
             _stopping = true;
             _drainThread.Join();
-            NativeAudio.yoniq_audio_capture_session_close(_handle);
+
+            // Run the native close on its own thread and bound the wait -- see CloseTimeout's doc
+            // comment for why this is necessary (a confirmed, reproducible hang otherwise). A P/Invoke
+            // call in progress cannot be safely cancelled/aborted once started, so a timeout here
+            // means abandoning that thread (and the underlying native handle) rather than actually
+            // stopping it; in the overwhelmingly common case (device still present) this thread
+            // finishes near-instantly and joins normally.
+            var handle = _handle;
+            var closeThread = new Thread(() => NativeAudio.yoniq_audio_capture_session_close(handle))
+            {
+                IsBackground = true,
+                Name = "MiniAudioCaptureClose",
+            };
+            closeThread.Start();
+            TimedOutDuringClose = !closeThread.Join(CloseTimeout);
+
             _disposed = true;
         }
     }
