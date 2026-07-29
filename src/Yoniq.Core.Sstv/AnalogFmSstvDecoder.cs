@@ -214,7 +214,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         for (var i = 0; i < span.Length; i++)
         {
             _rawSamples.Add(span[i]);
-            _demodulatedFrequencies.Add(_demodulator.ProcessSample(span[i]));
+            // Scale bridge -- see PllFmDemodulator's own doc comment: legacy's CPLL AGC assumes
+            // int16-scaled input, this port's raw samples are float in [-1.0, 1.0]. Same bridge
+            // AgcSampleAt already applies for LevelAgc.
+            _demodulatedFrequencies.Add(_demodulator.ProcessSample(span[i] * 32768.0));
         }
 
         TryProcessBuffer();

@@ -13,6 +13,23 @@ namespace Yoniq.Core.Sstv;
 /// (<c>centerFrequencyHz - normalizedOutput * bandwidthHz</c>), since that's what this decoder's
 /// pixel-mapping needs; the derivation is in the spec/06-sstv-dsp.md parity notes, not yet
 /// cross-checked against a captured legacy golden vector.
+///
+/// Scale bridge (found by the holistic review of the VIS/preamble-lock system, same category as
+/// <c>LevelAgc</c>'s own): <c>CPLL::Do</c>'s AGC (<c>sstv.cpp:316-343</c>) resets its own tracking
+/// window to <c>m_Max=1.0; m_Min=-1.0</c> every half-cycle -- the *same* literal ±1.0 floor this
+/// class uses (<see cref="_max"/>/<see cref="_min"/>). Legacy's real input is int16-scaled, so that
+/// floor only ever binds during near-silence; for legacy, a real full-scale signal always exceeds
+/// it and the AGC adapts to the signal's *actual* peak-to-peak range. This port's raw samples are
+/// float in [-1.0, 1.0] (`spec/05-audio-engine.md:44`), so a full-scale signal sits *exactly* at the
+/// floor -- coincidentally converging to the same effective gain as legacy's own full-scale case
+/// (both settle on `5.0/2.0 = 2.5`), which is why every fixture in this suite (all full-scale) was
+/// unaffected by this gap and it went unnoticed. Below full scale, though, the floor never releases:
+/// the AGC stays pinned at 2.5 regardless of actual signal amplitude, so loop drive falls linearly
+/// with input level instead of staying normalized -- this port's PLL has effectively no AGC at all
+/// for anything quieter than 0dBFS, unlike legacy's. Callers must scale by 32768.0 before calling
+/// <see cref="ProcessSample"/>, mirroring the exact bridge <c>LevelAgc</c> already uses (see that
+/// class's own doc comment) -- keeping every constant inside this class itself (the ±1.0 floor, the
+/// `5.0` target) literally identical to legacy's.
 /// </summary>
 internal sealed class PllFmDemodulator
 {
