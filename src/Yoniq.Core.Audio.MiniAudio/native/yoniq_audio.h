@@ -87,6 +87,10 @@ int yoniq_audio_ring_write(yoniq_audio_ring *ring, const float *data, int frame_
  * count. Returns -1 on error. */
 int yoniq_audio_ring_read(yoniq_audio_ring *ring, float *out_data, int frame_count);
 
+/* Returns how many frames are currently buffered in the ring, available to be read without
+ * blocking. Returns -1 on error. */
+int yoniq_audio_ring_available_read(yoniq_audio_ring *ring);
+
 /*
  * Piece Audio 5: the real capture path. A real-time native callback (never entering managed
  * code, see LevelAgc-style reasoning already established for the ring itself in piece Audio 3)
@@ -120,6 +124,44 @@ int yoniq_audio_capture_session_read(yoniq_audio_capture_session *session, float
  * in piece Audio 5, rather than bolted on later) -- piece Audio 8 is what actually exercises this
  * against a real device disappearing mid-capture. */
 int yoniq_audio_capture_session_check_and_clear_stopped(yoniq_audio_capture_session *session);
+
+/*
+ * Piece Audio 6: the real playback path -- the mirror image of piece Audio 5's capture session.
+ * Managed code writes samples into an internal ring via yoniq_audio_playback_session_write; the
+ * real-time native callback (never entering managed code) pulls from that ring to fill the
+ * device's own output buffer, padding with silence on underrun rather than emitting
+ * garbage/uninitialized audio.
+ */
+
+typedef struct yoniq_audio_playback_session yoniq_audio_playback_session;
+
+/* Opens and starts playing to the named device. ring_capacity_frames sizes the buffer between
+ * managed writes and the real-time pull callback. Returns NULL on failure. */
+yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *device_id, int sample_rate, int ring_capacity_frames);
+
+void yoniq_audio_playback_session_close(yoniq_audio_playback_session *session);
+
+/* Enqueues up to frame_count frames from data for playback. Never blocks: if the ring doesn't
+ * have room for all of it, writes as many as fit and returns that (possibly smaller) count --
+ * this is the direct native backing for IAudioEngine.EnqueuePlaybackSamples's own "returns
+ * accepted count" contract (piece Audio 2). Returns -1 on error. */
+int yoniq_audio_playback_session_write(yoniq_audio_playback_session *session, const float *data, int frame_count);
+
+/* Returns how many enqueued frames have not yet actually been played (still sitting in the ring).
+ * Callers implementing IAudioEngine.StopPlaybackAsync's "block until everything has actually
+ * played out" contract (piece Audio 2) should poll this down to 0 before closing the session --
+ * closing early would truncate the tail of a real transmission. Returns -1 on error. */
+int yoniq_audio_playback_session_pending_frames(yoniq_audio_playback_session *session);
+
+/* Returns the cumulative count of frames the real-time callback has had to pad with silence
+ * because the ring ran dry (an underrun) since the session was opened. Distinguishing an expected
+ * underrun (nothing left to play, transmission legitimately finished) from an unwanted one
+ * (managed code fell behind mid-transmission) requires knowing how many frames were actually
+ * enqueued vs. expected to play -- context only the caller has, not this shim -- so this is a raw
+ * counter for the caller to interpret, not a verdict. */
+int yoniq_audio_playback_session_underrun_count(yoniq_audio_playback_session *session);
+
+int yoniq_audio_playback_session_check_and_clear_stopped(yoniq_audio_playback_session *session);
 
 #ifdef __cplusplus
 }

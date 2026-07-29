@@ -404,6 +404,16 @@ int yoniq_audio_ring_read(yoniq_audio_ring *ring, float *out_data, int frame_cou
     return total_read;
 }
 
+int yoniq_audio_ring_available_read(yoniq_audio_ring *ring)
+{
+    if (ring == NULL)
+    {
+        return -1;
+    }
+
+    return (int)ma_pcm_rb_available_read(&ring->rb);
+}
+
 /*
  * Piece Audio 5: the real capture path. See yoniq_audio.h's own doc comment on
  * yoniq_audio_capture_session_open for the design.
@@ -522,6 +532,162 @@ int yoniq_audio_capture_session_read(yoniq_audio_capture_session *session, float
 }
 
 int yoniq_audio_capture_session_check_and_clear_stopped(yoniq_audio_capture_session *session)
+{
+    if (session == NULL)
+    {
+        return 0;
+    }
+
+    int was_stopped = session->stopped;
+    session->stopped = 0;
+    return was_stopped;
+}
+
+/*
+ * Piece Audio 6: the real playback path -- see yoniq_audio.h's own doc comment on
+ * yoniq_audio_playback_session_open for the design.
+ */
+
+struct yoniq_audio_playback_session
+{
+    ma_device device;
+    yoniq_audio_ring *ring;
+    volatile int stopped;         /* see yoniq_audio_capture_session's own comment on this field --
+                                    * same single-writer/single-reader reasoning applies here. */
+    volatile int underrun_count;
+};
+
+static void playback_session_data_callback(ma_device *pDevice, void *pOutput, const void *pInput, ma_uint32 frameCount)
+{
+    (void)pInput;
+    yoniq_audio_playback_session *session = (yoniq_audio_playback_session *)pDevice->pUserData;
+
+    int frames_read = yoniq_audio_ring_read(session->ring, (float *)pOutput, (int)frameCount);
+    if (frames_read < 0)
+    {
+        frames_read = 0;
+    }
+
+    if ((ma_uint32)frames_read < frameCount)
+    {
+        /* Underrun: not enough buffered data to fill this callback. Pad the remainder with
+         * silence -- never leave garbage/uninitialized samples in the device's own output
+         * buffer. Mono (1 channel), matching this session's own fixed config below. */
+        float *output = (float *)pOutput;
+        memset(output + frames_read, 0, ((size_t)frameCount - (size_t)frames_read) * sizeof(float));
+        session->underrun_count++;
+    }
+}
+
+static void playback_session_notification_callback(const ma_device_notification *pNotification)
+{
+    if (pNotification->type == ma_device_notification_type_stopped)
+    {
+        yoniq_audio_playback_session *session = (yoniq_audio_playback_session *)pNotification->pDevice->pUserData;
+        session->stopped = 1;
+    }
+}
+
+yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *device_id, int sample_rate, int ring_capacity_frames)
+{
+    if (!g_context_initialized)
+    {
+        return NULL;
+    }
+
+    ma_device_id id;
+    if (string_to_device_id(g_context.backend, device_id, &id) != 0)
+    {
+        return NULL;
+    }
+
+    yoniq_audio_playback_session *session = (yoniq_audio_playback_session *)malloc(sizeof(yoniq_audio_playback_session));
+    if (session == NULL)
+    {
+        return NULL;
+    }
+
+    session->stopped = 0;
+    session->underrun_count = 0;
+    session->ring = yoniq_audio_ring_create(ring_capacity_frames, 1);
+    if (session->ring == NULL)
+    {
+        free(session);
+        return NULL;
+    }
+
+    ma_device_config config = ma_device_config_init(ma_device_type_playback);
+    config.playback.pDeviceID = &id;
+    config.playback.format = ma_format_f32;
+    config.playback.channels = 1;
+    config.sampleRate = (ma_uint32)sample_rate;
+    config.dataCallback = playback_session_data_callback;
+    /* Same reasoning as the capture session: must be set here, at config/init time -- miniaudio
+     * has no way to attach a notification callback to an already-initialized device. */
+    config.notificationCallback = playback_session_notification_callback;
+    config.pUserData = session;
+
+    if (ma_device_init(&g_context, &config, &session->device) != MA_SUCCESS)
+    {
+        yoniq_audio_ring_destroy(session->ring);
+        free(session);
+        return NULL;
+    }
+
+    if (ma_device_start(&session->device) != MA_SUCCESS)
+    {
+        ma_device_uninit(&session->device);
+        yoniq_audio_ring_destroy(session->ring);
+        free(session);
+        return NULL;
+    }
+
+    return session;
+}
+
+void yoniq_audio_playback_session_close(yoniq_audio_playback_session *session)
+{
+    if (session == NULL)
+    {
+        return;
+    }
+
+    ma_device_uninit(&session->device); /* also stops it first */
+    yoniq_audio_ring_destroy(session->ring);
+    free(session);
+}
+
+int yoniq_audio_playback_session_write(yoniq_audio_playback_session *session, const float *data, int frame_count)
+{
+    if (session == NULL)
+    {
+        return -1;
+    }
+
+    return yoniq_audio_ring_write(session->ring, data, frame_count);
+}
+
+int yoniq_audio_playback_session_pending_frames(yoniq_audio_playback_session *session)
+{
+    if (session == NULL)
+    {
+        return -1;
+    }
+
+    return yoniq_audio_ring_available_read(session->ring);
+}
+
+int yoniq_audio_playback_session_underrun_count(yoniq_audio_playback_session *session)
+{
+    if (session == NULL)
+    {
+        return -1;
+    }
+
+    return session->underrun_count;
+}
+
+int yoniq_audio_playback_session_check_and_clear_stopped(yoniq_audio_playback_session *session)
 {
     if (session == NULL)
     {
