@@ -32,14 +32,15 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     private readonly Thread _drainThread;
     private volatile bool _stopping;
 
-    // Second-opus-review fix: an int, not a bool, so Dispose can use Interlocked.Exchange to make
-    // "check and mark disposed" a single atomic step -- a plain `if (!_disposed) {...}` lets two
-    // concurrent Dispose calls both pass the check and both run the teardown (double native
-    // close, double free, double MiniAudioContext.Release -- an underflowed refcount). This
-    // matters more now that the self-join fix legitimizes disposing from inside a
-    // SamplesAvailable callback, which makes "the subscriber disposes, and the owner's `using`
-    // also disposes" a realistic shape, not just a theoretical one.
-    private int _disposed;
+    // Third-opus-review fix: second-opus-review's Interlocked.Exchange on _disposed only made
+    // Dispose-vs-Dispose safe, not Dispose racing a concurrent HasStopped call on another thread --
+    // see MiniAudioPlaybackSession's identical field/fix for the full reasoning (same class of bug,
+    // same fix: a ReaderWriterLockSlim around every externally-callable member, with Dispose as
+    // the writer). DrainLoop's OWN native read call is deliberately NOT put behind this lock --
+    // see DrainLoop's own comment for why that's still safe and why adding it there would risk
+    // reintroducing a self-deadlock in the self-dispose path.
+    private readonly ReaderWriterLockSlim _lifetimeLock = new(LockRecursionPolicy.NoRecursion);
+    private bool _disposed;
 
     /// <param name="deviceId">A capture device id, as returned by
     /// <see cref="MiniAudioDeviceEnumerator"/>.</param>
@@ -84,7 +85,16 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     /// independently-owned array (opus-review fix: previously a view into a scratch buffer this
     /// class overwrites on its very next drain iteration, so a subscriber that didn't copy
     /// synchronously could observe silently-corrupted data) -- safe to store or process
-    /// asynchronously.</summary>
+    /// asynchronously.
+    ///
+    /// Slow-subscriber behavior (CLAUDE.md's concurrency/scheduler rule): a handler that blocks
+    /// blocks this drain thread, which back-pressures into the native ring -- the real-time
+    /// callback feeding it drops the newest incoming frames once full (never blocks, never
+    /// corrupts/reorders, see the class doc comment's overrun policy), so RX samples are lost, not
+    /// corrupted. A handler that blocks indefinitely also blocks <see cref="Dispose"/>'s
+    /// <c>_drainThread.Join()</c> indefinitely -- unlike every native call this class makes, that
+    /// join has no timeout, because the only thing that can make it hang is managed subscriber
+    /// code, not an external device/server.</summary>
     public event Action<ReadOnlyMemory<float>>? SamplesAvailable;
 
     /// <summary>True if the underlying device's own notification callback reported the stream
@@ -102,8 +112,16 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     {
         get
         {
-            ObjectDisposedException.ThrowIf(_disposed != 0, this);
-            return NativeAudio.yoniq_audio_capture_session_check_and_clear_stopped(_handle) != 0;
+            _lifetimeLock.EnterReadLock();
+            try
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return NativeAudio.yoniq_audio_capture_session_check_and_clear_stopped(_handle) != 0;
+            }
+            finally
+            {
+                _lifetimeLock.ExitReadLock();
+            }
         }
     }
 
@@ -121,6 +139,18 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
 
     private void DrainLoop()
     {
+        // Third-opus-review note: this native read call is deliberately NOT guarded by
+        // _lifetimeLock. It doesn't need to be -- the normal-case ordering (Dispose sets
+        // _stopping, then Join()s this very thread before ever touching the native handle again)
+        // already guarantees this call and the close can never run concurrently, with or without
+        // the lock. Adding the lock here would only introduce risk: in the self-dispose path (see
+        // Dispose's own comment), Dispose runs ON this thread, from inside the SamplesAvailable
+        // invocation below -- if this read call held the read lock across that invocation, Dispose
+        // trying to take the write lock from the same thread would self-deadlock (ReaderWriterLockSlim
+        // has no support for a thread upgrading its own read lock to a write lock). Keeping the
+        // lock scoped to *only* the externally-callable members (HasStopped, Dispose) avoids that
+        // entirely, since this loop already releases any interest in _handle before ever invoking
+        // a subscriber.
         var buffer = new float[DrainBufferFrames];
         while (!_stopping)
         {
@@ -177,49 +207,64 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
 
     public void Dispose()
     {
-        // See _disposed's own doc comment for why this is Interlocked.Exchange, not a plain
-        // `if (!_disposed)` check.
-        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        // Third-opus-review fix: _lifetimeLock is deliberately never disposed -- see
+        // MiniAudioRing.Dispose's identical fix and comment for why (a second Dispose call's
+        // EnterWriteLock would otherwise throw on the lock object itself, before ever reaching the
+        // _disposed idempotency check below, which is exactly the bug a new concurrent stress test
+        // caught in the sibling classes). A ReaderWriterLockSlim left for the GC to finalize is a
+        // harmless, tiny cost.
+        _lifetimeLock.EnterWriteLock();
+        try
         {
-            _stopping = true;
-
-            // Self-join guard, found and fixed during the opus-review fix pass: a subscriber to
-            // SamplesAvailable that synchronously completes a TaskCompletionSource without
-            // TaskCreationOptions.RunContinuationsAsynchronously can end up running its own
-            // continuation -- and anything awaited after it, including a call back into this
-            // Dispose -- synchronously on THIS drain thread (this is TaskCompletionSource's own
-            // documented default behavior, not a bug in the TCS itself). Joining ourselves from
-            // our own thread blocks forever with no timeout at all, worse than anything
-            // CloseTimeout guards against below (confirmed reproducible: observed as an
-            // unresponsive test process that only SIGKILL could stop). _stopping is already set
-            // above, so skipping the join here is safe -- DrainLoop will exit on its own the
-            // moment this call (itself running from inside a SamplesAvailable invocation) returns.
-            if (Thread.CurrentThread != _drainThread)
+            if (!_disposed)
             {
-                _drainThread.Join();
+                _disposed = true;
+                _stopping = true;
+
+                // Self-join guard, found and fixed during the opus-review fix pass: a subscriber to
+                // SamplesAvailable that synchronously completes a TaskCompletionSource without
+                // TaskCreationOptions.RunContinuationsAsynchronously can end up running its own
+                // continuation -- and anything awaited after it, including a call back into this
+                // Dispose -- synchronously on THIS drain thread (this is TaskCompletionSource's own
+                // documented default behavior, not a bug in the TCS itself). Joining ourselves from
+                // our own thread blocks forever with no timeout at all, worse than anything
+                // CloseTimeout guards against below (confirmed reproducible: observed as an
+                // unresponsive test process that only SIGKILL could stop). _stopping is already set
+                // above, so skipping the join here is safe -- DrainLoop will exit on its own the
+                // moment this call (itself running from inside a SamplesAvailable invocation, and
+                // therefore not itself holding _lifetimeLock -- see DrainLoop's own comment) returns.
+                if (Thread.CurrentThread != _drainThread)
+                {
+                    _drainThread.Join();
+                }
+
+                // Run the native close on its own thread and bound the wait -- see CloseTimeout's doc
+                // comment for why this is necessary (a confirmed, reproducible hang otherwise). A P/Invoke
+                // call in progress cannot be safely cancelled/aborted once started, so a timeout here
+                // means abandoning that thread (and the underlying native handle) rather than actually
+                // stopping it; in the overwhelmingly common case (device still present) this thread
+                // finishes near-instantly and joins normally. Held under the write lock the whole
+                // time -- see _lifetimeLock's own doc comment for why.
+                var handle = _handle;
+                var closeThread = new Thread(() => NativeAudio.yoniq_audio_capture_session_close(handle))
+                {
+                    IsBackground = true,
+                    Name = "MiniAudioCaptureClose",
+                };
+                closeThread.Start();
+                TimedOutDuringClose = !closeThread.Join(CloseTimeout);
+
+                // Only release our context reference on a clean close -- see TimedOutDuringClose's own
+                // doc comment for why releasing after a timeout would be unsafe.
+                if (!TimedOutDuringClose)
+                {
+                    MiniAudioContext.Release();
+                }
             }
-
-            // Run the native close on its own thread and bound the wait -- see CloseTimeout's doc
-            // comment for why this is necessary (a confirmed, reproducible hang otherwise). A P/Invoke
-            // call in progress cannot be safely cancelled/aborted once started, so a timeout here
-            // means abandoning that thread (and the underlying native handle) rather than actually
-            // stopping it; in the overwhelmingly common case (device still present) this thread
-            // finishes near-instantly and joins normally.
-            var handle = _handle;
-            var closeThread = new Thread(() => NativeAudio.yoniq_audio_capture_session_close(handle))
-            {
-                IsBackground = true,
-                Name = "MiniAudioCaptureClose",
-            };
-            closeThread.Start();
-            TimedOutDuringClose = !closeThread.Join(CloseTimeout);
-
-            // Only release our context reference on a clean close -- see TimedOutDuringClose's own
-            // doc comment for why releasing after a timeout would be unsafe.
-            if (!TimedOutDuringClose)
-            {
-                MiniAudioContext.Release();
-            }
+        }
+        finally
+        {
+            _lifetimeLock.ExitWriteLock();
         }
     }
 }

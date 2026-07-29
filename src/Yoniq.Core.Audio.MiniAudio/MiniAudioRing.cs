@@ -16,9 +16,15 @@ internal sealed unsafe class MiniAudioRing : IDisposable
     private readonly IntPtr _handle;
     private readonly int _channels;
 
-    // Second-opus-review fix: an int, not a bool -- see MiniAudioCaptureSession's identical field
-    // and doc comment for why (Interlocked.Exchange makes "check and mark disposed" atomic).
-    private int _disposed;
+    // Third-opus-review fix: see MiniAudioPlaybackSession's identical field/fix for the full
+    // reasoning -- an Interlocked-guarded int only made Dispose-vs-Dispose safe, not Dispose
+    // racing a concurrent Write/Read on another thread (a real use-after-free, not just a missed
+    // exception). A ReaderWriterLockSlim closes both. (This class currently has no production
+    // caller besides its own tests -- piece Audio 5/6's sessions each keep their own ring
+    // entirely inside the native shim -- but fixed here anyway rather than leaving latent
+    // undefined behavior in a type explicitly meant to be a reusable, standalone building block.)
+    private readonly ReaderWriterLockSlim _lifetimeLock = new(LockRecursionPolicy.NoRecursion);
+    private bool _disposed;
 
     /// <param name="capacityFrames">Ring capacity in frames (not samples) -- each frame is
     /// <paramref name="channels"/> interleaved float samples.</param>
@@ -38,19 +44,27 @@ internal sealed unsafe class MiniAudioRing : IDisposable
     /// <c>IAudioEngine.EnqueuePlaybackSamples</c> (piece Audio 2).</summary>
     public int Write(ReadOnlySpan<float> data)
     {
-        ObjectDisposedException.ThrowIf(_disposed != 0, this);
-        // Opus-review fix: a caller passing a span whose length isn't a whole number of frames
-        // (e.g. an odd sample count for a stereo ring) previously had the trailing partial frame
-        // silently dropped by this integer division, with no signal that anything was wrong.
-        if (data.Length % _channels != 0)
+        _lifetimeLock.EnterReadLock();
+        try
         {
-            throw new ArgumentException($"Data length {data.Length} is not a whole number of {_channels}-channel frames.", nameof(data));
-        }
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            // Opus-review fix: a caller passing a span whose length isn't a whole number of frames
+            // (e.g. an odd sample count for a stereo ring) previously had the trailing partial frame
+            // silently dropped by this integer division, with no signal that anything was wrong.
+            if (data.Length % _channels != 0)
+            {
+                throw new ArgumentException($"Data length {data.Length} is not a whole number of {_channels}-channel frames.", nameof(data));
+            }
 
-        var frameCount = data.Length / _channels;
-        fixed (float* ptr = data)
+            var frameCount = data.Length / _channels;
+            fixed (float* ptr = data)
+            {
+                return NativeAudio.yoniq_audio_ring_write(_handle, ptr, frameCount);
+            }
+        }
+        finally
         {
-            return NativeAudio.yoniq_audio_ring_write(_handle, ptr, frameCount);
+            _lifetimeLock.ExitReadLock();
         }
     }
 
@@ -59,26 +73,49 @@ internal sealed unsafe class MiniAudioRing : IDisposable
     /// count), which may be less than requested if the ring doesn't have that much buffered.</summary>
     public int Read(Span<float> destination)
     {
-        ObjectDisposedException.ThrowIf(_disposed != 0, this);
-        if (destination.Length % _channels != 0)
+        _lifetimeLock.EnterReadLock();
+        try
         {
-            throw new ArgumentException($"Destination length {destination.Length} is not a whole number of {_channels}-channel frames.", nameof(destination));
-        }
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (destination.Length % _channels != 0)
+            {
+                throw new ArgumentException($"Destination length {destination.Length} is not a whole number of {_channels}-channel frames.", nameof(destination));
+            }
 
-        var frameCount = destination.Length / _channels;
-        fixed (float* ptr = destination)
+            var frameCount = destination.Length / _channels;
+            fixed (float* ptr = destination)
+            {
+                return NativeAudio.yoniq_audio_ring_read(_handle, ptr, frameCount);
+            }
+        }
+        finally
         {
-            return NativeAudio.yoniq_audio_ring_read(_handle, ptr, frameCount);
+            _lifetimeLock.ExitReadLock();
         }
     }
 
     public void Dispose()
     {
-        // See _disposed's own doc comment for why this is Interlocked.Exchange, not a plain
-        // `if (!_disposed)` check.
-        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        // Third-opus-review fix (caught by ConcurrentWriteAndDispose_NeverThrowsAnythingOtherThanObjectDisposedException,
+        // not just reasoned about): an earlier version of this method disposed _lifetimeLock
+        // itself after a successful teardown, which meant a *second* Dispose call's very first
+        // statement -- EnterWriteLock() -- threw ObjectDisposedException on the lock object,
+        // before ever reaching the _disposed idempotency check below. _lifetimeLock is
+        // deliberately never disposed: a ReaderWriterLockSlim left for the GC to finalize is a
+        // harmless, tiny cost, and it's what makes Dispose() safely re-enterable any number of
+        // times, which IDisposable.Dispose is documented to require.
+        _lifetimeLock.EnterWriteLock();
+        try
         {
-            NativeAudio.yoniq_audio_ring_destroy(_handle);
+            if (!_disposed)
+            {
+                _disposed = true;
+                NativeAudio.yoniq_audio_ring_destroy(_handle);
+            }
+        }
+        finally
+        {
+            _lifetimeLock.ExitWriteLock();
         }
     }
 }
