@@ -76,9 +76,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // _syncBypass1PrimaryHeld is this port's own local case-0/case-1 latch for that same threshold,
     // a deliberate second copy of what VisLockStateMachine already tracks internally: enforcing
     // "m_sint1 checked before m_sint2/m_sint3, every sample" requires evaluating it inside this same
-    // loop, and this loop has no access to VisLockStateMachine's separate instance/cursor (they run
-    // over the same raw samples from the same origin, so the two latches necessarily agree sample-
-    // for-sample -- documented duplication, not an invented shortcut).
+    // loop, and this loop has no access to VisLockStateMachine's separate instance/cursor.
+    //
+    // Corrected by independent review -- an earlier version of this comment claimed the two latches
+    // "necessarily agree sample-for-sample," which is only true pre-lock. While locked, only
+    // VisLockStateMachine runs (TrySyncIntervalDetection is hard-gated behind !m_Sync, matching
+    // legacy); its d12/d19 detectors keep running against the whole image, while this loop's own
+    // d12/d19 detectors (_syncBypass1200Detector/_syncBypass1900Detector) sit idle. EndOfImage then
+    // fast-forwards both cursors to the same resumeFrom, but the two detector pairs now carry
+    // different filter histories and produce different d12/d19 for the same samples until their
+    // resonators resettle -- so the latches can genuinely disagree for a short window at the start
+    // of every transmission after the first. Small (bounded by the envelope detectors' own settling
+    // time, the same order of magnitude as other already-accepted small imprecisions in this
+    // system), not eliminated, documented honestly rather than assumed away.
     private readonly SyncIntervalTracker _syncBypass1Tracker;
     private bool _syncBypass1PrimaryHeld;
 
@@ -224,8 +234,6 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 return;
             }
 
-            ApplyAfcCorrections();
-
             var mode = _mode!;
             var lineDecoder = _lineDecoder!;
             var pixels = _pixels!;
@@ -257,6 +265,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // sample calculation inside it proportionally, without IScanlineDecoder needing to know
                 // anything about slant correction at all.
                 var effectiveSampleRate = (int)Math.Round(_effectiveSamplesPerLine / (mode.LineDurationMs / 1000.0));
+
+                // Bounded to exactly this line's own extent, not a single eager bulk pass over the
+                // whole image -- see ApplyAfcCorrections' own doc comment for why (mid-reception
+                // restart double-correction fix). Must run before DecodeLine, which reads the
+                // corrected frequencies via SampleFrequencyAt.
+                ApplyAfcCorrections(_consumedSamples + lineSampleCount);
 
                 lineDecoder.DecodeLine(mode, effectiveSampleRate, _consumedSamples, _nextLine, SampleFrequencyAt, pixels);
                 _consumedSamples += lineSampleCount;
@@ -537,14 +551,31 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             _syncBypassNarrowTracker.Increment();
 
             // m_sint1 (sstv.cpp:1900-1904) -- checked FIRST every sample, top priority, no mode
-            // allowlist. See _syncBypass1Tracker's own doc comment for why it's fed differently from
-            // m_sint2/m_sint3 below.
-            var sint1Matched = _syncBypass1Tracker.TryStart();
-            if (sint1Matched is not null)
+            // allowlist, but ONLY while NOT currently holding the primary threshold: legacy's
+            // SyncStart() is polled from case 0 alone (sstv.cpp:1900), never from case 1
+            // (sstv.cpp:1952-1973 calls SyncMax there, never SyncStart). Bug fixed by independent
+            // review: an earlier version called TryStart() unconditionally every sample, which meant
+            // the very next sample after Trigger() latched a peak would immediately consume it (via
+            // SyncIntervalTracker.TryStart's unconditional _peakAmplitude=0), before SyncMax ever got
+            // a chance to track the pulse's real running max -- anchoring every match at the
+            // threshold-crossing edge instead of the envelope peak GetSyncSegmentMidpointOffsetMs
+            // assumes, and (worse) letting VIS data-bit tones (1100/1300Hz, only ±100Hz from d12's
+            // 1200Hz/100Hz-bandwidth center) spuriously re-trigger it throughout every VIS-bit-decode
+            // attempt, polluting the interval history legacy's own case-2/9 freeze would have
+            // prevented. Gating on !_syncBypass1PrimaryHeld reproduces that freeze for m_sint1
+            // specifically (m_sint2 already has an equivalent effect for free, see its own condition
+            // below -- its held-branch check subsumes its TryStart branch's threshold, so a held
+            // m_sint2 never calls TryStart either; m_sint1's bare top-of-loop poll had no such
+            // built-in protection).
+            if (!_syncBypass1PrimaryHeld)
             {
-                CommitSyncBypassMatch(sint1Matched, _syncBypass1Tracker.LastPeakPositionSamples);
-                _syncBypassProcessedUpTo++;
-                return true;
+                var sint1Matched = _syncBypass1Tracker.TryStart();
+                if (sint1Matched is not null)
+                {
+                    CommitSyncBypassMatch(sint1Matched, _syncBypass1Tracker.LastPeakPositionSamples);
+                    _syncBypassProcessedUpTo++;
+                    return true;
+                }
             }
 
             // m_sint2 (sstv.cpp:1899-1911). Piece 7c: full 3-term condition (sstv.cpp:1905), not just
@@ -732,24 +763,6 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // mistuned-audio narrow-mode decode end to end. Routing through the same Commit() every
         // other detection path already uses closes this and keeps future Commit()-side fixes from
         // needing to be duplicated a second time here.
-        // Direct port of a real regression caught by independent review: this used to duplicate
-        // Commit()'s body inline instead of calling it, which meant _afcBoundSample (added when
-        // Commit() gained it, see ApplyAfcCorrections' doc comment) was never assigned for a narrow
-        // transmission -- staying at its default 0, silently disabling AFC entirely for every
-        // MN/MC mode (Math.Min(_demodulatedFrequencies.Count, 0) == 0, so ApplyAfcCorrections'
-        // loop never ran). No existing test caught this: nothing in this suite exercises a
-        // mistuned-audio narrow-mode decode end to end. Routing through the same Commit() every
-        // other detection path already uses closes this and keeps future Commit()-side fixes from
-        // needing to be duplicated a second time here.
-        // Direct port of a real regression caught by independent review: this used to duplicate
-        // Commit()'s body inline instead of calling it, which meant _afcBoundSample (added when
-        // Commit() gained it, see ApplyAfcCorrections' doc comment) was never assigned for a narrow
-        // transmission -- staying at its default 0, silently disabling AFC entirely for every
-        // MN/MC mode (Math.Min(_demodulatedFrequencies.Count, 0) == 0, so ApplyAfcCorrections'
-        // loop never ran). No existing test caught this: nothing in this suite exercises a
-        // mistuned-audio narrow-mode decode end to end. Routing through the same Commit() every
-        // other detection path already uses closes this and keeps future Commit()-side fixes from
-        // needing to be duplicated a second time here.
         Commit(mode, _consumedSamples);
         return true;
     }
@@ -912,7 +925,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // (SstvModeRegistry.IsFastAfcGroup) -- see AfcTracker's doc comment for both.
     private void InitializeAfc(SstvModeDefinition mode)
     {
-        _afcProcessedUpTo = _consumedSamples;
+        // Math.Max, not a bare assignment -- bug found by independent review. A mid-reception
+        // restart's new anchor can land *before* wherever the abandoned transmission's own AFC pass
+        // had already processed up to (see ApplyAfcCorrections' updated doc comment for why that
+        // range can be large); rewinding _afcProcessedUpTo backward into it would let the new
+        // AfcTracker re-correct samples the old one already corrected, doubly applying two different
+        // trackers' corrections to the same content. Same defensive pattern already used for
+        // _visLockProcessedUpTo in Commit(). A no-op for every non-restart Commit() (the new anchor
+        // is always >= wherever AFC had gotten to in that case).
+        _afcProcessedUpTo = Math.Max(_afcProcessedUpTo, _consumedSamples);
 
         if (mode == SstvModeRegistry.Avt)
         {
@@ -942,22 +963,39 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // samples in the exact same order, one at a time, that legacy's own would have -- only the wall-
     // clock timing of *when* that processing happens (relative to VIS decode) differs.
     //
-    // Bounded by _afcBoundSample, NOT _demodulatedFrequencies.Count: never correct samples beyond
-    // this image's own generous nominal extent -- otherwise a single TryProcessBuffer call (a bulk
-    // PushSamples caller in particular) would eagerly correct straight through this image's footer/
-    // dead-zone and into a not-yet-detected *next* transmission's audio using a correction tuned to
-    // this image's own frequency offset, corrupting it before that transmission's own Commit() even
-    // runs -- the same category of bulk-vs-streaming ordering bug already documented on
-    // ApplySlantTracking, but for AFC specifically only became reachable once EndOfImage made a
-    // second Commit() within one decoder instance possible at all.
-    private void ApplyAfcCorrections()
+    // Bounded by upperBoundSample AND _afcBoundSample, NOT _demodulatedFrequencies.Count: never
+    // correct samples beyond this image's own generous nominal extent -- otherwise a single
+    // TryProcessBuffer call (a bulk PushSamples caller in particular) would eagerly correct straight
+    // through this image's footer/dead-zone and into a not-yet-detected *next* transmission's audio
+    // using a correction tuned to this image's own frequency offset, corrupting it before that
+    // transmission's own Commit() even runs -- the same category of bulk-vs-streaming ordering bug
+    // already documented on ApplySlantTracking, but for AFC specifically only became reachable once
+    // EndOfImage made a second Commit() within one decoder instance possible at all.
+    //
+    // upperBoundSample itself fixes a second, related bug found by independent review: this used to
+    // have no per-call bound at all, always racing ahead to _afcBoundSample in one shot the moment a
+    // transmission was committed, *before* any of its lines were actually decoded. Harmless for a
+    // transmission that completes normally (a causal, resumable tracker produces the same correction
+    // values regardless of when the eager pass ran relative to decode), but for one that gets
+    // abandoned mid-reception (piece 6c's restart path), it meant the abandoned transmission's own
+    // AFC tracker could have already "corrected" content that turns out to belong to the *real*
+    // second transmission -- not bounded to "at most one line" the way an earlier note here assumed
+    // (spec/14-roadmap.md), but up to the *entire* first image's nominal extent, since the eager pass
+    // ran once, upfront, independent of how far line-decoding had actually progressed. Callers now
+    // pass the current line's own end sample (mirroring ApplySlantTracking's existing per-line
+    // bound), so a restart detected after line K can only ever have over-corrected up through
+    // roughly that same line -- restoring the "at most one line" property this method's callers had
+    // assumed was already true. Combined with InitializeAfc's Math.Max fix (which stops a restart's
+    // new anchor from rewinding into whatever that bounded range already covered), this closes the
+    // double-correction path rather than just documenting it honestly.
+    private void ApplyAfcCorrections(int upperBoundSample)
     {
         if (_afcTracker is null)
         {
             return;
         }
 
-        var bound = Math.Min(_demodulatedFrequencies.Count, _afcBoundSample);
+        var bound = Math.Min(Math.Min(_demodulatedFrequencies.Count, _afcBoundSample), upperBoundSample);
         for (; _afcProcessedUpTo < bound; _afcProcessedUpTo++)
         {
             // Piece 7c: sstv.cpp:2258 (case 0/PLL -- the case this method's own doc comment cites as
