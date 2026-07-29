@@ -403,3 +403,132 @@ int yoniq_audio_ring_read(yoniq_audio_ring *ring, float *out_data, int frame_cou
 
     return total_read;
 }
+
+/*
+ * Piece Audio 5: the real capture path. See yoniq_audio.h's own doc comment on
+ * yoniq_audio_capture_session_open for the design.
+ */
+
+struct yoniq_audio_capture_session
+{
+    ma_device device;
+    yoniq_audio_ring *ring;
+    volatile int stopped; /* set by capture_session_notification_callback, real-time thread; read
+                            * and cleared by yoniq_audio_capture_session_check_and_clear_stopped,
+                            * managed thread -- a single int written from one side and read/cleared
+                            * from the other needs no separate lock (no ordering dependency on
+                            * anything else, a torn write of an int-sized value isn't a real
+                            * concern on any platform this project targets). */
+};
+
+static void capture_session_data_callback(ma_device *pDevice, void *pOutput, const void *pInput, ma_uint32 frameCount)
+{
+    (void)pOutput;
+    yoniq_audio_capture_session *session = (yoniq_audio_capture_session *)pDevice->pUserData;
+
+    /* Drop-newest-when-full is already yoniq_audio_ring_write's own behavior (never blocks, writes
+     * only as many frames as currently fit) -- exactly IAudioEngine's documented overrun policy
+     * (piece Audio 2): if the managed drain side has fallen behind, the newest incoming frames are
+     * dropped here, never corrupting or reordering what's already buffered. */
+    yoniq_audio_ring_write(session->ring, (const float *)pInput, (int)frameCount);
+}
+
+static void capture_session_notification_callback(const ma_device_notification *pNotification)
+{
+    if (pNotification->type == ma_device_notification_type_stopped)
+    {
+        yoniq_audio_capture_session *session = (yoniq_audio_capture_session *)pNotification->pDevice->pUserData;
+        session->stopped = 1;
+    }
+}
+
+yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device_id, int sample_rate, int ring_capacity_frames)
+{
+    if (!g_context_initialized)
+    {
+        return NULL;
+    }
+
+    ma_device_id id;
+    if (string_to_device_id(g_context.backend, device_id, &id) != 0)
+    {
+        return NULL;
+    }
+
+    yoniq_audio_capture_session *session = (yoniq_audio_capture_session *)malloc(sizeof(yoniq_audio_capture_session));
+    if (session == NULL)
+    {
+        return NULL;
+    }
+
+    session->stopped = 0;
+    session->ring = yoniq_audio_ring_create(ring_capacity_frames, 1);
+    if (session->ring == NULL)
+    {
+        free(session);
+        return NULL;
+    }
+
+    ma_device_config config = ma_device_config_init(ma_device_type_capture);
+    config.capture.pDeviceID = &id;
+    config.capture.format = ma_format_f32;
+    config.capture.channels = 1;
+    config.sampleRate = (ma_uint32)sample_rate;
+    config.dataCallback = capture_session_data_callback;
+    /* Wired in here at device-init time, not bolted on later (piece Audio 8): miniaudio's
+     * notification callback must be set inside ma_device_config before ma_device_init, there is
+     * no way to attach it to an already-initialized device. */
+    config.notificationCallback = capture_session_notification_callback;
+    config.pUserData = session;
+
+    if (ma_device_init(&g_context, &config, &session->device) != MA_SUCCESS)
+    {
+        yoniq_audio_ring_destroy(session->ring);
+        free(session);
+        return NULL;
+    }
+
+    if (ma_device_start(&session->device) != MA_SUCCESS)
+    {
+        ma_device_uninit(&session->device);
+        yoniq_audio_ring_destroy(session->ring);
+        free(session);
+        return NULL;
+    }
+
+    return session;
+}
+
+void yoniq_audio_capture_session_close(yoniq_audio_capture_session *session)
+{
+    if (session == NULL)
+    {
+        return;
+    }
+
+    ma_device_uninit(&session->device); /* also stops it first */
+    yoniq_audio_ring_destroy(session->ring);
+    free(session);
+}
+
+int yoniq_audio_capture_session_read(yoniq_audio_capture_session *session, float *out_data, int frame_count)
+{
+    if (session == NULL)
+    {
+        return -1;
+    }
+
+    return yoniq_audio_ring_read(session->ring, out_data, frame_count);
+}
+
+int yoniq_audio_capture_session_check_and_clear_stopped(yoniq_audio_capture_session *session)
+{
+    if (session == NULL)
+    {
+        return 0;
+    }
+
+    int was_stopped = session->stopped;
+    session->stopped = 0;
+    return was_stopped;
+}
