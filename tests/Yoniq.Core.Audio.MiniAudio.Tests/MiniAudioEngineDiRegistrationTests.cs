@@ -44,4 +44,28 @@ public class MiniAudioEngineDiRegistrationTests
         // -- this is the exact failure mode ("type only implements IAsyncDisposable") an ordinary
         // synchronous `using`/`Dispose()` would hit instead.
     }
+
+    // Round-1-engine-review finding: the test above only exercised the async path -- it never
+    // actually proved the failure mode it describes exists, so a regression to synchronous
+    // Dispose() in Program.cs would NOT have been caught here despite the doc comment's claim.
+    // This makes that claim true: a synchronous Dispose() on a ServiceProvider holding an
+    // IAsyncDisposable-only singleton must throw once that singleton has actually been
+    // constructed (i.e. resolved).
+    [Fact]
+    public void SynchronousDispose_OnServiceProviderWithResolvedAudioEngine_Throws()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IAudioEngine, MiniAudioEngine>();
+
+        // Deliberately not `await using`/disposed at all: provider.Dispose() below throws before
+        // ever reaching MiniAudioEngine.DisposeAsync, so this test's MiniAudioContext acquisition
+        // is never released -- a harmless, understood leak (the process-wide native context just
+        // stays initialized for the rest of this test run, which every other test's own
+        // Acquire/Release calls already tolerate) accepted specifically to prove this one
+        // exception path fires for real, not asserted from documentation alone.
+        var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<IAudioEngine>(); // must be resolved to actually construct MiniAudioEngine
+
+        Assert.Throws<InvalidOperationException>(() => provider.Dispose());
+    }
 }

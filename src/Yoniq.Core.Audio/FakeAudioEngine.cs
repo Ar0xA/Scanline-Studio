@@ -7,6 +7,18 @@ namespace Yoniq.Core.Audio;
 /// synchronously "play" a sample fixture through <see cref="SamplesCaptured"/> via
 /// <see cref="PushCapturedSamples"/>, and inspect whatever was enqueued for playback via
 /// <see cref="PlaybackSamples"/>. No real device, no threads, no native dependency.
+///
+/// Round-1-engine-review note: deliberately does NOT enforce the Lifecycle-error contract
+/// <see cref="IAudioEngine"/>'s own doc comment documents (double-Start throwing, Enqueue-before-
+/// Start throwing, post-dispose throwing) -- <see cref="MiniAudioEngine"/> in
+/// `Yoniq.Core.Audio.MiniAudio` enforces all of that for real. Kept permissive here on purpose:
+/// `FakeAudioEngineRoundTripTests` (`Yoniq.Core.Audio.Tests`) already calls
+/// <see cref="EnqueuePlaybackSamples"/> before ever calling <see cref="StartPlaybackAsync"/>, since
+/// that test only cares about exercising the DSP round trip through the interface's data-shape
+/// contract (chunking, memory lifetime), not engine lifecycle discipline. Tightening this fake to
+/// match would break that pre-existing, unrelated test for no benefit -- a caller that needs to
+/// verify lifecycle-error behavior should test against the real engine (see
+/// `Yoniq.Core.Audio.MiniAudio.Tests.MiniAudioEngineTests`), not this one.
 /// </summary>
 public sealed class FakeAudioEngine : IAudioEngine
 {

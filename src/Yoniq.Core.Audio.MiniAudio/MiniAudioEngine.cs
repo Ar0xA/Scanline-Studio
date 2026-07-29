@@ -47,23 +47,13 @@ public sealed class MiniAudioEngine : IAudioEngine
 
     private volatile MiniAudioCaptureSession? _captureSession;
 
-    // Piece Engine 1: records which managed thread is currently running the capture forwarder
-    // (MiniAudioCaptureSession's own drain thread) below, so StopCaptureAsync/DisposeAsync can
-    // detect being called re-entrantly from inside a SamplesCaptured subscriber and dispose the
-    // session INLINE on that same thread instead of via Task.Run.
-    //
-    // Why this matters: MiniAudioCaptureSession.Dispose() has an unbounded _drainThread.Join()
-    // that only skips when Dispose() itself runs ON the drain thread (confirmed by reading
-    // MiniAudioCaptureSession.cs -- dispose-called-from-inside-SamplesAvailable is an explicitly
-    // supported, tested pattern at the session level). If StopCaptureAsync always offloaded
-    // Dispose() to a pool thread via Task.Run, a subscriber that calls
-    // `await engine.StopCaptureAsync()` from inside its own SamplesCaptured handler would deadlock
-    // forever: the drain thread (blocked in the subscriber, awaiting the pool-thread task) would
-    // never return to let DrainLoop exit, so the pool thread's Join() would never complete either.
-    // Confirmed via this project's Opus plan-review pass, not assumed.
-    private int _captureForwarderThreadId;
-
     private int _disposed;
+
+    // Round-1-engine-review fix: signals a second concurrent DisposeAsync caller that teardown has
+    // actually finished, rather than letting it return immediately once _disposed is latched (the
+    // original behavior let a second caller's `await DisposeAsync()` complete while the first
+    // caller's teardown -- native close, MiniAudioContext.Release() -- was still in progress).
+    private readonly TaskCompletionSource _disposedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public MiniAudioEngine()
     {
@@ -71,8 +61,16 @@ public sealed class MiniAudioEngine : IAudioEngine
         {
             MiniAudioContext.Acquire();
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (ex is InvalidOperationException or DllNotFoundException or EntryPointNotFoundException)
         {
+            // Round-1-engine-review fix: this used to catch only InvalidOperationException, but
+            // MiniAudioContext.Acquire() calls straight into a P/Invoke (yoniq_audio_context_init)
+            // that throws DllNotFoundException/EntryPointNotFoundException if the native shim is
+            // missing or mismatched -- the same real failure mode OpenCaptureSession/
+            // OpenPlaybackSession already translate, confirmed by reading MiniAudioContext.cs.
+            // Without this, a broken Yoniq.Host native-shim copy target (see Engine 6's own commit)
+            // would surface as a raw DllNotFoundException from `new MiniAudioEngine()` instead of
+            // the typed exception AudioDeviceUnavailableException's own doc comment promises.
             throw new AudioDeviceUnavailableException("Failed to initialize the audio backend.", ex);
         }
     }
@@ -125,17 +123,32 @@ public sealed class MiniAudioEngine : IAudioEngine
 
     public async Task StopCaptureAsync()
     {
+        var session = await ClaimCaptureSessionAsync().ConfigureAwait(false);
+        if (session is not null)
+        {
+            await DisposeCaptureSessionAsync(session).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Atomically claims (and un-publishes) the active capture session, if any, holding
+    /// <see cref="_captureLock"/> only for that -- never across the disposal itself. Round-1-
+    /// engine-review fix: the previous version held the lock for the ENTIRE disposal, including
+    /// <see cref="DisposeCaptureSessionAsync"/>'s <c>Task.Run(session.Dispose)</c> branch, which
+    /// blocks on the session's own unbounded <c>_drainThread.Join()</c>. If a second caller (e.g.
+    /// this session's own drain thread, calling back in from inside <see cref="SamplesCaptured"/>)
+    /// was waiting on the same lock at that moment, it would never get to run and therefore never
+    /// let <c>DrainLoop</c> exit -- deadlocking the thread the Join is waiting for. Releasing the
+    /// lock as soon as the session reference is claimed means a second concurrent caller (drain
+    /// thread or otherwise) always finds <see cref="_captureSession"/> already null and returns
+    /// immediately as a no-op, instead of ever contending with an in-progress disposal.</summary>
+    private async Task<MiniAudioCaptureSession?> ClaimCaptureSessionAsync()
+    {
         await _captureLock.WaitAsync().ConfigureAwait(false);
         try
         {
             var session = _captureSession;
             _captureSession = null;
-            if (session is null)
-            {
-                return; // idempotent no-op, matching every session type's own Dispose convention
-            }
-
-            await DisposeCaptureSessionAsync(session).ConfigureAwait(false);
+            return session;
         }
         finally
         {
@@ -151,27 +164,19 @@ public sealed class MiniAudioEngine : IAudioEngine
     /// are swallowed by the session's own drain loop (documented there); this forwarder inherits
     /// that, a deliberate, pre-existing deviation from "never silent failure" this class does not
     /// attempt to fix.</summary>
-    private void OnCaptureSamplesAvailable(ReadOnlyMemory<float> samples)
-    {
-        Volatile.Write(ref _captureForwarderThreadId, Environment.CurrentManagedThreadId);
-        try
-        {
-            SamplesCaptured?.Invoke(samples);
-        }
-        finally
-        {
-            Volatile.Write(ref _captureForwarderThreadId, 0);
-        }
-    }
+    private void OnCaptureSamplesAvailable(ReadOnlyMemory<float> samples) => SamplesCaptured?.Invoke(samples);
 
-    private async Task DisposeCaptureSessionAsync(MiniAudioCaptureSession session)
+    /// <summary>Disposes a claimed capture session -- inline, on the calling thread, if and only if
+    /// that thread is THIS session's own drain thread (<see cref="MiniAudioCaptureSession.IsRunningOnDrainThread"/>,
+    /// round-1-engine-review fix: previously tracked via a single engine-wide "which thread is
+    /// currently forwarding" field, which could not tell one session's drain thread apart from
+    /// another's if a subscriber stopped one session and started a new one from within the same
+    /// callback invocation -- fixed by asking the session itself). Dispatches to a pool thread via
+    /// <c>Task.Run</c> otherwise, matching every other session-closing call in this class.</summary>
+    private static async Task DisposeCaptureSessionAsync(MiniAudioCaptureSession session)
     {
-        if (Environment.CurrentManagedThreadId == Volatile.Read(ref _captureForwarderThreadId))
+        if (session.IsRunningOnDrainThread)
         {
-            // Re-entrant: we're being called from inside this very session's SamplesAvailable
-            // forwarder, on its own drain thread. Dispose inline so MiniAudioCaptureSession's own
-            // self-join guard (Thread.CurrentThread != _drainThread) sees the correct thread -- see
-            // this class's own doc comment for the deadlock this avoids.
             session.Dispose();
         }
         else
@@ -257,6 +262,13 @@ public sealed class MiniAudioEngine : IAudioEngine
     /// this thread observes the most recent publish from <see cref="StartPlaybackAsync"/>).</summary>
     public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples)
     {
+        // Round-1-engine-review fix: this had no disposed check at all -- after DisposeAsync,
+        // _playbackSession is null, so this used to throw InvalidOperationException telling the
+        // caller to call StartPlaybackAsync, which would then throw ObjectDisposedException.
+        // Checking here directly gives a caller the real reason immediately, matching every other
+        // public member's post-dispose behavior.
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
         var session = _playbackSession;
         if (session is null)
         {
@@ -268,17 +280,24 @@ public sealed class MiniAudioEngine : IAudioEngine
 
     public async Task StopPlaybackAsync()
     {
+        var session = await ClaimPlaybackSessionAsync().ConfigureAwait(false);
+        if (session is not null)
+        {
+            await DrainAndDisposePlaybackSessionAsync(session).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Atomically claims (and un-publishes) the active playback session, if any -- see
+    /// <see cref="ClaimCaptureSessionAsync"/>'s own doc comment for why this class holds each
+    /// lifecycle's lock only for the claim step, never across the disposal/drain itself.</summary>
+    private async Task<MiniAudioPlaybackSession?> ClaimPlaybackSessionAsync()
+    {
         await _playbackLock.WaitAsync().ConfigureAwait(false);
         try
         {
             var session = _playbackSession;
             _playbackSession = null;
-            if (session is null)
-            {
-                return; // idempotent no-op, matching every session type's own Dispose convention
-            }
-
-            await DrainAndDisposePlaybackSessionAsync(session).ConfigureAwait(false);
+            return session;
         }
         finally
         {
@@ -332,33 +351,27 @@ public sealed class MiniAudioEngine : IAudioEngine
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
-            return; // idempotent
+            // Round-1-engine-review fix: this used to return immediately here, before the first
+            // caller's teardown (native close, MiniAudioContext.Release()) had necessarily
+            // finished -- a second concurrent `await engine.DisposeAsync()` could complete while
+            // the device was still open. Awaiting the completion signal instead matches the
+            // session types' own "Dispose blocks a second caller until the first is done"
+            // convention (there via a write lock; here via a TaskCompletionSource, since disposal
+            // itself must never be blocked by a Start/Stop racing in ahead of it the way a shared
+            // lock would force).
+            await _disposedSignal.Task.ConfigureAwait(false);
+            return;
         }
 
-        // Piece Engine 3: takes each lifecycle's own lock in turn (never both at once -- see this
-        // class's own doc comment on why that rules out an ABBA deadlock by construction), so a
-        // Start*Async call that's already in flight when DisposeAsync begins is waited out rather
-        // than raced.
-        await _captureLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            var captureSession = _captureSession;
-            _captureSession = null;
+            var captureSession = await ClaimCaptureSessionAsync().ConfigureAwait(false);
             if (captureSession is not null)
             {
                 await DisposeCaptureSessionAsync(captureSession).ConfigureAwait(false);
             }
-        }
-        finally
-        {
-            _captureLock.Release();
-        }
 
-        await _playbackLock.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            var playbackSession = _playbackSession;
-            _playbackSession = null;
+            var playbackSession = await ClaimPlaybackSessionAsync().ConfigureAwait(false);
             if (playbackSession is not null)
             {
                 try
@@ -378,9 +391,16 @@ public sealed class MiniAudioEngine : IAudioEngine
         }
         finally
         {
-            _playbackLock.Release();
+            // Round-1-engine-review fix: MiniAudioContext.Release() used to be the last, unguarded
+            // statement after both teardown blocks -- an exception from the capture teardown above
+            // (e.g. a LockRecursionException from a session's own ReaderWriterLockSlim) would skip
+            // the playback teardown AND this release entirely, permanently leaking this engine's
+            // context reference (and, on that path, the playback session's native handle too).
+            // Wrapping the whole teardown in try/finally guarantees this always runs exactly once,
+            // and the completion signal always fires so a second concurrent DisposeAsync caller
+            // (awaited above) is never left waiting forever even if teardown itself faulted.
+            MiniAudioContext.Release();
+            _disposedSignal.TrySetResult();
         }
-
-        MiniAudioContext.Release();
     }
 }
