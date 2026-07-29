@@ -26,6 +26,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private const double DemodulatorLowHz = 1100;
     private const double DemodulatorHighHz = 2300;
 
+    // SetSenseLvl (sstv.cpp:1793-1817), case 1 -- the actual shipped default. CSSTVDEM's constructor
+    // sets m_SenseLvl = 1 unconditionally (sstv.cpp:1489) before calling SetSenseLvl(), and the only
+    // other write path (Main.cpp:1865's `ReadInteger("Define","DEMSLVL", pDem->m_SenseLvl)`) falls
+    // back to that same ctor value when the INI key is absent -- so case 1 (3500/1750/5700) is what
+    // ships out of the box, NOT the switch's `default:` branch (2400/1200/5000), which is only
+    // reachable via a discrete 4-option "Sense Level" UI setting (Option.dfm's RGSLvl radio group)
+    // this port doesn't expose yet. Verified by reading the constructor directly, not assumed from
+    // the switch's own default label. m_SLvl2 is always m_SLvl*0.5 in every case (sstv.cpp:1798/1803/
+    // 1808/1813) -- ported as a derived value, not a second independent constant.
+    internal const double SLvl = 3500.0;
+    internal const double SLvl2 = SLvl * 0.5;
+    internal const double SLvl3 = 5700.0;
+
     private readonly int _sampleRate;
     private readonly List<double> _demodulatedFrequencies = [];
     private readonly List<float> _rawSamples = [];
@@ -109,6 +122,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // m_lvl continuously even through cases 512/513's dead zone.
     private readonly LevelAgc _levelAgc;
     private readonly List<double> _agcSamples = [];
+    private readonly List<double> _agcCurMaxSamples = []; // LevelAgc.CurMax snapshotted at the same index -- see AgcCurMaxAt
     private int _levelAgcProcessedUpTo;
 
     public AnalogFmSstvDecoder(int sampleRate = 11025)
@@ -120,7 +134,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _syncBypassTracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypassFskDetector = new SyncEnvelopeDetector(sampleRate, VisHeader.NarrowSpaceFrequencyHz);
         _syncBypassNarrowTracker = new SyncIntervalTracker(sampleRate, isNarrow: true, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
-        _visLockStateMachine = new VisLockStateMachine(sampleRate);
+        _visLockStateMachine = new VisLockStateMachine(sampleRate, SLvl, SLvl2);
         _levelAgc = new LevelAgc(sampleRate);
     }
 
@@ -141,9 +155,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             _levelAgc.Fix();
             var ad = _levelAgc.Agc(scaled) * 32.0;
             _agcSamples.Add(Math.Clamp(ad, -16384.0, 16384.0));
+            _agcCurMaxSamples.Add(_levelAgc.CurMax);
         }
 
         return _agcSamples[index];
+    }
+
+    // sstv.cpp:2258/2263/2267's `m_lvl.m_CurMax > 16` AFC silence gate reads m_CurMax as of the exact
+    // sample being processed at that moment in legacy's single real-time pass -- not "whatever
+    // LevelAgc's CurMax happens to be right now" (this port's AFC correction runs as a deferred bulk
+    // pass, potentially well after the shared AGC cache has already advanced past this index for an
+    // unrelated consumer), so this reads the value snapshotted into _agcCurMaxSamples at the same
+    // index AgcSampleAt itself cached, not the live LevelAgc.CurMax.
+    private double AgcCurMaxAt(int index)
+    {
+        AgcSampleAt(index);
+        return _agcCurMaxSamples[index];
     }
 
     public event Action<DecodedImageUpdate>? LineDecoded;
@@ -447,14 +474,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // the same resonator/lowpass state twice for no benefit and would diverge from legacy's actual
     // single-pass structure. As of piece 7b, d12/d19/dsp are read from AgcSampleAt -- the same
     // AGC'd/scaled ±16384-ish signal legacy's own d12/d19/dsp are computed from (see LevelAgc's doc
-    // comment) -- so the *scale* these values live on now matches legacy's. Simplification still
-    // flagged, not yet closed: legacy's m_sint2/m_sint3 conditions also check absolute amplitude
-    // thresholds (m_SLvl/m_SLvl2/m_SLvl3) on top of the relative comparisons used here -- a noise/
-    // squelch gate this port doesn't apply yet (piece 7c; same simplification already documented on
-    // AfcTracker's own omitted m_lvl.m_CurMax>16 gate, and on VisLockStateMachine). Harmless for a
-    // clean synthetic signal; would need the piece 7c gates for reliable noise immunity against real
-    // captured audio. m_sint1 (piece 7d, not yet ported here) piggybacks on this same loop's case-0
-    // trigger rather than scanning independently -- see spec/14-roadmap.md.
+    // comment). As of piece 7c, the absolute amplitude thresholds (m_SLvl/m_SLvl2/m_SLvl3) legacy
+    // also checks on top of the relative comparisons are applied too -- closing a simplification
+    // documented since m_sint2/m_sint3 were first ported (same simplification closed on
+    // AfcTracker's m_lvl.m_CurMax>16 gate and VisLockStateMachine, same piece). m_sint1 (piece 7d,
+    // not yet ported here) piggybacks on this same loop's case-0 trigger rather than scanning
+    // independently -- see spec/14-roadmap.md.
     //
     // Undocumented-until-now divergence, caught by independent review: legacy gates all of this
     // behind m_SyncMode's case 0 (m_sint2's SyncMax additionally continues in case 1, sstv.cpp:1954-
@@ -477,8 +502,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             _syncBypassTracker.Increment();
             _syncBypassNarrowTracker.Increment();
 
-            // m_sint2 (sstv.cpp:1899-1911).
-            if (d12 > d19)
+            // m_sint2 (sstv.cpp:1899-1911). Piece 7c: full 3-term condition (sstv.cpp:1905), not just
+            // the relative d12>d19 -- d12>SLvl2 and the difference gate (d12-d19)>=SLvl2 are what
+            // actually suppress false candidate peaks now that d12/d19 live on the AGC'd scale.
+            if (d12 > d19 && d12 > SLvl2 && d12 - d19 >= SLvl2)
             {
                 _syncBypassTracker.UpdateMax(d12);
             }
@@ -494,8 +521,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             }
 
             // m_sint3 (sstv.cpp:1924-1946) -- explicit SyncTrig-then-SyncMax edge latch, SyncStart
-            // called once on the falling edge only, matching legacy's own m_SyncPhase gating.
-            if (d19 > d12 && d19 > dsp)
+            // called once on the falling edge only, matching legacy's own m_SyncPhase gating. Piece
+            // 7c: full 5-term condition (sstv.cpp:1926) -- note the last difference term is gated by
+            // SLvl (not SLvl3), an asymmetry confirmed by reading the literal source, not assumed.
+            if (d19 > d12 && d19 > dsp && d19 > SLvl3 && d19 - d12 >= SLvl3 && d19 - dsp >= SLvl)
             {
                 if (_syncBypassNarrowPhaseActive)
                 {
@@ -863,9 +892,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var bound = Math.Min(_demodulatedFrequencies.Count, _afcBoundSample);
         for (; _afcProcessedUpTo < bound; _afcProcessedUpTo++)
         {
-            var measuredFrequencyHz = _afcFrequencyCounter!.ProcessSample(_rawSamples[_afcProcessedUpTo]);
-            var correctionHz = _afcTracker.ProcessSample(measuredFrequencyHz);
-            _demodulatedFrequencies[_afcProcessedUpTo] += correctionHz;
+            // Piece 7c: sstv.cpp:2258 (case 0/PLL -- the case this method's own doc comment cites as
+            // what it models) calls m_fqc.Do(...) *only inside* the `m_lvl.m_CurMax > 16` gate -- if
+            // the gate fails, legacy's frequency counter doesn't even see this sample, so this port's
+            // ZeroCrossingFrequencyCounter must skip ProcessSample entirely too, not just have its
+            // correction discarded afterward (`m_afc` itself is legacy's own always-on default,
+            // sstv.cpp:1471 -- no separate toggle to model; AVT's exclusion is already handled by
+            // _afcTracker staying null, see InitializeAfc).
+            if (AgcCurMaxAt(_afcProcessedUpTo) > 16.0)
+            {
+                var measuredFrequencyHz = _afcFrequencyCounter!.ProcessSample(_rawSamples[_afcProcessedUpTo]);
+                var correctionHz = _afcTracker.ProcessSample(measuredFrequencyHz);
+                _demodulatedFrequencies[_afcProcessedUpTo] += correctionHz;
+            }
         }
     }
 
