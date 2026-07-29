@@ -16,7 +16,11 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(5);
 
     private readonly IntPtr _handle;
-    private bool _disposed;
+
+    // Second-opus-review fix: an int, not a bool -- see MiniAudioCaptureSession's identical field
+    // and doc comment for why (Interlocked.Exchange makes "check and mark disposed" atomic,
+    // preventing a double-Dispose race that would otherwise double-free/double-release).
+    private int _disposed;
 
     /// <param name="deviceId">A playback device id, as returned by
     /// <see cref="MiniAudioDeviceEnumerator"/>.</param>
@@ -52,7 +56,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     /// (piece Audio 2). Never blocks.</summary>
     public unsafe int Write(ReadOnlySpan<float> data)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
         fixed (float* ptr = data)
         {
             return NativeAudio.yoniq_audio_playback_session_write(_handle, ptr, data.Length);
@@ -68,7 +72,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     {
         get
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ObjectDisposedException.ThrowIf(_disposed != 0, this);
             return NativeAudio.yoniq_audio_playback_session_pending_frames(_handle);
         }
     }
@@ -82,7 +86,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     {
         get
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ObjectDisposedException.ThrowIf(_disposed != 0, this);
             return NativeAudio.yoniq_audio_playback_session_underrun_count(_handle);
         }
     }
@@ -97,7 +101,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     {
         get
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ObjectDisposedException.ThrowIf(_disposed != 0, this);
             return NativeAudio.yoniq_audio_playback_session_check_and_clear_stopped(_handle) != 0;
         }
     }
@@ -117,7 +121,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     /// dead device) must not hang the caller indefinitely.</summary>
     public async Task DrainAsync(TimeSpan timeout, CancellationToken ct = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
         var deadline = DateTime.UtcNow + timeout;
         while (PendingFrames > 0 && DateTime.UtcNow < deadline)
         {
@@ -127,7 +131,9 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
 
     public void Dispose()
     {
-        if (!_disposed)
+        // See _disposed's own doc comment for why this is Interlocked.Exchange, not a plain
+        // `if (!_disposed)` check.
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
         {
             // See MiniAudioCaptureSession.Dispose's identical pattern and doc comment: the native
             // close can hang indefinitely if the underlying device disappeared, so it runs on its
@@ -147,8 +153,6 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
             {
                 MiniAudioContext.Release();
             }
-
-            _disposed = true;
         }
     }
 }

@@ -164,4 +164,54 @@ public class MiniAudioRingTests
         Assert.Equal(4, readCount);
         Assert.Equal(written, readBack);
     }
+
+    // Second-opus-review fix: these four were flagged as new behavior (the partial-frame guard,
+    // and the disposed guard/idempotent-Dispose Interlocked fix) added with zero test coverage --
+    // both are deterministic and hardware-free, so there was no excuse for that.
+
+    [Fact]
+    public void Write_Throws_WhenDataLengthIsNotWholeNumberOfFrames()
+    {
+        using var ring = new MiniAudioRing(capacityFrames: 64, channels: 2);
+
+        // 3 floats cannot form a whole number of 2-channel frames.
+        Assert.Throws<ArgumentException>(() => ring.Write(new float[] { 1f, 2f, 3f }));
+    }
+
+    [Fact]
+    public void Read_Throws_WhenDestinationLengthIsNotWholeNumberOfFrames()
+    {
+        using var ring = new MiniAudioRing(capacityFrames: 64, channels: 2);
+
+        Assert.Throws<ArgumentException>(() => ring.Read(new float[3]));
+    }
+
+    [Fact]
+    public void Write_Throws_AfterDispose()
+    {
+        var ring = new MiniAudioRing(capacityFrames: 64, channels: 1);
+        ring.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => ring.Write(new float[4]));
+    }
+
+    [Fact]
+    public void Read_Throws_AfterDispose()
+    {
+        var ring = new MiniAudioRing(capacityFrames: 64, channels: 1);
+        ring.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => ring.Read(new float[4]));
+    }
+
+    [Fact]
+    public void Dispose_IsIdempotent_WhenCalledTwice()
+    {
+        var ring = new MiniAudioRing(capacityFrames: 64, channels: 1);
+
+        ring.Dispose();
+        var exception = Record.Exception(() => ring.Dispose());
+
+        Assert.Null(exception);
+    }
 }

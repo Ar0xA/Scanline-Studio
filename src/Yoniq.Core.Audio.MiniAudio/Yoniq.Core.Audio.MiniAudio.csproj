@@ -40,10 +40,12 @@
 
     Each target declares Inputs/Outputs (opus-review fix) so MSBuild skips re-running it when the
     native sources haven't changed, instead of recompiling the ~95k-line vendored miniaudio.h on
-    every single build.
+    every single build. This project's own .csproj is included in Inputs too (second-opus-review
+    fix): without it, changing a compiler flag inside one of these targets would not itself
+    invalidate the target's cached output, silently leaving the old binary in place.
   -->
   <Target Name="BuildNativeShimLinux" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))"
-           Inputs="native/yoniq_audio.c;native/yoniq_audio.h;native/miniaudio.h"
+           Inputs="native/yoniq_audio.c;native/yoniq_audio.h;native/miniaudio.h;Yoniq.Core.Audio.MiniAudio.csproj"
            Outputs="$(OutDir)libyoniqaudio.so">
     <PropertyGroup>
       <NativeDir>$(MSBuildProjectDirectory)/native/</NativeDir>
@@ -55,7 +57,7 @@
   </Target>
 
   <Target Name="BuildNativeShimWindows" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))"
-           Inputs="native\yoniq_audio.c;native\yoniq_audio.h;native\miniaudio.h"
+           Inputs="native\yoniq_audio.c;native\yoniq_audio.h;native\miniaudio.h;Yoniq.Core.Audio.MiniAudio.csproj"
            Outputs="$(OutDir)yoniqaudio.dll">
     <PropertyGroup>
       <NativeDir>$(MSBuildProjectDirectory)\native\</NativeDir>
@@ -71,7 +73,7 @@
   </Target>
 
   <Target Name="BuildNativeShimMacOS" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))"
-           Inputs="native/yoniq_audio.c;native/yoniq_audio.h;native/miniaudio.h"
+           Inputs="native/yoniq_audio.c;native/yoniq_audio.h;native/miniaudio.h;Yoniq.Core.Audio.MiniAudio.csproj"
            Outputs="$(OutDir)libyoniqaudio.dylib">
     <PropertyGroup>
       <NativeDir>$(MSBuildProjectDirectory)/native/</NativeDir>
