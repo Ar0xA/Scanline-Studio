@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Yoniq.Abstractions.Imaging;
 using Yoniq.Abstractions.Sstv;
 
@@ -9,13 +10,24 @@ namespace Yoniq.Core.Sstv;
 /// sample stream. Once VIS reveals the mode, per-line decoding is delegated to a
 /// <see cref="IScanlineDecoder"/> selected via <see cref="ScanlineCodecFactory"/> — the decoder
 /// can't know the family upfront the way the encoder does, since VIS detection is itself part of
-/// this shared, family-agnostic shell. Scope note (Phase 1): this reconstructs scanlines using the
-/// mode's *nominal* timing — it does not independently re-search for each line's sync pulse (the
-/// legacy AFC/sync state machine in `CSSTVDEM` is a separate, larger piece of work not yet ported),
-/// and does not yet implement the clock-drift/slant correction described in spec/06-sstv-dsp.md.
-/// That's fine for the same-process, no-channel-noise round-trip this proves; real captured audio
-/// (with clock drift between transmitter and receiver sound cards) needs both of those added
-/// before this is usable on the air.
+/// this shared, family-agnostic shell.
+///
+/// Corrected doc-comment claim (an earlier revision of this comment, written before AFC/Slant/the
+/// VIS-preamble-lock system existed, claimed this "does not independently re-search for each line's
+/// sync pulse" and "does not yet implement the clock-drift/slant correction" -- both false as of the
+/// work described below, left stale until now): per-pixel readout is a single sample at a
+/// sync-anchored index, not a windowed average (see <see cref="SampleFrequencyAt"/>'s own doc
+/// comment) -- confirmed directly against `sstv.cpp`'s `GetPixelLevel`/`GetPictureLevel`
+/// (`Main.cpp:4038-4073`) that legacy does the same, and that there is no per-line re-search during
+/// live reception either (legacy's own `m_rBase`/`m_TW` nominal-timing arithmetic is set once at
+/// lock and never re-anchored mid-image; verified directly, not assumed, when an earlier attempt to
+/// scope a "port the sync-search state machine" task found that premise wrong before writing any
+/// code -- see spec/14-roadmap.md's "CSSTVDEM investigation, reframed" entry). AFC (<see cref="AfcTracker"/>,
+/// direct port of `CSSTVDEM::SyncFreq`) and Auto Slant (<see cref="SlantTracker"/>, clock-drift
+/// correction) are both ported and wired in via <see cref="ApplyAfcCorrections"/>/
+/// <see cref="ApplySlantTracking"/>. The real, still-open gap for real captured audio (as opposed to
+/// this port's own synthetic fixtures) is golden-vector validation against actual legacy binary
+/// output -- in progress, not yet complete; see spec/14-roadmap.md's Phase 1 section.
 /// </summary>
 public sealed class AnalogFmSstvDecoder : ISstvDecoder
 {
@@ -429,46 +441,56 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             }
         }
 
-        // m_sint2 runs continuously in real time, racing the VIS/narrow header path above
-        // (sstv.cpp:1888-1924 reads d12/d19 on every sample regardless of m_SyncMode) -- tried
-        // *after* the header path here, not because legacy orders them that way (it can't: both
-        // run per-sample in the same real-time loop), but because this port's header path can see
-        // its own fixed-duration window resolve in a single call against a bulk-pushed buffer,
-        // while a real m_sint2 needs several consecutive image lines (multiple seconds) of matching
-        // peaks to confirm anything. Trying header-decode first is what actually reproduces the real
-        // race's outcome for a signal with a valid header (header wins, every time, well before
-        // sync-interval matching could ever accumulate enough consecutive peaks) instead of letting
-        // a single large PushSamples call hand this detector an unrealistic head start over the
-        // whole future stream at once -- the same category of bulk-vs-streaming ordering bug
-        // documented on ApplySlantTracking above. It only ever actually resolves anything for a
-        // transmission with no valid header to decode at all, which is the only case where it needs
-        // to run.
+        // The fixed-window header paths above are tried first, not because legacy orders them that
+        // way (it can't: every mechanism below runs per-sample in the same real-time loop), but
+        // because this port's header path can see its own fixed-duration window resolve in a single
+        // call against a bulk-pushed buffer, while VisLockStateMachine/m_sint1/m_sint2/m_sint3 all
+        // need to scan forward sample-by-sample. Trying header-decode first is what actually
+        // reproduces the real race's outcome for a signal with a valid header (header wins, every
+        // time, well before either sample-by-sample mechanism could resolve) instead of letting a
+        // single large PushSamples call hand them an unrealistic head start over the whole future
+        // stream at once -- the same category of bulk-vs-streaming ordering bug documented on
+        // ApplySlantTracking above. The fallback below only ever actually resolves anything for a
+        // transmission with no valid (or not-yet-arrived) fixed-window header to decode, which is
+        // the only case where it needs to run.
         //
-        // VisLockStateMachine is tried next, before the sync-interval bypass: unlike the fixed-window
-        // path above (which assumes the header starts exactly at _consumedSamples), it scans forward
-        // sample-by-sample and can find a header despite arbitrary leading silence/noise, for any
-        // VIS-coded mode -- not just the trusted subset TrySyncIntervalDetection covers. Tried before
-        // the bypass detectors since it identifies a mode from actual bit content, not periodicity
-        // alone, making it the more reliable of the two remaining fallbacks.
-        if (TryVisLockStateMachine(_rawSamples.Count))
-        {
-            return true;
-        }
-
-        return TrySyncIntervalDetection();
+        // m_sint1-decoder-ordering-fix: VisLockStateMachine and the sync-interval bypass
+        // (TrySyncIntervalDetectionStep, m_sint1/m_sint2/m_sint3) used to be tried here as two
+        // separate, sequential full-buffer scans -- VisLockStateMachine over everything first, and
+        // only if THAT found nothing at all did the sync-bypass detectors ever see a single sample.
+        // That was a real bug (spec/14-roadmap.md's own write-up, "m_sint1's decoder-level priority
+        // is effectively inverted from legacy's real per-sample interleaving"), not just a stylistic
+        // difference: VisLockStateMachine's own doc comment documents a known false-positive risk
+        // (enough consecutive dark/sync-heavy image content can, in principle, assemble a byte
+        // identical to a real VIS code) -- in true legacy execution, m_sint1/m_sint2 checking every
+        // sample gives a genuine chance for the *correct* mode's periodicity to be recognized before
+        // a spurious false-positive byte-assembly completes, but scanning the sync-bypass detectors
+        // only *after* VisLockStateMachine has already exhausted the entire buffer removes that
+        // protection entirely in this port. TryInterleavedHeaderScan fixes this by running both
+        // mechanisms sample-by-sample in lockstep, in legacy's own real per-sample order (see that
+        // method's own doc comment) -- for any transmission with a real, decodable VIS header this
+        // is a no-op (VisLockStateMachine still resolves at the same absolute sample index it always
+        // did, well before m_sint2 could accumulate its own required multi-line consecutive-interval
+        // confidence), so it only changes outcomes for the specific headerless/false-positive-risk
+        // scenario m_sint1 exists to protect against.
+        return TryInterleavedHeaderScan();
     }
 
-    // Bounded by upperBoundSample, NOT always _rawSamples.Count: pre-lock (called from
-    // TryDecodeHeader), there's no "current decode position" to bound against, so the caller passes
-    // _rawSamples.Count and this scans everything available, same as always. While already locked
-    // (piece 6c, called from inside the per-line loop below), the caller passes _consumedSamples --
-    // never letting this run ahead into not-yet-decoded content. Without that bound, a single bulk
-    // PushSamples call containing a whole transmission followed by a second, genuinely valid one
-    // would let this method discover the *real* second header on its very first call (mid-decode of
-    // the first transmission's very first line) and "restart" onto it immediately, abandoning a
-    // transmission this port had every ability to finish -- the same category of bulk-vs-streaming
-    // ordering bug already documented on ApplySlantTracking and the original TrySyncIntervalDetection
-    // fix, caught here by this port's own end-to-end test, not by a theoretical review.
+    // m_sint1-decoder-ordering-fix: this method's only remaining caller is piece 6c's mid-reception
+    // re-verification (below, called once per decoded line while already locked) -- the OTHER
+    // caller this doc comment used to describe (TryDecodeHeader's own pre-lock fallback) was
+    // replaced by TryInterleavedHeaderScan, which calls _visLockStateMachine.ProcessSample directly
+    // so it can interleave with the sync-bypass detectors. Bounded by upperBoundSample (the caller
+    // passes _consumedSamples): never let this run ahead into not-yet-decoded content. Without that
+    // bound, a single bulk PushSamples call containing a whole transmission followed by a second,
+    // genuinely valid one would let this method discover the *real* second header on its very first
+    // call (mid-decode of the first transmission's very first line) and "restart" onto it
+    // immediately, abandoning a transmission this port had every ability to finish -- the same
+    // category of bulk-vs-streaming ordering bug already documented on ApplySlantTracking, caught
+    // here by this port's own end-to-end test, not by a theoretical review. Legacy's own m_sint1/
+    // m_sint2/m_sint3 are gated behind `!m_Sync` (sstv.cpp:1899) and genuinely never run at all once
+    // locked, which is why this call site is intentionally NOT merged with the sync-bypass step the
+    // way TryInterleavedHeaderScan merges it pre-lock.
     private bool TryVisLockStateMachine(int upperBoundSample)
     {
         var bound = Math.Min(_rawSamples.Count, upperBoundSample);
@@ -538,116 +560,171 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // same low-severity category as the divergence above, not fixed: legacy's own same-sample
     // second fire is close to a no-op in practice (m_Sync is already 1 by the time it would matter),
     // and this port's Commit() already fully supersedes whichever tracker's match is acted on first.
-    private bool TrySyncIntervalDetection()
+    // Piece: m_sint1 decoder-ordering fix. Single-sample step, extracted from what used to be
+    // TrySyncIntervalDetection's own for-loop body so it can be interleaved with
+    // VisLockStateMachine.ProcessSample one sample at a time (see TryInterleavedHeaderScan) instead
+    // of each mechanism scanning the whole available buffer before the other gets a turn. Reads and
+    // (on no match) leaves _syncBypassProcessedUpTo unchanged -- the caller owns advancing it.
+    private bool TrySyncIntervalDetectionStep()
     {
-        for (; _syncBypassProcessedUpTo < _rawSamples.Count; _syncBypassProcessedUpTo++)
+        var agcSample = AgcSampleAt(_syncBypassProcessedUpTo);
+        var d12 = _syncBypass1200Detector.ProcessSample(agcSample);
+        var d19 = _syncBypass1900Detector.ProcessSample(agcSample);
+        var dsp = _syncBypassFskDetector.ProcessSample(agcSample);
+
+        // SyncInc (sstv.cpp:1890-1892) -- unconditional for all three trackers, every sample,
+        // before the case-0 body below.
+        _syncBypass1Tracker.Increment();
+        _syncBypassTracker.Increment();
+        _syncBypassNarrowTracker.Increment();
+
+        // m_sint1 (sstv.cpp:1900-1904) -- checked FIRST every sample, top priority, no mode
+        // allowlist, but ONLY while NOT currently holding the primary threshold: legacy's
+        // SyncStart() is polled from case 0 alone (sstv.cpp:1900), never from case 1
+        // (sstv.cpp:1952-1973 calls SyncMax there, never SyncStart). Bug fixed by independent
+        // review: an earlier version called TryStart() unconditionally every sample, which meant
+        // the very next sample after Trigger() latched a peak would immediately consume it (via
+        // SyncIntervalTracker.TryStart's unconditional _peakAmplitude=0), before SyncMax ever got
+        // a chance to track the pulse's real running max -- anchoring every match at the
+        // threshold-crossing edge instead of the envelope peak GetSyncSegmentMidpointOffsetMs
+        // assumes, and (worse) letting VIS data-bit tones (1100/1300Hz, only ±100Hz from d12's
+        // 1200Hz/100Hz-bandwidth center) spuriously re-trigger it throughout every VIS-bit-decode
+        // attempt, polluting the interval history legacy's own case-2/9 freeze would have
+        // prevented. Gating on !_syncBypass1PrimaryHeld reproduces that freeze for m_sint1
+        // specifically (m_sint2 already has an equivalent effect for free, see its own condition
+        // below -- its held-branch check subsumes its TryStart branch's threshold, so a held
+        // m_sint2 never calls TryStart either; m_sint1's bare top-of-loop poll had no such
+        // built-in protection).
+        if (!_syncBypass1PrimaryHeld)
         {
-            var agcSample = AgcSampleAt(_syncBypassProcessedUpTo);
-            var d12 = _syncBypass1200Detector.ProcessSample(agcSample);
-            var d19 = _syncBypass1900Detector.ProcessSample(agcSample);
-            var dsp = _syncBypassFskDetector.ProcessSample(agcSample);
-
-            // SyncInc (sstv.cpp:1890-1892) -- unconditional for all three trackers, every sample,
-            // before the case-0 body below.
-            _syncBypass1Tracker.Increment();
-            _syncBypassTracker.Increment();
-            _syncBypassNarrowTracker.Increment();
-
-            // m_sint1 (sstv.cpp:1900-1904) -- checked FIRST every sample, top priority, no mode
-            // allowlist, but ONLY while NOT currently holding the primary threshold: legacy's
-            // SyncStart() is polled from case 0 alone (sstv.cpp:1900), never from case 1
-            // (sstv.cpp:1952-1973 calls SyncMax there, never SyncStart). Bug fixed by independent
-            // review: an earlier version called TryStart() unconditionally every sample, which meant
-            // the very next sample after Trigger() latched a peak would immediately consume it (via
-            // SyncIntervalTracker.TryStart's unconditional _peakAmplitude=0), before SyncMax ever got
-            // a chance to track the pulse's real running max -- anchoring every match at the
-            // threshold-crossing edge instead of the envelope peak GetSyncSegmentMidpointOffsetMs
-            // assumes, and (worse) letting VIS data-bit tones (1100/1300Hz, only ±100Hz from d12's
-            // 1200Hz/100Hz-bandwidth center) spuriously re-trigger it throughout every VIS-bit-decode
-            // attempt, polluting the interval history legacy's own case-2/9 freeze would have
-            // prevented. Gating on !_syncBypass1PrimaryHeld reproduces that freeze for m_sint1
-            // specifically (m_sint2 already has an equivalent effect for free, see its own condition
-            // below -- its held-branch check subsumes its TryStart branch's threshold, so a held
-            // m_sint2 never calls TryStart either; m_sint1's bare top-of-loop poll had no such
-            // built-in protection).
-            if (!_syncBypass1PrimaryHeld)
+            var sint1Matched = _syncBypass1Tracker.TryStart();
+            if (sint1Matched is not null)
             {
-                var sint1Matched = _syncBypass1Tracker.TryStart();
-                if (sint1Matched is not null)
-                {
-                    CommitSyncBypassMatch(sint1Matched, _syncBypass1Tracker.LastPeakPositionSamples);
-                    _syncBypassProcessedUpTo++;
-                    return true;
-                }
+                CommitSyncBypassMatch(sint1Matched, _syncBypass1Tracker.LastPeakPositionSamples);
+                return true;
             }
+        }
 
-            // m_sint2 (sstv.cpp:1899-1911). Piece 7c: full 3-term condition (sstv.cpp:1905), not just
-            // the relative d12>d19 -- d12>SLvl2 and the difference gate (d12-d19)>=SLvl2 are what
-            // actually suppress false candidate peaks now that d12/d19 live on the AGC'd scale.
-            if (d12 > d19 && d12 > SLvl2 && d12 - d19 >= SLvl2)
+        // m_sint2 (sstv.cpp:1899-1911). Piece 7c: full 3-term condition (sstv.cpp:1905), not just
+        // the relative d12>d19 -- d12>SLvl2 and the difference gate (d12-d19)>=SLvl2 are what
+        // actually suppress false candidate peaks now that d12/d19 live on the AGC'd scale.
+        if (d12 > d19 && d12 > SLvl2 && d12 - d19 >= SLvl2)
+        {
+            _syncBypassTracker.UpdateMax(d12);
+        }
+        else
+        {
+            var matched = _syncBypassTracker.TryStart();
+            if (matched is not null && SyncBypassTrustedModes.Contains(matched))
             {
-                _syncBypassTracker.UpdateMax(d12);
+                CommitSyncBypassMatch(matched, _syncBypassTracker.LastPeakPositionSamples);
+                return true;
+            }
+        }
+
+        // m_sint3 (sstv.cpp:1924-1946) -- explicit SyncTrig-then-SyncMax edge latch, SyncStart
+        // called once on the falling edge only, matching legacy's own m_SyncPhase gating. Piece
+        // 7c: full 5-term condition (sstv.cpp:1926) -- note the last difference term is gated by
+        // SLvl (not SLvl3), an asymmetry confirmed by reading the literal source, not assumed.
+        if (d19 > d12 && d19 > dsp && d19 > SLvl3 && d19 - d12 >= SLvl3 && d19 - dsp >= SLvl)
+        {
+            if (_syncBypassNarrowPhaseActive)
+            {
+                _syncBypassNarrowTracker.UpdateMax(d19);
             }
             else
             {
-                var matched = _syncBypassTracker.TryStart();
-                if (matched is not null && SyncBypassTrustedModes.Contains(matched))
-                {
-                    CommitSyncBypassMatch(matched, _syncBypassTracker.LastPeakPositionSamples);
-                    _syncBypassProcessedUpTo++;
-                    return true;
-                }
+                _syncBypassNarrowTracker.Trigger(d19);
+                _syncBypassNarrowPhaseActive = true;
             }
+        }
+        else if (_syncBypassNarrowPhaseActive)
+        {
+            _syncBypassNarrowPhaseActive = false;
+            var matchedNarrow = _syncBypassNarrowTracker.TryStart();
+            if (matchedNarrow is not null)
+            {
+                CommitSyncBypassMatch(matchedNarrow, _syncBypassNarrowTracker.LastPeakPositionSamples);
+                return true;
+            }
+        }
 
-            // m_sint3 (sstv.cpp:1924-1946) -- explicit SyncTrig-then-SyncMax edge latch, SyncStart
-            // called once on the falling edge only, matching legacy's own m_SyncPhase gating. Piece
-            // 7c: full 5-term condition (sstv.cpp:1926) -- note the last difference term is gated by
-            // SLvl (not SLvl3), an asymmetry confirmed by reading the literal source, not assumed.
-            if (d19 > d12 && d19 > dsp && d19 > SLvl3 && d19 - d12 >= SLvl3 && d19 - dsp >= SLvl)
+        // sstv.cpp:1946-1950/1958-1972 -- the primary VIS-leader threshold, a sibling statement
+        // to the m_sint1/m_sint2/m_sint3 blocks above (not nested inside any of them). This is
+        // the ONLY place _syncBypass1Tracker gets new peak data: SyncTrig on the rising edge,
+        // SyncMax while held (mirroring VisLockStateMachine's own Search/ConfirmLock condition
+        // exactly -- see _syncBypass1Tracker's own doc comment for why this is a deliberate
+        // second copy, not a shared instance -- that comment's own "no access to
+        // VisLockStateMachine's cursor" framing no longer applies now that the two run interleaved
+        // in TryInterleavedHeaderScan, but the copy itself is still needed: legacy computes its own
+        // d12/d19 once and shares them; recombining that here would mean VisLockStateMachine no
+        // longer owning its own envelope detectors, a bigger change than this fix, left for a
+        // follow-up).
+        if (d12 > d19 && d12 > SLvl && d12 - d19 >= SLvl)
+        {
+            if (_syncBypass1PrimaryHeld)
             {
-                if (_syncBypassNarrowPhaseActive)
-                {
-                    _syncBypassNarrowTracker.UpdateMax(d19);
-                }
-                else
-                {
-                    _syncBypassNarrowTracker.Trigger(d19);
-                    _syncBypassNarrowPhaseActive = true;
-                }
-            }
-            else if (_syncBypassNarrowPhaseActive)
-            {
-                _syncBypassNarrowPhaseActive = false;
-                var matchedNarrow = _syncBypassNarrowTracker.TryStart();
-                if (matchedNarrow is not null)
-                {
-                    CommitSyncBypassMatch(matchedNarrow, _syncBypassNarrowTracker.LastPeakPositionSamples);
-                    _syncBypassProcessedUpTo++;
-                    return true;
-                }
-            }
-
-            // sstv.cpp:1946-1950/1958-1972 -- the primary VIS-leader threshold, a sibling statement
-            // to the m_sint1/m_sint2/m_sint3 blocks above (not nested inside any of them). This is
-            // the ONLY place _syncBypass1Tracker gets new peak data: SyncTrig on the rising edge,
-            // SyncMax while held (mirroring VisLockStateMachine's own Search/ConfirmLock condition
-            // exactly -- see _syncBypass1Tracker's own doc comment for why this is a deliberate
-            // second copy, not a shared instance).
-            if (d12 > d19 && d12 > SLvl && d12 - d19 >= SLvl)
-            {
-                if (_syncBypass1PrimaryHeld)
-                {
-                    _syncBypass1Tracker.UpdateMax(d12);
-                }
-                else
-                {
-                    _syncBypass1Tracker.Trigger(d12);
-                    _syncBypass1PrimaryHeld = true;
-                }
+                _syncBypass1Tracker.UpdateMax(d12);
             }
             else
             {
-                _syncBypass1PrimaryHeld = false;
+                _syncBypass1Tracker.Trigger(d12);
+                _syncBypass1PrimaryHeld = true;
+            }
+        }
+        else
+        {
+            _syncBypass1PrimaryHeld = false;
+        }
+
+        return false;
+    }
+
+    // Piece: m_sint1 decoder-ordering fix (spec/14-roadmap.md: "m_sint1's decoder-level priority is
+    // effectively inverted from legacy's real per-sample interleaving"). TrySyncIntervalDetectionStep
+    // (m_sint1/m_sint2/m_sint3) and VisLockStateMachine.ProcessSample are now interleaved sample by
+    // sample instead of each scanning the *entire* available buffer before the other gets a turn --
+    // see TryDecodeHeader's own doc comment for why the old sequential shape was a real bug, not
+    // just a stylistic difference. Reproduces sstv.cpp:1897-1951's real per-sample order exactly:
+    // m_sint1/m_sint2/m_sint3 (case 0's `if (!m_Sync && m_MSync)` block) are checked first, every
+    // sample, and only then (a sibling statement, same sample) the primary VIS-leader threshold that
+    // drives m_SyncMode's case 0->1 transition -- TrySyncIntervalDetectionStep's own last statement
+    // is a deliberate second copy of that same threshold (see its doc comment), so calling it before
+    // VisLockStateMachine.ProcessSample reproduces legacy's real order.
+    //
+    // _syncBypassProcessedUpTo and _visLockProcessedUpTo are NOT always kept in lockstep outside
+    // this method -- Commit() only fast-forwards _visLockProcessedUpTo (via Math.Max) when some
+    // OTHER path (the fixed-window header paths) committed a match, and never touches
+    // _syncBypassProcessedUpTo at all. But this method is only ever entered when _mode is null, and
+    // the only place that becomes true again once a transmission has started is EndOfImage, which
+    // always resets both cursors to the same resumeFrom -- so they are always equal on entry here,
+    // confirmed by checking every _mode assignment in this file, even though nothing enforces that
+    // generally.
+    private bool TryInterleavedHeaderScan()
+    {
+        Debug.Assert(_syncBypassProcessedUpTo == _visLockProcessedUpTo, "See this method's own doc comment for why these must be equal on entry.");
+
+        for (; _syncBypassProcessedUpTo < _rawSamples.Count; _syncBypassProcessedUpTo++, _visLockProcessedUpTo++)
+        {
+            if (TrySyncIntervalDetectionStep())
+            {
+                return true;
+            }
+
+            var result = _visLockStateMachine.ProcessSample(AgcSampleAt(_visLockProcessedUpTo));
+            if (result is not null)
+            {
+                // No manual _visLockProcessedUpTo++ here, matching TryVisLockStateMachine's own
+                // identical note: Commit() itself sets _visLockProcessedUpTo (a Math.Max-derived
+                // value), so incrementing afterward would desync it by exactly one sample.
+                // _syncBypassProcessedUpTo is deliberately left un-advanced past this same sample on
+                // this branch too (sync-bypass didn't "run out of turns" here, VisLockStateMachine
+                // simply matched first at the same index) -- harmless: this method is never
+                // re-entered without an intervening EndOfImage reset overwriting both cursors fresh
+                // (see this method's own doc comment above), so a value that's off by at most one
+                // sample is never actually read again.
+                Commit(result.Value.Mode, _visLockOriginSample + result.Value.LineStartSample);
+                return true;
             }
         }
 
