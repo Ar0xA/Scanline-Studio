@@ -380,6 +380,23 @@ public class MiniAudioEngineTests
         await engine.DisposeAsync();
     }
 
+    // Round-3-engine-review finding: DisposeAsync_CalledConcurrentlyTwice_BothCompleteWithoutHanging
+    // below moved from [Fact] to [RequiresPipeWireFact] when it was rewritten to use a real capture
+    // session (needed to genuinely exercise concurrency -- see its own comment), which means the
+    // concurrent-launch (not-yet-awaited-either-call) shape it tests no longer runs in CI on
+    // windows/macos or a headless Linux runner. This hardware-free variant keeps that shape under
+    // CI coverage, even though with nothing started it necessarily degenerates to the same trivial
+    // case DisposeAsync_IsIdempotent_WhenCalledTwice already covers sequentially -- named to be
+    // honest about that rather than imply it proves genuine concurrency.
+    [Fact]
+    public async Task DisposeAsync_CalledConcurrentlyTwice_WithNothingStarted_BothComplete()
+    {
+        var engine = new MiniAudioEngine();
+        var dispose1 = engine.DisposeAsync().AsTask();
+        var dispose2 = engine.DisposeAsync().AsTask();
+        await Task.WhenAll(dispose1, dispose2);
+    }
+
     // Round-1-engine-review finding: a second concurrent DisposeAsync caller used to return
     // immediately once _disposed was latched, before the first caller's teardown had necessarily
     // finished. Fixed with a TaskCompletionSource the second caller awaits instead.
