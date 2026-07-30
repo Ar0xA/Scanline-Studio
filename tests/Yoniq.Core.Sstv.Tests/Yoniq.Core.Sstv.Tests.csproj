@@ -23,4 +23,8 @@
     <ProjectReference Include="..\..\src\Yoniq.Core.Audio\Yoniq.Core.Audio.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -38,6 +38,18 @@ covered by the same license-audit rule in `CLAUDE.md` — recorded here for the 
 |---|---|---|---|
 | `miniaudio.h` v0.11.25 | [github.com/mackron/miniaudio](https://github.com/mackron/miniaudio), pinned at tag `0.11.25`, vendored at `src/Yoniq.Core.Audio.MiniAudio/native/miniaudio.h` | Dual-licensed by the author (David Reid): Unlicense (public domain) **or** MIT-0 (MIT No Attribution), author's choice granted to users. Yoniq v2 elects **MIT-0** — a clearer, better-recognized statement of the same permissive terms than an unlicense/public-domain dedication, which doesn't hold the same legal weight in every jurisdiction. | Used as the native audio backend (device enumeration, capture, playback) behind a hand-written C shim (`native/yoniq_audio.c`/`.h`) — see [[spec/05-audio-engine]]'s Backend choice section for why PortAudio was rejected in favor of this. The single-header amalgamation also contains `dr_wav`/`dr_flac`/`dr_mp3` (same author, same dual license) — disclosed here even though this project compiles them out via `MA_NO_DECODING`/`MA_NO_ENCODING` (see the shim's own `#define`s), since their source text is still physically present in the vendored file. |
 
+## Test fixtures captured by running the legacy binary
+
+Distinct from both audits above: these are neither excluded assets nor bundled third-party code —
+they're golden-vector test fixtures (per [[spec/13-testing]]) produced by running a real, locally-installed
+legacy YONIQ/MMSSTV binary on originally-authored input, not copied from `yoniq-old/`'s source tree.
+Recorded here per the same `CLAUDE.md` rule, which names "bitmap" and "dataset" explicitly.
+
+| Asset | Captured how | License |
+|---|---|---|
+| `tests/Yoniq.Core.Sstv.Tests/Fixtures/GoldenVectors/{robot36,martin-m1}.mmv` | Real-time modulator/soundcard tap via legacy's own `File → Rec` (`Sound.cpp`'s `CWaveFile::Rec`), transmitting an originally-authored synthetic gradient image (`{robot36,martin-m1}.bmp`, not a legacy asset) through a locally-built/run legacy install. See the fixture directory's own `README.md` for exact capture details. | LGPL-3.0-or-later (output of running the LGPL-licensed legacy binary), included here solely as a golden-vector comparison fixture in this repo's own test suite — never redistributed as a product asset. |
+| `tests/Yoniq.Core.Sstv.Tests/Fixtures/GoldenVectors/{robot36,martin-m1}_RX.bmp` | Legacy's own decode of the corresponding `.mmv` above, played back via `File → Play` and saved via legacy's auto-History feature. | Same as above. |
+
 ## Process going forward
 
 Per the license-audit rule in `CLAUDE.md`: no legacy asset (source file, data table, bitmap, `.mtm` template, prefix table) may be ported or bundled into Yoniq v2 without a new row in this document recording what it is, where it came from, and under what license it's being included.
