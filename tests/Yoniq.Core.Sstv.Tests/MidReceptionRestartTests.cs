@@ -6,8 +6,10 @@ namespace Yoniq.Core.Sstv.Tests;
 
 /// <summary>
 /// End-to-end proof of piece 6d: the actual mid-reception abandon-and-restart scenario piece 6c
-/// wires up (legacy's case-0 trigger, `sstv.cpp:1946-1950`, ungated -- keeps running even while
-/// already locked). A first transmission's audio is truncated partway through its own image body
+/// wires up (legacy's case-0 trigger, `sstv.cpp:1946-1950`, carries no `!m_Sync` guard on the
+/// transition itself -- keeps running even while already locked, at legacy's own shipped defaults;
+/// see <see cref="AnalogFmSstvDecoder"/>'s piece-6c comment for the full `m_SyncRestart` nuance,
+/// found by round-2 review). A first transmission's audio is truncated partway through its own image body
 /// (simulating a real station cutting out, or a second station overriding it), immediately followed
 /// by a second, complete transmission -- no footer, no gap, just a hard cut mid-image into a new
 /// header. This is the scenario <see cref="EndOfImageResetTests"/> does not cover: that test's two
