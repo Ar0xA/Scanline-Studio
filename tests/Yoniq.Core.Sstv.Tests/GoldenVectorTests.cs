@@ -27,7 +27,14 @@ namespace Yoniq.Core.Sstv.Tests;
 /// turn this "test-only" effort into a production-code change, which is explicitly out of scope for
 /// this pass. <see cref="MmvFixture_TxRegionDuration_MatchesExpectedTransmissionTiming"/> and
 /// <see cref="EncoderOutput_DecodesSimilarlyTo_RealLegacyAudioDecode"/> capture most of the
-/// realistic value of an encoder check without either problem.
+/// realistic value of an encoder check without either problem -- for martin-m1. Round-2-review
+/// correction: this summary used to make that claim unqualified for both fixture modes, which
+/// <see cref="EncoderOutput_DecodesSimilarlyTo_RealLegacyAudioDecode"/>'s own per-test comment
+/// already contradicts for robot-36 (its corruption-floor finding: that test's robot-36 arm is a
+/// regression tripwire only, not meaningfully discriminating, until the Robot-36-at-11025Hz DSP gap
+/// documented on <see cref="Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource"/> is fixed) --
+/// this summary should have said so too instead of leaving an unqualified claim standing at the
+/// file's most-read location.
 /// </summary>
 public class GoldenVectorTests
 {
@@ -164,35 +171,63 @@ public class GoldenVectorTests
         // 8x100ms leader tones (800ms) unconditionally before the VIS header at legacy's shipped
         // defaults (sys.m_VOX==0, non-narrow) -- called from SendSSTV at Main.cpp:7393, right
         // before the VIS header itself. TMmsstv::SendSSTV's own footer (Main.cpp:6996-7009, same
-        // shipped defaults, sys.m_TXFSKID==0 per Main.cpp:903) writes WriteC(1500,
-        // min(m_TW, SampFreq/2)) + 4x100ms (400ms), where m_TW is one line's duration in samples
-        // (sstv.cpp:1109) -- i.e. min(mode.LineDurationMs, 500ms) + 400ms.
+        // shipped defaults, sys.m_TXFSKID==0 per Main.cpp:903) writes
+        // WriteC(1500, min(SSTVSET.m_TW, SampFreq/2)) + 4x100ms (400ms).
+        //
+        // Round-2-review correction: the first version of this fix read m_TW as "one line's
+        // duration in samples" for the TRANSMITTED mode -- wrong, caught by tracing SSTVSET.m_TW's
+        // actual assignment. m_TW is set by CSSTVSET::SetSampFreq (sstv.cpp:655-1109, the RECEIVE
+        // side), as `GetTiming(m_Mode) * m_SampFreq / 1000.0` -- m_Mode is the demodulator's
+        // currently-selected mode, not the mode being transmitted. The TX-side equivalent is a
+        // genuinely separate field, CSSTVSET::SetTxSampFreq's `m_TTW = GetTiming(m_TxMode) *
+        // m_TxSampFreq / 1000.0` (sstv.cpp:1280-1285) -- SendSSTV's footer does not use it. So this
+        // footer segment's length depends on whatever mode the RX side happens to be sitting on at
+        // the moment TX finishes, not on the mode actually being sent -- confirmed empirically: both
+        // fixtures measure the same ~425ms WriteC portion despite transmitting different modes
+        // (150ms vs 446ms LineDurationMs), consistent with both captures' RX side sitting at
+        // GetTiming's own `default:` case (smSCT1, 428.22ms, sstv.cpp:1275) the whole time, i.e. the
+        // demodulator's default/never-changed mode on a fresh run. Using mode.LineDurationMs here
+        // was coincidentally close for these two fixtures only because both are well under the
+        // SampFreq/2 (500ms) clamp -- it would have been actively wrong for any mode whose duration
+        // differs meaningfully from 428.22ms. Modeled here as a named constant tied to that legacy
+        // default, not derived from the transmitted mode at all.
+        const double receiveSideDefaultLineDurationMs = 428.22; // GetTiming's default: case (smSCT1)
         var headSeconds = 0.8;
-        var footerSeconds = (Math.Min(mode.LineDurationMs, 500.0) / 1000.0) + 0.4;
+        var footerSeconds = (Math.Min(receiveSideDefaultLineDurationMs, 500.0) / 1000.0) + 0.4;
         var expectedTotalSeconds = headSeconds + expectedHeaderSeconds + expectedBodySeconds + footerSeconds;
 
-        // Measured directly (not assumed): robot-36 expected 38.26s, measured ~38.6s (delta
-        // ~0.34s, not fully pinned down -- likely TX-buffer/soundcard start latency, left as an
-        // acknowledged small residual rather than chased further); martin-m1 expected 116.85s,
-        // measured ~116.9s (delta ~0.05s, within one 50ms envelope window). 1.0s comfortably
-        // covers both real residuals plus envelope-window slop, while still being tight enough to
-        // catch a real gross timing error (wrong sample rate, wrong mode duration table entry,
-        // badly misdetected TX region) -- a 5x tighter bound than the pre-review 5.0s, which was
-        // wide enough to accept anything from ~129ms to ~171ms as "correct" for robot-36's own
+        // Measured directly (not assumed), after also fixing MeasureTxRegion's own window-duration
+        // unit mismatch (see that method's comment): robot-36 expected 38.54s, measured 38.58s
+        // (delta 0.04s); martin-m1 expected 116.83s, measured 116.85s (delta 0.02s) -- both now
+        // sub-50ms residuals (envelope-window granularity), a very different picture from the
+        // pre-review 1.7s-per-mode gap this test used to carry. 0.2s is 5x the larger measured
+        // residual: generous enough to absorb real envelope-window granularity, while still tight
+        // enough to catch a real gross timing error (wrong sample rate, wrong mode duration table
+        // entry, badly misdetected TX region) -- a 25x tighter bound than the original 5.0s, which
+        // was wide enough to accept anything from ~129ms to ~171ms as "correct" for robot-36's own
         // 150ms line duration and so couldn't actually catch the error class it claimed to guard.
         var deltaSeconds = Math.Abs(measuredDurationSeconds - expectedTotalSeconds);
         Assert.True(
-            deltaSeconds < 1.0,
+            deltaSeconds < 0.2,
             $"[{modeId}] TX-region duration {measuredDurationSeconds:F2}s vs expected {expectedTotalSeconds:F2}s, " +
             $"delta {deltaSeconds:F2}s exceeded tolerance.");
     }
 
     private static (double StartSeconds, double EndSeconds) MeasureTxRegion(float[] samples, int sampleRate)
     {
-        const double windowSeconds = 0.05;
+        const double nominalWindowSeconds = 0.05;
         const float threshold = 15000f / 32768f;
 
-        var windowSize = (int)(windowSeconds * sampleRate);
+        var windowSize = (int)(nominalWindowSeconds * sampleRate);
+        // Round-2-review fix: windowSize is an integer sample count, e.g. (int)(0.05*11025) = 551
+        // samples = 49.977ms, not exactly the nominal 50ms used to compute it -- converting window
+        // INDICES back to seconds using the nominal constant instead of this actual window duration
+        // introduced a systematic +0.045% scale error, proportional to elapsed time (~17ms on
+        // robot-36's ~38s capture, ~45ms on martin-m1's ~117s one -- both confirmed by an
+        // independent re-implementation of this same algorithm). Deriving the conversion from the
+        // actual windowSize/sampleRate instead removes that error rather than just tolerating it.
+        var actualWindowSeconds = windowSize / (double)sampleRate;
+
         var windowPeaks = new List<float>();
         for (var i = 0; i < samples.Length; i += windowSize)
         {
@@ -210,8 +245,8 @@ public class GoldenVectorTests
         var lastActive = windowPeaks.FindLastIndex(p => p > threshold);
         Assert.True(firstActive >= 0, "No TX region found above the amplitude threshold.");
 
-        var startSeconds = firstActive * windowSeconds;
-        var endSeconds = (lastActive + 1) * windowSeconds;
+        var startSeconds = firstActive * actualWindowSeconds;
+        var endSeconds = (lastActive + 1) * actualWindowSeconds;
         return (startSeconds, endSeconds);
     }
 
@@ -244,6 +279,11 @@ public class GoldenVectorTests
         var selfDecoder = new AnalogFmSstvDecoder(encoder.SampleRate);
         SstvModeDefinition? selfDetectedMode = null;
         IImageSource? selfDecoded = null;
+        // Deliberately simpler than DecodeMmvFixture's "pin the first lock" logic: encodedSamples
+        // is exactly one clean encode with no trailing audio, so unlike the real .mmv captures
+        // there is no extra content for a second, spurious lock to ever occur against -- keeping
+        // the last (== only) ModeDetected/LineDecoded update is equivalent here, not an
+        // inconsistency with the sibling helper.
         selfDecoder.ModeDetected += m => selfDetectedMode = m;
         // Round-1-review fix: snapshot immediately rather than aliasing the decoder's own live
         // pixel buffer -- see DecodeMmvFixture's own comment on Snapshot for why this matters even
@@ -299,7 +339,16 @@ public class GoldenVectorTests
     // "always a fresh array" invariant -- if Commit() were ever changed to reuse a same-sized
     // buffer instead of reallocating (a plausible future allocation optimization), a captured
     // reference would silently keep mutating after being "frozen," with no visible symptom. Copying
-    // into a real snapshot here removes the dependency on that invariant instead of relying on it.
+    // into a real snapshot here removes the dependency on that invariant instead of relying on it,
+    // for the two capture sites in THIS file specifically. Round-2-review note: this same pattern
+    // (bare `update.Image` capture, no snapshot) is used at roughly 15 other LineDecoded sites
+    // across this test project (SstvRoundTripTests, PllScaleBridgeTests, SlantTests,
+    // MidReceptionRestartTests, EndOfImageResetTests, and others) -- this fix does not protect any
+    // of those, and fixing it here should not be read as having addressed the pattern project-wide.
+    // Left as-is rather than touched here: this pass is scoped to the golden-vector harness, and a
+    // repo-wide sweep is a separate, explicitly-scoped follow-up (or, more robustly, enforcing the
+    // "always allocate fresh" invariant at the decoder itself, with a doc comment or test asserting
+    // it, rather than every caller having to defensively copy).
     private static ArrayImageSource Snapshot(IImageSource image)
     {
         var pixels = new Rgb24[image.Width * image.Height];
