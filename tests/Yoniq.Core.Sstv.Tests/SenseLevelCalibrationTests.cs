@@ -3,7 +3,7 @@ namespace Yoniq.Core.Sstv.Tests;
 /// <summary>
 /// Measured, not assumed: piece 7c reintroduced legacy's absolute-amplitude thresholds
 /// (<see cref="AnalogFmSstvDecoder.SLvl"/>/<see cref="AnalogFmSstvDecoder.SLvl2"/>/
-/// <see cref="AnalogFmSstvDecoder.SLvl3"/>) into <c>TrySyncIntervalDetection</c> and
+/// <see cref="AnalogFmSstvDecoder.SLvl3"/>) into <c>TrySyncIntervalDetectionStep</c> and
 /// <see cref="VisLockStateMachine"/>. Those thresholds are only meaningful if a real full-amplitude
 /// tone, pushed through this port's own <see cref="LevelAgc"/> + <see cref="SyncEnvelopeDetector"/>
 /// pipeline (the same math <c>AnalogFmSstvDecoder.AgcSampleAt</c> uses), actually produces an

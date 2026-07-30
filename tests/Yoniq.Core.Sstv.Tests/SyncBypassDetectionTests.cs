@@ -6,7 +6,7 @@ namespace Yoniq.Core.Sstv.Tests;
 
 /// <summary>
 /// End-to-end proof that <c>m_sint2</c> (ported as <see cref="SyncIntervalTracker"/>, wired into
-/// <see cref="AnalogFmSstvDecoder"/> via its <c>TrySyncIntervalDetection</c> method) actually
+/// <see cref="AnalogFmSstvDecoder"/> via its <c>TrySyncIntervalDetectionStep</c> method) actually
 /// recognizes a transmission with no VIS header at all -- the only way to meaningfully exercise
 /// this path, since every round-trip test in <see cref="SstvRoundTripTests"/> always includes a
 /// valid VIS header, through which VIS decode resolves the mode long before sync-interval

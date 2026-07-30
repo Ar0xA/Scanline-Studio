@@ -14,7 +14,7 @@ namespace Yoniq.Core.Sstv;
 /// `spec/14-roadmap.md`'s VIS/preamble-lock section for why.
 ///
 /// Deliberately excludes case 0's <c>m_sint1</c>/<c>m_sint2</c>/<c>m_sint3</c> branches (those
-/// already live in <c>AnalogFmSstvDecoder.TrySyncIntervalDetection</c>) and cases 4-8 (AVT's
+/// already live in <c>AnalogFmSstvDecoder.TrySyncIntervalDetectionStep</c>) and cases 4-8 (AVT's
 /// separate, PLL-based training-sequence lock, now ported as <see cref="AvtTrainingLockStateMachine"/>).
 /// When the decoded byte identifies AVT, this class deliberately does *not* report a lock (see
 /// <see cref="ProcessSample"/>) — legacy's own case 3 (`sstv.cpp:2139-2144`) doesn't call

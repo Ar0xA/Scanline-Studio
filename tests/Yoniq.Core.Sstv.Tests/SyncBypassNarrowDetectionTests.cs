@@ -6,7 +6,7 @@ namespace Yoniq.Core.Sstv.Tests;
 
 /// <summary>
 /// End-to-end proof that <c>m_sint3</c> (ported as a second <see cref="SyncIntervalTracker"/>
-/// instance, wired into <see cref="AnalogFmSstvDecoder"/>'s <c>TrySyncIntervalDetection</c> loop
+/// instance, wired into <see cref="AnalogFmSstvDecoder"/>'s <c>TrySyncIntervalDetectionStep</c> loop
 /// alongside <c>m_sint2</c>) recognizes a narrow-family (MN/MC) transmission with no header at all.
 /// Mirrors <see cref="SyncBypassDetectionTests"/> exactly, except MN/MC modes never have a VIS
 /// header to strip in the first place -- they use the distinct FSK mode-announce packet
