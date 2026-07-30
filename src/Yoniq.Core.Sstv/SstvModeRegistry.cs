@@ -787,7 +787,7 @@ public static class SstvModeRegistry
     /// <summary>The midpoint (not start) of this mode's sync segment, in ms from line start --
     /// <see cref="GetSyncSegmentOffsetMs"/> plus half that same segment's own duration. Used only by
     /// the sync-interval-bypass mode detector (<c>m_sint2</c>, see
-    /// <c>AnalogFmSstvDecoder.TrySyncIntervalDetection</c>) to turn a detected sync-envelope peak
+    /// <c>AnalogFmSstvDecoder.TrySyncIntervalDetectionStep</c>) to turn a detected sync-envelope peak
     /// position back into a line-start anchor: <see cref="SyncEnvelopeDetector"/>'s peak naturally
     /// lands near the temporal center of the (constant-tone) sync segment, not its leading edge, so
     /// anchoring off the start alone would offset every subsequent line by roughly half a sync pulse.

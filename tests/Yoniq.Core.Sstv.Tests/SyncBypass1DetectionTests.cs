@@ -7,7 +7,7 @@ namespace Yoniq.Core.Sstv.Tests;
 /// <summary>
 /// End-to-end proof of piece 7d's actual value-add: <c>m_sint1</c> (the fourth
 /// <see cref="SyncIntervalTracker"/> instance, wired into <see cref="AnalogFmSstvDecoder"/> via
-/// <c>TrySyncIntervalDetection</c>) recognizes a headerless transmission that <c>m_sint2</c> cannot,
+/// <c>TrySyncIntervalDetectionStep</c>) recognizes a headerless transmission that <c>m_sint2</c> cannot,
 /// even though both share the exact same underlying <see cref="SyncIntervalTracker.TryStart"/>
 /// mechanism and both would, in principle, find the same periodicity. The difference is legacy's own
 /// trusted-mode allowlist (`sstv.cpp:1912-1922`): <c>m_sint2</c>'s caller only ever acts on
