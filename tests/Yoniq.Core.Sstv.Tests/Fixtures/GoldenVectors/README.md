@@ -32,11 +32,23 @@ because of this and why.
 
 ## Measured facts (not assumed) used to set test tolerances
 
-- **TX-region timing** (50ms-window amplitude envelope, threshold ~15000/32768): robot-36 active from
-  ~5.4s to ~44.0s (38.6s duration) against an expected 36.91s (910ms header + 240 lines × 150ms);
-  martin-m1 active from ~10.7s to ~127.6s (116.9s duration) against an expected 115.20s (910ms header
-  + 256 lines × 446.446ms). The consistent ~1.7s overshoot on both, not a per-mode-specific amount,
-  points to coarse envelope-detection slop rather than a real timing bug.
+- **TX-region timing** (amplitude envelope, threshold ~15000/32768): robot-36 measured ~38.58s,
+  martin-m1 measured ~116.85s. **Round-2-review correction**: an earlier version of this note
+  compared these against an incomplete expected duration (VIS header + image body only) and
+  attributed the resulting ~1.7s gap on both modes to "envelope-detection slop" — wrong. Confirmed
+  directly against `Main.cpp` instead: legacy's real TX writes two more fixed-duration segments at
+  shipped defaults — `TMmsstv::OutHEAD` (`Main.cpp:7270-7292`, called from `SendSSTV` at `:7393`)
+  writes 800ms of leader tones before the VIS header, and `SendSSTV`'s own footer
+  (`Main.cpp:6996-7009`) writes `WriteC(1500, min(SSTVSET.m_TW, SampFreq/2)) + 4×100ms` after the
+  image body — where `SSTVSET.m_TW` is the *demodulator's currently-selected mode's* line duration
+  (`CSSTVSET::SetSampFreq`, `sstv.cpp:655-1109`), not the transmitted mode's (a separate field,
+  `m_TTW`, is used for that — `CSSTVSET::SetTxSampFreq`, `sstv.cpp:1280-1285`). Both fixtures were
+  captured with the RX side sitting at its default mode (`GetTiming`'s own `default:` case, smSCT1,
+  428.22ms, `sstv.cpp:1275`), confirmed empirically: both captures show the same ~425ms footer
+  segment despite transmitting different modes. With head+footer accounted for correctly, expected
+  totals are robot-36 38.54s (measured 38.58s, 0.04s residual) and martin-m1 116.83s (measured
+  116.85s, 0.02s residual) — both now sub-50ms, consistent with envelope-window granularity, not a
+  real timing bug.
 - **Robot 36 canvas**: legacy's RX save is the full 320×256 shared canvas (`GetBitmapSize`), not the
   240-line picture (`GetPictureSize`) — rows 0-239 of `robot36_RX.bmp` are real decoded content, rows
   240-255 are pure white (255,255,255) fill. Verified the paste is 1:1, not a 240→256 stretch (row 239
@@ -45,12 +57,21 @@ because of this and why.
   average per-channel delta. This is the honest reference bar for judging every other tolerance in
   `GoldenVectorTests.cs` — legacy's own decode is visibly imperfect even on a synthetic, noise-free
   gradient.
+- **Corruption floor** on this exact source image and delta metric: a flat gray image, a horizontally
+  mirrored copy, a vertically flipped copy, and an R↔B channel-swapped copy of the source all score
+  ~42.67 — this gradient is smooth enough that most structural corruptions land in a narrow band
+  around that number. Load-bearing for interpreting the numbers below: a tolerance above ~42.67
+  cannot reject a structural bug, only something worse than near-random.
 - **C# decoder vs source, decoding the real captures**: martin-m1 = 11.78 (close to legacy's own
-  baseline and to this suite's usual 10.0 synthetic-round-trip tolerance). robot-36 = 68.06 — a real,
-  substantial, **pre-existing known gap**, not new information: `SstvModeRegistry.cs`'s own doc
-  comment already documents Robot 36 (and the rest of the low-samples-per-pixel family) failing the
-  10.0 tolerance at 11025Hz, suspecting incomplete AFC/PLL settling. This is that suspicion, now
-  grounded in a real captured-audio measurement instead of a synthetic experiment.
+  baseline, comfortably below the ~42.67 corruption floor — genuinely discriminating). robot-36 =
+  68.06 — a real, substantial gap whose *existence* is pre-documented (`SstvModeRegistry.cs`'s own
+  doc comment already names Robot 36, and the rest of the low-samples-per-pixel family, as failing
+  the 10.0 tolerance at 11025Hz against a *synthetic* self-round-trip, suspecting incomplete AFC/PLL
+  settling) but whose *magnitude* is not: that same doc comment's own synthetic self-round-trip
+  number for Robot 36 post-fix is 13.4 (`spec/14-roadmap.md`), roughly **5x smaller** than this
+  real-capture number. And 68.06 is already worse than the ~42.67 corruption floor above — so the
+  robot-36 golden-vector tests currently function only as regression tripwires (no worse than what's
+  observed today), not as discriminating parity checks, until the underlying gap is fixed.
 
 ## What was captured, and what wasn't (privacy note)
 
