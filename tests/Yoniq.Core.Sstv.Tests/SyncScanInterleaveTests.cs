@@ -20,52 +20,102 @@ namespace Yoniq.Core.Sstv.Tests;
 /// sample-by-sample in lockstep, so Robot 36 -- needing only a few lines' worth of sync-pulse
 /// periodicity, appearing at the very start of the buffer -- is recognized well before
 /// <c>VisLockStateMachine</c> ever reaches Martin M1's header, deep inside the same buffer.
+///
+/// Round-1-review addition: confirmed (not just reasoned about) that Robot 36 completes cleanly
+/// (all of its lines decoded) before Martin M1 is detected via its own real header at
+/// <c>EndOfImage</c> -- exactly <c>["robot-36", "martin-m1"]</c> with zero <c>DecodeRestarted</c>
+/// events, measured directly rather than assumed, so both tests below pin that exact shape instead
+/// of the weaker "M1 appears somewhere" check an earlier version of this file used.
 /// </summary>
 public class SyncScanInterleaveTests
 {
+    private const int SampleRate = 44100;
+
     [Fact]
     public async Task EarlierSyncIntervalMatch_PreemptsLaterVisHeaderLock()
     {
-        const int sampleRate = 44100;
+        var combined = await BuildCombinedFixtureAsync();
 
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+        var detectedModesInOrder = new List<SstvModeDefinition>();
+        var restartCount = 0;
+        decoder.ModeDetected += m => detectedModesInOrder.Add(m);
+        decoder.DecodeRestarted += _ => restartCount++;
+
+        decoder.PushSamples(combined);
+
+        AssertExpectedOutcome(detectedModesInOrder, restartCount);
+    }
+
+    // Round-1-review addition: this whole fix is about a bulk-vs-streaming ordering divergence
+    // (TryDecodeHeader's own doc comment), so the one obvious case the original single-bulk-push
+    // test couldn't distinguish is whether the fix actually holds under genuine streaming too, not
+    // just a single PushSamples call handing every mechanism the entire buffer at once. The
+    // interleave is per-sample state (see TryInterleavedHeaderScan's own doc comment), so this is
+    // expected to behave identically -- confirmed here empirically rather than left as a plausible
+    // but unverified assumption.
+    [Fact]
+    public async Task EarlierSyncIntervalMatch_PreemptsLaterVisHeaderLock_UnderChunkedStreaming()
+    {
+        var combined = await BuildCombinedFixtureAsync();
+
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+        var detectedModesInOrder = new List<SstvModeDefinition>();
+        var restartCount = 0;
+        decoder.ModeDetected += m => detectedModesInOrder.Add(m);
+        decoder.DecodeRestarted += _ => restartCount++;
+
+        const int chunkSize = 1024;
+        for (var offset = 0; offset < combined.Length; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, combined.Length - offset);
+            decoder.PushSamples(new ReadOnlyMemory<float>(combined, offset, length));
+        }
+
+        AssertExpectedOutcome(detectedModesInOrder, restartCount);
+    }
+
+    private static void AssertExpectedOutcome(List<SstvModeDefinition> detectedModesInOrder, int restartCount)
+    {
+        // Confirmed discrimination empirically (this project's own precedent, e.g.
+        // PllScaleBridgeTests), not assumed: temporarily reverting TryDecodeHeader/
+        // TryInterleavedHeaderScan back to the old two-sequential-full-buffer-scans shape and
+        // re-running the bulk-push test fails with detectedModesInOrder[0].Id == "martin-m1" --
+        // VisLockStateMachine sweeping the whole buffer finds Martin M1's real header before the
+        // sync-bypass detectors (where m_sint1 lives) ever see sample 0 of the Robot 36 content
+        // sitting right at the start of the same buffer.
+        Assert.Equal(["robot-36", "martin-m1"], detectedModesInOrder.Select(m => m.Id));
+
+        // Robot 36's entire (headerless) body decodes cleanly to completion before Martin M1 is
+        // separately detected via EndOfImage -- not a mid-reception restart. Measured directly
+        // (Console-instrumented run showed restartCount==0 for the bulk-push case before this
+        // assertion was written), not assumed from the mode sequence alone.
+        Assert.Equal(0, restartCount);
+    }
+
+    private static async Task<float[]> BuildCombinedFixtureAsync()
+    {
         var robot36 = SstvModeRegistry.Robot36;
         var robot36Image = CreateGradientTestImage(robot36.ImageWidth, robot36.ImageHeight);
-        var robot36Samples = await EncodeAsync(robot36, robot36Image, sampleRate);
+        var robot36Samples = await EncodeAsync(robot36, robot36Image);
 
         // Strip exactly the VIS header, same as SyncBypass1DetectionTests -- leaving only the raw,
         // periodic sync+image-line data a real headerless transmission would present. This is the
         // exact fixture already proven (by that test) to lock via m_sint1 alone.
         var headerDurationMs = VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs;
-        var headerSampleCount = (int)Math.Round(headerDurationMs / 1000.0 * sampleRate);
+        var headerSampleCount = (int)Math.Round(headerDurationMs / 1000.0 * SampleRate);
         var robot36Body = robot36Samples.Skip(headerSampleCount).ToArray();
 
         var martinM1 = SstvModeRegistry.MartinM1;
         var martinM1Image = CreateGradientTestImage(martinM1.ImageWidth, martinM1.ImageHeight);
-        var martinM1Samples = await EncodeAsync(martinM1, martinM1Image, sampleRate);
+        var martinM1Samples = await EncodeAsync(martinM1, martinM1Image);
 
-        var combined = robot36Body.Concat(martinM1Samples).ToArray();
-
-        var decoder = new AnalogFmSstvDecoder(sampleRate);
-        var detectedModesInOrder = new List<SstvModeDefinition>();
-        decoder.ModeDetected += m => detectedModesInOrder.Add(m);
-        decoder.DecodeRestarted += _ => { }; // no assertion needed here, just documenting this can fire
-
-        decoder.PushSamples(combined);
-
-        // Confirmed discrimination empirically (this project's own precedent, e.g. PllScaleBridgeTests),
-        // not assumed: temporarily reverting TryDecodeHeader/TryInterleavedHeaderScan back to the old
-        // two-sequential-full-buffer-scans shape and re-running this exact test fails with
-        // detectedModesInOrder[0].Id == "martin-m1" -- VisLockStateMachine sweeping the whole buffer
-        // finds Martin M1's real header before the sync-bypass detectors (where m_sint1 lives) ever
-        // see sample 0 of the Robot 36 content sitting right at the start of the same buffer.
-        Assert.NotEmpty(detectedModesInOrder);
-        Assert.Equal(robot36.Id, detectedModesInOrder[0].Id);
-        Assert.Contains(detectedModesInOrder, m => m.Id == martinM1.Id);
+        return robot36Body.Concat(martinM1Samples).ToArray();
     }
 
-    private static async Task<float[]> EncodeAsync(SstvModeDefinition mode, Yoniq.Core.Imaging.ArrayImageSource image, int sampleRate)
+    private static async Task<float[]> EncodeAsync(SstvModeDefinition mode, Yoniq.Core.Imaging.ArrayImageSource image)
     {
-        var encoder = new AnalogFmSstvEncoder(sampleRate);
+        var encoder = new AnalogFmSstvEncoder(SampleRate);
         var samples = new List<float>();
         await foreach (var sample in encoder.EncodeAsync(mode, image))
         {

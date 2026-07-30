@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Yoniq.Abstractions.Imaging;
 using Yoniq.Abstractions.Sstv;
 
@@ -17,8 +16,9 @@ namespace Yoniq.Core.Sstv;
 /// sync pulse" and "does not yet implement the clock-drift/slant correction" -- both false as of the
 /// work described below, left stale until now): per-pixel readout is a single sample at a
 /// sync-anchored index, not a windowed average (see <see cref="SampleFrequencyAt"/>'s own doc
-/// comment) -- confirmed directly against `sstv.cpp`'s `GetPixelLevel`/`GetPictureLevel`
-/// (`Main.cpp:4038-4073`) that legacy does the same, and that there is no per-line re-search during
+/// comment) -- confirmed directly against `Main.cpp`'s `GetPixelLevel`/`GetPictureLevel`
+/// (`Main.cpp:4038-4073`, round-1-review fix: an earlier revision of this very correction
+/// mis-attributed these to `sstv.cpp`) that legacy does the same, and that there is no per-line re-search during
 /// live reception either (legacy's own `m_rBase`/`m_TW` nominal-timing arithmetic is set once at
 /// lock and never re-anchored mid-image; verified directly, not assumed, when an earlier attempt to
 /// scope a "port the sync-search state machine" task found that premise wrong before writing any
@@ -86,13 +86,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // ConfirmLock (sstv.cpp:1946-1950/1958-1972), via SyncTrig on that threshold's rising edge and
     // SyncMax while it holds -- not a lower, always-checked threshold like m_sint2/m_sint3's own.
     // _syncBypass1PrimaryHeld is this port's own local case-0/case-1 latch for that same threshold,
-    // a deliberate second copy of what VisLockStateMachine already tracks internally: enforcing
-    // "m_sint1 checked before m_sint2/m_sint3, every sample" requires evaluating it inside this same
-    // loop, and this loop has no access to VisLockStateMachine's separate instance/cursor.
+    // a deliberate second copy of what VisLockStateMachine already tracks internally. Round-1-review
+    // correction: this used to say "requires evaluating it inside this same loop, and this loop has
+    // no access to VisLockStateMachine's separate instance/cursor" -- false since the m_sint1
+    // decoder-ordering fix (TryInterleavedHeaderScan/TrySyncIntervalDetectionStep run interleaved,
+    // in the same class, with direct field access to _visLockStateMachine). The copy is still needed
+    // for a different reason: legacy computes its own d12/d19 once per Do() call and shares them
+    // (sstv.cpp:1841-1853); recombining that here would mean VisLockStateMachine no longer owning
+    // its own envelope detectors, a bigger change than that fix, left for a follow-up.
     //
     // Corrected by independent review -- an earlier version of this comment claimed the two latches
     // "necessarily agree sample-for-sample," which is only true pre-lock. While locked, only
-    // VisLockStateMachine runs (TrySyncIntervalDetection is hard-gated behind !m_Sync, matching
+    // VisLockStateMachine runs (TrySyncIntervalDetectionStep is hard-gated behind !m_Sync, matching
     // legacy); its d12/d19 detectors keep running against the whole image, while this loop's own
     // d12/d19 detectors (_syncBypass1200Detector/_syncBypass1900Detector) sit idle. EndOfImage then
     // fast-forwards both cursors to the same resumeFrom, but the two detector pairs now carry
@@ -184,7 +189,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // [-1.0, 1.0] (spec/05-audio-engine.md:44) -- multiply by 32768.0 before handing to LevelAgc so
     // every constant inside that class stays literally identical to legacy's own. Computed at most
     // once per index regardless of call order between the several independent cursors that read this
-    // (TrySyncIntervalDetection's, TryVisLockStateMachine's, ApplySlantTracking's) -- each just asks
+    // (TrySyncIntervalDetectionStep's, TryVisLockStateMachine's, ApplySlantTracking's) -- each just asks
     // for whatever index it's currently at; the cache fills forward monotonically the first time any
     // of them reaches a new index.
     private double AgcSampleAt(int index)
@@ -308,7 +313,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // transmission -- it has no notion of "this content doesn't actually belong to this
                 // image" -- and would never return control to notice the second transmission's real
                 // header at all. Only VisLockStateMachine runs here, not the fixed-window path (which
-                // assumes _consumedSamples is a header start, not mid-image) or TrySyncIntervalDetection
+                // assumes _consumedSamples is a header start, not mid-image) or TrySyncIntervalDetectionStep
                 // (both m_sint2 and m_sint3 are hard-gated behind !m_Sync at every call site in
                 // legacy, sstv.cpp:1899/1949/1953/1959 -- they must not run while locked). Bounded to
                 // _consumedSamples (the current decode position), NOT the whole buffer -- see
@@ -468,11 +473,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // only *after* VisLockStateMachine has already exhausted the entire buffer removes that
         // protection entirely in this port. TryInterleavedHeaderScan fixes this by running both
         // mechanisms sample-by-sample in lockstep, in legacy's own real per-sample order (see that
-        // method's own doc comment) -- for any transmission with a real, decodable VIS header this
-        // is a no-op (VisLockStateMachine still resolves at the same absolute sample index it always
-        // did, well before m_sint2 could accumulate its own required multi-line consecutive-interval
-        // confidence), so it only changes outcomes for the specific headerless/false-positive-risk
-        // scenario m_sint1 exists to protect against.
+        // method's own doc comment).
+        //
+        // Round-1-review correction: an earlier version of this comment claimed the fix "is a no-op
+        // for any transmission with a real, decodable VIS header" -- overclaimed, and contradicted by
+        // this fix's own regression test (SyncScanInterleaveTests). What's actually true, and all
+        // that's needed: VisLockStateMachine's own internal per-sample state evolution is unaffected
+        // by the interleave (it still reaches the same absolute sample index for the SAME
+        // transmission's header, since nothing about its own stepping changed) -- but the OUTCOME
+        // (which mode is detected first) genuinely can and does change whenever a sync-bypass
+        // tracker (m_sint1 has no mode allowlist -- it can recognize *any* mode's periodicity, not
+        // just SyncBypassTrustedModes) matches at an earlier sample index than where
+        // VisLockStateMachine would otherwise resolve, e.g. a real, headerless transmission sitting
+        // earlier in the same buffer than a later transmission's own real header. That outcome
+        // change is the entire point of this fix, not an accepted side effect of it.
         return TryInterleavedHeaderScan();
     }
 
@@ -702,7 +716,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // generally.
     private bool TryInterleavedHeaderScan()
     {
-        Debug.Assert(_syncBypassProcessedUpTo == _visLockProcessedUpTo, "See this method's own doc comment for why these must be equal on entry.");
+        // Round-1-review fix: this was a Debug.Assert, which .github/workflows/ci.yml's own
+        // `--configuration Release` builds strip entirely ([Conditional("DEBUG")]) -- providing no
+        // actual protection in the one place (CI) it would matter, and this was the only
+        // Debug.Assert anywhere in this codebase, so it wasn't even following an established local
+        // convention. An unconditional check gives this invariant (see this method's own doc
+        // comment above) a real enforcement, not just a doc-comment claim.
+        if (_syncBypassProcessedUpTo != _visLockProcessedUpTo)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(_syncBypassProcessedUpTo)} ({_syncBypassProcessedUpTo}) and {nameof(_visLockProcessedUpTo)} ({_visLockProcessedUpTo}) " +
+                "must be equal on entry to this method -- see its own doc comment for why.");
+        }
 
         for (; _syncBypassProcessedUpTo < _rawSamples.Count; _syncBypassProcessedUpTo++, _visLockProcessedUpTo++)
         {
@@ -711,7 +736,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 return true;
             }
 
-            var result = _visLockStateMachine.ProcessSample(AgcSampleAt(_visLockProcessedUpTo));
+            // Round-1-review nitpick fix: bound to a shared local, not read from
+            // _visLockProcessedUpTo directly -- makes the "same sample index as
+            // TrySyncIntervalDetectionStep just processed" coupling visible at the call site,
+            // rather than merely guaranteed by the two cursors currently always being equal inside
+            // this loop.
+            var sampleIndex = _syncBypassProcessedUpTo;
+            var result = _visLockStateMachine.ProcessSample(AgcSampleAt(sampleIndex));
             if (result is not null)
             {
                 // No manual _visLockProcessedUpTo++ here, matching TryVisLockStateMachine's own
@@ -780,6 +811,32 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // fast-forwarded (Reset() only clears logical state, not the origin) -- cheap, and guarantees
         // no stale in-progress bit accumulation survives into the new transmission if a different
         // path pre-empted an in-progress VisLockStateMachine scan.
+        //
+        // Round-1-review addition: a THIRD case, not covered by either paragraph above, and a real
+        // behavior change from the m_sint1 decoder-ordering fix (found by independent review of that
+        // fix, not anticipated when it was written) -- a sync-bypass match (CommitSyncBypassMatch,
+        // m_sint1/m_sint2/m_sint3) triggering this Commit() from inside TryInterleavedHeaderScan.
+        // Pre-fix, this case could only happen after TryVisLockStateMachine had already separately
+        // exhausted the whole buffer first (the old sequential shape), so _visLockProcessedUpTo was
+        // already at _rawSamples.Count by the time a sync-bypass match landed here -- pinning
+        // _visLockOriginSample at the buffer's end. Post-fix, the two cursors advance together
+        // inside TryInterleavedHeaderScan's own loop, so a sync-bypass match at index i leaves
+        // _visLockProcessedUpTo at i too (Math.Max(i, lineStart) == i, since lineStart <= i by
+        // construction) -- _visLockOriginSample now lands near the actual lock point, not the buffer
+        // end. Consequence: piece 6c's mid-reception re-verification (TryVisLockStateMachine(_consumedSamples)
+        // inside TryProcessBuffer's per-line loop) used to be an effective no-op for the rest of a
+        // bulk-pushed, sync-bypass-locked transmission (its own bound, _consumedSamples, could never
+        // catch up to a _visLockProcessedUpTo already pinned at the buffer end) -- it now actually
+        // runs, scanning the locked transmission's own image content for a stronger/cleaner VIS lock
+        // the same way legacy's real, permanently-ungated case-0 trigger does (sstv.cpp:1946-1950
+        // has no `!m_Sync` guard on the transition itself, only on the m_sint1/m_sint2/m_sint3
+        // branches above it) -- a genuine improvement in fidelity, not a regression, but one that
+        // extends VisLockStateMachine's own already-documented, already-accepted false-positive risk
+        // (see its class doc comment) to a scenario (mid-reception, bulk-pushed, sync-bypass-locked)
+        // that was previously immune to it by accident. Not given a dedicated test, matching this
+        // project's own established precedent for that same risk elsewhere (VisLockStateMachine's
+        // own doc comment: hand-verified reachable, deliberately not chased with a fixture) --
+        // documented honestly here instead of left as a silent, undiscussed side effect.
         _visLockStateMachine.Reset();
         _visLockProcessedUpTo = Math.Max(_visLockProcessedUpTo, _consumedSamples);
         _visLockOriginSample = _visLockProcessedUpTo;
