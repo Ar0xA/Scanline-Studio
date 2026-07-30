@@ -26,6 +26,15 @@ namespace Yoniq.Core.Sstv.Tests;
 /// <c>EndOfImage</c> -- exactly <c>["robot-36", "martin-m1"]</c> with zero <c>DecodeRestarted</c>
 /// events, measured directly rather than assumed, so both tests below pin that exact shape instead
 /// of the weaker "M1 appears somewhere" check an earlier version of this file used.
+///
+/// Round-2-review clarification: the chunked-streaming variant below is a chunk-size-invariance
+/// check on this fix specifically (proving <c>TryInterleavedHeaderScan</c>'s per-sample state
+/// behaves identically regardless of how <c>PushSamples</c> is called), not a second, independently
+/// discriminating regression test -- at <c>chunkSize = 1024</c> it would very likely pass even
+/// against the pre-fix, two-sequential-full-buffer-scans shape, since a 1024-sample head start is
+/// nowhere near enough for the old code's <c>VisLockStateMachine</c> pass to reach Martin M1's
+/// header several seconds ahead of Robot 36's own lock point. The bulk-push variant above is the one
+/// empirically confirmed (via <c>git stash</c>) to fail pre-fix; see its own assertion helper below.
 /// </summary>
 public class SyncScanInterleaveTests
 {

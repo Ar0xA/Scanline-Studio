@@ -303,10 +303,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // and never for a line that hasn't been decoded yet.
                 ApplySlantTracking();
 
-                // Piece 6c: legacy's case-0 trigger (sstv.cpp:1946-1950) is ungated -- it keeps
-                // running even while m_Sync is true, so a stronger/cleaner new lock found mid-
-                // reception aborts and restarts on it (Start() resets m_SyncMode back to 0
-                // unconditionally). Checked once per decoded line, not once per TryProcessBuffer
+                // Piece 6c: legacy's case-0 trigger (sstv.cpp:1946-1950) carries no `!m_Sync` guard on
+                // the transition itself, so it keeps running even while m_Sync is true and a
+                // stronger/cleaner new lock found mid-reception aborts and restarts on it (Start()
+                // resets m_SyncMode back to 0 unconditionally) -- true at legacy's own shipped
+                // defaults: the whole switch only runs while locked because the enclosing gate at
+                // sstv.cpp:1889, `!m_Sync || m_SyncRestart || m_SyncAVT`, is satisfied by
+                // m_SyncRestart defaulting to 1 (sstv.cpp:1486), a real user-toggleable option
+                // (spec/14-roadmap.md) this port hard-wires on with no way to disable -- round-2-review
+                // correction, an earlier version of this comment said "ungated" without that
+                // qualification. Checked once per decoded line, not once per TryProcessBuffer
                 // call: for a bulk-pushed buffer containing a whole (possibly truncated)
                 // transmission followed immediately by a second one, the loop above would otherwise
                 // just keep decoding every available sample as if it were more lines of the *first*
@@ -314,8 +320,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // image" -- and would never return control to notice the second transmission's real
                 // header at all. Only VisLockStateMachine runs here, not the fixed-window path (which
                 // assumes _consumedSamples is a header start, not mid-image) or TrySyncIntervalDetectionStep
-                // (both m_sint2 and m_sint3 are hard-gated behind !m_Sync at every call site in
-                // legacy, sstv.cpp:1899/1949/1953/1959 -- they must not run while locked). Bounded to
+                // (m_sint2 is hard-gated behind !m_Sync at every call site in legacy -- case 0's shared
+                // guard, sstv.cpp:1899, and its own case-1 guard, sstv.cpp:1953; m_sint3's calls at
+                // sstv.cpp:1927-1937 sit inside the same case-0 :1899 guard -- they must not run while
+                // locked; round-2-review fix, an earlier version of this citation pointed at m_sint1's
+                // own gates, sstv.cpp:1949/1959, by mistake). Bounded to
                 // _consumedSamples (the current decode position), NOT the whole buffer -- see
                 // TryVisLockStateMachine's own doc comment for the bulk-vs-streaming bug this bound fixes.
                 if (TryVisLockStateMachine(_consumedSamples))
@@ -721,7 +730,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // actual protection in the one place (CI) it would matter, and this was the only
         // Debug.Assert anywhere in this codebase, so it wasn't even following an established local
         // convention. An unconditional check gives this invariant (see this method's own doc
-        // comment above) a real enforcement, not just a doc-comment claim.
+        // comment above) a real enforcement, not just a doc-comment claim, for every caller that
+        // invokes PushSamples directly (every test in this suite, and any future caller that does the
+        // same). Round-2-review caveat: MiniAudioCaptureSession.SamplesAvailable's own invocation is
+        // wrapped in a deliberate bare try/catch (that class has no logger of its own) that forwards
+        // into MiniAudioEngine.SamplesCaptured -- if this decoder is ever wired to that event, a
+        // violation here would throw silently on every chunk with no log and no visible failure,
+        // rather than surfacing the way it does today. Not fixed here (no production caller of
+        // PushSamples exists yet, per a repo-wide grep at the time of this review), but worth a log
+        // line at that wiring's call site when it's built.
         if (_syncBypassProcessedUpTo != _visLockProcessedUpTo)
         {
             throw new InvalidOperationException(
@@ -796,47 +813,62 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // for by the time reception is locked, or its now-continuously-running re-verification scan
         // (see TryProcessBuffer) immediately rediscovers the very header that just committed and
         // fires a spurious mid-reception "restart" against itself. When any path other than
-        // TryVisLockStateMachine itself (fixed-window, narrow, AVT) triggered this Commit(),
-        // _visLockProcessedUpTo may still be at its initial 0 (never touched, since TryDecodeHeader
-        // only falls through to TryVisLockStateMachine when the faster paths fail) -- Math.Max fast-
-        // forwards it past the header those paths already resolved. When TryVisLockStateMachine
-        // itself triggered this Commit(), Math.Max still *advances* it (not a no-op): re-derived
-        // independently by review, walking VisLockStateMachine's own anchor formula against how many
-        // samples ProcessSample actually consumed to return a match shows the anchor is always
-        // slightly *later* (~15ms/164 samples at 11025Hz, for every candidate mode, normal or
-        // extended) than where the state machine itself stopped needing samples -- an earlier version
-        // of this comment claimed Math.Max "leaves it alone" here, which was backwards, though
+        // VisLockStateMachine resolving a match itself (fixed-window, narrow, AVT, or a sync-bypass
+        // match inside TryInterleavedHeaderScan) triggered this Commit(), _visLockProcessedUpTo may
+        // still be at its initial 0 (never touched -- TryDecodeHeader only falls through to
+        // TryInterleavedHeaderScan once the fixed-window paths fail, and neither AVT resolution nor a
+        // sync-bypass match touches this cursor on its own) -- Math.Max fast-forwards it past the
+        // header those paths already resolved. When VisLockStateMachine itself resolved the match --
+        // whether via TryInterleavedHeaderScan's inlined branch pre-lock, or via
+        // TryVisLockStateMachine's piece-6c mid-reception call -- Math.Max still *advances* it (not a
+        // no-op): re-derived independently by review, walking VisLockStateMachine's own anchor formula
+        // against how many samples ProcessSample actually consumed to return a match shows the anchor
+        // is always slightly *later* (~15ms/164 samples at 11025Hz, for every candidate mode, normal
+        // or extended) than where the state machine itself stopped needing samples -- an earlier
+        // version of this comment claimed Math.Max "leaves it alone" here, which was backwards, though
         // harmless (the skipped samples are header tail, never re-examined either way). Always
         // Reset(), even when self-triggered (already resets itself internally on a match) or already
         // fast-forwarded (Reset() only clears logical state, not the origin) -- cheap, and guarantees
         // no stale in-progress bit accumulation survives into the new transmission if a different
         // path pre-empted an in-progress VisLockStateMachine scan.
         //
-        // Round-1-review addition: a THIRD case, not covered by either paragraph above, and a real
-        // behavior change from the m_sint1 decoder-ordering fix (found by independent review of that
-        // fix, not anticipated when it was written) -- a sync-bypass match (CommitSyncBypassMatch,
-        // m_sint1/m_sint2/m_sint3) triggering this Commit() from inside TryInterleavedHeaderScan.
-        // Pre-fix, this case could only happen after TryVisLockStateMachine had already separately
-        // exhausted the whole buffer first (the old sequential shape), so _visLockProcessedUpTo was
-        // already at _rawSamples.Count by the time a sync-bypass match landed here -- pinning
-        // _visLockOriginSample at the buffer's end. Post-fix, the two cursors advance together
-        // inside TryInterleavedHeaderScan's own loop, so a sync-bypass match at index i leaves
-        // _visLockProcessedUpTo at i too (Math.Max(i, lineStart) == i, since lineStart <= i by
-        // construction) -- _visLockOriginSample now lands near the actual lock point, not the buffer
-        // end. Consequence: piece 6c's mid-reception re-verification (TryVisLockStateMachine(_consumedSamples)
-        // inside TryProcessBuffer's per-line loop) used to be an effective no-op for the rest of a
-        // bulk-pushed, sync-bypass-locked transmission (its own bound, _consumedSamples, could never
-        // catch up to a _visLockProcessedUpTo already pinned at the buffer end) -- it now actually
-        // runs, scanning the locked transmission's own image content for a stronger/cleaner VIS lock
-        // the same way legacy's real, permanently-ungated case-0 trigger does (sstv.cpp:1946-1950
-        // has no `!m_Sync` guard on the transition itself, only on the m_sint1/m_sint2/m_sint3
-        // branches above it) -- a genuine improvement in fidelity, not a regression, but one that
-        // extends VisLockStateMachine's own already-documented, already-accepted false-positive risk
-        // (see its class doc comment) to a scenario (mid-reception, bulk-pushed, sync-bypass-locked)
-        // that was previously immune to it by accident. Not given a dedicated test, matching this
-        // project's own established precedent for that same risk elsewhere (VisLockStateMachine's
-        // own doc comment: hand-verified reachable, deliberately not chased with a fixture) --
-        // documented honestly here instead of left as a silent, undiscussed side effect.
+        // Round-1-review addition, round-2-review-corrected: a sync-bypass match (CommitSyncBypassMatch,
+        // m_sint1/m_sint2/m_sint3) triggering this Commit() from inside TryInterleavedHeaderScan is
+        // already covered mechanically by the first paragraph above (Math.Max fast-forwards
+        // _visLockProcessedUpTo the same way any other non-self-triggering path does), but it has a
+        // consequence worth calling out on its own. Pre-fix, this case could only happen after
+        // TryVisLockStateMachine had already separately exhausted the whole buffer first (the old
+        // sequential shape), so _visLockProcessedUpTo was already at _rawSamples.Count by the time a
+        // sync-bypass match landed here -- pinning _visLockOriginSample at the buffer's end. Post-fix,
+        // the two cursors advance together inside TryInterleavedHeaderScan's own loop, so a sync-bypass
+        // match at index i leaves _visLockProcessedUpTo at i too (Math.Max(i, lineStart) == i, since
+        // lineStart <= i by construction) -- _visLockOriginSample now lands near the actual lock point,
+        // not the buffer end. Consequence: piece 6c's mid-reception re-verification
+        // (TryVisLockStateMachine(_consumedSamples) inside TryProcessBuffer's per-line loop) used to
+        // be an effective no-op for the rest of a bulk-pushed, sync-bypass-locked transmission (its
+        // own bound, _consumedSamples, could never catch up to a _visLockProcessedUpTo already pinned
+        // at the buffer end) -- it now actually runs, scanning the locked transmission's own image
+        // content for a stronger/cleaner VIS lock. This is closer to legacy's behavior at its SHIPPED
+        // DEFAULTS, not a universal legacy truth -- round-1-review's original wording here said
+        // legacy's case-0 trigger is "permanently-ungated," which round-2-review found to be wrong:
+        // the whole switch (sstv.cpp:1897) only runs at all while m_Sync is set because of the
+        // enclosing gate at sstv.cpp:1889, `if(!m_Sync || m_SyncRestart || m_SyncAVT)`, which is
+        // satisfied by m_SyncRestart defaulting to 1 (sstv.cpp:1486) -- a real, user-toggleable option
+        // (Option.cpp:611, Main.cpp:1857/10907/11887, already logged at spec/14-roadmap.md) that this
+        // port hard-wires on with no way to disable. So "the same way legacy does" means "at legacy's
+        // shipped defaults," not "unconditionally in every configuration." That framing correction
+        // doesn't change the substance: this remains a genuine improvement in fidelity relative to
+        // this port's own prior (accidentally-inert) behavior, but one that extends
+        // VisLockStateMachine's own already-documented, already-accepted false-positive risk (see its
+        // class doc comment) to a scenario (mid-reception, bulk-pushed, sync-bypass-locked) that was
+        // previously immune to it by accident. Not given a dedicated false-positive-forcing test,
+        // matching this project's own established precedent for that same risk elsewhere
+        // (VisLockStateMachine's own doc comment: hand-verified reachable, deliberately not chased
+        // with a fixture) -- SyncScanInterleaveTests' Assert.Equal(0, restartCount) is, incidentally,
+        // a real (if narrow) negative check that this newly-reachable path does not false-positive on
+        // exactly the fixture (a Robot 36 transmission) VisLockStateMachine's own doc comment names as
+        // the hand-verified false-positive risk case -- see PiecesSixCReachabilityTests for a positive
+        // check that the path actually engages, not just that it stays silent.
         _visLockStateMachine.Reset();
         _visLockProcessedUpTo = Math.Max(_visLockProcessedUpTo, _consumedSamples);
         _visLockOriginSample = _visLockProcessedUpTo;
