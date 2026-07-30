@@ -37,7 +37,7 @@ because of this and why.
   martin-m1 active from ~10.7s to ~127.6s (116.9s duration) against an expected 115.20s (910ms header
   + 256 lines × 446.446ms). The consistent ~1.7s overshoot on both, not a per-mode-specific amount,
   points to coarse envelope-detection slop rather than a real timing bug.
-- **Robot 36 canvas**: legacy's RX save is the full 320×256 shared canvac (`GetBitmapSize`), not the
+- **Robot 36 canvas**: legacy's RX save is the full 320×256 shared canvas (`GetBitmapSize`), not the
   240-line picture (`GetPictureSize`) — rows 0-239 of `robot36_RX.bmp` are real decoded content, rows
   240-255 are pure white (255,255,255) fill. Verified the paste is 1:1, not a 240→256 stretch (row 239
   decodes G≈255 matching source row 239, not a stretched G≈239).
