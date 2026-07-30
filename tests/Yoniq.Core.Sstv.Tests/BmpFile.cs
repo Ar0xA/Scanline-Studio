@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using Yoniq.Abstractions.Imaging;
 using Yoniq.Core.Imaging;
 
@@ -28,18 +29,21 @@ internal static class BmpFile
             throw new InvalidDataException($"'{path}' is not a BMP file (missing 'BM' magic).");
         }
 
-        var pixelDataOffset = BitConverter.ToInt32(data, 10);
-        var headerSize = BitConverter.ToInt32(data, 14);
+        // Round-1-review nitpick fix: explicit little-endian reads throughout (BMP fields are
+        // always little-endian on disk), matching MmvFile's own explicit-endianness convention
+        // rather than relying on BitConverter's host-endianness default.
+        var pixelDataOffset = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(10));
+        var headerSize = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(14));
         if (headerSize != 40)
         {
             throw new NotSupportedException(
                 $"'{path}' uses a {headerSize}-byte DIB header; only the 40-byte BITMAPINFOHEADER variant is supported.");
         }
 
-        var width = BitConverter.ToInt32(data, 18);
-        var heightRaw = BitConverter.ToInt32(data, 22);
-        var bitCount = BitConverter.ToInt16(data, 28);
-        var compression = BitConverter.ToInt32(data, 30);
+        var width = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(18));
+        var heightRaw = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(22));
+        var bitCount = BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(28));
+        var compression = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(30));
 
         if (bitCount != 24 || compression != 0)
         {
@@ -61,6 +65,15 @@ internal static class BmpFile
         // Each row is padded to a 4-byte boundary; all four fixtures happen to need no padding
         // (320*3=960, already a multiple of 4), but this is computed generally rather than assumed.
         var stride = ((width * 3) + 3) / 4 * 4;
+
+        // Round-1-review nitpick fix: a truncated file used to throw a bare IndexOutOfRangeException
+        // from deep inside the pixel loop below instead of one of this reader's own clear messages.
+        var requiredLength = pixelDataOffset + ((long)height * stride);
+        if (requiredLength > data.Length)
+        {
+            throw new InvalidDataException(
+                $"'{path}' is truncated: pixel data would need {requiredLength} bytes, file has {data.Length}.");
+        }
 
         for (var fileRow = 0; fileRow < height; fileRow++)
         {

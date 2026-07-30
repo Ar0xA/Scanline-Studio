@@ -89,15 +89,31 @@ public class GoldenVectorTests
         //   martin-m1: 11.78 -- close to the 10.0 tolerance SstvRoundTripTests uses for its
         //     synthetic self-round-trip, slightly worse as expected for real captured audio (real
         //     mic-preamp/soundcard noise floor, not a bit-exact synthetic signal).
-        //   robot-36:  68.06 -- a real, substantial, PRE-EXISTING known gap, not new information:
-        //     SstvModeRegistry.cs's own doc comment already documents that Robot 36 (and the rest
-        //     of the low-samples-per-pixel family) fails the 10.0 tolerance at 11025Hz even after
-        //     the single-sample-readout fix, and names the still-incompletely-effective AFC/PLL
-        //     settling speed as the likely remaining cause. This test grounds that existing,
-        //     source-derived suspicion in a real captured-audio measurement for the first time.
-        //     The bound below is a "no worse than currently observed" regression guard, NOT a
-        //     parity claim -- per this project's explicit rule (spec/14-roadmap.md) against
+        //   robot-36:  68.06 -- a real, substantial, PRE-EXISTING known gap, not new information in
+        //     its EXISTENCE: SstvModeRegistry.cs's own doc comment already documents Robot 36 (and
+        //     the rest of the low-samples-per-pixel family) failing the 10.0 tolerance at 11025Hz,
+        //     naming incomplete AFC/PLL settling as the likely cause. But the MAGNITUDE is new: that
+        //     same doc comment's own measured synthetic self-round-trip number for Robot 36 post-fix
+        //     is 13.4 (spec/14-roadmap.md), roughly 5x smaller than this real-capture number --
+        //     round-1-review's finding, independently confirmed by re-reading that roadmap entry.
+        //     A ~5x-worse result against real captured audio than against the port's own
+        //     self-generated signal is exactly the "encoder and decoder agree with each other while
+        //     both being wrong about reality" failure mode CLAUDE.md's behavioral-parity rule exists
+        //     to catch -- worth its own follow-up investigation, not just filed under "already
+        //     known." The bound below is a "no worse than currently observed" regression guard, NOT
+        //     a parity claim -- per this project's explicit rule (spec/14-roadmap.md) against
         //     silently picking whatever tolerance makes a bad number pass and calling it parity.
+        //     Round-1-review finding: 75.0 is NOT meaningfully discriminating for robot-36
+        //     specifically -- measured (not assumed) that a flat gray image, a horizontally
+        //     mirrored copy, a vertically flipped copy, and an R<->B channel swap all score ~42.67
+        //     against this exact source image under this exact metric (the gradient is smooth
+        //     enough that most structural corruptions land in a narrow band). Since robot-36's own
+        //     real measured delta (68.06) is already WORSE than that corruption floor, no tolerance
+        //     can simultaneously (a) pass today's actual, already-known-poor output and (b) reject a
+        //     structural bug -- those two goals are incompatible until the underlying DSP gap above
+        //     is fixed. Kept as a regression tripwire only for robot-36; martin-m1's 15.0 remains
+        //     genuinely discriminating (comfortably below its own ~42.66 corruption floor on the
+        //     same source image).
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 15.0,
@@ -105,6 +121,7 @@ public class GoldenVectorTests
         };
         var tolerance = toleranceByModeId[modeId];
 
+        Assert.Equal(0, restartCount);
         Assert.True(
             delta < tolerance,
             $"[{modeId}] decoder-vs-source delta {delta:F2} exceeded regression-guard tolerance {tolerance}. " +
@@ -138,19 +155,34 @@ public class GoldenVectorTests
         // non-AVT) VIS header -- both fixture modes use a normal header.
         var expectedHeaderSeconds = (VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs) / 1000.0;
         var expectedBodySeconds = mode.LineDurationMs * mode.ImageHeight / 1000.0;
-        var expectedTotalSeconds = expectedHeaderSeconds + expectedBodySeconds;
 
-        // Measured directly (not assumed): robot-36 expected 36.91s, measured ~38.6s (+1.7s);
-        // martin-m1 expected 115.20s, measured ~116.9s (+1.7s). The consistent ~1.5-2s overshoot
-        // across both modes, rather than a per-mode-specific one, points to coarse
-        // envelope-detection slop (50ms windows, a fixed amplitude threshold catching the
-        // modulator's ramp-up/down tails) rather than a real timing bug -- a tight tolerance here
-        // would be testing this test's own envelope detector, not the port. 5.0s is generous enough
-        // to absorb that slop while still catching a real gross timing error (wrong sample rate,
-        // wrong mode duration table entry, badly misdetected TX region).
+        // Round-1-review finding: an earlier version of this test omitted two real, fixed-duration
+        // legacy TX segments and misattributed the resulting ~1.7s gap to "envelope-detection
+        // slop" -- wrong, and caught by re-deriving the envelope by hand (both edges are a single
+        // 50ms window wide, not a ramp, so slop is bounded at about +-0.1s per edge, not 1.7s).
+        // Confirmed directly against source instead: TMmsstv::OutHEAD (Main.cpp:7270-7292) writes
+        // 8x100ms leader tones (800ms) unconditionally before the VIS header at legacy's shipped
+        // defaults (sys.m_VOX==0, non-narrow) -- called from SendSSTV at Main.cpp:7393, right
+        // before the VIS header itself. TMmsstv::SendSSTV's own footer (Main.cpp:6996-7009, same
+        // shipped defaults, sys.m_TXFSKID==0 per Main.cpp:903) writes WriteC(1500,
+        // min(m_TW, SampFreq/2)) + 4x100ms (400ms), where m_TW is one line's duration in samples
+        // (sstv.cpp:1109) -- i.e. min(mode.LineDurationMs, 500ms) + 400ms.
+        var headSeconds = 0.8;
+        var footerSeconds = (Math.Min(mode.LineDurationMs, 500.0) / 1000.0) + 0.4;
+        var expectedTotalSeconds = headSeconds + expectedHeaderSeconds + expectedBodySeconds + footerSeconds;
+
+        // Measured directly (not assumed): robot-36 expected 38.26s, measured ~38.6s (delta
+        // ~0.34s, not fully pinned down -- likely TX-buffer/soundcard start latency, left as an
+        // acknowledged small residual rather than chased further); martin-m1 expected 116.85s,
+        // measured ~116.9s (delta ~0.05s, within one 50ms envelope window). 1.0s comfortably
+        // covers both real residuals plus envelope-window slop, while still being tight enough to
+        // catch a real gross timing error (wrong sample rate, wrong mode duration table entry,
+        // badly misdetected TX region) -- a 5x tighter bound than the pre-review 5.0s, which was
+        // wide enough to accept anything from ~129ms to ~171ms as "correct" for robot-36's own
+        // 150ms line duration and so couldn't actually catch the error class it claimed to guard.
         var deltaSeconds = Math.Abs(measuredDurationSeconds - expectedTotalSeconds);
         Assert.True(
-            deltaSeconds < 5.0,
+            deltaSeconds < 1.0,
             $"[{modeId}] TX-region duration {measuredDurationSeconds:F2}s vs expected {expectedTotalSeconds:F2}s, " +
             $"delta {deltaSeconds:F2}s exceeded tolerance.");
     }
@@ -196,7 +228,7 @@ public class GoldenVectorTests
     // about, the two decodes would diverge from each other, not just from the source.
     [Theory]
     [MemberData(nameof(DecoderFixtures))]
-    public void EncoderOutput_DecodesSimilarlyTo_RealLegacyAudioDecode(
+    public async Task EncoderOutput_DecodesSimilarlyTo_RealLegacyAudioDecode(
         string modeId, string mmvFile, string sourceBmp, int pictureHeight)
     {
         var source = BmpFile.Read(Path.Combine(FixtureDir, sourceBmp));
@@ -204,7 +236,7 @@ public class GoldenVectorTests
 
         var encoder = new AnalogFmSstvEncoder(11025);
         var encodedSamples = new List<float>();
-        foreach (var sample in EncodeSync(encoder, mode, source))
+        await foreach (var sample in encoder.EncodeAsync(mode, source))
         {
             encodedSamples.Add(sample);
         }
@@ -213,7 +245,11 @@ public class GoldenVectorTests
         SstvModeDefinition? selfDetectedMode = null;
         IImageSource? selfDecoded = null;
         selfDecoder.ModeDetected += m => selfDetectedMode = m;
-        selfDecoder.LineDecoded += update => selfDecoded = update.Image;
+        // Round-1-review fix: snapshot immediately rather than aliasing the decoder's own live
+        // pixel buffer -- see DecodeMmvFixture's own comment on Snapshot for why this matters even
+        // though, for this single-lock case, the live reference happens to be safe to read after
+        // PushSamples returns too.
+        selfDecoder.LineDecoded += update => selfDecoded = Snapshot(update.Image);
 
         selfDecoder.PushSamples(encodedSamples.ToArray());
 
@@ -225,13 +261,24 @@ public class GoldenVectorTests
         var croppedReal = CropToTop(realAudioDecoded, pictureHeight);
         var delta = MeasureAveragePerChannelDelta(croppedSelf, croppedReal, pictureHeight);
 
-        // Measured directly: martin-m1 = 13.66, robot-36 = 60.89 -- both close to (not wildly
-        // divergent from) Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource's own
-        // decode-vs-source deltas for the same modes (11.78 / 68.06), which is exactly what's
-        // expected if the C# encoder and decoder broadly agree with each other AND with the real
-        // legacy signal -- not what's expected if the encoder had a structural bug independent of
-        // the decoder's own known Robot-36-at-11025Hz gap. Same "regression guard, not parity claim"
-        // policy as the sibling test above, for the same documented reason.
+        // Measured directly: martin-m1 = 13.66, robot-36 = 60.89.
+        //
+        // martin-m1's number is close to (not wildly divergent from)
+        // Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource's own decode-vs-source delta for
+        // the same mode (11.78), and comfortably below its own ~42.66 corruption floor (see below)
+        // -- genuinely consistent with the encoder and decoder broadly agreeing with each other and
+        // with the real legacy signal, not just with a loose tolerance happening to pass.
+        //
+        // robot-36's number is NOT meaningfully evidence of agreement -- round-1-review finding,
+        // confirmed by measurement: a flat gray image, a horizontally mirrored copy, a vertically
+        // flipped copy, and an R<->B channel swap of the source all score ~42.67 under this exact
+        // metric on this exact (very smooth) gradient image, and 60.89 is WORSE than all of them.
+        // The earlier version of this comment read 60.89 as "close to" 68.06 and took that as
+        // evidence of encoder/decoder agreement -- overclaimed: being close to another already-bad
+        // number is not evidence of correctness when both numbers are already worse than trivial
+        // structural corruption would score. Kept only as a regression tripwire for robot-36, same
+        // as its sibling test's own tolerance -- not a discriminating check until the underlying
+        // Robot-36-at-11025Hz DSP gap (documented on the sibling test) is fixed.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 18.0,
@@ -244,21 +291,28 @@ public class GoldenVectorTests
             $"[{modeId}] self-encoded-vs-real-audio-decode delta {delta:F2} exceeded tolerance {tolerance}.");
     }
 
-    private static IEnumerable<float> EncodeSync(AnalogFmSstvEncoder encoder, SstvModeDefinition mode, IImageSource image)
+    // Round-1-review fix: AnalogFmSstvDecoder.LineDecoded hands out a MutableImageSource wrapping
+    // the decoder's own LIVE _pixels array by reference, not a copy (confirmed directly against
+    // AnalogFmSstvDecoder.cs: Commit() allocates a fresh _pixels array on every lock, and the only
+    // writer, DecodeLine, re-reads _pixels from the field at the top of every outer-loop
+    // iteration). Capturing that reference and reading it later works TODAY only because of that
+    // "always a fresh array" invariant -- if Commit() were ever changed to reuse a same-sized
+    // buffer instead of reallocating (a plausible future allocation optimization), a captured
+    // reference would silently keep mutating after being "frozen," with no visible symptom. Copying
+    // into a real snapshot here removes the dependency on that invariant instead of relying on it.
+    private static ArrayImageSource Snapshot(IImageSource image)
     {
-        var task = CollectAsync(encoder, mode, image);
-        return task.GetAwaiter().GetResult();
-    }
-
-    private static async Task<List<float>> CollectAsync(AnalogFmSstvEncoder encoder, SstvModeDefinition mode, IImageSource image)
-    {
-        var samples = new List<float>();
-        await foreach (var sample in encoder.EncodeAsync(mode, image))
+        var pixels = new Rgb24[image.Width * image.Height];
+        for (var y = 0; y < image.Height; y++)
         {
-            samples.Add(sample);
+            var line = image.GetScanline(y);
+            for (var x = 0; x < image.Width; x++)
+            {
+                pixels[(y * image.Width) + x] = line[x];
+            }
         }
 
-        return samples;
+        return new ArrayImageSource(image.Width, image.Height, pixels);
     }
 
     private static (IImageSource Decoded, SstvModeDefinition Mode, int RestartCount) DecodeMmvFixture(string modeId, string mmvFile)
@@ -279,14 +333,15 @@ public class GoldenVectorTests
             // itself (confirmed during scoping: legacy's "Rec" only taps the modulator while
             // transmitting -- Wave.InClose() during TX means the pre/post-TX portions are live mic
             // input, not silence), so the decoder legitimately keeps scanning afterward and could in
-            // principle find a second, spurious lock in that extra audio. Freezing on the last
+            // principle find a second, spurious lock in that extra audio. Snapshotting (see
+            // Snapshot's own comment for why a bare reference isn't safe to rely on) on the last
             // LineDecoded update seen while still on the FIRST detected mode -- rather than assuming
             // the last LineDecoded event overall is the real image -- means a later spurious lock
             // can't silently overwrite the image we actually want to compare. See
             // Fixtures/GoldenVectors/README.md for the measured TX-region timing.
             if (detectedModesInOrder.Count == 1)
             {
-                lastImageBeforeSecondLock = update.Image;
+                lastImageBeforeSecondLock = Snapshot(update.Image);
             }
         };
 
