@@ -34,27 +34,29 @@ namespace Yoniq.Core.Audio.MiniAudio;
 /// holds both semaphores at once (capture teardown fully released before playback teardown
 /// begins), so there is no ABBA case to order against.
 ///
-/// Round-2-engine-review: a known, narrow, deliberately NOT fixed residual race, documented
-/// honestly rather than left silently open. `_captureLock`'s wait (in
-/// <see cref="ClaimCaptureSessionAsync"/>) is only guaranteed to keep a caller on its own original
-/// thread when the lock is uncontended -- when contended, the `await` can resume on a different
-/// (pool) thread once the lock becomes available. If that happens to a
+/// Round-2/3-engine-review history, kept for anyone re-deriving this: round 2 found that
+/// `_captureLock`'s wait (in <see cref="ClaimCaptureSessionAsync"/>) was only guaranteed to keep a
+/// caller on its own original thread when the lock was uncontended -- when contended, the `await`
+/// could resume on a different (pool) thread once the lock became available. If that happened to a
 /// <see cref="SamplesCaptured"/> subscriber's own re-entrant self-dispose call (see
-/// <see cref="DisposeCaptureSessionAsync"/>'s doc comment for that supported pattern) at the exact
-/// moment it's racing another Start/Stop call for the lock, the session's own
-/// <see cref="MiniAudioCaptureSession.IsRunningOnDrainThread"/> check can then run on the wrong
-/// (post-hop) thread and dispatch to <c>Task.Run</c> instead of inline -- reintroducing the same
-/// class of self-join deadlock this whole mechanism exists to avoid, just gated behind a much
-/// narrower trigger window (lock contention landing on that specific call) than the case actually
-/// fixed. The only correct fix found for this needs to live in
-/// <see cref="MiniAudioCaptureSession"/> itself (bounding its own `_drainThread.Join()` the way its
-/// native close is already bounded by `CloseTimeout`) -- not applied here, deliberately: doing so
-/// naively means proceeding to the native close call while the drain thread might still be
-/// concurrently reading from the same native handle the close call frees, trading a rare (if
-/// serious) managed-code hang for a rarer but worse native use-after-free. Left open rather than
-/// risk introducing that, pending a dedicated look at restructuring the drain loop's shutdown
-/// signaling (e.g. away from thread-Join-based synchronization entirely) rather than a rushed
-/// patch to already-three-times-reviewed session code.
+/// <see cref="DisposeCaptureSessionAsync"/>'s doc comment for that supported pattern) racing another
+/// Start/Stop call for the lock, the session's own
+/// <see cref="MiniAudioCaptureSession.IsRunningOnDrainThread"/> check would then run on the wrong
+/// (post-hop) thread and dispatch to `Task.Run` instead of inline -- reintroducing the same class of
+/// self-join deadlock this whole mechanism exists to avoid, gated behind lock contention (which,
+/// per round 3's own tracing, is not as narrow a window as first assumed: `StartCaptureAsync` holds
+/// `_captureLock` across a real native device open, milliseconds to hundreds of milliseconds, not
+/// just brief field writes). Round 2 documented this as needing a fix inside
+/// <see cref="MiniAudioCaptureSession"/> itself (bounding its `_drainThread.Join()`) and deliberately
+/// did not apply one, correctly identifying that doing so naively risks a native use-after-free (the
+/// drain thread could still be reading from the native handle when a timed-out Join's caller
+/// proceeds to close it anyway) -- round 3 confirmed that risk analysis is right, but found the
+/// "needs to live in the session class" framing was not: <see cref="ClaimCaptureSessionAsync"/> now
+/// fixes this at the engine level instead, by never letting the hop happen in the first place (a
+/// caller already on the active session's own drain thread takes a genuinely thread-blocking
+/// `SemaphoreSlim.Wait()`, which cannot hop, rather than the async `WaitAsync()` a Start call or
+/// another claim could contend against) -- see that method's own doc comment for the full
+/// reasoning and why the fix carries no native-lifetime risk.
 /// </summary>
 public sealed class MiniAudioEngine : IAudioEngine
 {
@@ -104,7 +106,12 @@ public sealed class MiniAudioEngine : IAudioEngine
     /// <see cref="IAudioEngine"/> itself (no interface change), same pattern as the session types'
     /// own extra diagnostic members (e.g. <c>TimedOutDuringClose</c>) that go beyond what any
     /// interface requires. 0 when capture isn't started, matching "nothing to report" rather than
-    /// throwing.</summary>
+    /// throwing -- except for the same narrow, documented race
+    /// <see cref="EnqueuePlaybackSamples"/> has (round-3-engine-review honesty fix): a concurrent
+    /// <see cref="StopCaptureAsync"/> disposing the session between this property's field read and
+    /// the underlying native call can still surface the session's own
+    /// <see cref="ObjectDisposedException"/>, since this is a diagnostic-only member and
+    /// deliberately does not take <see cref="_captureLock"/> either.</summary>
     public int CaptureOverrunCount => _captureSession?.OverrunCount ?? 0;
 
     /// <summary>Piece Engine 5a: diagnostic pass-through to the active playback session's own
@@ -165,33 +172,71 @@ public sealed class MiniAudioEngine : IAudioEngine
     /// immediately as a no-op, instead of ever contending with an in-progress disposal.</summary>
     private async Task<MiniAudioCaptureSession?> ClaimCaptureSessionAsync()
     {
+        // Round-3-engine-review fix: closes the residual race this class's own doc comment used to
+        // describe as "not safely fixable without touching MiniAudioCaptureSession" -- that framing
+        // was wrong. The actual problem was letting a drain-thread-originated claim potentially hop
+        // onto a different physical thread via a contended WaitAsync; the fix is to never let that
+        // hop happen in the first place, not to detect/recover from one afterward (which
+        // DisposeCaptureSessionAsync's own per-session check cannot do -- it only ever sees
+        // whichever thread ends up calling it). When the caller IS the active session's own drain
+        // thread, this uses a genuinely thread-blocking SemaphoreSlim.Wait() instead of
+        // WaitAsync() -- Wait() never hops threads under any circumstance, unlike a contended
+        // WaitAsync's continuation, which can resume on a pool thread once the lock frees up. The
+        // only holders of _captureLock a drain thread could ever contend against are
+        // StartCaptureAsync (opening a NEW, unrelated session -- never waits on this drain thread)
+        // and other claim calls (brief field writes) -- neither can deadlock against a bounded
+        // synchronous wait here. If the speculative check below is stale by the time the lock is
+        // actually acquired (the field changed to a different session, or null, between the check
+        // and the wait), that's harmless: DisposeCaptureSessionAsync re-evaluates
+        // IsRunningOnDrainThread fresh against whatever session was ACTUALLY claimed, so
+        // correctness never depends on this check being atomic with the claim -- it only ever picks
+        // which wait strategy to use.
+        if (_captureSession?.IsRunningOnDrainThread == true)
+        {
+            _captureLock.Wait();
+            try
+            {
+                return ClaimCaptureSessionLocked();
+            }
+            finally
+            {
+                _captureLock.Release();
+            }
+        }
+
         await _captureLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            var session = _captureSession;
-            _captureSession = null;
-
-            // Round-2-engine-review fix: unsubscribe as soon as a session is claimed, not only
-            // once Dispose() actually finishes closing it. Without this, a claimed-but-not-yet-
-            // disposed S1 (its native close can take up to CloseTimeout, run on a background
-            // thread) could still be forwarding SamplesAvailable while a StartCaptureAsync racing
-            // in right behind this claim opens S2 -- interleaving two devices' audio on one
-            // SamplesCaptured event with no marker between them, silent stream corruption for
-            // whatever's downstream (the SSTV decoder). Safe to call concurrently with an
-            // in-flight SamplesAvailable invocation: C# multicast delegate invocation captures its
-            // own snapshot of the list, so `-=` here cannot affect a call already in progress, only
-            // ones that haven't started yet.
-            if (session is not null)
-            {
-                session.SamplesAvailable -= OnCaptureSamplesAvailable;
-            }
-
-            return session;
+            return ClaimCaptureSessionLocked();
         }
         finally
         {
             _captureLock.Release();
         }
+    }
+
+    /// <summary>Must be called with <see cref="_captureLock"/> already held.</summary>
+    private MiniAudioCaptureSession? ClaimCaptureSessionLocked()
+    {
+        var session = _captureSession;
+        _captureSession = null;
+
+        // Round-2-engine-review fix: unsubscribe as soon as a session is claimed, not only
+        // once Dispose() actually finishes closing it. Without this, a claimed-but-not-yet-
+        // disposed S1 (its native close can take up to CloseTimeout, run on a background
+        // thread) could still be forwarding SamplesAvailable while a StartCaptureAsync racing
+        // in right behind this claim opens S2 -- interleaving two devices' audio on one
+        // SamplesCaptured event with no marker between them, silent stream corruption for
+        // whatever's downstream (the SSTV decoder). Safe to call concurrently with an
+        // in-flight SamplesAvailable invocation: C# multicast delegate invocation captures its
+        // own snapshot of the list, so `-=` here cannot affect a call already in progress, only
+        // ones that haven't started yet.
+        if (session is not null)
+        {
+            session.SamplesAvailable -= OnCaptureSamplesAvailable;
+        }
+
+        return session;
     }
 
     /// <summary>Fires on <see cref="MiniAudioCaptureSession"/>'s own drain thread -- see
@@ -436,6 +481,20 @@ public sealed class MiniAudioEngine : IAudioEngine
                     }
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            // Round-3-engine-review fix: without this, a faulted teardown was invisible to a second
+            // concurrent DisposeAsync caller -- the finally block below always called
+            // _disposedSignal.TrySetResult() (unconditional success) regardless of whether the try
+            // block above actually threw, so caller 1 would observe the real exception while caller
+            // 2's `await _disposedSignal.Task` (see the branch at the top of this method) completed
+            // as if nothing went wrong. The same silent-failure shape this project's own Program.cs
+            // Exit-handler fix (round 2) closed for the WhenAny case. TrySetException here, then
+            // rethrow for this (the first) caller; TrySetResult in the finally below becomes a
+            // harmless no-op once the signal is already resolved.
+            _disposedSignal.TrySetException(ex);
+            throw;
         }
         finally
         {
