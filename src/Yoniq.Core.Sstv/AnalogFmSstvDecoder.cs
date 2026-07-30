@@ -812,13 +812,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // path found this match, VisLockStateMachine must never re-examine samples already accounted
         // for by the time reception is locked, or its now-continuously-running re-verification scan
         // (see TryProcessBuffer) immediately rediscovers the very header that just committed and
-        // fires a spurious mid-reception "restart" against itself. When any path other than
-        // VisLockStateMachine resolving a match itself (fixed-window, narrow, AVT, or a sync-bypass
-        // match inside TryInterleavedHeaderScan) triggered this Commit(), _visLockProcessedUpTo may
-        // still be at its initial 0 (never touched -- TryDecodeHeader only falls through to
-        // TryInterleavedHeaderScan once the fixed-window paths fail, and neither AVT resolution nor a
-        // sync-bypass match touches this cursor on its own) -- Math.Max fast-forwards it past the
-        // header those paths already resolved. When VisLockStateMachine itself resolved the match --
+        // fires a spurious mid-reception "restart" against itself. When the fixed-window, narrow, or
+        // AVT path triggered this Commit(), _visLockProcessedUpTo may still be at its initial 0
+        // (never touched -- TryDecodeHeader only falls through to TryInterleavedHeaderScan once the
+        // fixed-window paths fail, and neither AVT resolution nor anything before that fallthrough
+        // touches this cursor) -- Math.Max fast-forwards it past the header those paths already
+        // resolved. Round-3-review correction: a sync-bypass match does NOT belong in that "still at
+        // 0" case -- TryInterleavedHeaderScan advances _visLockProcessedUpTo in lockstep with
+        // _syncBypassProcessedUpTo on every sample, sync-bypass match or not, so by the time one
+        // fires it's already at the matching sample index (see the paragraph below); an earlier
+        // version of this parenthetical said sync-bypass "doesn't touch this cursor on its own",
+        // which was wrong -- it's mechanically the same Math.Max fast-forward as the other paths,
+        // but the "never touched"/"still at 0" framing specifically does not apply to it. When
+        // VisLockStateMachine itself resolved the match --
         // whether via TryInterleavedHeaderScan's inlined branch pre-lock, or via
         // TryVisLockStateMachine's piece-6c mid-reception call -- Math.Max still *advances* it (not a
         // no-op): re-derived independently by review, walking VisLockStateMachine's own anchor formula

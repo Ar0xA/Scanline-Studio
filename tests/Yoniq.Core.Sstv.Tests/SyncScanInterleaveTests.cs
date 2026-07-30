@@ -22,10 +22,30 @@ namespace Yoniq.Core.Sstv.Tests;
 /// <c>VisLockStateMachine</c> ever reaches Martin M1's header, deep inside the same buffer.
 ///
 /// Round-1-review addition: confirmed (not just reasoned about) that Robot 36 completes cleanly
-/// (all of its lines decoded) before Martin M1 is detected via its own real header at
-/// <c>EndOfImage</c> -- exactly <c>["robot-36", "martin-m1"]</c> with zero <c>DecodeRestarted</c>
-/// events, measured directly rather than assumed, so both tests below pin that exact shape instead
-/// of the weaker "M1 appears somewhere" check an earlier version of this file used.
+/// (all of its lines decoded) before Martin M1 is separately detected -- exactly
+/// <c>["robot-36", "martin-m1"]</c> with zero <c>DecodeRestarted</c> events, measured directly
+/// rather than assumed, so both tests below pin that exact shape instead of the weaker "M1 appears
+/// somewhere" check an earlier version of this file used.
+///
+/// Round-3-review correction: the sentence above used to claim M1 is detected "via its own real
+/// header at <c>EndOfImage</c>" -- wrong, not caught until round 3. <c>EndOfImage</c> resumes
+/// 500ms after Robot 36's own decode finishes, which lands well past M1's real header window in
+/// this fixture, so the fixed-window header path (anchored to <c>_consumedSamples</c>, see
+/// <c>TryDecodeHeader</c>) can never align with it. M1 is actually found the same way a real
+/// headerless capture would be: the sync-interval bypass (M1 is one of
+/// <c>SyncBypassTrustedModes</c>, and <c>m_sint1</c> has no allowlist at all) recognizes its sync
+/// periodicity a few lines into its own image body -- past its own header, not via it. Contrast
+/// <see cref="PiecesSixCReachabilityTests"/>, where M1's real header genuinely is what gets found
+/// (piece 6c's own <c>TryVisLockStateMachine</c> mid-reception call lands inside M1's header window
+/// there, not past it).
+///
+/// Round-3-review note: the <c>restartCount == 0</c> assertion below has roughly a 145ms margin
+/// (less than one Robot 36 line) against flipping to 1 -- piece 6c's per-line bound reaches ~750ms
+/// into M1's header by the time Robot 36's own decode completes, and <c>VisLockStateMachine</c>
+/// needs ~895ms to resolve a header from a cold start. A future change to m_sint1's lock latency,
+/// VisLockStateMachine's anchor timing, or slant tracking's effect on samples-per-line could flip
+/// this without indicating a regression in the fix itself -- recorded here so a future maintainer
+/// re-derives the margin before assuming a failure here means the fix broke.
 ///
 /// Round-2-review clarification: the chunked-streaming variant below is a chunk-size-invariance
 /// check on this fix specifically (proving <c>TryInterleavedHeaderScan</c>'s per-sample state
