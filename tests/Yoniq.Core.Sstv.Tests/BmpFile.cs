@@ -59,6 +59,16 @@ internal static class BmpFile
             throw new NotSupportedException($"'{path}': top-down (negative-height) BMPs are not supported.");
         }
 
+        // Round-2-review nitpick fix: a corrupt/malicious width or pixelDataOffset (e.g. negative)
+        // used to reach the pixel loop below and fail with a bare IndexOutOfRangeException instead
+        // of one of this reader's own clear messages -- same class of fix as the truncated-length
+        // check a few lines down.
+        if (width <= 0 || pixelDataOffset < 54)
+        {
+            throw new InvalidDataException(
+                $"'{path}': implausible width={width} or pixelDataOffset={pixelDataOffset}.");
+        }
+
         var height = heightRaw;
         var pixels = new Rgb24[width * height];
 
