@@ -70,13 +70,15 @@ committed as of this brief — see `git status`.**
   `AvtTrainingLockStateMachineTests.cs`, `GoldenVectorTests.cs`, `spec/14-roadmap.md`) — ask before
   pushing, per standing instruction.
 
-## Piece 10 — `GetPictureLevel` peak-picking — IMPLEMENTED, 317/317 passing, not yet committed
+## Piece 10 — `GetPictureLevel` peak-picking — COMPLETE, committed and pushed (`ee74bfd`)
 Started as item #2 below ("Robot 36 luma bare read"); investigation found the real scope is far bigger
 — confirmed by reading Main.cpp's actual per-pixel decode switch directly, not inferring from the
 original one-line framing. User chose "full fix, plan-reviewed first" over a narrower Robot-36-only
-slice. No code written yet — auditor's round-1 plan review just came back with 2 blockers + 4 risks
-against the drafted plan. This section is the current source of truth; fold into `spec/14-roadmap.md`
-once implementation starts.
+slice. Went through 4 rounds of auditor plan review, then implementation in isolate-tested steps,
+317/317 tests passing. Full narrative (all 4 review rounds, implementation steps, the root-caused
+delta-increase finding) is in `spec/14-roadmap.md`, search "Piece 10" — that's the authoritative log;
+this section is kept as a detailed record but is no longer the live working copy. Not the current task
+— background only, same status as piece 8/9 above.
 
 ### The bug, verified against source
 Legacy's `GetPictureLevel(short *ip)` (`Main.cpp:4057-4071`) compares two raw demodulated samples
@@ -357,14 +359,46 @@ as part of this piece (too large, separately-scoped, not guaranteed to be the fu
 bump its priority in item #5 below instead, since it's no longer just a documentation gap, it now has
 a measured behavioral consequence.
 
-**Not yet done**: commit. Full suite is green; `spec/14-roadmap.md` still needs this same narrative
-folded in as the durable log (PROJECT_BRIEF.md is the working copy).
+**Done**: committed and pushed (`ee74bfd`), `spec/14-roadmap.md` updated with the full narrative as the
+durable log. Piece 10 complete.
+
+## Piece 11 — `m_KSS`/`m_KS2S` horizontal pixel-pitch fix — COMPLETE, committed and pushed (`be938d4`)
+
+Item #3 from the open-items list below. User approved implementing directly (no auditor plan-review
+round) since it reuses Piece 10's already-tested `GetPeakPickParameters` machinery rather than
+introducing new architecture.
+
+**Investigation** (verify-before-implement, per CLAUDE.md):
+- TX confirmed unaffected: `TMmsstv::LineR36` (`Main.cpp:6558`) writes each pixel at a flat
+  `DurationMs/Width` with no trim — this is RX-decode-only, per CLAUDE.md's TX/RX-separate-paths rule.
+- RX's real x-mapping traced directly in `Main.cpp`'s decode switch: `x = ps * Width / m_KSS` for
+  luma/RGB channels, `x = ps * Width / m_KS2S` for chroma (R-Y/B-Y/Robot's combined "C" channel).
+- **Caught a wrong assumption before implementing**: an earlier note in this project claimed
+  `m_KS2S` always uses the same trim divisor as `m_KSS`. False for group D (MR73) —
+  `sstv.cpp:1152-1154` trims luma by `/640` but chroma by `/1024`. Every other group (A/B/C/E) does
+  use the same divisor for both. Re-verified directly against source rather than trusting the earlier
+  note.
+
+**Fix**: extended `PeakPickParameters` (`SstvModeRegistry.cs`) with a second field, `Ks2sTrimFactor`
+(identical to `KssTrimFactor` in groups A/B/C/E, `1023/1024` vs `639/640` in group D). Added
+`IsChromaChannel(channelName)` (`"RY"`/`"BY"`/`"C"`) and `GetPixelPitchTrimFactor(mode, channelName)`.
+All 5 decoders' `perPixelDurationMs = scan.DurationMs / mode.ImageWidth` now multiply by
+`GetPixelPitchTrimFactor(mode, scan.ChannelName)` before computing sample windows.
+
+**Tests**: `PeakPickParametersTests.cs` extended (Ks2sTrimFactor column on the existing 43-mode theory,
+`IsChromaChannel`/`GetPixelPitchTrimFactor` unit tests using MR73's real divergence as the
+discriminating case). 327/327 passing (was 317).
+
+**Golden-vector re-measurement** (both fixtures are group E, ~0.4% trim on both axes): martin-m1
+1.284 → 1.438 (still well inside the 15.0 tolerance), robot-36 17.086 → 14.809 (improved). No
+regression; expected small opposite-signed movement since this is a scale fix, not a settling-time
+fix like Piece 9's.
+
+**Done**: committed and pushed (`be938d4`), `spec/14-roadmap.md` updated with the full narrative as the
+durable log. Piece 11 complete.
 
 ## Other still-open items (not started, for context/prioritization)
 From `spec/14-roadmap.md`'s "Secondary, smaller, independently-source-verified divergences" list:
-3. Horizontal pixel pitch should use legacy's `m_KSS` (`m_KS - m_KS/240` for Robot 36, `sstv.cpp:1157`),
-   not `m_KS` — ~0.42% horizontal scale error. **Connected to piece 10** — piece 10 computes `m_KSS` as
-   an intermediate value already (`GetPeakPickParameters`), worth doing together with this.
 5. **Legacy's shipped default demodulator is actually the Hilbert path (`CHILL`), not PLL at all** —
    this port only has PLL. Bigger, separately-scoped question, previously "not attempted here" with no
    further framing. **Priority bumped by piece 10's own investigation (see above)**: this is no longer
