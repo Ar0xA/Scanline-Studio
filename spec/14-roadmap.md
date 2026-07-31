@@ -378,7 +378,50 @@ its own piece than decided on the strength of one finding. Concrete next step lo
 real implementation and get an actual settling-time comparison before deciding whether to implement it,
 rather than leaving "worth it?" as a guess in either direction.
 
-**Piece 10 status: implemented, 317/317 passing, not yet committed.**
+**Piece 10 status: implemented, 317/317 passing, committed (`ee74bfd`), pushed.**
+
+## Piece 11 — `m_KSS`/`m_KS2S` horizontal pixel-pitch fix
+
+Open-items list's item 3 (logged during piece 10 as "connected to piece 10"). Legacy's real per-pixel
+x-mapping (`Main.cpp`'s decode switch, e.g. `Main.cpp:4223/4300`) is `x = ps * Width / m_KSS` for
+luma/RGB channels, `x = ps * Width / m_KS2S` for chroma (R-Y/B-Y, and Robot's tone-selected combined
+"C" channel) — both TRIMMED widths, not the raw scan duration `m_KS`/`m_KS2` this port's decoders were
+using (`perPixelDurationMs = scan.DurationMs / mode.ImageWidth`, no trim). A ~0.1%-0.4%-of-scan
+horizontal scale error, per group.
+
+**TX/RX verified separately, per CLAUDE.md's rule** (never infer one from the other): read
+`TMmsstv::LineR36` (`Main.cpp:6558`) directly — TX writes each pixel at a flat `DurationMs/Width` with
+no trim at all. This fix is RX-decode-only.
+
+**Caught a wrong assumption before implementing**: an earlier working note in this project claimed
+`m_KS2S` always uses the identical trim divisor as `m_KSS`. Re-verified directly against
+`sstv.cpp:1110-1160`'s grouping switch and found this is FALSE for group D (MR73 only) —
+`m_KSS = m_KS - m_KS/640` but `m_KS2S = m_KS2 - m_KS2/1024` (`sstv.cpp:1152-1154`), different
+divisors. Groups A/B/C/E use the same divisor for both. Caught by re-reading source instead of trusting
+the earlier note — exactly the kind of error CLAUDE.md's "no assumptions" rule exists to catch.
+
+**Fix**: extended `PeakPickParameters` (`SstvModeRegistry.cs`) with a second field, `Ks2sTrimFactor`
+(equal to `KssTrimFactor` in groups A/B/C/E; `1023/1024` vs `639/640` in group D). Added
+`IsChromaChannel(channelName)` (`"RY"`/`"BY"`/`"C"`) and `GetPixelPitchTrimFactor(mode, channelName)`,
+reusing the same 5-group switch `GetPeakPickParameters` already implements. All 5 scanline decoders'
+`perPixelDurationMs` now multiply by `GetPixelPitchTrimFactor(mode, scan.ChannelName)` before computing
+each pixel's sample window.
+
+**User approved implementing directly** (no auditor plan-review round) given this reuses piece 10's
+already-tested `GetPeakPickParameters` machinery rather than introducing new architecture.
+
+**Tests**: `PeakPickParametersTests.cs` extended — `Ks2sTrimFactor` column added to the existing
+43-mode theory (MR73 is the only row where it differs from `KssTrimFactor`), plus dedicated
+`IsChromaChannel`/`GetPixelPitchTrimFactor` tests using MR73's real divergence as the discriminating
+case (a test that only exercised matching-groups modes could pass even with the chroma branch wired to
+the wrong field). 327/327 passing (was 317).
+
+**Golden-vector re-measurement** (both fixtures are group E — 239/240 trim on both axes): martin-m1
+1.284 → 1.438 (small increase, still well inside the 15.0 tolerance), robot-36 17.086 → 14.809
+(improved). No regression; small opposite-signed movement is the expected shape for a scale fix (unlike
+piece 10's settling-time-driven regression, this doesn't touch demodulator dynamics at all).
+
+**Piece 11 status: implemented, 327/327 passing, not yet committed.**
 
 **Demo:** a console/test harness encodes a test image to a `.wav`, decodes it back, and the round-trip image matches within tolerance — provable before any UI exists.
 

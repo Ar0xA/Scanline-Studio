@@ -118,7 +118,11 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
         ref double idealSamplesSoFar,
         double[] destination)
     {
-        var perPixelDurationMs = scan.DurationMs / mode.ImageWidth;
+        // Trimmed to m_KSS/m_KS2S, not the raw scan duration -- legacy's real x-mapping is
+        // `x = ps * Width / m_KSS` for luma, `x = ps * Width / m_KS2S` for the tone-selected chroma
+        // channel ("C" -- Main.cpp:4300, inside smR36's chroma branch), never `x = ps * Width / m_KS`.
+        var perPixelDurationMs = scan.DurationMs / mode.ImageWidth
+            * SstvModeRegistry.GetPixelPitchTrimFactor(mode, scan.ChannelName);
         for (var x = 0; x < mode.ImageWidth; x++)
         {
             var startSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
