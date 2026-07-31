@@ -713,6 +713,85 @@ public static class SstvModeRegistry
         || mode == Sc2180 || mode == Sc2120 || mode == Sc260
         || mode == Mc110 || mode == Mc140 || mode == Mc180;
 
+    /// <summary><c>m_KSB</c>'s two per-mode components (<c>CSSTVSET::SetSampFreq</c>'s grouping
+    /// switch, `sstv.cpp:1110-1179`) -- the sample offset <c>GetPictureLevel</c>'s peak-pick compares
+    /// two demodulated samples across (see <see cref="GetPeakPickParameters"/>/
+    /// <see cref="GetKsbSamples"/>). <see cref="KssTrimFactor"/> is what <c>m_KS</c> gets MULTIPLIED
+    /// by to get <c>m_KSS</c> -- deliberately a multiply-by-<c>1.0</c> factor for the "no trim" case
+    /// (`sstv.cpp:1147`'s group C, <c>m_KSS = m_KS</c> unchanged), not a divide-by-<c>1</c> sentinel:
+    /// a divisor of 1 would silently compute <c>m_KS - m_KS/1 == 0</c>, zeroing <c>m_KSB</c> for
+    /// every group-C mode -- a real bug caught during this piece's own plan review (round 4), not a
+    /// hypothetical one.</summary>
+    internal readonly record struct PeakPickParameters(double KssTrimFactor, double KsbDivisor);
+
+    /// <summary>Legacy's 5-way grouping for <c>m_KSS</c>/<c>m_KSB</c> (`sstv.cpp:1110-1179`),
+    /// transcribed directly from source -- see spec/14-roadmap.md's "Piece 10" entry for the full
+    /// per-mode derivation and 4 rounds of plan review. <c>default:</c> genuinely IS group E in
+    /// legacy's own switch (`sstv.cpp:1156-1160`), not an invented catch-all -- it's where PD50/PD90
+    /// land too (confirmed absent from group A's own case list, `sstv.cpp:1111-1118`, an error an
+    /// earlier round of this piece's own review caught in its own draft).</summary>
+    internal static PeakPickParameters GetPeakPickParameters(SstvModeDefinition mode)
+    {
+        // Group A: m_KSS = m_KS - m_KS/480; m_KSB = m_KSS/1280 (sstv.cpp:1111-1118)
+        if (mode == Pd120 || mode == Pd160 || mode == Pd180 || mode == Pd240 || mode == Pd290
+            || mode == P3 || mode == P5 || mode == P7)
+        {
+            return new PeakPickParameters(479.0 / 480.0, 1280.0);
+        }
+
+        // Group B: m_KSS = m_KS - m_KS/1280; m_KSB = m_KSS/1280 (sstv.cpp:1120-1127)
+        if (mode == Mp73 || mode == Mn73 || mode == ScottieDx)
+        {
+            return new PeakPickParameters(1279.0 / 1280.0, 1280.0);
+        }
+
+        // Group C: m_KSS = m_KS (no trim); m_KSB = m_KSS/1280 (sstv.cpp:1129-1146)
+        if (mode == Sc2180 || mode == Mp115 || mode == Mp140 || mode == Mp175
+            || mode == Mr90 || mode == Mr115 || mode == Mr140 || mode == Mr175
+            || mode == Ml180 || mode == Ml240 || mode == Ml280 || mode == Ml320
+            || mode == Mn110 || mode == Mn140
+            || mode == Mc110 || mode == Mc140 || mode == Mc180)
+        {
+            return new PeakPickParameters(1.0, 1280.0);
+        }
+
+        // Group D: m_KSS = m_KS - m_KS/640; m_KSB = m_KSS/1024 (sstv.cpp:1148-1155)
+        if (mode == Mr73)
+        {
+            return new PeakPickParameters(639.0 / 640.0, 1024.0);
+        }
+
+        // Group E (default): m_KSS = m_KS - m_KS/240; m_KSB = m_KSS/640 (sstv.cpp:1156-1160) --
+        // Robot36/72, AVT, ScottieS1/S2 (ScottieDx is group B, above), MartinM1/M2, SC2-60/120, R24,
+        // RM8/12, and PD50/PD90 (see class doc comment above for why PD50/90 land here).
+        return new PeakPickParameters(239.0 / 240.0, 640.0);
+    }
+
+    /// <summary>Legacy's one mode-specific exception to peak-picking at all
+    /// (`Main.cpp:4226-4268`'s <c>smSCTDX</c> branch inside the SCT1/SCT2/SCTDX case:
+    /// <c>GetPixelLevel</c>, bare, for all 3 R/G/B channels -- SCT1/SCT2 in that same case use
+    /// <c>GetPictureLevel</c>, peak-picked). No other mode has this exception.</summary>
+    internal static bool NeverPeakPicks(SstvModeDefinition mode) => mode == ScottieDx;
+
+    /// <summary>Ported <c>m_KSB</c> itself, in samples at the given rate -- see
+    /// <see cref="GetPeakPickParameters"/> for the per-mode formula components. <c>m_KS</c> is this
+    /// mode's own first (luma, or first RGB channel) <see cref="ScanSegment"/>'s <c>DurationMs</c> --
+    /// verified equal to legacy's real <c>m_KS</c> for every mode checked during this piece's plan
+    /// review (e.g. Robot 36's <c>m_KS=88.0ms</c> matches its own <c>Y</c> segment exactly). Truncate
+    /// once, here, matching <c>m_KSB</c>'s real type (a C++ <c>int</c> truncated from a <c>double</c>,
+    /// `sstv.h:523`) -- not earlier, not via rounding. Then apply legacy's universal floor
+    /// (`sstv.cpp:1179`, <c>if(!m_KSB) m_KSB++;</c>), since <c>m_KSB</c> can truncate to 0 for
+    /// narrow/short modes at low sample rates.</summary>
+    internal static int GetKsbSamples(SstvModeDefinition mode, double sampleRate)
+    {
+        var firstScan = mode.LineSegments.OfType<ScanSegment>().First();
+        var ksSamples = firstScan.DurationMs / 1000.0 * sampleRate;
+        var parameters = GetPeakPickParameters(mode);
+        var kssSamples = ksSamples * parameters.KssTrimFactor;
+        var ksbSamples = (int)(kssSamples / parameters.KsbDivisor);
+        return ksbSamples == 0 ? 1 : ksbSamples;
+    }
+
     /// <summary>Auto Slant's <c>m_ASPos[0..3]</c> (`Main.cpp:3801-3857`, <c>InitAutoStop</c>) --
     /// line-count thresholds at which progressively smaller drift becomes trustworthy enough to act
     /// on. Default is [64,128,160,ImageHeight-36]; several mode groups override some or all of it.

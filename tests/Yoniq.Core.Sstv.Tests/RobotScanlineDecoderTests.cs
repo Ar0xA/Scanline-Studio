@@ -24,12 +24,16 @@ public class RobotScanlineDecoderTests
         const double chromaFreqLine0 = 2000;
         const double chromaFreqLine1 = 1800;
 
-        // RobotScanlineDecoder calls averageFrequencyInWindow in a fixed, fully sequential order:
-        // 320 Y-scan calls, then exactly 1 tone-selector call, then 320 chroma-scan calls, per line.
+        // RobotScanlineDecoder calls the reader in a fixed, fully sequential order: 320 Y-scan calls
+        // (ReadBare, unaffected by piece 10 -- Robot's luma DOES peak-pick in legacy, but this test
+        // only exercises the tone-selector's ambiguity fallback, so a plain call-count stub is still
+        // valid: ReadBare and ReadPeakPicked both resolve to the same underlying source here since
+        // ksbSamples is irrelevant to a source that returns a fixed value per call index, not per
+        // sample index), then exactly 1 tone-selector call, then 320 chroma-scan calls, per line.
         // Scripting by call index (rather than by sample window) avoids needing to replicate the
         // decoder's own sample-accounting internally just to drive this test.
         var callIndex = 0;
-        double AverageFrequencyInWindow(int start, int end)
+        double AverageFrequencyInWindow(int index)
         {
             callIndex++;
             return callIndex switch
@@ -43,8 +47,14 @@ public class RobotScanlineDecoderTests
             };
         }
 
-        decoder.DecodeLine(mode, sampleRate: 44100, lineStartSample: 0, lineIndex: 0, AverageFrequencyInWindow, pixels);
-        decoder.DecodeLine(mode, sampleRate: 44100, lineStartSample: 0, lineIndex: 1, AverageFrequencyInWindow, pixels);
+        // neverPeakPicks: true -- this test only exercises the tone-selector/chroma ambiguity logic
+        // (both already-bare reads, unaffected by piece 10), and forcing ReadPeakPicked to degrade to
+        // ReadBare keeps this call-count-based stub valid without needing to also fake a peak-pick
+        // comparison across two different call indices.
+        var reader = new PixelSampleReader(AverageFrequencyInWindow, ksbSamples: 1, lineEndSampleExclusive: int.MaxValue, luminanceMinHz: mode.LuminanceMinHz, neverPeakPicks: true);
+
+        decoder.DecodeLine(mode, sampleRate: 44100, lineStartSample: 0, lineIndex: 0, reader, pixels);
+        decoder.DecodeLine(mode, sampleRate: 44100, lineStartSample: 0, lineIndex: 1, reader, pixels);
 
         double ToByteDomain(double freq) => (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
 

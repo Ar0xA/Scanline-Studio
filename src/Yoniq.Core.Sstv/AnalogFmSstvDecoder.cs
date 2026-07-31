@@ -15,7 +15,7 @@ namespace Yoniq.Core.Sstv;
 /// VIS-preamble-lock system existed, claimed this "does not independently re-search for each line's
 /// sync pulse" and "does not yet implement the clock-drift/slant correction" -- both false as of the
 /// work described below, left stale until now): per-pixel readout is a single sample at a
-/// sync-anchored index, not a windowed average (see <see cref="SampleFrequencyAt"/>'s own doc
+/// sync-anchored index, not a windowed average (see <see cref="PixelSampleReader"/>'s own doc
 /// comment) -- confirmed directly against `Main.cpp`'s `GetPixelLevel`/`GetPictureLevel`
 /// (`Main.cpp:4038-4073`, round-1-review fix: an earlier revision of this very correction
 /// mis-attributed these to `sstv.cpp`) that legacy does the same, and that there is no per-line re-search during
@@ -321,10 +321,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // Bounded to exactly this line's own extent, not a single eager bulk pass over the
                 // whole image -- see ApplyAfcCorrections' own doc comment for why (mid-reception
                 // restart double-correction fix). Must run before DecodeLine, which reads the
-                // corrected frequencies via SampleFrequencyAt.
+                // corrected frequencies via the reader constructed below.
                 ApplyAfcCorrections(_consumedSamples + lineSampleCount);
 
-                lineDecoder.DecodeLine(mode, effectiveSampleRate, _consumedSamples, _nextLine, SampleFrequencyAt, pixels);
+                // Piece 10: PixelSampleReader is constructed fresh per line, not per mode/session --
+                // GetKsbSamples depends on effectiveSampleRate, which this port recomputes per line
+                // for Auto Slant (matching legacy's own per-line m_KSB recompute-on-slant-change,
+                // Main.cpp:4015/:5900-5903). lineEndSampleExclusive is this line's own extent, used
+                // only by the (currently unreachable at every real mode) line-end guard.
+                var reader = new PixelSampleReader(
+                    index => _demodulatedFrequencies[Math.Clamp(index, 0, _demodulatedFrequencies.Count - 1)],
+                    SstvModeRegistry.GetKsbSamples(mode, effectiveSampleRate),
+                    _consumedSamples + lineSampleCount,
+                    mode.LuminanceMinHz,
+                    SstvModeRegistry.NeverPeakPicks(mode));
+
+                lineDecoder.DecodeLine(mode, effectiveSampleRate, _consumedSamples, _nextLine, reader, pixels);
                 _consumedSamples += lineSampleCount;
 
                 LineDecoded?.Invoke(new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
@@ -1649,21 +1661,6 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         }
 
         return sum / (to - from);
-    }
-
-    /// <summary>Reads the demodulated frequency at a single sample point — the delegate passed to
-    /// <see cref="IScanlineDecoder.DecodeLine"/> for per-pixel reads (see that interface's doc
-    /// comment for why: legacy's own pixel readout is a single raw sample, not a windowed average,
-    /// and this is a direct port of that, not an invented technique). <paramref name="endSample"/>
-    /// is accepted but ignored, matching <see cref="IScanlineDecoder"/>'s <c>sampleFrequencyAt</c>
-    /// contract — callers pick which endpoint of their computed window to pass depending on whether
-    /// they want the pixel's first sample (ordinary scans) or last sample (e.g. Robot's
-    /// tone-selector, which legacy re-decides on every sample of its window with no "first wins"
-    /// gate, so its real effective reading is whatever the window's last sample decided).</summary>
-    private double SampleFrequencyAt(int startSample, int endSample)
-    {
-        var index = Math.Clamp(startSample, 0, _demodulatedFrequencies.Count - 1);
-        return _demodulatedFrequencies[index];
     }
 
     private sealed class MutableImageSource(int width, int height, Rgb24[] pixels) : IImageSource
