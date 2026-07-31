@@ -6,10 +6,16 @@ namespace Yoniq.Core.Sstv;
 /// counter AVT's own header transmits (<see cref="VisHeader.GenerateAvtSegments"/>) using the same
 /// PLL demodulator this port already runs continuously (fed via <see cref="AnalogFmSstvDecoder"/>'s
 /// existing demodulated-frequency buffer -- confirmed by direct measurement that this port's PLL,
-/// though configured over a wider 1100-2300Hz span than legacy's 1500-2300Hz, settles cleanly
-/// within the tight acceptance bands cases 4/5/6 need, even within a single 9.7646ms bit window:
-/// measured ripple ~5.8Hz at steady state, and 16 consecutive alternating-tone bit windows all
-/// landed solidly on the correct side of case 6's threshold. No second PLL instance needed.
+/// now matching legacy's own real 1500-2300Hz band exactly (piece 9 narrowed it from an earlier,
+/// wider 1100-2300Hz once VIS-bit decode stopped depending on this same demodulator, see
+/// spec/14-roadmap.md's "Piece 9" entry), settles cleanly within the tight acceptance bands cases
+/// 4/5/6 need, even within a single 9.7646ms bit window: re-measured at the narrowed band, steady-
+/// state ripple is ~9.0Hz for the bit-1 tone (1600Hz) and ~2.3Hz for bit-0 (2200Hz), both landing
+/// with a solid ~100Hz margin against case 6's threshold (`BitOneMaxHz`/`BitZeroMinHz`, +/-8000/
+/// 40.96 either side of 1900Hz) -- comfortably wider than the ripple either way, and
+/// <see cref="AvtTrainingLockStateMachineTests.FullTrainingSequence_CompletesWithinExpectedBudget"/>
+/// confirms a full 32-block sequence still locks correctly end to end at this band. No second PLL
+/// instance needed.
 ///
 /// Surprising finding from reading cases 4-8 in full, not assumed from a partial read: legacy's
 /// own case 8 (`sstv.cpp:2234-2239`) is dead code -- <c>m_SyncMode</c> is 8 on entry, so

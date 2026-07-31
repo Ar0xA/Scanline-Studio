@@ -121,7 +121,12 @@ public class AvtTrainingLockStateMachineTests
             trainingSamples.Add(0f);
         }
 
-        var demodulator = new PllFmDemodulator(SampleRate, 1100, 2300);
+        // Piece 9 step 3: matches AnalogFmSstvDecoder's real 1500-2300Hz band (legacy's own CPLL
+        // range) -- was 1100-2300Hz, a stale artifact of the pre-piece-9 PLL config this test is
+        // deliberately built to track (see class doc comment: "matching this port's actual decode
+        // path"). Left un-updated here, this test would have silently stayed green against a
+        // config production no longer uses, defeating the point of re-measuring AVT's lock margin.
+        var demodulator = new PllFmDemodulator(SampleRate, 1500, 2300);
         // Let the demodulator settle through the VIS-repeat portion first (matching real
         // continuous operation), discarding its output, then start recording from the training
         // sequence's own first marker.
