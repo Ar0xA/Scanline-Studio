@@ -31,11 +31,17 @@ namespace Yoniq.Core.Sstv;
 /// </summary>
 public sealed class AnalogFmSstvDecoder : ISstvDecoder
 {
-    // Covers every frequency this decoder needs to track: VIS tones (1100-1900Hz) and per-line
-    // sync/porch/separator/luminance (1200-2300Hz). See PllFmDemodulator's doc comment — legacy
-    // switches tracking bandwidth between VIS detection and image data; this port uses one fixed
-    // range for both, which is simpler and a documented Phase 1 simplification.
-    private const double DemodulatorLowHz = 1100;
+    // Legacy's real CPLL is always 1500-2300Hz for every mode except the MN/MC narrow family
+    // (narrowed further to 2044-2300Hz via CSSTVDEM::SetWidth/IsNarrowMode, sstv.cpp:1707-1719/
+    // 266-279) -- this port narrows flat to 1500-2300Hz for ALL modes including MN/MC, not
+    // implementing legacy's further MN/MC narrowing (a documented Phase 1 simplification, not a
+    // bug: MN/MC's own pixel tones, 2044-2300Hz, stay in-band either way). VIS decode never touches
+    // the PLL at all (see VisBitDecision/TryDecodeVisDataBits) -- legacy doesn't even feed the PLL
+    // during VIS cases 0/1/2/9, only from case 3 onward (sstv.cpp:2129); this port runs it
+    // continuously regardless, a further simplification. Previously 1100-2300Hz, a stale artifact of
+    // an earlier design where VIS-bit decode read this same PLL's demodulated-frequency stream --
+    // narrowed to the real band once that dependency was removed (spec/14-roadmap.md's "Piece 9").
+    private const double DemodulatorLowHz = 1500;
     private const double DemodulatorHighHz = 2300;
 
     // SetSenseLvl (sstv.cpp:1793-1817), case 1 -- the actual shipped default. CSSTVDEM's constructor
