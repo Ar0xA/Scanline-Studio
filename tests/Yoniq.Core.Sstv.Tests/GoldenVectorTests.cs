@@ -185,27 +185,38 @@ public class GoldenVectorTests
         // the moment TX finishes, not on the mode actually being sent -- confirmed empirically: both
         // fixtures measure the same ~425ms WriteC portion despite transmitting different modes
         // (150ms vs 446ms LineDurationMs), consistent with both captures' RX side sitting at
-        // GetTiming's own `default:` case (smSCT1, 428.22ms, sstv.cpp:1275) the whole time, i.e. the
-        // demodulator's default/never-changed mode on a fresh run. Using mode.LineDurationMs here
-        // was coincidentally close for these two fixtures only because both are well under the
-        // SampFreq/2 (500ms) clamp -- it would have been actively wrong for any mode whose duration
-        // differs meaningfully from 428.22ms. Modeled here as a named constant tied to that legacy
-        // default, not derived from the transmitted mode at all.
-        const double receiveSideDefaultLineDurationMs = 428.22; // GetTiming's default: case (smSCT1)
+        // GetTiming's own `default:` case (smSCT1, 428.22ms, sstv.cpp:1275) during capture.
+        //
+        // Round-3-review correction: an earlier version of this comment called that RX-side state
+        // "the demodulator's default/never-changed mode on a fresh run" -- not quite right, and not
+        // a general invariant. SSTVSET.m_Mode is NOT constructor-fixed: on every ini load,
+        // Main.cpp:1872-1873 reads the *persisted* TX mode (`Define/SSTVMode`) and immediately calls
+        // `SSTVSET.SetMode()` with it, seeding the RX side from whatever TX mode was last saved --
+        // which happens to have been Scottie 1 (smSCT1, matching CSSTVSET's own constructor default
+        // at sstv.cpp:570) for these two specific captures, not because the value can never change.
+        // Re-capturing after a session that saved a different persisted TX mode would change this
+        // constant. Documented here as a fact about these two committed fixtures, not a property of
+        // the .mmv format or of legacy in general -- modeled as a named constant rather than derived
+        // from the transmitted mode, since it demonstrably isn't derived from that mode either way.
+        const double receiveSideModeLineDurationMsForTheseFixtures = 428.22; // GetTiming's default: case (smSCT1)
         var headSeconds = 0.8;
-        var footerSeconds = (Math.Min(receiveSideDefaultLineDurationMs, 500.0) / 1000.0) + 0.4;
+        var footerSeconds = (Math.Min(receiveSideModeLineDurationMsForTheseFixtures, 500.0) / 1000.0) + 0.4;
         var expectedTotalSeconds = headSeconds + expectedHeaderSeconds + expectedBodySeconds + footerSeconds;
 
         // Measured directly (not assumed), after also fixing MeasureTxRegion's own window-duration
-        // unit mismatch (see that method's comment): robot-36 expected 38.54s, measured 38.58s
-        // (delta 0.04s); martin-m1 expected 116.83s, measured 116.85s (delta 0.02s) -- both now
+        // unit mismatch (see that method's comment): robot-36 expected 38.5382s, measured 38.5325s
+        // (delta 0.0057s); martin-m1 expected 116.8284s, measured 116.7970s (delta 0.0314s) -- both
         // sub-50ms residuals (envelope-window granularity), a very different picture from the
-        // pre-review 1.7s-per-mode gap this test used to carry. 0.2s is 5x the larger measured
-        // residual: generous enough to absorb real envelope-window granularity, while still tight
-        // enough to catch a real gross timing error (wrong sample rate, wrong mode duration table
-        // entry, badly misdetected TX region) -- a 25x tighter bound than the original 5.0s, which
-        // was wide enough to accept anything from ~129ms to ~171ms as "correct" for robot-36's own
-        // 150ms line duration and so couldn't actually catch the error class it claimed to guard.
+        // pre-review 1.7s-per-mode gap this test used to carry. Round-3-review note: these exact
+        // numbers (and their sign) shift slightly whenever the underlying .mmv files are
+        // re-trimmed/re-captured, since trimming re-phases the fixed-size envelope-window grid
+        // against the TX region -- re-measure rather than assume these stay exact after any future
+        // fixture change. 0.2s is comfortably above the larger residual either way: generous enough
+        // to absorb real envelope-window granularity, while still tight enough to catch a real gross
+        // timing error (wrong sample rate, wrong mode duration table entry, badly misdetected TX
+        // region) -- a 25x tighter bound than the original 5.0s, which was wide enough to accept
+        // anything from ~129ms to ~171ms as "correct" for robot-36's own 150ms line duration and so
+        // couldn't actually catch the error class it claimed to guard.
         var deltaSeconds = Math.Abs(measuredDurationSeconds - expectedTotalSeconds);
         Assert.True(
             deltaSeconds < 0.2,
@@ -378,11 +389,14 @@ public class GoldenVectorTests
         decoder.DecodeRestarted += _ => restartCount++;
         decoder.LineDecoded += update =>
         {
-            // These captures carry real sound-card audio recorded before/after the transmission
-            // itself (confirmed during scoping: legacy's "Rec" only taps the modulator while
-            // transmitting -- Wave.InClose() during TX means the pre/post-TX portions are live mic
-            // input, not silence), so the decoder legitimately keeps scanning afterward and could in
-            // principle find a second, spurious lock in that extra audio. Snapshotting (see
+            // These captures originally carried real sound-card audio recorded before/after the
+            // transmission itself (confirmed during scoping: legacy's "Rec" only taps the modulator
+            // while transmitting -- Wave.InClose() during TX means the pre/post-TX portions are live
+            // mic input, not silence); now trimmed to the TX region plus a 1.0s margin (see
+            // Fixtures/GoldenVectors/README.md), so the hazard this logic guards against is much
+            // smaller in practice than when it was written, but the decoder still legitimately keeps
+            // scanning past the end of the real transmission regardless of how much trailing audio
+            // remains, so the defensive logic stays worth keeping. Snapshotting (see
             // Snapshot's own comment for why a bare reference isn't safe to rely on) on the last
             // LineDecoded update seen while still on the FIRST detected mode -- rather than assuming
             // the last LineDecoded event overall is the real image -- means a later spurious lock
