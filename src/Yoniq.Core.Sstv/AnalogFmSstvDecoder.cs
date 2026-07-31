@@ -62,6 +62,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private Rgb24[]? _pixels;
     private int _nextLine;
 
+    // Piece 8c: legacy re-anchors the per-pixel phase from a measured sync-envelope peak
+    // (TMmsstv::SyncSSTV, Main.cpp:3751-3799) before ever drawing a pixel for a newly-locked image --
+    // gated behind CSSTVDEM::Start's m_wBgn (sstv.cpp:1732), which DrawSSTV (Main.cpp:4917-4986)
+    // checks before every draw call, returning without drawing until enough lines are buffered. This
+    // field is that same gate: non-null between Commit() locking a (non-AVT) mode and
+    // TryResolveSyncAnchorCorrection successfully applying the correction -- see both methods' own
+    // doc comments. AFC/Slant initialization and the ModeDetected event are deliberately deferred
+    // until this resolves (FinalizeAnchorAndStartDecoding), since both derive their own initial
+    // cursors from _consumedSamples and mutating it afterward would silently desync them (found by
+    // Opus plan-review before this piece was implemented).
+    private SstvModeDefinition? _pendingAnchorCorrectionMode;
+
     private ZeroCrossingFrequencyCounter? _afcFrequencyCounter;
     private AfcTracker? _afcTracker;
     private int _afcProcessedUpTo;
@@ -252,6 +264,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             if (_mode is null && !TryDecodeHeader())
             {
                 return;
+            }
+
+            // Piece 8c: a non-AVT mode just locked (or is still waiting from a previous call) --
+            // resolve the sync-anchor correction before decoding any pixels for it. See
+            // _pendingAnchorCorrectionMode's own doc comment.
+            if (_pendingAnchorCorrectionMode is not null)
+            {
+                if (!TryResolveSyncAnchorCorrection(_pendingAnchorCorrectionMode))
+                {
+                    return;
+                }
+
+                FinalizeAnchorAndStartDecoding(_pendingAnchorCorrectionMode);
+                _pendingAnchorCorrectionMode = null;
             }
 
             var mode = _mode!;
@@ -794,20 +820,6 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _pixels = new Rgb24[matched.ImageWidth * matched.ImageHeight];
         _nextLine = 0;
 
-        // An upper bound on this image's own total audio extent -- exactly the *nominal* (pre-slant-
-        // correction) duration, not a deliberately generous margin (corrected wording, caught by
-        // independent review: with Auto Slant active on a slow clock, actual elapsed samples can
-        // exceed this nominal figure by a small amount, meaning the image's last lines are AFC-
-        // corrected against slightly stale state -- bounded by ~0.1% of image length in practice,
-        // well under one line at realistic drift, not fixed further here). See ApplyAfcCorrections'
-        // doc comment for why this bound exists at all: without it, a single TryProcessBuffer call
-        // can eagerly AFC-correct straight through this image's own footer/dead-zone and into a not-
-        // yet-detected *next* transmission's audio, using a correction tuned to this image's own
-        // frequency offset. A real bug caught by independent review once EndOfImage made a second
-        // Commit() within one decoder instance possible at all.
-        var totalTransmissionLines = matched.ImageHeight / _lineDecoder.RowsPerTransmissionLine;
-        _afcBoundSample = _consumedSamples + (int)Math.Round(totalTransmissionLines * matched.LineDurationMs / 1000.0 * _sampleRate);
-
         // Piece 6c prerequisite, a real bug caught by this port's own end-to-end test: whichever
         // path found this match, VisLockStateMachine must never re-examine samples already accounted
         // for by the time reception is locked, or its now-continuously-running re-verification scan
@@ -879,9 +891,146 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _visLockProcessedUpTo = Math.Max(_visLockProcessedUpTo, _consumedSamples);
         _visLockOriginSample = _visLockProcessedUpTo;
 
+        // Piece 8c: AVT has no equivalent of this mechanism at all -- legacy's SyncSSTV itself
+        // early-outs for smAVT (Main.cpp:3754-3758: zeroes the offset, clears m_wBgn immediately,
+        // no waiting for buffered lines), so AFC/slant initialize immediately here exactly as before
+        // this piece existed. Every other mode defers to TryResolveSyncAnchorCorrection (called from
+        // TryProcessBuffer, once enough samples are buffered) -- see _pendingAnchorCorrectionMode's
+        // own doc comment for why the deferral is needed.
+        if (matched == SstvModeRegistry.Avt)
+        {
+            FinalizeAnchorAndStartDecoding(matched);
+        }
+        else
+        {
+            _pendingAnchorCorrectionMode = matched;
+        }
+    }
+
+    // Piece 8c: the deferred tail of Commit() -- everything that must see the FINAL (possibly
+    // sync-anchor-corrected) _consumedSamples, not the provisional VIS-lock-derived value Commit()
+    // itself sets. Called either immediately from Commit() (AVT, which has no correction step) or
+    // from TryProcessBuffer once TryResolveSyncAnchorCorrection succeeds.
+    private void FinalizeAnchorAndStartDecoding(SstvModeDefinition matched)
+    {
+        // An upper bound on this image's own total audio extent -- exactly the *nominal* (pre-slant-
+        // correction) duration, not a deliberately generous margin (corrected wording, caught by
+        // independent review: with Auto Slant active on a slow clock, actual elapsed samples can
+        // exceed this nominal figure by a small amount, meaning the image's last lines are AFC-
+        // corrected against slightly stale state -- bounded by ~0.1% of image length in practice,
+        // well under one line at realistic drift, not fixed further here). See ApplyAfcCorrections'
+        // doc comment for why this bound exists at all: without it, a single TryProcessBuffer call
+        // can eagerly AFC-correct straight through this image's own footer/dead-zone and into a not-
+        // yet-detected *next* transmission's audio, using a correction tuned to this image's own
+        // frequency offset. A real bug caught by independent review once EndOfImage made a second
+        // Commit() within one decoder instance possible at all.
+        var totalTransmissionLines = matched.ImageHeight / _lineDecoder!.RowsPerTransmissionLine;
+        _afcBoundSample = _consumedSamples + (int)Math.Round(totalTransmissionLines * matched.LineDurationMs / 1000.0 * _sampleRate);
+
         InitializeAfc(matched);
         InitializeSlant(matched);
         ModeDetected?.Invoke(matched);
+    }
+
+    // Piece 8c: port of TMmsstv::SyncSSTV (Main.cpp:3751-3799) -- see SyncAnchorCorrector's own doc
+    // comment for the fold/argmax algorithm and sign derivation this wraps. Returns false (and
+    // consumes nothing) if fewer than `e` transmission lines' worth of samples are buffered yet from
+    // the provisional anchor, matching legacy's own DrawSSTV/m_wBgn gate (Main.cpp:4917-4986):
+    // return without drawing until enough data has arrived, re-checked on every TryProcessBuffer
+    // call exactly like every other "not enough data yet" path in this class.
+    //
+    // Uses a DEDICATED SyncEnvelopeDetector instance, not the one InitializeSlant creates -- legacy
+    // shares one continuously-running d12/d19 computation for everything (a passive buffer, m_B12,
+    // read back later in whatever order SyncSSTV wants), but this port's SyncEnvelopeDetector is a
+    // stateful *streaming* filter that must see each sample exactly once, in order -- feeding it
+    // through this fold AND then again through ApplySlantTracking's own instance would double-
+    // process. Matches this file's own established precedent for the same tradeoff (_syncBypass1Tracker's
+    // own doc comment: "legacy computes its own d12/d19 once per Do() call and shares them...
+    // recombining that here would mean [merging instances], a bigger change... left for a follow-up").
+    // Harmless here specifically because InitializeSlant already creates a brand-new
+    // SyncEnvelopeDetector from scratch on every call (confirmed by reading it) -- this temporary
+    // instance's state is simply discarded once the fold completes, and slant tracking starts fresh
+    // from the corrected _consumedSamples exactly as it already would have from the uncorrected one.
+    private bool TryResolveSyncAnchorCorrection(SstvModeDefinition mode)
+    {
+        var lineWidthSamples = mode.LineDurationMs / 1000.0 * _sampleRate;
+        var pageWidthSamples = (int)lineWidthSamples;
+
+        // e=3 vs e=4: legacy's real condition (Main.cpp:3760) is `m_SyncAccuracy && sys.m_UseRxBuff
+        // && SSTVSET.m_TW >= SSTVSET.m_SampFreq` -- both settings default ON (Main.cpp:730/899, no
+        // UI/config knob this port has an equivalent of yet), so this reduces to exactly
+        // LineDurationMs >= 1000.0 -- a one-line exact port, not a simplification, verified against
+        // source during plan-review. Reachable for Scottie DX/PD240/MP140/MP175/MN140 -- not either
+        // golden-vector fixture, but a real divergence for those modes if skipped.
+        var lineCount = mode.LineDurationMs >= 1000.0 ? 3 : 4;
+        var neededSamples = lineCount * pageWidthSamples;
+
+        if (_demodulatedFrequencies.Count - _consumedSamples < neededSamples)
+        {
+            return false;
+        }
+
+        var origin = _consumedSamples;
+        var targetToneHz = mode.NarrowModeCode is not null ? 1900.0 : 1200.0;
+        var detector = new SyncEnvelopeDetector(_sampleRate, targetToneHz);
+
+        // This port's anchor (_consumedSamples) is the start of LineSegments[0], not legacy's own
+        // internal "phase 0" -- for every mode except the Scottie family those agree (TX places its
+        // sync tone first), but Scottie's real TX order (LineSCT, Main.cpp:6620-6640) puts the
+        // tracked sync tone roughly two-thirds into the line (see SyncAnchorCorrector's own doc
+        // comment for the full derivation and the wraparound-trick bug this replaced). Computing the
+        // pre-sync-segment offset directly from LineSegments (rather than a new hardcoded table)
+        // keeps this correct automatically and is 0 -- a no-op -- for every mode whose tracked sync
+        // segment is already first.
+        var preSyncSegmentOffsetMs = 0.0;
+        foreach (var segment in mode.LineSegments)
+        {
+            if (segment is SyncSegment syncSegment && syncSegment.FrequencyHz == targetToneHz)
+            {
+                break;
+            }
+
+            preSyncSegmentOffsetMs += segment.DurationMs;
+        }
+
+        var syncPeakOffsetSamples = (preSyncSegmentOffsetMs + SstvModeRegistry.GetSyncPeakOffsetMs(mode)) / 1000.0 * _sampleRate;
+
+        // Round-1-review-equivalent fix, caught by this piece's own test run (not assumed): legacy's
+        // real d12/d19 filter chain runs continuously from long before any given lock point (it's
+        // CSSTVDEM's own persistent member, never reset -- confirmed elsewhere in this codebase,
+        // e.g. CLVL/m_lvl), so by the time SyncSSTV's fold reads it back, it's long since settled.
+        // A brand-new SyncEnvelopeDetector instance starting cold exactly at `origin` has no such
+        // history -- TankFilter's resonator ring-up/decay time constant is
+        // sampleRate/(pi*bandwidthHz) (~35 samples/~3.2ms at 100Hz/11025Hz), plus the smoother's own
+        // settling -- confirmed empirically to matter: without this warm-up, the synthetic
+        // self-round-trip suite (SstvRoundTripTests) regressed hard for Scottie S1/S2/DX and Robot 36
+        // (average delta jumping from ~10-13 to 50-73), immediately caught by running the full suite
+        // after wiring this piece in, per this session's "test early, test often" instruction. Warm
+        // up on real, already-buffered samples before `origin` (the VIS header itself, ~900ms+, or
+        // whatever preceded this lock) without accumulating that output into any fold bin -- 2000
+        // samples (~180ms at 11025Hz) is comfortably more than an order of magnitude past the
+        // resonator's own ~3.2ms time constant, clamped to what's actually available before `origin`.
+        var warmupSamples = Math.Min(origin, 2000);
+        for (var w = origin - warmupSamples; w < origin; w++)
+        {
+            detector.ProcessSample(AgcSampleAt(w));
+        }
+
+        var delta = SyncAnchorCorrector.ComputeAnchorCorrection(
+            lineWidthSamples,
+            syncPeakOffsetSamples,
+            lineCount,
+            n => detector.ProcessSample(AgcSampleAt(origin + n)));
+
+        // Legacy's own equivalent of a negative result is DrawSSTVNormal skipping samples whose
+        // phase is still negative (`if (n<0) continue`, Main.cpp:4146) rather than reading earlier
+        // samples that were never buffered. Clamping to 0 here is the direct equivalent for a
+        // sample-cursor variable that cannot legitimately go negative (it indexes _rawSamples from
+        // its own start) -- flagged by review as a real edge case (a correction up to -OFP, ~118
+        // samples for Robot 36, applied very early in a short buffer could clamp) but expected to be
+        // rare in practice: real transmissions carry several seconds of lead-in before the image.
+        _consumedSamples = Math.Max(0, origin + delta);
+        return true;
     }
 
     private bool TryDecodeNarrowModeHeader()
