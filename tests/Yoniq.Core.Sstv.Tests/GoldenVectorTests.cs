@@ -91,40 +91,35 @@ public class GoldenVectorTests
         var actual = CropToTop(decoded, pictureHeight);
         var delta = MeasureAveragePerChannelDelta(source, actual, pictureHeight);
 
-        // Measured directly against the real captures (not assumed), restarts=0 and the correct
-        // mode detected first-try for both:
-        //   martin-m1: 11.78 -- close to the 10.0 tolerance SstvRoundTripTests uses for its
-        //     synthetic self-round-trip, slightly worse as expected for real captured audio (real
-        //     mic-preamp/soundcard noise floor, not a bit-exact synthetic signal).
-        //   robot-36:  68.06 -- a real, substantial, PRE-EXISTING known gap, not new information in
-        //     its EXISTENCE: SstvModeRegistry.cs's own doc comment already documents Robot 36 (and
-        //     the rest of the low-samples-per-pixel family) failing the 10.0 tolerance at 11025Hz,
-        //     naming incomplete AFC/PLL settling as the likely cause. But the MAGNITUDE is new: that
-        //     same doc comment's own measured synthetic self-round-trip number for Robot 36 post-fix
-        //     is 13.4 (spec/14-roadmap.md), roughly 5x smaller than this real-capture number --
-        //     round-1-review's finding, independently confirmed by re-reading that roadmap entry.
-        //     A ~5x-worse result against real captured audio than against the port's own
-        //     self-generated signal is exactly the "encoder and decoder agree with each other while
-        //     both being wrong about reality" failure mode CLAUDE.md's behavioral-parity rule exists
-        //     to catch -- worth its own follow-up investigation, not just filed under "already
-        //     known." The bound below is a "no worse than currently observed" regression guard, NOT
-        //     a parity claim -- per this project's explicit rule (spec/14-roadmap.md) against
-        //     silently picking whatever tolerance makes a bad number pass and calling it parity.
-        //     Round-1-review finding: 75.0 is NOT meaningfully discriminating for robot-36
-        //     specifically -- measured (not assumed) that a flat gray image, a horizontally
-        //     mirrored copy, a vertically flipped copy, and an R<->B channel swap all score ~42.67
-        //     against this exact source image under this exact metric (the gradient is smooth
-        //     enough that most structural corruptions land in a narrow band). Since robot-36's own
-        //     real measured delta (68.06) is already WORSE than that corruption floor, no tolerance
-        //     can simultaneously (a) pass today's actual, already-known-poor output and (b) reject a
-        //     structural bug -- those two goals are incompatible until the underlying DSP gap above
-        //     is fixed. Kept as a regression tripwire only for robot-36; martin-m1's 15.0 remains
-        //     genuinely discriminating (comfortably below its own ~42.66 corruption floor on the
-        //     same source image).
+        // Re-measured after Piece 9 (spec/14-roadmap.md) narrowed PllFmDemodulator from 1100-2300Hz
+        // to legacy's real 1500-2300Hz image-decode band, restarts=0 and the correct mode detected
+        // first-try for both:
+        //   martin-m1: 1.22 -- was 11.78 pre-piece-9 (already close to SstvRoundTripTests' own 10.0
+        //     synthetic-self-round-trip tolerance); the tighter PLL band's better-settled per-pixel
+        //     reads brought real-capture accuracy roughly in line with synthetic self-consistency.
+        //   robot-36:  16.995 -- was 68.06 pre-piece-9, a ~4x improvement. The narrower-band-PLL
+        //     hypothesis from spec/14-roadmap.md's re-verification plan (VCO gain change affecting
+        //     line-start settling) turned out not to dominate here -- EVERY mode's round-trip delta
+        //     improved after narrowing (measured directly, not assumed; see spec/14-roadmap.md's
+        //     Piece 9 entry for the full per-mode table), consistent with the narrower band's real
+        //     benefit (less out-of-band content bleeding into the tracked frequency range) winning
+        //     out over the slower-reacquisition risk in practice, at least for these two fixtures'
+        //     actual content and rates. This closes out the "5x-worse-than-synthetic" divergence a
+        //     previous revision of this comment flagged as needing its own follow-up investigation --
+        //     the PLL bandwidth mismatch WAS that investigation's target all along (Piece 9's own
+        //     starting diagnosis), not a coincidence.
+        //     Previous revision's "not meaningfully discriminating" framing for robot-36's tolerance
+        //     no longer applies: the corruption-floor measurement it relied on (~42.67 for this exact
+        //     source image under this exact metric -- a flat gray image, a horizontal mirror, a
+        //     vertical flip, and an R<->B channel swap all score around there) is now comfortably
+        //     ABOVE robot-36's real measured delta (16.995), not below it. Tightened from 75.0 to
+        //     25.0 -- real margin over the measured value (comparable proportionally to martin-m1's
+        //     own margin below), while staying safely under the corruption floor, so this bound is a
+        //     genuine discriminating check again, not just a regression tripwire.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 15.0,
-            ["robot-36"] = 75.0,
+            ["robot-36"] = 25.0,
         };
         var tolerance = toleranceByModeId[modeId];
 

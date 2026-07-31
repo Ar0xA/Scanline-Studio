@@ -14,59 +14,61 @@ Robot-36-at-11025Hz sync-anchor fix (`TMmsstv::SyncSSTV` port), Scottie wraparou
 `_visLockProcessedUpTo` catch-up gap, and the Robot 36 test tolerance — commits `b9e3512`, `2444343`,
 `8f87146`. Full history in `spec/14-roadmap.md` (search "piece 8"). Not the current task — background only.
 
-## Current task: Piece 9 — VIS-bit decode / PLL bandwidth mismatch
-Full narrative (diagnosis, both plan-review rounds, all bugs found, both code-review fixes) is in
-`spec/14-roadmap.md`, search "Piece 9" — that's the authoritative log; this is just a pointer + status.
-
-**Steps 1-2 DONE, tested, code-reviewed, all fixes applied. Not yet committed to git (uncommitted as of
-this brief — see `git status`).** Steps 3-4 NOT STARTED.
+## Piece 9 — VIS-bit decode / PLL bandwidth mismatch — COMPLETE (steps 1-4)
+Full narrative (diagnosis, both plan-review rounds, all bugs found, code-review round, re-verification
+numbers) is in `spec/14-roadmap.md`, search "Piece 9" — that's the authoritative log; this is just a
+pointer + status. Steps 1-2 committed/pushed (`d448586`). **Steps 3-4 done this session, not yet
+committed as of this brief — see `git status`.**
 
 - Diagnosis: `AnalogFmSstvDecoder` used to decide VIS header bits by reading the shared PLL's
   demodulated-frequency stream — a proxy that only worked by coincidence. Legacy's real mechanism
   (`sstv.cpp` case 2/9) is a completely separate tone race between two dedicated 1080Hz/1320Hz envelope
-  detectors. Steps 1-2 replaced the proxy with the real mechanism.
+  detectors. Steps 1-2 replaced the proxy with the real mechanism; step 3 then narrowed the PLL itself
+  to legacy's real 1500-2300Hz image-decode band, now safe since nothing reads VIS bits off it anymore.
 - New file: `src/Yoniq.Core.Sstv/VisBitDecision.cs` (the shared stateless decision predicate).
-- Modified: `src/Yoniq.Core.Sstv/VisLockStateMachine.cs` (refactored to use the shared predicate; its own
-  anchor-rounding bug also fixed, see below), `src/Yoniq.Core.Sstv/AnalogFmSstvDecoder.cs` (new
-  `TryDecodeVisDataBits` method replaces the old PLL-average bit reads in `TryDecodeVisHeader`).
-- New tests: `tests/Yoniq.Core.Sstv.Tests/VisToneRaceHeaderTests.cs`.
-- **Four real bugs found and fixed purely by running the full suite after each change** (none
-  anticipated by either of the two plan-review rounds or the code-level review) — full detail in the
-  roadmap entry, one-line summaries: (1) false-positive lock on real mic noise (missing trigger
-  precondition), (2) false-reject of genuine signal (fixed-timing assumption too strict for real filter
-  settling lag — fixed via dynamic trigger search), (3) last data bit silently defaulting to 0 (two
-  independently-rounded sample bounds diverging — fixed by looping on bit count instead), (4) the
-  dynamic-search fix from #2, once made resumable-on-reject (a code-review finding, see below), had no
-  upper bound and could scan into unrelated content on multi-transmission streams — fixed by
-  reintroducing a local search ceiling.
-- Got a full `auditor` code-level review after steps 1-2 landed (not just the two plan-review rounds).
-  Verdict "equivalent-with-risks": core mechanism confirmed faithful against `sstv.cpp` directly
-  (frequencies, bandwidths, smoothing, gate, decision, timing arithmetic down to the sample). Two real
-  risks found and fixed (Risk 1: reject was permanent instead of resumable, a real regression for AVT
-  specifically since `VisLockStateMachine` never reports AVT and has no fallback for it; Risk 2: the
-  same rounding-mismatch bug class as #3 above, also present in `VisLockStateMachine`'s own anchor
-  calc). Fixing Risk 1 is what surfaced bug #4 above. Also added the auditor's recommended pinning test
-  (`VisLockStateMachine` and the fixed-window path agree on the same synthetic header).
+- Modified: `src/Yoniq.Core.Sstv/VisLockStateMachine.cs`, `src/Yoniq.Core.Sstv/AnalogFmSstvDecoder.cs`
+  (new `TryDecodeVisDataBits` method, narrowed `DemodulatorLowHz`/`DemodulatorHighHz`),
+  `src/Yoniq.Core.Sstv/AvtTrainingLockStateMachine.cs` (doc comment only, re-measured numbers).
+- New/modified tests: `tests/Yoniq.Core.Sstv.Tests/VisToneRaceHeaderTests.cs` (new),
+  `AvtTrainingLockStateMachineTests.cs` (hardcoded old PLL config updated),
+  `GoldenVectorTests.cs` (robot-36 tolerance tightened 75.0→25.0 with updated reasoning).
+- **Four real bugs found and fixed purely by running the full suite after each change during steps 1-2**
+  (none anticipated by either plan-review round or the code-level review) — full detail in the roadmap
+  entry, one-line summaries: (1) false-positive lock on real mic noise (missing trigger precondition),
+  (2) false-reject of genuine signal (fixed-timing assumption too strict for real filter settling lag —
+  fixed via dynamic trigger search), (3) last data bit silently defaulting to 0 (two independently-
+  rounded sample bounds diverging — fixed by looping on bit count instead), (4) the dynamic-search fix
+  from #2, once made resumable-on-reject (a code-review finding), had no upper bound and could scan into
+  unrelated content on multi-transmission streams — fixed by reintroducing a local search ceiling.
+- Got a full `auditor` code-level review after steps 1-2 landed. Verdict "equivalent-with-risks": core
+  mechanism confirmed faithful against `sstv.cpp` directly (frequencies, bandwidths, smoothing, gate,
+  decision, timing arithmetic down to the sample). Two real risks found and fixed (Risk 1: reject was
+  permanent instead of resumable, a real regression for AVT specifically since `VisLockStateMachine`
+  never reports AVT and has no fallback for it — fixing this surfaced bug #4 above; Risk 2: the same
+  rounding-mismatch bug class as #3, also present in `VisLockStateMachine`'s own anchor calc). Also
+  added the auditor's recommended pinning test (`VisLockStateMachine` and the fixed-window path agree
+  on the same synthetic header).
+- **Step 3 re-verification result: unambiguously positive, no regressions anywhere.** Measured every
+  mode's round-trip delta before/after narrowing (temporary diagnostic, not a permanent test) — EVERY
+  single mode improved, none regressed (MN/MC family included, per scope). Both `GoldenVectorTests`
+  fixtures re-measured against real captured audio: martin-m1 11.78→1.22, robot-36 **68.06→16.995** (a
+  ~4x improvement) — this closes out a divergence `GoldenVectorTests.cs`'s own comment had flagged as
+  needing follow-up ("~5x-worse real-capture result than synthetic self-round-trip"); the PLL bandwidth
+  mismatch this whole piece exists to fix WAS that investigation's answer. Robot-36's golden-vector
+  tolerance tightened 75.0→25.0 accordingly (was "not meaningfully discriminating" per its own old
+  comment, now is). AVT lock margin re-measured at the new band too (steady-state ripple ~9.0Hz/2.3Hz,
+  ~100Hz margin to threshold either way) — full training-sequence test still locks correctly end to end.
 - **Logged, deliberately NOT fixed**: a real performance concern the auditor flagged — the new
   `TryDecodeVisDataBits` rebuilds 4 envelope detectors and replays from `headerStart` on every single
   `PushSamples` call while unlocked, no persistent cursor (unlike every other detector in this file).
-  Bounded now (not unbounded, since bug #4's fix), but still real, repeated, from-scratch work. Full
-  writeup + what a future fix would look like is in the roadmap entry — don't forget this exists.
+  Bounded (not unbounded, since bug #4's fix), but still real, repeated, from-scratch work. Full writeup
+  + what a future fix would look like is in the roadmap entry — don't forget this exists.
 - Full suite: **262/262 passing** as of this brief.
 
-### Steps 3-4, not started
-3. Narrow `PllFmDemodulator`'s tracked band (`AnalogFmSstvDecoder.cs:38-39`) from 1100-2300Hz to legacy's
-   real 1500-2300Hz (image-decode only) — now safe since no VIS-bit decision path depends on the PLL
-   anymore. Re-verification scope (already detailed in the roadmap entry): re-run the full per-mode
-   round-trip delta table including MN/MC, re-measure BOTH `GoldenVectorTests` fixtures (not just
-   synthetic round-trips), update `AvtTrainingLockStateMachineTests.cs:124`'s hardcoded old PLL config.
-4. Fix two stale doc comments: `AnalogFmSstvDecoder.cs:34-39` and `AvtTrainingLockStateMachine.cs:9-12`
-   (exact replacement text already drafted in the roadmap entry).
-
-### Before starting steps 3-4
-- **Commit steps 1-2 first** (currently uncommitted) — ask before pushing, per standing instruction.
-- Steps 3-4 need real legacy-source re-verification during re-measurement (golden-vector deltas can move
-  either direction) — this is NOT purely mechanical, don't treat it as a quick pass.
+### Before committing steps 3-4
+- Review the diff (`AnalogFmSstvDecoder.cs`, `AvtTrainingLockStateMachine.cs`,
+  `AvtTrainingLockStateMachineTests.cs`, `GoldenVectorTests.cs`, `spec/14-roadmap.md`) — ask before
+  pushing, per standing instruction.
 
 ## Other still-open items from the original piece-8 investigation (not started, for context/prioritization)
 From `spec/14-roadmap.md`'s "Secondary, smaller, independently-source-verified divergences" list:
