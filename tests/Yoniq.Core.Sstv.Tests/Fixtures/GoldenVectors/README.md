@@ -73,9 +73,30 @@ because of this and why.
   robot-36 golden-vector tests currently function only as regression tripwires (no worse than what's
   observed today), not as discriminating parity checks, until the underlying gap is fixed.
 
-## What was captured, and what wasn't (privacy note)
+## Trimmed to remove incidental room/mic audio
 
-Because the `.mmv` files contain real recorded sound-card/mic audio outside the TX window (see
-above), the *contents* of that non-TX audio were not reviewed or transcribed as part of this work —
-only its amplitude envelope was measured, to find the TX region. If that's a concern, the affected
-segments are the leading ~5-11s and trailing ~20-35s of each file.
+Both `.mmv` files were trimmed (at the user's explicit request) from their original captures, which
+contained real recorded sound-card/mic audio outside the TX window (confirmed via `Sound.cpp`'s
+sound-processing loop, see above). Trimmed to the detected TX region (amplitude envelope, threshold
+~15000/32768, 5ms windows for tight bounds) plus a 1.0s safety margin on each side, to avoid clipping
+any real signal content while removing as much of the non-TX audio as reasonably possible:
+
+| file | original | trimmed | removed |
+|---|---|---|---|
+| `robot36.mmv` | 866304 samples (78.58s) | 446870 samples (40.53s) | ~38.05s |
+| `martin-m1.mmv` | 1630208 samples (147.86s) | 1309600 samples (118.78s) | ~29.08s |
+
+Confirmed the trim didn't touch any TX content: the decode deltas and encoder-cross-check deltas in
+`GoldenVectorTests.cs` (martin-m1 11.78/13.66, robot-36 68.06/60.89) were re-measured against the
+trimmed files and found byte-for-byte unchanged from the pre-trim measurements. The TX-region
+**duration** test's own numbers did shift slightly (round-3-review correction to an earlier,
+overclaiming version of this paragraph that called all of these numbers "unchanged" without
+re-checking this one at the precision the test actually asserts): trimming moves the TX region to a
+different absolute offset within the file, which re-phases the fixed-size (551-sample)
+envelope-detection window grid against it, changing exactly where a window boundary falls relative
+to the true TX start/end — a real, expected, sub-window-size (<50ms) effect on the measured
+duration, not evidence of any actual timing change. See `GoldenVectorTests.cs`'s own updated comment
+for the exact current numbers; re-measure again (don't assume) after any future re-trim or
+re-capture. The *contents* of the removed non-TX audio were never reviewed or transcribed at any
+point, before or after trimming — only its amplitude envelope was measured, to find the region to
+remove.

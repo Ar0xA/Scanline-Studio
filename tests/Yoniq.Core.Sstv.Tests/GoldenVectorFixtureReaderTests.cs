@@ -67,9 +67,11 @@ public class GoldenVectorFixtureReaderTests
 
         Assert.Equal(11025, sampleRate);
 
-        // Confirmed during scoping via direct byte inspection: 866304 samples (1732612-byte file,
-        // minus the 4-byte header, over 2 bytes/sample).
-        Assert.Equal(866304, samples.Length);
+        // Confirmed via direct byte inspection: 446870 samples. Trimmed from the original 78.58s
+        // capture (866304 samples) to the TX region plus a 1.0s safety margin on each side, per the
+        // user's explicit request to remove incidental room/mic audio -- see the fixture directory's
+        // own README.md for exact trim provenance.
+        Assert.Equal(446870, samples.Length);
 
         // Real captured audio should be well within [-1, 1] and not all-zero.
         Assert.All(samples, s => Assert.InRange(s, -1.0f, 1.0f));
@@ -82,7 +84,9 @@ public class GoldenVectorFixtureReaderTests
         var (samples, sampleRate) = MmvFile.Read(Path.Combine(FixtureDir, "martin-m1.mmv"));
 
         Assert.Equal(11025, sampleRate);
-        Assert.Equal(1630208, samples.Length);
+        // Trimmed from the original 147.86s capture (1630208 samples) the same way as robot36.mmv
+        // above -- see that test's comment.
+        Assert.Equal(1309600, samples.Length);
         Assert.All(samples, s => Assert.InRange(s, -1.0f, 1.0f));
         Assert.Contains(samples, s => Math.Abs(s) > 0.1f);
     }
