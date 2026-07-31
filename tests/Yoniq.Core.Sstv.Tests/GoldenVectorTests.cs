@@ -116,6 +116,11 @@ public class GoldenVectorTests
         //     25.0 -- real margin over the measured value (comparable proportionally to martin-m1's
         //     own margin below), while staying safely under the corruption floor, so this bound is a
         //     genuine discriminating check again, not just a regression tripwire.
+        // Re-measured again after the m_KSS/m_KS2S pixel-pitch fix (spec/14-roadmap.md's item 3,
+        // GetPixelPitchTrimFactor): martin-m1 1.22 -> 1.438 (still well inside tolerance), robot-36
+        // 16.995 -> 14.809 (improved). Both fixtures are group E (239/240 trim on both axes), so the
+        // ~0.4% horizontal correction moved each fixture a small, opposite-signed amount -- expected
+        // given it's a scale fix, not a settling-time fix like Piece 9's was.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 15.0,

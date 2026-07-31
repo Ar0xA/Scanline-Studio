@@ -721,50 +721,77 @@ public static class SstvModeRegistry
     /// (`sstv.cpp:1147`'s group C, <c>m_KSS = m_KS</c> unchanged), not a divide-by-<c>1</c> sentinel:
     /// a divisor of 1 would silently compute <c>m_KS - m_KS/1 == 0</c>, zeroing <c>m_KSB</c> for
     /// every group-C mode -- a real bug caught during this piece's own plan review (round 4), not a
-    /// hypothetical one.</summary>
-    internal readonly record struct PeakPickParameters(double KssTrimFactor, double KsbDivisor);
+    /// hypothetical one. <see cref="Ks2sTrimFactor"/> is the same idea applied to <c>m_KS2</c> (the
+    /// chroma segment's own raw duration) to get <c>m_KS2S</c> -- identical to
+    /// <see cref="KssTrimFactor"/> in every group EXCEPT group D (MR73), where legacy trims luma by
+    /// <c>/640</c> but chroma by <c>/1024</c> (`sstv.cpp:1152-1154`) -- verify per-group, don't assume
+    /// the two always match.</summary>
+    internal readonly record struct PeakPickParameters(double KssTrimFactor, double Ks2sTrimFactor, double KsbDivisor);
 
-    /// <summary>Legacy's 5-way grouping for <c>m_KSS</c>/<c>m_KSB</c> (`sstv.cpp:1110-1179`),
-    /// transcribed directly from source -- see spec/14-roadmap.md's "Piece 10" entry for the full
-    /// per-mode derivation and 4 rounds of plan review. <c>default:</c> genuinely IS group E in
-    /// legacy's own switch (`sstv.cpp:1156-1160`), not an invented catch-all -- it's where PD50/PD90
-    /// land too (confirmed absent from group A's own case list, `sstv.cpp:1111-1118`, an error an
-    /// earlier round of this piece's own review caught in its own draft).</summary>
+    /// <summary>Legacy's 5-way grouping for <c>m_KSS</c>/<c>m_KS2S</c>/<c>m_KSB</c>
+    /// (`sstv.cpp:1110-1179`), transcribed directly from source -- see spec/14-roadmap.md's "Piece 10"
+    /// entry for the full per-mode derivation and 4 rounds of plan review. <c>default:</c> genuinely
+    /// IS group E in legacy's own switch (`sstv.cpp:1156-1160`), not an invented catch-all -- it's
+    /// where PD50/PD90 land too (confirmed absent from group A's own case list, `sstv.cpp:1111-1118`,
+    /// an error an earlier round of this piece's own review caught in its own draft).</summary>
     internal static PeakPickParameters GetPeakPickParameters(SstvModeDefinition mode)
     {
-        // Group A: m_KSS = m_KS - m_KS/480; m_KSB = m_KSS/1280 (sstv.cpp:1111-1118)
+        // Group A: m_KSS = m_KS - m_KS/480; m_KS2S = m_KS2 - m_KS2/480; m_KSB = m_KSS/1280 (sstv.cpp:1111-1118)
         if (mode == Pd120 || mode == Pd160 || mode == Pd180 || mode == Pd240 || mode == Pd290
             || mode == P3 || mode == P5 || mode == P7)
         {
-            return new PeakPickParameters(479.0 / 480.0, 1280.0);
+            return new PeakPickParameters(479.0 / 480.0, 479.0 / 480.0, 1280.0);
         }
 
-        // Group B: m_KSS = m_KS - m_KS/1280; m_KSB = m_KSS/1280 (sstv.cpp:1120-1127)
+        // Group B: m_KSS = m_KS - m_KS/1280; m_KS2S = m_KS2 - m_KS2/1280; m_KSB = m_KSS/1280 (sstv.cpp:1120-1127)
         if (mode == Mp73 || mode == Mn73 || mode == ScottieDx)
         {
-            return new PeakPickParameters(1279.0 / 1280.0, 1280.0);
+            return new PeakPickParameters(1279.0 / 1280.0, 1279.0 / 1280.0, 1280.0);
         }
 
-        // Group C: m_KSS = m_KS (no trim); m_KSB = m_KSS/1280 (sstv.cpp:1129-1146)
+        // Group C: m_KSS = m_KS (no trim); m_KS2S = m_KS2 (no trim); m_KSB = m_KSS/1280 (sstv.cpp:1129-1146)
         if (mode == Sc2180 || mode == Mp115 || mode == Mp140 || mode == Mp175
             || mode == Mr90 || mode == Mr115 || mode == Mr140 || mode == Mr175
             || mode == Ml180 || mode == Ml240 || mode == Ml280 || mode == Ml320
             || mode == Mn110 || mode == Mn140
             || mode == Mc110 || mode == Mc140 || mode == Mc180)
         {
-            return new PeakPickParameters(1.0, 1280.0);
+            return new PeakPickParameters(1.0, 1.0, 1280.0);
         }
 
-        // Group D: m_KSS = m_KS - m_KS/640; m_KSB = m_KSS/1024 (sstv.cpp:1148-1155)
+        // Group D: m_KSS = m_KS - m_KS/640; m_KS2S = m_KS2 - m_KS2/1024 (NOT /640 -- the one group
+        // where luma and chroma trim differently); m_KSB = m_KSS/1024 (sstv.cpp:1148-1155)
         if (mode == Mr73)
         {
-            return new PeakPickParameters(639.0 / 640.0, 1024.0);
+            return new PeakPickParameters(639.0 / 640.0, 1023.0 / 1024.0, 1024.0);
         }
 
-        // Group E (default): m_KSS = m_KS - m_KS/240; m_KSB = m_KSS/640 (sstv.cpp:1156-1160) --
-        // Robot36/72, AVT, ScottieS1/S2 (ScottieDx is group B, above), MartinM1/M2, SC2-60/120, R24,
-        // RM8/12, and PD50/PD90 (see class doc comment above for why PD50/90 land here).
-        return new PeakPickParameters(239.0 / 240.0, 640.0);
+        // Group E (default): m_KSS = m_KS - m_KS/240; m_KS2S = m_KS2 - m_KS2/240; m_KSB = m_KSS/640
+        // (sstv.cpp:1156-1160) -- Robot36/72, AVT, ScottieS1/S2 (ScottieDx is group B, above),
+        // MartinM1/M2, SC2-60/120, R24, RM8/12, and PD50/PD90 (see class doc comment above for why
+        // PD50/90 land here).
+        return new PeakPickParameters(239.0 / 240.0, 239.0 / 240.0, 640.0);
+    }
+
+    /// <summary>Legacy's chroma channels for the pixel-pitch trim (`Main.cpp`'s RX decode switch: R-Y/
+    /// B-Y sites use <c>x = ps * Width / m_KS2S</c>, e.g. `Main.cpp:4300/4338/4347/4664/4703/4712`;
+    /// every other channel -- luma, or any RGB-family channel -- uses <c>m_KSS</c> instead). "C" is
+    /// Robot 36/72's single tone-selected R-Y-or-B-Y channel (`Main.cpp:4300`, inside <c>smR36</c>'s
+    /// chroma branch), not a luma channel despite the short name.</summary>
+    internal static bool IsChromaChannel(string channelName) => channelName is "RY" or "BY" or "C";
+
+    /// <summary>The trim factor a decoder's per-pixel sample-window walk must multiply
+    /// <c>DurationMs/Width</c> by to match legacy's real x-mapping (<c>x = ps * Width / m_KSS</c> for
+    /// luma/RGB, <c>x = ps * Width / m_KS2S</c> for chroma -- both traced directly in `Main.cpp`'s RX
+    /// decode switch, never inferred from the TX side; TX (`Main.cpp`'s <c>Line*</c> family, e.g.
+    /// <c>LineR36</c>) writes each pixel at a flat <c>DurationMs/Width</c> with no trim at all, so this
+    /// is RX-decode-only). Without this trim, every decoder was using the full, untrimmed
+    /// <c>m_KS</c>/<c>m_KS2</c> width instead of <c>m_KSS</c>/<c>m_KS2S</c> -- a small
+    /// (~0.1%-0.4%-of-scan, per-group) horizontal scale error.</summary>
+    internal static double GetPixelPitchTrimFactor(SstvModeDefinition mode, string channelName)
+    {
+        var parameters = GetPeakPickParameters(mode);
+        return IsChromaChannel(channelName) ? parameters.Ks2sTrimFactor : parameters.KssTrimFactor;
     }
 
     /// <summary>Legacy's one mode-specific exception to peak-picking at all
