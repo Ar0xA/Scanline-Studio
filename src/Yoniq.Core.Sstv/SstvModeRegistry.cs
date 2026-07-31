@@ -814,6 +814,72 @@ public static class SstvModeRegistry
         throw new InvalidOperationException($"Mode '{mode.Id}' has no sync segment at {expectedSyncHz}Hz.");
     }
 
+    /// <summary>Legacy's real <c>m_OFP</c> constant (`sstv.cpp`'s <c>CSSTVSET::SetSampFreq</c>,
+    /// `sstv.cpp:657-1108`, one literal per <c>case</c>) -- an empirically-tuned per-mode offset (in
+    /// ms) used ONLY by <c>TMmsstv::SyncSSTV</c>'s (`Main.cpp:3751-3799`) fold-and-argmax fine
+    /// sync-anchor correction (piece 8), which needs legacy's actual literal value, unlike
+    /// <see cref="GetSyncSegmentOffsetMs"/>'s deliberate substitute (see that method's own doc
+    /// comment for why a substitute is fine there but not here). Transcribed directly from source,
+    /// one entry per <c>case</c> in that switch; <c>smSCT1</c> uses the switch's own <c>default:</c>
+    /// case (`sstv.cpp:1098-1107`), value 10.7 -- coincidentally identical to <c>smR36</c>'s own
+    /// explicit 10.7, not a copy-paste. Do not confuse this constant's source with
+    /// <c>TMmsstv::AdjustSyncPos</c> (`Main.cpp:5428-5480`): that function opens with the identical
+    /// `n -= m_OFP; n = -n;` + Scottie-wrap lines, then adds mode-specific fudge terms `SyncSSTV`
+    /// does NOT have (e.g. `smR36`/`smR72: +0.16ms`, `smMRT1: +0.45ms`) -- those belong to a
+    /// different, manual-resync UI feature, not this mechanism; porting them here would be wrong.
+    /// AVT (`smAVT`, `sstv.cpp:684`) is 0.0 in legacy and is excluded from this mechanism entirely
+    /// (`SyncSSTV`'s own early-out, `Main.cpp:3754-3758`) -- callers should exclude <see cref="Avt"/>
+    /// before calling this, the same way AFC/Auto-Slant already do, rather than relying on 0.0 being
+    /// a meaningful value here.</summary>
+    internal static double GetSyncPeakOffsetMs(SstvModeDefinition mode)
+    {
+        if (mode == Robot36) return 10.7;
+        if (mode == Robot72) return 10.7;
+        if (mode == Avt) return 0.0;
+        if (mode == ScottieS1) return 10.7;
+        if (mode == ScottieS2) return 10.8;
+        if (mode == ScottieDx) return 10.2;
+        if (mode == MartinM1) return 7.2;
+        if (mode == MartinM2) return 7.4;
+        if (mode == Sc2180) return 7.8;
+        if (mode == Sc2120) return 7.5;
+        if (mode == Sc260) return 7.9;
+        if (mode == Pd50) return 19.3;
+        if (mode == Pd90) return 18.9;
+        if (mode == Pd120) return 19.4;
+        if (mode == Pd160) return 18.9;
+        if (mode == Pd180) return 18.9;
+        if (mode == Pd240) return 18.9;
+        if (mode == Pd290) return 18.9;
+        if (mode == P3) return 7.8;
+        if (mode == P5) return 9.2;
+        if (mode == P7) return 11.5;
+        if (mode == Mr73) return 10.6;
+        if (mode == Mr90) return 10.6;
+        if (mode == Mr115) return 10.6;
+        if (mode == Mr140) return 10.6;
+        if (mode == Mr175) return 10.6;
+        if (mode == Mp73) return 10.5;
+        if (mode == Mp115) return 10.5;
+        if (mode == Mp140) return 10.5;
+        if (mode == Mp175) return 10.5;
+        if (mode == Ml180) return 10.6;
+        if (mode == Ml240) return 10.6;
+        if (mode == Ml280) return 10.6;
+        if (mode == Ml320) return 10.6;
+        if (mode == R24) return 8.1;
+        if (mode == Rm8) return 8.2;
+        if (mode == Rm12) return 8.0;
+        if (mode == Mn73) return 10.5;
+        if (mode == Mn110) return 10.5;
+        if (mode == Mn140) return 10.5;
+        if (mode == Mc110) return 8.95;
+        if (mode == Mc140) return 8.75;
+        if (mode == Mc180) return 8.75;
+
+        throw new InvalidOperationException($"Mode '{mode.Id}' has no known legacy m_OFP value.");
+    }
+
     /// <summary>Legacy's per-mode expected sync-repeat interval, <c>SSTVSET.m_MS[i] = GetTiming(i) *
     /// m_SampFreq / 1000.0</c> (`sstv.cpp:577`) — the mode's own line duration, since (for every
     /// mode except AVT) the sync tone repeats once per transmission line. Derived from this port's
