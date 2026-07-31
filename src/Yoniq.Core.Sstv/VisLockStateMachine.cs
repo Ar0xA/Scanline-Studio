@@ -191,15 +191,16 @@ internal sealed class VisLockStateMachine
                 {
                     // sstv.cpp:1981-1984 -- as of piece 7c, includes the second OR'd reject branch
                     // (fabs(d11-d13) < m_SLvl2, "too close to call") that was previously missing
-                    // entirely, not just unthresholded.
-                    if ((d11 < d19 && d13 < d19) || Math.Abs(d11 - d13) < _slvl2)
+                    // entirely, not just unthresholded. Piece 9: shared with AnalogFmSstvDecoder's
+                    // fixed-window header path via VisBitDecision, not duplicated inline anymore.
+                    if (!VisBitDecision.TryDecide(d11, d13, d19, _slvl2, out var bit))
                     {
                         _state = LockState.Search;
                         break;
                     }
 
                     _syncTimeCounter = MsToSamples(BitDurationMs);
-                    _visData = (_visData >> 1) | (d11 > d13 ? 0x0080 : 0); // sstv.cpp:1987-1988
+                    _visData = (_visData >> 1) | (bit == 1 ? 0x0080 : 0); // sstv.cpp:1987-1988
                     if (--_visCount != 0)
                     {
                         break;
@@ -256,14 +257,27 @@ internal sealed class VisLockStateMachine
                 {
                     if (d12 > d19 && d12 > _slvl)
                     {
+                        // Code-review finding (Piece 9): each term rounded to samples SEPARATELY,
+                        // not combined into one ms total then rounded once -- matching how this
+                        // state machine's own _syncTimeCounter actually accumulated real elapsed
+                        // samples (MsToSamples(ConfirmLockDurationMs) once, then MsToSamples(BitDurationMs)
+                        // exactly bitCount times, one per real per-bit countdown reset, then
+                        // MsToSamples(VerifyDurationMs) once). The two rounding conventions can
+                        // diverge by a few samples after several steps (confirmed: 3 samples for
+                        // extended VIS at 11025Hz) -- the same rounding-mismatch bug class
+                        // TryDecodeVisDataBits' own doc comment describes fixing, caught here by
+                        // code review rather than a failing test (this file's own anchor-precision
+                        // tests were within tolerance either way, small effect only, but the same
+                        // bug class this project already treats as worth fixing on principle).
                         var mode = _resolvedMode!;
-                        var anchorOffsetMs = ConfirmLockDurationMs
-                            + BitDurationMs * (_isExtended ? 16 : 8)
-                            + VerifyDurationMs
-                            + 15.0 // reconciles this state machine's own boundary with VisHeader's, see ProcessSample's doc comment
-                            + (SstvModeRegistry.IsScottieFamily(mode) ? VisHeader.ScottiePostVisPulseDurationMs : 0.0);
+                        var bitCount = _isExtended ? 16 : 8;
+                        var anchorOffsetSamples = MsToSamples(ConfirmLockDurationMs)
+                            + bitCount * MsToSamples(BitDurationMs)
+                            + MsToSamples(VerifyDurationMs)
+                            + MsToSamples(15.0) // reconciles this state machine's own boundary with VisHeader's, see ProcessSample's doc comment
+                            + (SstvModeRegistry.IsScottieFamily(mode) ? MsToSamples(VisHeader.ScottiePostVisPulseDurationMs) : 0);
 
-                        var lineStartSample = _triggerFireSample + MsToSamples(anchorOffsetMs);
+                        var lineStartSample = _triggerFireSample + anchorOffsetSamples;
                         _state = LockState.Search;
                         return (mode, lineStartSample);
                     }

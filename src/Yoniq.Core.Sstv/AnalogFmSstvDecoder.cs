@@ -1107,6 +1107,186 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         return true;
     }
 
+    // Ported mechanism: sstv.cpp's case 2/9 (1974-2126) -- the tone race between m_iir11/m_iir13
+    // (1080Hz/1320Hz, 80Hz bandwidth, sstv.cpp:1446/1448) that decides each VIS data bit, including
+    // the (d11<d19&&d13<d19)||fabs(d11-d13)<SLvl2 weak/ambiguous reject gate (sstv.cpp:1981-1984)
+    // this port previously had no equivalent of at all -- it decided bits from the shared PLL's
+    // demodulated-frequency stream instead, a proxy that only worked because the PLL happened to
+    // also cover 1100-1300Hz (see spec/14-roadmap.md's "Piece 9" entry). VisBitDecision.TryDecide
+    // is the actual decision predicate, shared with VisLockStateMachine rather than duplicated here.
+    //
+    // Timing, derived directly from legacy's own real-time arithmetic, not assumed: case-2 entry
+    // (where d13 starts advancing, sstv.cpp:1976-1978, "frozen between attempts" otherwise) is 15ms
+    // into the 30ms start-bit tone -- i.e. 15ms BEFORE DataBit0's own tone begins (VisHeader's
+    // Leader+Break+Leader+StartBit = 640ms from headerStart; case-2 entry = 610ms trigger + 15ms
+    // ConfirmLock hold = 625ms, matching VisLockStateMachine's own already-tested arithmetic for
+    // the same trigger). Each bit's decision fires exactly 30ms after case-2 entry (or after the
+    // previous decision), landing at (bit-window-start + 15ms) -- the window's own MIDPOINT, not
+    // its end. This falls out of legacy's fixed trigger-to-decode arithmetic itself, not a separate
+    // compensation for filter settling: legacy doesn't wait for its filters to settle before
+    // reading d11/d13/d19, it reads whatever they contain at this fixed countdown-zero instant, and
+    // this port's SyncEnvelopeDetector (an exact TankFilter/IirFilter port of the same
+    // CIIRTANK/CIIR legacy uses) reproduces the same filter response given the same relative
+    // timing -- so no additional group-delay fudge is layered on top of this analytically-derived
+    // midpoint offset. Confirmed empirically by this port's own existing extended/normal-VIS
+    // round-trip tests (SstvRoundTripTests) continuing to pass with this timing, not just asserted.
+    //
+    // d11/d19 run continuously from headerStart (well before case-2 entry, matching legacy's own
+    // always-running m_iir11/m_iir19, sstv.cpp:1893-1895/1847-1853) rather than being restarted per
+    // bit window. Fresh detector instances are constructed on every call -- this method is a pure
+    // function of (headerStart, bitCount), safe to call again if TryDecodeVisHeader's caller
+    // re-invokes it on the same not-yet-consumed samples (the method returns false/doesn't consume
+    // in several places, and a streaming PushSamples caller can do exactly that).
+    //
+    // Returns null if the trigger precondition or the tone race rejects (weak/ambiguous, matching
+    // legacy's abort-to-search) -- never for "not enough samples yet", since the caller already
+    // gates on that before calling in.
+    //
+    // Precondition, added after this method's first version produced a real false-positive lock on
+    // real captured audio (spec/14-roadmap.md's Piece 9 entry, caught by GoldenVectorTests --
+    // martin-m1's real mic-noise lead-in raced to a byte that happened to match a registered mode,
+    // sc2-120): legacy NEVER runs the d11/d13 tone race at all unless a genuine, sustained 1200Hz
+    // dominant tone was already found first -- case 0's trigger, held for case 1's full 15ms
+    // (sstv.cpp:1946-1973, "ANY single failing sample resets to Search immediately"), exactly what
+    // VisLockStateMachine's own Search/ConfirmLock states check. This method previously had no
+    // equivalent gate at all, so it would blindly race two envelope detectors against whatever
+    // content happened to sit at headerStart, real header or not.
+    //
+    // The trigger point is found DYNAMICALLY (a small, locally-scoped search + 15ms hold, mirroring
+    // VisLockStateMachine's Search/ConfirmLock -- NOT a full second copy of that state machine, which
+    // the round-2 plan review already ruled out reusing wholesale for this call site), not assumed to
+    // fall at the analytically-idealized 610ms mark. A second real bug this caught, empirically (not
+    // theorized): a fixed 610ms assumption fails even on a clean, full-amplitude, real filtered
+    // signal, because the leader-to-startbit tone transition isn't instantaneous through a resonator+
+    // lowpass chain -- measured ~14.5ms of real settling lag before d12 actually overtakes d19 on a
+    // synthetic AVT fixture with no noise at all. Legacy's own real trigger has the exact same
+    // property (it fires whenever d12 actually crosses d19, not at a hardcoded offset), so searching
+    // for it dynamically is the more legacy-faithful choice, not just a workaround.
+    //
+    // Both the trigger search AND the per-bit reject gate resume searching on failure rather than
+    // aborting the whole attempt -- code-review finding, not anticipated by either plan-review round:
+    // legacy's real receiver never permanently gives up either (case 1's failing condition and case
+    // 2/9's own reject gate both just set `m_SyncMode = 0`, sstv.cpp:1957/1972/1983, returning to
+    // case 0 which re-triggers on the very next qualifying sample). A first version of this method
+    // aborted outright on any reject, which -- unlike legacy -- could permanently kill detection at
+    // this headerStart if e.g. the 10ms/1200Hz break tone (VisHeader.BreakFrequencyHz, 300-310ms)
+    // spuriously satisfied the trigger+hold before the real 30ms start-bit tone was ever reached. For
+    // every mode except AVT, VisLockStateMachine's own independent scan is a fallback that recovers
+    // from this anyway -- but VisLockStateMachine deliberately never reports AVT (see its own class
+    // doc comment), making this method AVT's ONLY detector, with no second chance.
+    //
+    // Bounded to a generous but LOCAL ceiling relative to headerStart, not the whole buffered
+    // stream -- an unbounded version (tried first, reverted) is a real regression, not a hypothetical
+    // one: with no ceiling, this fixed-window method effectively becomes a second, untested full-buffer
+    // scanner whenever its first attempt fails, and on a multi-transmission stream it can walk straight
+    // through unrelated image content and spuriously match some OTHER registered VIS byte deep inside
+    // it -- caught by the existing multi-transmission ordering suite (PiecesSixCReachabilityTests,
+    // SyncScanInterleaveTests), which expect the fixed-window path to fail LOCALLY and yield to
+    // TryInterleavedHeaderScan, not to keep searching indefinitely on its own. The ceiling covers the
+    // idealized trigger (610ms) plus a 200ms retry margin (generous room for one or two short spurious
+    // candidates, e.g. the 10ms/1200Hz break tone, before the real start bit) plus this bitCount's own
+    // full decode duration -- enough for legacy-faithful local recovery, not a general-purpose search.
+    private int[]? TryDecodeVisDataBits(int headerStart, int bitCount)
+    {
+        var confirmHoldSamples = MsToSamples(VisHeader.BitDurationMs / 2); // 15ms, sstv.cpp:1948
+        var searchCeiling = headerStart + MsToSamples(VisHeader.LeaderDurationMs * 2 + VisHeader.BreakDurationMs + 200)
+            + confirmHoldSamples + bitCount * MsToSamples(VisHeader.BitDurationMs);
+        var availableUpTo = Math.Min(_demodulatedFrequencies.Count, searchCeiling);
+
+        var d11Detector = new SyncEnvelopeDetector(_sampleRate, 1080.0, bandwidthHz: 80.0);
+        var d12Detector = new SyncEnvelopeDetector(_sampleRate, 1200.0);
+        var d13Detector = new SyncEnvelopeDetector(_sampleRate, 1320.0, bandwidthHz: 80.0);
+        var d19Detector = new SyncEnvelopeDetector(_sampleRate, 1900.0);
+
+        var sample = headerStart;
+        var holdCount = 0;
+        var d11 = 0.0;
+        var d19 = 0.0;
+
+        while (sample < availableUpTo)
+        {
+            var triggerFound = false;
+            for (; sample < availableUpTo; sample++)
+            {
+                var agcSample = AgcSampleAt(sample);
+                d11 = d11Detector.ProcessSample(agcSample);
+                var d12 = d12Detector.ProcessSample(agcSample);
+                d19 = d19Detector.ProcessSample(agcSample);
+
+                if (d12 > d19 && d12 > SLvl && d12 - d19 >= SLvl)
+                {
+                    if (++holdCount >= confirmHoldSamples)
+                    {
+                        triggerFound = true;
+                        sample++; // case-2 entry -- d13 starts advancing from here
+                        break;
+                    }
+                }
+                else
+                {
+                    holdCount = 0;
+                }
+            }
+
+            if (!triggerFound)
+            {
+                return null; // not enough data buffered yet to complete a hold anywhere available
+            }
+
+            holdCount = 0; // reset for the next trigger search, if this attempt's bits get rejected
+
+            var bits = new int[bitCount];
+            var bitIndex = 0;
+            var nextDecisionSample = sample + MsToSamples(VisHeader.BitDurationMs);
+            var rejected = false;
+
+            // Loop on bitIndex, not a precomputed sample bound -- a bound computed as a single
+            // MsToSamples(bitCount * BitDurationMs) rounds differently than nextDecisionSample's own
+            // bitCount separate MsToSamples(BitDurationMs) increments (they can differ by a sample or
+            // two after several steps), which silently left the LAST bit's decision point past the
+            // loop's bound and its array slot at its default 0 -- a real bug this caught (AVT's own
+            // round-trip test at 11025Hz: byte 0x44 decoded as 0x04, R24's code, with bit 6 never
+            // decided). Looping until every bit has been decided (or data runs out) sidesteps the
+            // mismatch entirely instead of trying to keep two independently-rounded bounds in sync.
+            for (; bitIndex < bitCount; sample++)
+            {
+                if (sample >= availableUpTo)
+                {
+                    return null;
+                }
+
+                var agcSample = AgcSampleAt(sample);
+                d11 = d11Detector.ProcessSample(agcSample);
+                d19 = d19Detector.ProcessSample(agcSample);
+                var d13 = d13Detector.ProcessSample(agcSample);
+
+                if (sample == nextDecisionSample)
+                {
+                    if (!VisBitDecision.TryDecide(d11, d13, d19, SLvl2, out var bit))
+                    {
+                        rejected = true;
+                        sample++; // advance past this already-processed sample before the outer loop
+                                  // resumes searching -- these are stateful streaming filters, not a
+                                  // cache; re-processing the same sample would double-apply it
+                        break;
+                    }
+
+                    bits[bitIndex++] = bit;
+                    nextDecisionSample += MsToSamples(VisHeader.BitDurationMs);
+                }
+            }
+
+            if (!rejected)
+            {
+                return bits;
+            }
+        }
+
+        return null;
+    }
+
+    private int MsToSamples(double ms) => (int)Math.Round(ms / 1000.0 * _sampleRate);
+
     private bool TryDecodeVisHeader()
     {
         // Prefix (leader/break/leader/start-bit + first 7 data bits) is the same length whether
@@ -1119,19 +1299,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         }
 
         var headerStart = _consumedSamples;
-        var bitMidpointHz = (VisHeader.Bit1FrequencyHz + VisHeader.Bit0FrequencyHz) / 2;
-        var prefixIdealSamples = (VisHeader.LeaderDurationMs + VisHeader.BreakDurationMs + VisHeader.LeaderDurationMs + VisHeader.BitDurationMs)
-            / 1000.0 * _sampleRate;
 
-        var firstByteBits = new int[VisHeader.DataBitCount];
-        for (var bitIndex = 0; bitIndex < VisHeader.DataBitCount; bitIndex++)
+        var firstByteBits = TryDecodeVisDataBits(headerStart, VisHeader.DataBitCount);
+        if (firstByteBits is null)
         {
-            var startSample = headerStart + (int)Math.Round(prefixIdealSamples);
-            prefixIdealSamples += VisHeader.BitDurationMs / 1000.0 * _sampleRate;
-            var endSample = headerStart + (int)Math.Round(prefixIdealSamples);
-
-            var avgFreq = AverageFrequencyInWindow(startSample, endSample);
-            firstByteBits[bitIndex] = avgFreq < bitMidpointHz ? 1 : 0; // closer to Bit1FrequencyHz (1100) => 1
+            return false; // weak/ambiguous tone race -- legacy aborts the whole attempt (sstv.cpp:1983)
         }
 
         var firstByteValue = VisHeader.DecodeVisCode(firstByteBits);
@@ -1148,18 +1320,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         if (isExtended)
         {
             // 1 leftover bit from the escape byte (its bit 7, unused) + all 8 bits of the real
-            // extended-mode byte = 9 more bit-slots before the stop bit.
-            var remainingBits = new int[9];
-            for (var bitIndex = 0; bitIndex < remainingBits.Length; bitIndex++)
+            // extended-mode byte = 9 more bit-slots before the stop bit -- windows 7-15 of the same
+            // continuous tone race, not a fresh decode (TryDecodeVisDataBits recomputes bits 0-6
+            // too, deterministically identical to firstByteBits above; harmless redundancy).
+            var allBits = TryDecodeVisDataBits(headerStart, VisHeader.DataBitCount + 9);
+            if (allBits is null)
             {
-                var startSample = headerStart + (int)Math.Round(prefixIdealSamples);
-                prefixIdealSamples += VisHeader.BitDurationMs / 1000.0 * _sampleRate;
-                var endSample = headerStart + (int)Math.Round(prefixIdealSamples);
-
-                var avgFreq = AverageFrequencyInWindow(startSample, endSample);
-                remainingBits[bitIndex] = avgFreq < bitMidpointHz ? 1 : 0;
+                return false;
             }
 
+            var remainingBits = allBits[VisHeader.DataBitCount..];
             var extendedCode = VisHeader.DecodeRawByte(remainingBits.AsSpan(1, 8));
             mode = SstvModeRegistry.FindByExtendedCode(extendedCode);
         }
