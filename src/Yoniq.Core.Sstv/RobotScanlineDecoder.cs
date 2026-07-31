@@ -39,7 +39,7 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
         int sampleRate,
         int lineStartSample,
         int lineIndex,
-        Func<int, int, double> sampleFrequencyAt,
+        PixelSampleReader reader,
         Rgb24[] pixels)
     {
         _rMinusY ??= new double[mode.ImageWidth];
@@ -55,7 +55,9 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
             switch (segment)
             {
                 case ScanSegment scan when scanSegmentsSeen == 0:
-                    DecodePixels(scan, mode, sampleRate, lineStartSample, sampleFrequencyAt, ref idealSamplesSoFar, y);
+                    // Luma peak-picks in legacy (Main.cpp:4280, GetPictureLevel) -- unlike the
+                    // tone-selector and chroma sites below, which stay bare (GetPixelLevel).
+                    DecodePixels(scan, mode, sampleRate, lineStartSample, reader.ReadPeakPicked, ref idealSamplesSoFar, y);
                     scanSegmentsSeen++;
                     break;
 
@@ -68,7 +70,9 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
                     // "first wins" gate (Main.cpp:4286-4297, unlike the per-pixel scans' m_AX-gated
                     // "first sample" behavior) -- so the real effective reading is whatever the
                     // segment's LAST sample decided, not an average and not the first sample.
-                    var freq = sampleFrequencyAt(endSample - 1, endSample);
+                    // Tone-selector always reads bare -- matches legacy's own GetPixelLevel here
+                    // (Main.cpp:4289), never GetPictureLevel. Unaffected by piece 10.
+                    var freq = reader.ReadBare(endSample - 1, endSample);
                     var midpoint = (selector.LowFrequencyHz + selector.HighFrequencyHz) / 2;
                     var deviation = freq - midpoint;
                     isEvenLine = deviation >= AmbiguityHalfWidthHz || deviation < -AmbiguityHalfWidthHz
@@ -80,8 +84,10 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
 
                 case ScanSegment chromaScan:
                 {
+                    // Chroma always reads bare -- matches legacy's own GetPixelLevel here
+                    // (Main.cpp:4303), never GetPictureLevel. Unaffected by piece 10.
                     var target = isEvenLine ? _rMinusY : _bMinusY;
-                    DecodePixels(chromaScan, mode, sampleRate, lineStartSample, sampleFrequencyAt, ref idealSamplesSoFar, target!);
+                    DecodePixels(chromaScan, mode, sampleRate, lineStartSample, reader.ReadBare, ref idealSamplesSoFar, target!);
                     scanSegmentsSeen++;
                     break;
                 }
@@ -99,12 +105,16 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
         }
     }
 
+    // Piece 10: takes a bound method GROUP (reader.ReadBare or reader.ReadPeakPicked), decided once
+    // by the caller for this whole scan segment -- not a PixelSampleReader plus a `bool usePeak`
+    // flag, which would reintroduce the exact same-typed-parameter ambiguity ReadBare/ReadPeakPicked
+    // were split out to eliminate (round-2 plan review finding).
     private static void DecodePixels(
         ScanSegment scan,
         SstvModeDefinition mode,
         int sampleRate,
         int lineStartSample,
-        Func<int, int, double> sampleFrequencyAt,
+        Func<int, int, double> read,
         ref double idealSamplesSoFar,
         double[] destination)
     {
@@ -115,7 +125,7 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
             idealSamplesSoFar += perPixelDurationMs / 1000.0 * sampleRate;
             var endSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
 
-            var freq = sampleFrequencyAt(startSample, endSample);
+            var freq = read(startSample, endSample);
             // Inverse of ColorToFreq, not "+1500" -- uses the mode's own LuminanceMinHz/MaxHz.
             destination[x] = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
         }

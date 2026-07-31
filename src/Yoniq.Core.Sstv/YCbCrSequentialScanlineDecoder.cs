@@ -10,7 +10,7 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
         int sampleRate,
         int lineStartSample,
         int lineIndex,
-        Func<int, int, double> sampleFrequencyAt,
+        PixelSampleReader reader,
         Rgb24[] pixels)
     {
         var y = new double[mode.ImageWidth];
@@ -22,11 +22,15 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
         {
             if (segment is ScanSegment scan)
             {
-                var destination = scan.ChannelName switch
+                // Piece 10: peak-vs-bare folded into the SAME exhaustive channel switch that already
+                // picks the destination array, not a second parallel switch that could drift out of
+                // sync with this one. "Y" peak-picks (Main.cpp:4330, GetPictureLevel); "RY"/"BY" stay
+                // bare (Main.cpp:4338/4347, GetPixelLevel) -- legacy never peak-picks chroma here.
+                (double[] destination, Func<int, int, double> read) = scan.ChannelName switch
                 {
-                    "Y" => y,
-                    "RY" => rMinusY,
-                    "BY" => bMinusY,
+                    "Y" => (y, (Func<int, int, double>)reader.ReadPeakPicked),
+                    "RY" => (rMinusY, reader.ReadBare),
+                    "BY" => (bMinusY, reader.ReadBare),
                     _ => throw new NotSupportedException($"Unknown channel '{scan.ChannelName}'."),
                 };
 
@@ -37,7 +41,7 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
                     idealSamplesSoFar += perPixelDurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
 
-                    var freq = sampleFrequencyAt(startSample, endSample);
+                    var freq = read(startSample, endSample);
                     destination[x] = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
                 }
             }
