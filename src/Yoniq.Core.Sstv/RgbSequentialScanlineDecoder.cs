@@ -22,7 +22,8 @@ internal sealed class RgbSequentialScanlineDecoder : IScanlineDecoder
         {
             if (segment is ScanSegment scan)
             {
-                var perPixelDurationMs = scan.DurationMs / mode.ImageWidth;
+                var perPixelDurationMs = scan.DurationMs / mode.ImageWidth
+                    * SstvModeRegistry.GetPixelPitchTrimFactor(mode, scan.ChannelName);
                 for (var x = 0; x < mode.ImageWidth; x++)
                 {
                     var startSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);

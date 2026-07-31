@@ -30,7 +30,11 @@ internal sealed class MonoAveragedPairedScanlineDecoder : IScanlineDecoder
         {
             if (segment is ScanSegment scan)
             {
-                var perPixelDurationMs = scan.DurationMs / mode.ImageWidth;
+                // Trimmed to m_KSS, not the raw scan duration -- legacy's real x-mapping is
+                // `x = ps * Width / m_KSS`, never `x = ps * Width / m_KS`. RM8/RM12 has no chroma
+                // segment, so this is always the luma (non-chroma) branch of the trim factor.
+                var perPixelDurationMs = scan.DurationMs / mode.ImageWidth
+                    * SstvModeRegistry.GetPixelPitchTrimFactor(mode, scan.ChannelName);
                 for (var x = 0; x < mode.ImageWidth; x++)
                 {
                     var startSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);

@@ -27,76 +27,80 @@ public class PeakPickParametersTests
     private const double GroupCFactor = 1.0;
     private const double GroupCDivisor = 1280.0;
 
-    // Group D: m_KSS = m_KS - m_KS/640; m_KSB = m_KSS/1024 (sstv.cpp:1148-1155)
+    // Group D: m_KSS = m_KS - m_KS/640; m_KS2S = m_KS2 - m_KS2/1024 (NOT /640); m_KSB = m_KSS/1024
+    // (sstv.cpp:1148-1155) -- the one group where luma and chroma trim differently.
     private const double GroupDFactor = 639.0 / 640.0;
+    private const double GroupDKs2sFactor = 1023.0 / 1024.0;
     private const double GroupDDivisor = 1024.0;
 
     // Group E (default): m_KSS = m_KS - m_KS/240; m_KSB = m_KSS/640 (sstv.cpp:1156-1160)
     private const double GroupEFactor = 239.0 / 240.0;
     private const double GroupEDivisor = 640.0;
 
-    public static readonly TheoryData<SstvModeDefinition, double, double> ExpectedParameters = new()
+    public static readonly TheoryData<SstvModeDefinition, double, double, double> ExpectedParameters = new()
     {
         // Group A
-        { SstvModeRegistry.Pd120, GroupAFactor, GroupADivisor },
-        { SstvModeRegistry.Pd160, GroupAFactor, GroupADivisor },
-        { SstvModeRegistry.Pd180, GroupAFactor, GroupADivisor },
-        { SstvModeRegistry.Pd240, GroupAFactor, GroupADivisor },
-        { SstvModeRegistry.Pd290, GroupAFactor, GroupADivisor },
-        { SstvModeRegistry.P3, GroupAFactor, GroupADivisor },
-        { SstvModeRegistry.P5, GroupAFactor, GroupADivisor },
-        { SstvModeRegistry.P7, GroupAFactor, GroupADivisor },
+        { SstvModeRegistry.Pd120, GroupAFactor, GroupAFactor, GroupADivisor },
+        { SstvModeRegistry.Pd160, GroupAFactor, GroupAFactor, GroupADivisor },
+        { SstvModeRegistry.Pd180, GroupAFactor, GroupAFactor, GroupADivisor },
+        { SstvModeRegistry.Pd240, GroupAFactor, GroupAFactor, GroupADivisor },
+        { SstvModeRegistry.Pd290, GroupAFactor, GroupAFactor, GroupADivisor },
+        { SstvModeRegistry.P3, GroupAFactor, GroupAFactor, GroupADivisor },
+        { SstvModeRegistry.P5, GroupAFactor, GroupAFactor, GroupADivisor },
+        { SstvModeRegistry.P7, GroupAFactor, GroupAFactor, GroupADivisor },
 
         // Group B
-        { SstvModeRegistry.Mp73, GroupBFactor, GroupBDivisor },
-        { SstvModeRegistry.Mn73, GroupBFactor, GroupBDivisor },
-        { SstvModeRegistry.ScottieDx, GroupBFactor, GroupBDivisor },
+        { SstvModeRegistry.Mp73, GroupBFactor, GroupBFactor, GroupBDivisor },
+        { SstvModeRegistry.Mn73, GroupBFactor, GroupBFactor, GroupBDivisor },
+        { SstvModeRegistry.ScottieDx, GroupBFactor, GroupBFactor, GroupBDivisor },
 
         // Group C
-        { SstvModeRegistry.Sc2180, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mp115, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mp140, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mp175, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mr90, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mr115, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mr140, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mr175, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Ml180, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Ml240, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Ml280, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Ml320, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mn110, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mn140, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mc110, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mc140, GroupCFactor, GroupCDivisor },
-        { SstvModeRegistry.Mc180, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Sc2180, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mp115, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mp140, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mp175, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mr90, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mr115, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mr140, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mr175, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Ml180, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Ml240, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Ml280, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Ml320, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mn110, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mn140, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mc110, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mc140, GroupCFactor, GroupCFactor, GroupCDivisor },
+        { SstvModeRegistry.Mc180, GroupCFactor, GroupCFactor, GroupCDivisor },
 
-        // Group D
-        { SstvModeRegistry.Mr73, GroupDFactor, GroupDDivisor },
+        // Group D -- luma/chroma trim diverge, see GroupDKs2sFactor's comment
+        { SstvModeRegistry.Mr73, GroupDFactor, GroupDKs2sFactor, GroupDDivisor },
 
         // Group E (default) -- includes PD50/PD90, confirmed absent from group A's own case list
-        { SstvModeRegistry.Robot36, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.Robot72, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.Avt, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.ScottieS1, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.ScottieS2, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.MartinM1, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.MartinM2, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.Sc260, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.Sc2120, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.R24, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.Rm8, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.Rm12, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.Pd50, GroupEFactor, GroupEDivisor },
-        { SstvModeRegistry.Pd90, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.Robot36, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.Robot72, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.Avt, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.ScottieS1, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.ScottieS2, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.MartinM1, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.MartinM2, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.Sc260, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.Sc2120, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.R24, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.Rm8, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.Rm12, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.Pd50, GroupEFactor, GroupEFactor, GroupEDivisor },
+        { SstvModeRegistry.Pd90, GroupEFactor, GroupEFactor, GroupEDivisor },
     };
 
     [Theory]
     [MemberData(nameof(ExpectedParameters))]
-    public void GetPeakPickParameters_MatchesLegacyGroup(SstvModeDefinition mode, double expectedFactor, double expectedDivisor)
+    public void GetPeakPickParameters_MatchesLegacyGroup(
+        SstvModeDefinition mode, double expectedKssFactor, double expectedKs2sFactor, double expectedDivisor)
     {
         var actual = SstvModeRegistry.GetPeakPickParameters(mode);
-        Assert.Equal(expectedFactor, actual.KssTrimFactor, precision: 10);
+        Assert.Equal(expectedKssFactor, actual.KssTrimFactor, precision: 10);
+        Assert.Equal(expectedKs2sFactor, actual.Ks2sTrimFactor, precision: 10);
         Assert.Equal(expectedDivisor, actual.KsbDivisor, precision: 10);
     }
 
@@ -135,6 +139,35 @@ public class PeakPickParametersTests
     {
         var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
         Assert.Equal(expectedKsbSamples, SstvModeRegistry.GetKsbSamples(mode, sampleRate));
+    }
+
+    [Theory]
+    [InlineData("RY", true)]
+    [InlineData("BY", true)]
+    [InlineData("C", true)]
+    [InlineData("Y", false)]
+    [InlineData("Y1", false)]
+    [InlineData("Y2", false)]
+    [InlineData("R", false)]
+    [InlineData("G", false)]
+    [InlineData("B", false)]
+    public void IsChromaChannel_MatchesLegacyKs2sSites(string channelName, bool expected)
+    {
+        Assert.Equal(expected, SstvModeRegistry.IsChromaChannel(channelName));
+    }
+
+    [Fact]
+    public void GetPixelPitchTrimFactor_UsesKs2sForChroma_KssOtherwise()
+    {
+        // MR73 (group D) is the only mode where these two factors actually differ -- everywhere else
+        // this test would pass even with the RY/BY branch wired to the wrong field.
+        var mr73 = SstvModeRegistry.Mr73;
+        var parameters = SstvModeRegistry.GetPeakPickParameters(mr73);
+
+        Assert.Equal(parameters.KssTrimFactor, SstvModeRegistry.GetPixelPitchTrimFactor(mr73, "Y"));
+        Assert.Equal(parameters.Ks2sTrimFactor, SstvModeRegistry.GetPixelPitchTrimFactor(mr73, "RY"));
+        Assert.Equal(parameters.Ks2sTrimFactor, SstvModeRegistry.GetPixelPitchTrimFactor(mr73, "BY"));
+        Assert.NotEqual(parameters.KssTrimFactor, parameters.Ks2sTrimFactor);
     }
 
     [Fact]

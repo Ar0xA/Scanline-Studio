@@ -34,7 +34,10 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
                     _ => throw new NotSupportedException($"Unknown channel '{scan.ChannelName}'."),
                 };
 
-                var perPixelDurationMs = scan.DurationMs / mode.ImageWidth;
+                // Trimmed to m_KSS/m_KS2S, not the raw scan duration -- legacy's real x-mapping is
+                // `x = ps * Width / m_KSS` (`m_KS2S` for RY/BY), never `x = ps * Width / m_KS`.
+                var perPixelDurationMs = scan.DurationMs / mode.ImageWidth
+                    * SstvModeRegistry.GetPixelPitchTrimFactor(mode, scan.ChannelName);
                 for (var x = 0; x < mode.ImageWidth; x++)
                 {
                     var startSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
