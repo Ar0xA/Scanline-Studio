@@ -12,7 +12,7 @@ internal sealed class YCbCrLinePairedScanlineDecoder : IScanlineDecoder
         int sampleRate,
         int lineStartSample,
         int lineIndex,
-        Func<int, int, double> sampleFrequencyAt,
+        PixelSampleReader reader,
         Rgb24[] pixels)
     {
         var y1 = new double[mode.ImageWidth];
@@ -25,12 +25,16 @@ internal sealed class YCbCrLinePairedScanlineDecoder : IScanlineDecoder
         {
             if (segment is ScanSegment scan)
             {
-                var destination = scan.ChannelName switch
+                // Piece 10: peak-vs-bare folded into the same exhaustive channel switch that already
+                // picks the destination array. "Y1"/"Y2" BOTH peak-pick in legacy (Main.cpp:4385/4420,
+                // GetPictureLevel) -- PD/MP/MN's two luma segments are not a "first only" case; "RY"/
+                // "BY" stay bare (Main.cpp:4393/4402, GetPixelLevel).
+                (double[] destination, Func<int, int, double> read) = scan.ChannelName switch
                 {
-                    "Y1" => y1,
-                    "Y2" => y2,
-                    "RY" => rMinusY,
-                    "BY" => bMinusY,
+                    "Y1" => (y1, (Func<int, int, double>)reader.ReadPeakPicked),
+                    "Y2" => (y2, reader.ReadPeakPicked),
+                    "RY" => (rMinusY, reader.ReadBare),
+                    "BY" => (bMinusY, reader.ReadBare),
                     _ => throw new NotSupportedException($"Unknown channel '{scan.ChannelName}'."),
                 };
 
@@ -41,7 +45,7 @@ internal sealed class YCbCrLinePairedScanlineDecoder : IScanlineDecoder
                     idealSamplesSoFar += perPixelDurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
 
-                    var freq = sampleFrequencyAt(startSample, endSample);
+                    var freq = read(startSample, endSample);
                     destination[x] = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
                 }
             }

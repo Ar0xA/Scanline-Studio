@@ -291,6 +291,95 @@ New tests (`VisToneRaceHeaderTests.cs`): a synthetic-noise-never-locks regressio
 
 **Piece 9 complete** (steps 1-4, both plan-review rounds, one code-level review round, re-verification). All committed and pushed except this final entry.
 
+## Piece 10 — `GetPictureLevel` peak-picking
+
+Started as a one-line item ("Robot 36 luma bare read") in the "Secondary, smaller,
+independently-source-verified divergences" list below piece 8's own entry. Investigation (reading
+`Main.cpp`'s real per-pixel RX decode switch directly, not inferring from the original framing) found
+the real scope was far bigger: legacy's `GetPictureLevel` (`Main.cpp:4057-4071`) peak-picks — compares
+two raw demodulated samples `m_KSB` apart, keeps whichever is larger — and this applies to nearly every
+mode's every channel (all 3 RGB channels for Scottie SCT1/SCT2/Martin/SC2/MC/Pasokon; luma only for the
+Robot/R24/MR/ML/PD/MP/MN YCbCr-paired families, chroma always stays bare; RM8/RM12's single channel).
+Scottie DX is the ONE mode that never peak-picks anything. This port previously did zero peak-picking
+anywhere across all 5 scanline decoders — confirmed by reading every one of them.
+
+User chose "full fix, plan-reviewed first" over a narrower Robot-36-only slice. **4 rounds of auditor
+plan review** (a new "ask the auditor directly: is this plan good enough to build now, given a
+code-level review will follow?" policy was established mid-piece — see `~/.claude/agents/auditor.md`'s
+"Plan reviews" section and the `feedback_plan_review_cadence` memory — soft 3-round backstop, then check
+with the user, which is what happened: round 3 gave a clean GO, round 4 was dispatched anyway per this
+policy and confirmed it independently):
+
+- **Round 1**: 2 blockers (PD50/PD90 wrongly placed in group A instead of E; missing the universal
+  `if(!m_KSB) m_KSB++;` floor) + several risks (Robot's 3 read sites not 2, PD/MP/MN's two luma segments
+  both peak-pick, `effectiveSampleRate` not the raw constructor rate, a design footgun in the originally
+  proposed two-same-typed-delegate-parameters shape).
+- **Round 2**: found the round-1 fix for the line-end boundary was ITSELF wrong twice — the "bare always
+  wins past line end" premise was traced to the wrong buffer's clamp (it's actually a floor at each
+  mode's own `LuminanceMinHz`, since `-16384` equals `center-BWH` exactly), and the reachability claim
+  ("AVT-only") was backwards — the guard is unreachable at EVERY currently-registered mode (max ratio
+  ~0.625 at PD290, not AVT), meaning test coverage needed to be a direct synthetic-line unit test, not
+  an integration test. Also recommended moving the group-table/Scottie-DX-exception data off
+  `SstvModeDefinition` (its own precedent for a compile-error-on-missing-mode guarantee didn't actually
+  hold, since the cited nullable fields all have defaults) onto `SstvModeRegistry` as internal functions,
+  matching `GetSyncPeakOffsetMs`/`IsFastAfcGroup` precedent — **adopted**.
+- **Round 3 (verdict GO)**: independently re-verified rounds 1-2's corrections, confirmed the sign
+  direction (legacy picks the HIGHER raw value = higher frequency = brighter, verified via
+  `m_Buf[n]=-d`'s sign convention) and the corrected line-end floor. Flagged that the golden-vector
+  acceptance criterion needed to be a FIRM "no regression" requirement, not just "deferred" — this repo
+  has a real precedent (`8f87146`) of loosening a tolerance instead of investigating a regression.
+- **Round 4 (verdict GO, explicit)**: asked directly "is this good enough to build now, given a
+  code-level review follows?" — yes, with 2 cheap spec-text clarifications (group C's "no trim" needed
+  an explicit sentinel/factor-of-1.0, not a divisor-of-1 that would silently zero `m_KSB`; the
+  int-truncation needed to live directly in the formula, not just in prose) and one adopted
+  implementation-ordering split (3a: wire the reader in bare-only, provably zero-behavior-change; 3b:
+  flip the actual peak-pick sites — a clean bisection point).
+
+**Implementation (all isolate-tested, matching the chop-into-pieces methodology)**:
+1. `SstvModeRegistry.GetPeakPickParameters`/`NeverPeakPicks`/`GetKsbSamples` — pure functions, the 5-group
+   `m_KSS`/`m_KSB` table transcribed from `sstv.cpp:1110-1179`. Pinned by `PeakPickParametersTests.cs`
+   (48 tests: one assertion per mode's group, `AllModesCovered`, hand-computed AVT/PD290 spot-checks
+   matching the auditor's own worked examples, universal-floor check). Zero behavior change.
+2. `PixelSampleReader.cs` — the new `ReadBare`/`ReadPeakPicked` reader object replacing the old single
+   `Func<int,int,double>` delegate `IScanlineDecoder.DecodeLine` used to take (distinctly-named methods
+   so a call-site mixup fails to compile, not silently reads the wrong channel — the round-1-flagged
+   design fix). Takes a `Func<int,double> rawSampleAt` delegate rather than owning a `List<double>`
+   directly, so it stays unit-testable with an arbitrary synthetic source. Pinned by
+   `PixelSampleReaderTests.cs` (7 tests). Zero behavior change (nothing called it yet).
+3a. Wired the reader into all 5 decoders + `AnalogFmSstvDecoder`'s call site, every call site to
+    `ReadBare` only. Provably zero-behavior-change: 317/317 tests bit-identical to the pre-piece-10
+    baseline.
+3b. Flipped the real peak-pick call sites per the corrected mode/channel table, folded into each
+    decoder's existing exhaustive `ChannelName` switch (not a parallel one). Fixed a stale doc comment
+    (`IScanlineDecoder`/`AnalogFmSstvDecoder`) that had claimed "GetPictureLevel/GetPixelLevel both
+    simply dereference `*ip`" — false; only `GetPixelLevel` is the bare read. Full suite: **317/317
+    passing** with peak-picking actually active.
+
+**Re-verification: found a real, small, root-caused side effect — not a bug in this piece.** Both
+`GoldenVectorTests` fixtures moved slightly the wrong direction (robot-36 16.995→17.086, martin-m1
+1.216→1.284 — both tiny, both comfortably within their 25.0/15.0 tolerances) and most round-trip deltas
+increased slightly (+0.1 to +0.9 across ~35 of 43 modes). Investigated rather than accepted at face
+value: empirically measured `PllFmDemodulator`'s real transient response to a small tone step (the size
+of a typical gradient's per-pixel frequency delta) — it undershoots BELOW the starting tone within ~5
+samples, then recovers over 30+ samples; for narrow-pitch modes (e.g. RM12, ~12.7 samples/pixel at
+44100Hz) that settling time exceeds a whole pixel's dwell time, so both the bare and peek-ahead samples
+land inside the same still-ringing transient. **Root cause traced directly to source**: `CSSTVDEM`'s
+constructor sets `m_Type = 2` (`sstv.cpp:1492`), and the demodulator dispatch (`sstv.cpp:2256`, `case 0:
+PLL / case 1: Zero-crossing / default: Hilbert`) confirms legacy's REAL shipped default is Hilbert, not
+PLL — this port only implements PLL, and its settling dynamics are slower/rougher than whatever
+Hilbert's were when legacy's peak-pick heuristic was designed. The peak-pick LOGIC itself is
+independently verified correct (4 rounds of source-verified review + 55 dedicated unit tests) — this is
+a genuine, small, now-explained interaction with an already-known, already-scoped-out demodulator gap
+(see the open-items list's item 5, priority bumped by this finding), not a defect introduced by piece
+10. Discussed directly with the user (not silently accepted): decision was to keep the small increase
+(documented, root-caused, within tolerance), and NOT implement Hilbert as part of this piece — assessed
+as a large, uncertain-payoff undertaking for a currently-small measured gap, better scoped/researched as
+its own piece than decided on the strength of one finding. Concrete next step logged: read `CHILL`'s
+real implementation and get an actual settling-time comparison before deciding whether to implement it,
+rather than leaving "worth it?" as a guess in either direction.
+
+**Piece 10 status: implemented, 317/317 passing, not yet committed.**
+
 **Demo:** a console/test harness encodes a test image to a `.wav`, decodes it back, and the round-trip image matches within tolerance — provable before any UI exists.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)

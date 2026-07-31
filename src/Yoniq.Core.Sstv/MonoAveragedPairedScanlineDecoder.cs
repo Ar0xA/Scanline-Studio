@@ -20,7 +20,7 @@ internal sealed class MonoAveragedPairedScanlineDecoder : IScanlineDecoder
         int sampleRate,
         int lineStartSample,
         int lineIndex,
-        Func<int, int, double> sampleFrequencyAt,
+        PixelSampleReader reader,
         Rgb24[] pixels)
     {
         var y = new double[mode.ImageWidth];
@@ -37,7 +37,10 @@ internal sealed class MonoAveragedPairedScanlineDecoder : IScanlineDecoder
                     idealSamplesSoFar += perPixelDurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
 
-                    var freq = sampleFrequencyAt(startSample, endSample);
+                    // RM8/RM12's single channel always peak-picks in legacy (Main.cpp:4437,
+                    // GetPictureLevel) -- no chroma exception to worry about here, unlike the
+                    // YCbCr-paired families.
+                    var freq = reader.ReadPeakPicked(startSample, endSample);
                     y[x] = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
                 }
             }

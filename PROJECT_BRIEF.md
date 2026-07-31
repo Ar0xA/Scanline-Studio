@@ -70,18 +70,317 @@ committed as of this brief — see `git status`.**
   `AvtTrainingLockStateMachineTests.cs`, `GoldenVectorTests.cs`, `spec/14-roadmap.md`) — ask before
   pushing, per standing instruction.
 
-## Other still-open items from the original piece-8 investigation (not started, for context/prioritization)
+## Piece 10 — `GetPictureLevel` peak-picking — IMPLEMENTED, 317/317 passing, not yet committed
+Started as item #2 below ("Robot 36 luma bare read"); investigation found the real scope is far bigger
+— confirmed by reading Main.cpp's actual per-pixel decode switch directly, not inferring from the
+original one-line framing. User chose "full fix, plan-reviewed first" over a narrower Robot-36-only
+slice. No code written yet — auditor's round-1 plan review just came back with 2 blockers + 4 risks
+against the drafted plan. This section is the current source of truth; fold into `spec/14-roadmap.md`
+once implementation starts.
+
+### The bug, verified against source
+Legacy's `GetPictureLevel(short *ip)` (`Main.cpp:4057-4071`) compares two raw demodulated samples
+`m_KSB` apart (`*ip` vs `*(ip+m_KSB)`), converts whichever is LARGER via `GetPixelLevel` (a monotonic
+linear scale). `sys.m_UseRxBuff` defaults to 1 (`Main.cpp:899`, guard is `!= 2`), so this is shipped-
+default behavior. **Scope, confirmed by reading `Main.cpp`'s real per-pixel RX switch (~4218-4503) for
+every mode family** (this port currently does ZERO peak-picking anywhere — confirmed by reading all 5
+scanline decoders):
+- Scottie SCT1/SCT2 (not SCTDX): all 3 R/G/B channels peak-pick.
+- Robot 36, R24/R72/MR*/ML*, PD*/MP*/MN* (YCbCr-paired families): LUMA peak-picks; chroma (R-Y/B-Y)
+  stays bare — chroma already correctly ported.
+- RM8/RM12 (mono): the single luma channel peak-picks.
+- `default:` case (Martin MRT1/MRT2, SC2-*, MC*, P3/P5/P7, **and AVT** — no explicit `case smAVT`
+  anywhere in the switch, confirmed via grep, so it falls to `default:` too, and AVT's own
+  `ColorEncoding.RgbSequential` does go through this same decode path, not moot): ALL 3 channels peak-pick.
+- **Scottie DX is the ONE mode that never peak-picks anything** — explicit bare-read special-case.
+
+### `m_KSB` derivation — CORRECTED group table (auditor caught a real error in the draft)
+Computed once per mode (`CSSTVSET::SetSampFreq`, `sstv.cpp:655-1109`) from `m_KS` (that mode's own
+luma/first-channel scan width in ms — sample-rate-independent; verified this equals this port's own
+`ScanSegment.DurationMs` for the mode's first/luma segment, e.g. Robot 36's `m_KS=88.0ms` matches
+`SstvModeRegistry.Robot36`'s `Y` segment exactly), then a grouping formula (`sstv.cpp:1113-1179`):
+
+| Group | Modes | m_KSS | m_KSB |
+|---|---|---|---|
+| A | PD120/160/180/240/290, P3/P5/P7 | `m_KS - m_KS/480` | `m_KSS/1280` |
+| B | MP73, MN73, SCTDX | `m_KS - m_KS/1280` | `m_KSS/1280` |
+| C | SC2-180, MP115/140/175, MR90/115/140/175, ML180/240/280/320, MN110/140, MC110/140/180 | `m_KS` | `m_KSS/1280` |
+| D | MR73 | `m_KS - m_KS/640` | `m_KSS/1024` |
+| E (default) | **PD50, PD90**, R36, R72, AVT, SCT1, SCT2, MRT1, MRT2, SC2-60, SC2-120, R24, RM8, RM12 | `m_KS - m_KS/240` | `m_KSS/640` |
+
+**Corrected from the draft**: PD50/PD90 are NOT in group A (they don't appear in that switch case list
+at all, `sstv.cpp:1111-1118`) — they fall to `default:` = group E. This is invisible at 11025Hz (both
+formulas collapse to the same truncated value there) — a pinning test only at 11025Hz would NOT catch
+this, must test at 44100Hz too (or another rate where the groups diverge).
+
+**Missing clamp, must add** (`sstv.cpp:1179`, applied after the group switch, to ALL modes):
+`if (!m_KSB) m_KSB++;` — `m_KSB` can be 0 for very short/narrow modes at low sample rates (e.g. RM8 at
+8000Hz truncates to 0 before this clamp); never negative. Must replicate this exactly.
+
+### Other corrections/risks from the auditor's review (all need addressing before implementation)
+- **Robot has THREE read sites, not two.** Luma (peak), tone-selector (bare — already correctly ported,
+  `RobotScanlineDecoder.cs:71`, must stay routed to the bare delegate when wiring the new dual-delegate
+  signature through), chroma (bare). The plan's original "chroma stays bare" phrasing under-specified
+  the tone-selector site — same fix, just don't forget it exists as a third case.
+- **PD/MP/MN family has TWO luma segments (Y1/Y2) and BOTH peak-pick** (`Main.cpp:4385` and `:4420`) —
+  `YCbCrLinePairedScanlineDecoder.cs`'s `"Y1"`/`"Y2"` must BOTH map to the peak-picking delegate, R-Y/B-Y
+  stay bare. The plan's singular "luma channel" phrasing was ambiguous here.
+- **Which sample rate feeds the m_KSB calculation**: must be `DecodeLine`'s slant-adjusted
+  `effectiveSampleRate` (`AnalogFmSstvDecoder.cs:319`), NOT the raw constructor-time `_sampleRate` —
+  legacy recomputes `m_KSB` whenever auto-slant changes the sample frequency (`Main.cpp:4015`,
+  `:5900-5903`). Legacy also quantizes that rate via `NormalSampFreq(smp,50)`, which this port doesn't
+  — flagged by the auditor as a known, deliberately out-of-scope gap, not something to chase now.
+- **Line-end read boundary**: legacy pre-fills the trailing buffer past each line's real content with
+  `-16384` once (`sstv.cpp:1735-1741`), so a peak-pick straddling the line end ALWAYS loses to the bare
+  sample — deliberate, not accidental. This port's `_demodulatedFrequencies` is a continuous stream, so
+  a naive `startSample+ksb` read could wrongly read the START of the NEXT line's real audio and win the
+  comparison. Only reachable where the last scan runs exactly to the line's end with no trailing porch —
+  **AVT specifically** (R,G,B back-to-back, `SstvModeRegistry.cs:328-330`, 3×125ms=375ms=`GetTiming(smAVT)`
+  exactly). Needs an explicit decision: either clamp the peek-ahead read to the current line's own extent
+  (so it degenerates to comparing the sample against itself, naturally losing to the bare read — matches
+  legacy's real outcome via a different mechanism) or bounds-check some other way — don't leave this
+  implicit.
+- **Design footgun flagged**: the plan's original two-same-typed-`Func<int,int,double>`-parameters shape
+  is a silent-argument-swap risk (compiles clean either order, only detectable via a golden-vector diff).
+  Auditor suggests a shape where a swap can't compile — e.g. one small reader object with two named
+  methods (`Read`/`ReadPeak`) or two distinct delegate types. Needs a decision before implementing, not
+  a minor style nit — pick this before writing `IScanlineDecoder`'s new signature.
+
+### Confirmed correct by the auditor (verified independently against source, not just trusted from the draft)
+Every per-mode `m_KS` value; the full switch-scope claim (which modes/channels peak-pick, Scottie DX
+exception); that comparing raw Hz directly (not converted luma) is valid (all 5 decoders' Hz-to-luma
+formulas are monotonic increasing, same sign direction as legacy's own); truncation-not-rounding,
+truncate once at the very end; `m_UseRxBuff` defaults to 1; targeting `GetPictureLevel`/`DrawSSTVNormal`
+is right, not the differentiator path (`GetPictureLevelDiff`/`DrawSSTVDiff`, `sys.m_Differentiator=0`
+by default so it's dead code for the shipped config); deriving `m_KSB` from each mode's own first
+`ScanSegment.DurationMs` is safe for every group (verified against `SstvModeRegistry.cs` directly).
+
+### New off-scope findings from this review (logged, not chased)
+- `sys.m_DemCalibration` branch (`Main.cpp:4040-4045`) uses a non-monotonic LUT — if that branch is
+  ever ported, the "compare raw Hz" shortcut breaks. Default is 0 (off) — fine to ignore for now, but
+  don't reuse this piece's raw-Hz-comparison logic blindly if calibration support gets added later.
+- **Connects to already-logged item #3 below**: this port maps pixel x-position as `DurationMs/Width`
+  (≈ `m_KS/Width`), legacy uses `m_KSS/Width` (the same shrunken-width value this piece needs computed
+  anyway) — piece 10 will have `m_KSS` in hand as a byproduct, worth doing both together.
+- **New bug found, not previously logged**: `MonoAveragedPairedScanlineDecoder` (RM8/RM12) is missing
+  legacy's `d *= 256.0/(256.0-32.0)` gain correction (`Main.cpp:4438`) — unrelated to peak-picking,
+  logged here so it isn't lost.
+- Legacy leaves `m_KS2`/`m_KS2S` stale/unassigned for several mode families — harmless for `m_KSB`
+  itself, but a trap if `m_KS2S` (chroma pitch) is ever ported later.
+
+### Round-1 design decisions (superseded in part by round 2 below — kept for context, don't re-derive)
+
+**Delegate-shape fix**: replace `IScanlineDecoder.DecodeLine`'s single `Func<int,int,double>
+sampleFrequencyAt` parameter with a single reader object exposing two DISTINCTLY-NAMED methods —
+`double ReadBare(int startSample, int endSample)` and `double ReadPeakPicked(int startSample, int
+endSample)` — so a call-site mixup fails to compile instead of silently reading the wrong channel.
+**Round 2 confirmed this eliminates round 1's swap risk AT THE DecodeLine BOUNDARY, but flagged it
+re-appears one level down**: `RobotScanlineDecoder.cs`'s shared `DecodePixels` helper (`:102-118`) is
+called for BOTH the peak luma scan and the bare chroma scan — must pass the reader's METHOD GROUP
+(`reader.ReadPeakPicked` / `reader.ReadBare`) into that shared helper per call site, not a `bool
+usePeak` flag (which reintroduces the exact ambiguity the redesign was meant to remove).
+
+**m_KSB sample rate**: computed from `effectiveSampleRate` (not `_sampleRate`) — matches legacy's own
+per-line recompute-on-slant-change behavior (`Main.cpp:4015`/`:5900-5903`). Round 2 confirmed this is
+right but flagged a type mismatch: `effectiveSampleRate` is `int`
+(`AnalogFmSstvDecoder.cs:319`) while `lineEndSampleExclusive` (below) derives from the `double`
+`_effectiveSamplesPerLine` — pick one type and use it consistently, don't leave an implicit narrowing.
+
+### Round-2 findings — CORRECTED (both blockers fixed, one risk adopted as a design decision)
+[Superseded in one detail by round 3 below — Correction 1's return value was itself wrong; kept here
+for context/history, don't re-derive, read round 3's fix instead.]
+
+**[fixed then re-fixed] Line-end guard.** No more "clamp peek-ahead to lineEnd-1" (round 1's version —
+only tied at exactly one sample, silently wrong for other positions). Round 2's replacement
+(`return ReadBare(...)` unconditionally past the line end) was ALSO wrong in its justification — see
+round 3 below for the actually-correct version.
+
+**[fixed] Reachability finding corrected — the guard is DEFENSE-IN-DEPTH, currently unreachable for
+every registered mode, not "AVT-only" as round 1's plan claimed. ROUND 3 INDEPENDENTLY RE-DERIVED AND
+CONFIRMED THIS.** The ratio is structural: `m_KSB/samplesPerPixel = width/divisor` (before `m_KSB`'s own
+int truncation shrinks it further) — enumerated for every group, max ratio is **0.625 at PD290** (not
+AVT as round 2 said; round 2's ~0.62 number was right, the mode it attributed it to was wrong), still
+under 1.0 everywhere. **Test coverage must be a DIRECT unit test on the reader object with a
+deliberately-constructed synthetic short line**, not an AVT/real-mode integration test — confirmed
+those would exercise nothing here.
+
+**[adopted, then REVERSED by round 3] Group table (A-E) and Scottie-DX exception placement.** Round 2's
+"put it on `SstvModeDefinition` as fields" is **not adopted** — round 3 found its own stated rationale
+factually wrong: `SstvModeDefinition`'s existing nullable fields (`NarrowModeCode`/`ExtendedVisCode`)
+all have DEFAULTS, so a new mode omitting new fields the same way produces **no compile error at all**,
+completely defeating the goal. See round 3's replacement design below.
+
+### Round 3 (FINAL round, per the 3-round cap) — verdict: GO, with these corrections applied
+
+**[corrected] Line-end guard's return value.** Round 2's premise ("the demodulated buffer is hard-
+clamped to `-16384`, so bare always wins unconditionally") was FALSE: `sstv.cpp:1838-1839`'s clamp
+applies to the AGC'd *audio* input feeding the tone detectors, a different `d` than the one written
+into the demodulated buffer (`sstv.cpp:2289`, from the discriminator's own output, NOT clamped — values
+below -16384 are routine, e.g. -28672 for a 1200Hz sync tone). **The real finding, independently
+derived by round 3**: `-16384` is not an arbitrary floor — it equals `center - BWH`, which is exactly
+each mode's own `LuminanceMinHz` field (1500Hz normal, 2044Hz narrow). So legacy's real boundary rule
+is a **floor at `LuminanceMinHz`**, not "bare always wins":
+```
+if (startSample + ksbSamples >= lineEndSampleExclusive)
+    return Math.Max(ReadBare(startSample, endSample), mode.LuminanceMinHz);
+```
+Since this branch is confirmed unreachable at every current mode (previous finding, re-confirmed),
+this doesn't change any real decode output — but the plan's own synthetic unit test for this branch
+must assert THIS value (the floor), not "returns whatever `ReadBare` returns," or the test pins a wrong
+expectation. `lineEndSampleExclusive` itself: keep `(int)Math.Round(effectiveSamplesPerLine)` (matches
+this port's own established per-line stepping convention elsewhere in `AnalogFmSstvDecoder.cs`) even
+though legacy technically truncates (`m_WD = int(m_TW)`) — round 3 confirmed this divergence is moot
+inside an already-unreachable branch, just note it in a comment rather than changing established
+convention.
+
+**[corrected] Group table / Scottie-DX placement — moved OFF `SstvModeDefinition`, onto
+`SstvModeRegistry` as internal functions, matching 3 existing precedents for this exact class of
+per-mode legacy-switch data**: `GetSyncPeakOffsetMs` (piece 8a, the `m_OFP` table), `IsFastAfcGroup`
+(literally the switch immediately adjacent to the one this piece needs, `sstv.cpp:1162-1177`), and
+`GetAutoSlantThresholdPositions` — all three are `internal static` functions on `SstvModeRegistry`, not
+fields on the public (`Yoniq.Abstractions`) `SstvModeDefinition` type. Design: `internal static
+PeakPickParameters GetPeakPickParameters(SstvModeDefinition mode)` returning `(kssTrimDivisor,
+ksbDivisor)`, plus `internal static bool NeverPeakPicks(SstvModeDefinition mode) => mode == ScottieDx`
+(shaped like the existing `IsScottieFamily`). Return group E from the function's own `default:` case
+(faithful — legacy's own `default:` IS group E). **Pin with an `AllModesCovered`-style test**, exactly
+matching piece 8a's own `SyncPeakOffsetTests.AllModesCovered` precedent (asserts the lookup covers
+`SstvModeRegistry.All` exactly) — gives the SAME "new mode without an entry fails loudly" guarantee
+round 2 wanted, without adding public-surface fields to a type outside `Yoniq.Core.Sstv` that no
+encoder/UI/non-decode consumer will ever read.
+
+**[confirmed, no change]**: sign/direction trace (higher raw = higher Hz = brighter, verified
+end-to-end via `CFQC::Do`'s `-(m_out*16384)` and `m_Buf[n]=-d`); strict `<` tie-break (`Main.cpp:4062`);
+Robot's 3 read sites; PD/MP/MN's Y1+Y2 both peak-pick; `effectiveSampleRate` not `_sampleRate`;
+`GetPictureLevel`/`DrawSSTVNormal` is the right target; the full group A-E table including the
+easy-to-miss splits (PD50/PD90 → E not A, SC2-60/120 → E but SC2-180 → C, MP73 → B but MP115/140/175 →
+C); `if(!m_KSB) m_KSB++;` universal floor.
+
+**[new, must add]**: `_demodulatedFrequencies` is already `List<double>` throughout — no float-vs-double
+tolerance concern for this piece's own data path, worth stating explicitly rather than leaving implicit.
+One-line comment needed: peak-picking is gated on legacy's `sys.m_UseRxBuff != 2` (`Main.cpp:4061`),
+defaulting to 1 (on) — same class of "hard-wired to the shipped default, not user-toggleable" as
+`m_SyncRestart` (already documented at `AnalogFmSstvDecoder.cs:338-346`).
+
+**[new, firm commitment required, not just "defer"]**: golden-vector tolerance framing is still
+deferred (can't know the number pre-implementation) BUT round 3 flagged a real risk in leaving it at
+just "defer": both existing `GoldenVectorTests` fixtures (robot-36, martin-m1) are group-E peak-picking
+modes, so this piece WILL move those deltas, and this repo has a real precedent (commit `8f87146`,
+"Raise Robot 36's round-trip tolerance...") of loosening a tolerance rather than investigating a
+regression. **Firm acceptance criterion, not just a deferred question**: measure both fixtures'
+deltas before and after implementing, and require NO REGRESSION (matching piece 9 step 3's own
+precedent exactly) — only loosen a tolerance with an explicit, source-verified fragility diagnosis,
+never just to make a number pass.
+
+### Round 4 (per the new plan-review-cadence policy — asked the auditor directly "good enough to build?")
+**Verdict: YES, build it now** — "EQUIVALENT-WITH-RISKS", no blockers, only 2 spec-text clarifications
+(cheap, folded in below) + 1 optional implementation-ordering suggestion (adopted). Independently
+re-verified rounds 1-3's load-bearing claims for real (the `-16384`=`LuminanceMinHz` trace, sign
+direction via BOTH demodulator types not just one, the full A-E table against every one of
+`SstvModeRegistry`'s 43 modes with none missing/duplicated, the scope claim against the matching RX
+function, guard unreachability re-derived independently, and that the golden-vector criterion is
+genuinely discriminating not circular — legacy's OWN decode of the same fixtures scores 6.99/1.57,
+vs. this port's current 16.995/1.22, so a faithful peak-pick should move robot-36 *toward* 6.99, not
+just downward arbitrarily).
+
+**[fold in] Group C's "no trim" needs an explicit sentinel, not a literal divisor of 1.** If
+`kssTrimDivisor` is implemented as a plain `double` and someone writes `1` for "no trim" (natural
+mistake), `m_KS - m_KS/1 == 0` → `m_KSB` truncates to 0 → the universal floor silently bumps it to 1 —
+a plausible-looking, non-crashing WRONG value for all 17 group-C modes at every sample rate. Store the
+trim as either a factor (`1.0` for group C meaning "multiply by 1, i.e. no trim" — NOT a divisor) or a
+`double?` where `null` explicitly means "no trim" for group C specifically — state which explicitly in
+the implementation, don't leave it implicit in the table alone.
+
+**[fold in] `m_KSB`'s int/truncation must be written directly in the formula, not left as separate
+prose elsewhere.** `m_KS`/`m_KSS` are `double`, `m_KSB` is `int` (truncating C++ assignment) — write the
+actual computation as `ksbSamples = (int)(kss / ksbDivisor); if (ksbSamples == 0) ksbSamples = 1;`
+directly next to wherever the group table lives in code, not just noted in this doc — this is exactly
+the "silent int/double substitution" class of bug CLAUDE.md's own numeric-fidelity rule calls out, and
+it's invisible at 11025Hz for most modes (only shows up at other sample rates), so it needs to be
+impossible to miss in the code itself, not just documented here.
+
+**[adopted] Split the decoder-wiring step (3) into 3a/3b for a clean bisection point.** 3a: swap
+`IScanlineDecoder.DecodeLine`'s `Func<int,int,double>` for the reader object, but wire EVERY call site
+to `ReadBare` only (provably zero behavior change — full suite must stay bit-identical after this
+sub-step, confirming the plumbing itself, e.g. `effectiveSampleRate` threading and reader construction,
+introduced nothing). 3b: flip the actual peak-picking call sites per the corrected mode/channel table.
+If golden-vector deltas move unexpectedly after 3a (they shouldn't), the fault is isolated to plumbing,
+not peak-pick math — much faster to debug than one combined step.
+
+**Plan review complete — 4 rounds total (3 to reach GO, 1 to confirm "ready to build" under the new
+cadence policy). All corrections from all 4 rounds folded in.**
+
+### Piece 10 — IMPLEMENTED (steps 1-3b), all isolate-tested, 317/317 passing throughout
+- Step 1: `SstvModeRegistry.GetPeakPickParameters`/`NeverPeakPicks`/`GetKsbSamples` — pure functions,
+  pinned by `PeakPickParametersTests.cs` (48 tests: per-mode group assertions, `AllModesCovered`,
+  hand-computed AVT/PD290 spot-checks, universal-floor check). Zero behavior change on its own.
+- Step 2: `PixelSampleReader.cs` — the `ReadBare`/`ReadPeakPicked` reader object, including the
+  corrected line-end guard (floors at `LuminanceMinHz`, not "bare always wins") and the
+  `NeverPeakPicks` Scottie-DX resolution. Pinned by `PixelSampleReaderTests.cs` (7 tests: sign
+  direction, strict tie-break, both line-end-guard cases, in-line sanity, Scottie-DX exception, bare
+  clamp). Refactored to take a `Func<int,double> rawSampleAt` delegate rather than owning a
+  `List<double>` directly, so it stays unit-testable with a synthetic source (needed to keep
+  `RobotScanlineDecoderTests`'s existing call-count-based stub working). Zero behavior change on its
+  own (nothing called it yet).
+- Step 3a: `IScanlineDecoder.DecodeLine`'s `Func<int,int,double> sampleFrequencyAt` parameter replaced
+  with `PixelSampleReader reader` across all 5 decoders + `AnalogFmSstvDecoder`'s call site (reader
+  constructed fresh per line, using `effectiveSampleRate` and that line's own extent). Every call site
+  wired to `ReadBare` only — confirmed provably zero-behavior-change: 317/317 tests bit-identical to
+  pre-piece-10 baseline.
+- Step 3b: flipped the real peak-pick call sites per the corrected mode/channel table (folded into each
+  decoder's existing exhaustive `ChannelName` switch, not a parallel one, per round-2's nit) —
+  `RgbSequentialScanlineDecoder` (all 3 channels), `YCbCrSequentialScanlineDecoder` ("Y" only),
+  `YCbCrLinePairedScanlineDecoder` ("Y1"+"Y2" both), `MonoAveragedPairedScanlineDecoder` (its one
+  channel), `RobotScanlineDecoder` (luma only; tone-selector/chroma correctly stayed `ReadBare`). Also
+  fixed a stale `IScanlineDecoder`/`AnalogFmSstvDecoder` doc comment that had claimed
+  "GetPictureLevel/GetPixelLevel both simply dereference `*ip`" — false, `GetPictureLevel` peak-picks;
+  only `GetPixelLevel` is the bare dereference. Full suite: **317/317 passing** with peak-picking
+  actually active.
+
+**Re-verification result: mixed, root-caused, understood — NOT a bug in this piece.** Golden-vector
+deltas moved slightly the WRONG way (robot-36 16.995→17.086, martin-m1 1.216→1.284 — both tiny, both
+comfortably within their 25.0/15.0 tolerances) and most round-trip deltas increased slightly too
+(+0.1 to +0.9 across ~35 of 43 modes). Investigated directly (not just accepted): empirically measured
+`PllFmDemodulator`'s real transient response to a small tone step (matching a gradient's per-pixel
+frequency delta) — it undershoots BELOW the starting tone within ~5 samples before slowly recovering
+over 30+ samples, and for narrow-pitch modes (e.g. RM12, ~12.7 samples/pixel at 44100Hz) that settling
+time exceeds a whole pixel's dwell time, so both the bare AND peek-ahead samples land inside the same
+still-ringing transient. **Root cause traced to source**: `CSSTVDEM`'s constructor sets `m_Type = 2`
+(`sstv.cpp:1492`), and the demodulator dispatch (`sstv.cpp:2256`, `case 0: PLL / case 1: Zero-crossing
+/ default: Hilbert`) confirms legacy's REAL shipped default is Hilbert, not PLL — already logged below
+as item #5. This port only implements PLL, whose settling dynamics are slower/rougher than Hilbert's
+presumably were when legacy's peak-pick heuristic was designed against it. The peak-pick LOGIC itself
+is independently verified correct (4 rounds of source-verified review + 55 dedicated unit tests) — this
+is a genuine, small, now-explained side effect of an already-known, already-scoped-out demodulator gap,
+not a defect introduced by this piece. Discussed directly with the user rather than silently accepted;
+decision: keep the small increase (documented, root-caused, within tolerance), do NOT implement Hilbert
+as part of this piece (too large, separately-scoped, not guaranteed to be the full fix on its own) —
+bump its priority in item #5 below instead, since it's no longer just a documentation gap, it now has
+a measured behavioral consequence.
+
+**Not yet done**: commit. Full suite is green; `spec/14-roadmap.md` still needs this same narrative
+folded in as the durable log (PROJECT_BRIEF.md is the working copy).
+
+## Other still-open items (not started, for context/prioritization)
 From `spec/14-roadmap.md`'s "Secondary, smaller, independently-source-verified divergences" list:
-2. `GetPictureLevel` (luma) peak-picks the brighter of two samples `m_KSB` apart (`Main.cpp:4057-4071`),
-   not a bare dereference — `RobotScanlineDecoder` uses a bare read. Real behavioral gap, smaller scope
-   than piece 9.
 3. Horizontal pixel pitch should use legacy's `m_KSS` (`m_KS - m_KS/240` for Robot 36, `sstv.cpp:1157`),
-   not `m_KS` — ~0.42% horizontal scale error.
-5. Legacy's shipped **default** demodulator is actually the Hilbert path (`CHILL`), not PLL at all —
-   this port only has PLL. Bigger, separately-scoped question, not attempted here.
-- New, from piece 9's own investigation: `TryDecodeNarrowModeHeader`'s FSK bit decode
-  (`AnalogFmSstvDecoder.cs:1072`) has the identical PLL-proxy-instead-of-real-detector shape as piece
-  9's original bug — survives piece 9 untouched, logged for later.
+   not `m_KS` — ~0.42% horizontal scale error. **Connected to piece 10** — piece 10 computes `m_KSS` as
+   an intermediate value already (`GetPeakPickParameters`), worth doing together with this.
+5. **Legacy's shipped default demodulator is actually the Hilbert path (`CHILL`), not PLL at all** —
+   this port only has PLL. Bigger, separately-scoped question, previously "not attempted here" with no
+   further framing. **Priority bumped by piece 10's own investigation (see above)**: this is no longer
+   just an abstract fidelity gap — empirically measured that this port's PLL demodulator has slow,
+   undershooting settling (30+ samples to recover from a small tone step) that measurably interacts
+   with the (correctly-ported) peak-pick heuristic on narrow-pitch modes, producing small but real
+   golden-vector delta increases. **This needs to be done, or at minimum properly researched/scoped to
+   determine if it's worth doing** — not committing to implementing a full Hilbert demodulator yet, but
+   this should get an actual investigation pass (read `CHILL`'s real implementation in `sstv.cpp`, scope
+   the size of the piece, check whether it would actually close the gap found above) rather than staying
+   an unexamined one-liner indefinitely.
+- `TryDecodeNarrowModeHeader`'s FSK bit decode (`AnalogFmSstvDecoder.cs:1072`) has the identical
+  PLL-proxy-instead-of-real-detector shape as piece 9's original bug — survives piece 9 untouched,
+  logged for later.
+- `MonoAveragedPairedScanlineDecoder`'s missing RM8/RM12 gain correction — see piece 10's off-scope
+  findings above.
 
 ## Working methodology (established across this project, apply here too)
 - Legacy is ground truth — verify against `yoniq-old/YONIQ-main/` source directly, no assumptions.
