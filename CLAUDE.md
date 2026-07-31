@@ -4,6 +4,10 @@ This repository modernizes YONIQ (a fork of MMSSTV) into Yoniq v2: a cross-platf
 
 Legacy source: **https://github.com/w0eeemst/YONIQ** (upstream, not included in this repository). Spec documents reference legacy files by relative path (e.g. `cradio.cpp`, `Draw.h`) on the assumption of a local clone at `yoniq-old/YONIQ-main/` for convenience during development — that path is gitignored here and never committed; clone upstream separately if you need to inspect it.
 
+## Collaboration notes
+
+The user has ADHD. Stay tightly scoped to the task actually asked for — no unrequested tangents, no chasing interesting-but-irrelevant side findings, no scope creep. If something adjacent-but-out-of-scope turns up, note it briefly (one line) rather than following it. This keeps the user able to stay on task and burns fewer tokens on drift. **This applies to every agent working in this repo, including Opus plan-review/investigation/review-round subagents — restate it explicitly in the prompt each time one is invoked, don't rely on it reading this file.**
+
 ## License
 
 Yoniq v2 is **LGPL-3.0-or-later** — see [LICENSE provenance](LICENSES.md), [COPYING](COPYING), [COPYING.LESSER](COPYING.LESSER). This follows upstream YONIQ/MMSSTV's own stated license, which matters because the specs plan to port algorithms and constants from the legacy source, not reimplement clean-room.
