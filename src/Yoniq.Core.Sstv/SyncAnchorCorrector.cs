@@ -29,6 +29,31 @@ namespace Yoniq.Core.Sstv;
 /// <c>n</c>. An earlier draft of this fix got this backwards (would have doubled the anchor error in
 /// the wrong direction) -- caught by Opus plan-review before any code was written, then independently
 /// re-derived and confirmed by tracing every use of <c>m_rBase</c> directly.
+///
+/// <b>No Scottie-only wraparound branch here (unlike legacy's own `Main.cpp:3785-3791`,
+/// `if(n&lt;0) n+=SSTVSET.m_WD` for `smSCT1`/`smSCT2`/`smSCTDX`) -- deliberately dropped, not
+/// missed.</b> That branch only makes sense under legacy's OWN indexing convention, where `m_OFP`
+/// is measured from wherever legacy's internal decode considers "phase 0" -- which, for every mode
+/// legacy special-cases, is implicitly pinned at/just-before the periodic tone this fold tracks
+/// (that's the whole reason `argmaxBin` normally lands close to `m_OFP`). This port instead defines
+/// its anchor (`_consumedSamples`) as the start of <c>SstvModeDefinition.LineSegments[0]</c> -- a
+/// deliberate, previously-reviewed design choice (see <c>ScottieS1</c>'s own doc comment on
+/// this file) that mirrors each mode's real TX wire order. For every mode except the Scottie family,
+/// TX places its sync tone first, so both conventions agree and `argmaxBin` lands near `m_OFP` as
+/// expected. Scottie's real TX order (`LineSCT`, Main.cpp:6620-6640) is
+/// separator-G-separator-B-SYNC-separator-R -- the sync tone legacy (and this fold) tracks sits
+/// roughly two-thirds into THIS port's own line-segment ordering, not at the start. Reusing legacy's
+/// literal wraparound trick against this port's differently-anchored origin produced wildly wrong,
+/// near-page-width-magnitude corrections (a real regression caught by this port's own full test
+/// suite, not just the golden-vector target) -- independently confirmed via instrumented diagnostics:
+/// the raw argmax for Scottie S1/S2/DX lands almost exactly at (cumulative duration of the
+/// LineSegments preceding the tracked sync segment) + m_OFP, i.e. exactly where the tone physically
+/// is. The caller (<see cref="AnalogFmSstvDecoder.TryResolveSyncAnchorCorrection"/>) now folds that
+/// per-mode line-segment offset into <paramref name="syncPeakOffsetSamples"/> itself (computed
+/// generically from <c>LineSegments</c>, not a new hardcoded table -- it's 0 for every mode whose
+/// tracked sync segment is first, matching today's behavior exactly, and only nonzero for Scottie).
+/// With that, plain <c>argmaxBin - syncPeakOffsetSamples</c> is already correct for every mode and
+/// no wraparound is needed.
 /// </summary>
 internal static class SyncAnchorCorrector
 {
@@ -39,16 +64,17 @@ internal static class SyncAnchorCorrector
     /// legacy's own `int(SSTVSET.m_TW) + 2`/`m_WD` sizing, `Main.cpp:3764`/`sstv.cpp:594` --
     /// preserving the resulting sub-sample "creep" across pages is a faithful reproduction of
     /// legacy's real behavior, not a bug to smooth over). <paramref name="syncPeakOffsetSamples"/>
-    /// is the mode's real <c>m_OFP</c> in samples (<see cref="SstvModeRegistry.GetSyncPeakOffsetMs"/>
-    /// times the sample rate). <paramref name="isScottieFamily"/> selects legacy's Scottie-only
-    /// wraparound branch (`Main.cpp:3785-3791`, `smSCT1`/`smSCT2`/`smSCTDX`). <paramref
-    /// name="lineCount"/> is legacy's <c>e</c> (3 or 4, `Main.cpp:3759-3760`).
-    /// <paramref name="envelopeAt"/> supplies the sync-envelope value at relative sample index
-    /// <c>0..(lineCount*(int)lineWidthSamples)-1</c>, counted from the provisional anchor -- this
-    /// port's flat sample arrays need no equivalent of legacy's page-strided ring-buffer indexing
-    /// (`m_B12[pg*m_BWidth+i]`, `Main.cpp:3768`): that stride is purely a C++ circular-buffer memory
-    /// layout detail, not part of the actual DSP algorithm, so a simple 0-based relative index is a
-    /// faithful (not simplified) equivalent.
+    /// is the EFFECTIVE expected offset (samples) from this port's own anchor
+    /// (<c>LineSegments[0]</c>'s start) to where the tracked sync tone's filtered peak should appear
+    /// -- legacy's real <c>m_OFP</c> (<see cref="SstvModeRegistry.GetSyncPeakOffsetMs"/>) plus this
+    /// port's own line-segment-derived offset for modes (Scottie only, today) whose tracked sync
+    /// segment isn't first; see this class's own doc comment. <paramref name="lineCount"/> is
+    /// legacy's <c>e</c> (3 or 4, `Main.cpp:3759-3760`). <paramref name="envelopeAt"/> supplies the
+    /// sync-envelope value at relative sample index <c>0..(lineCount*(int)lineWidthSamples)-1</c>,
+    /// counted from the provisional anchor -- this port's flat sample arrays need no equivalent of
+    /// legacy's page-strided ring-buffer indexing (`m_B12[pg*m_BWidth+i]`, `Main.cpp:3768`): that
+    /// stride is purely a C++ circular-buffer memory layout detail, not part of the actual DSP
+    /// algorithm, so a simple 0-based relative index is a faithful (not simplified) equivalent.
     ///
     /// Omits legacy's Hilbert-demodulator tap adjustment (`if (m_Type==2) n -= m_hill.m_htap/4`,
     /// `Main.cpp:3794`) -- this port has no Hilbert demodulator path (only the PLL), so that term
@@ -58,7 +84,6 @@ internal static class SyncAnchorCorrector
     public static int ComputeAnchorCorrection(
         double lineWidthSamples,
         double syncPeakOffsetSamples,
-        bool isScottieFamily,
         int lineCount,
         Func<int, double> envelopeAt)
     {
@@ -91,13 +116,6 @@ internal static class SyncAnchorCorrector
         // Truncates toward zero, matching C++'s narrowing conversion on `n -= SSTVSET.m_OFP`
         // (n declared int, m_OFP double) -- C#'s explicit double-to-int cast has the same
         // truncate-toward-zero semantics, so this is exact, not an approximation.
-        var delta = (int)(argmaxBin - syncPeakOffsetSamples);
-
-        if (isScottieFamily && delta > 0)
-        {
-            delta -= pageWidthSamples;
-        }
-
-        return delta;
+        return (int)(argmaxBin - syncPeakOffsetSamples);
     }
 }

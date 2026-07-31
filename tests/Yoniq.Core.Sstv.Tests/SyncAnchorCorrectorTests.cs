@@ -9,15 +9,13 @@ namespace Yoniq.Core.Sstv.Tests;
 public class SyncAnchorCorrectorTests
 {
     [Fact]
-    public void RecoversInjectedSpikeOffset_NegativeDelta_NonScottie()
+    public void RecoversInjectedSpikeOffset_NegativeDelta()
     {
         // TW=100 (whole number, no fractional creep to worry about here), a periodic spike at bin 10
-        // repeated across 4 lines, OFP=20 -- expect argmax=10, delta = 10-20 = -10 (no Scottie
-        // wraparound, since -10 is already negative).
+        // repeated across 4 lines, OFP=20 -- expect argmax=10, delta = 10-20 = -10.
         var delta = SyncAnchorCorrector.ComputeAnchorCorrection(
             lineWidthSamples: 100.0,
             syncPeakOffsetSamples: 20.0,
-            isScottieFamily: false,
             lineCount: 4,
             envelopeAt: n => (n % 100) == 10 ? 1000.0 : 0.0);
 
@@ -25,48 +23,19 @@ public class SyncAnchorCorrectorTests
     }
 
     [Fact]
-    public void RecoversInjectedSpikeOffset_PositiveDelta_NonScottie()
+    public void RecoversInjectedSpikeOffset_PositiveDelta()
     {
-        // Spike at bin 80, OFP=20 -- delta = 80-20 = 60, positive, but non-Scottie modes never wrap.
+        // Spike at bin 80, OFP=20 -- delta = 80-20 = 60. No wraparound in this function anymore --
+        // see the class doc comment for why the old Scottie-only wraparound branch was removed (it
+        // was a mistranslation of legacy's own convention against this port's differently-anchored
+        // origin; the caller now folds the needed offset into syncPeakOffsetSamples instead).
         var delta = SyncAnchorCorrector.ComputeAnchorCorrection(
             lineWidthSamples: 100.0,
             syncPeakOffsetSamples: 20.0,
-            isScottieFamily: false,
             lineCount: 4,
             envelopeAt: n => (n % 100) == 80 ? 1000.0 : 0.0);
 
         Assert.Equal(60, delta);
-    }
-
-    [Fact]
-    public void PositiveDelta_ScottieFamily_WrapsBackByPageWidth()
-    {
-        // Same spike/OFP as the positive-delta case above, but Scottie family: legacy's own
-        // `if (n<0) n += WD` (in legacy's raw n, i.e. delta>0 in this function's own sign
-        // convention -- see class doc comment) fires and subtracts a full page width from delta.
-        var delta = SyncAnchorCorrector.ComputeAnchorCorrection(
-            lineWidthSamples: 100.0,
-            syncPeakOffsetSamples: 20.0,
-            isScottieFamily: true,
-            lineCount: 4,
-            envelopeAt: n => (n % 100) == 80 ? 1000.0 : 0.0);
-
-        Assert.Equal(60 - 100, delta);
-    }
-
-    [Fact]
-    public void NegativeDelta_ScottieFamily_DoesNotWrap()
-    {
-        // The wraparound condition is delta>0 only -- confirm a Scottie-family mode with an
-        // already-negative delta is left untouched, same as the non-Scottie case.
-        var delta = SyncAnchorCorrector.ComputeAnchorCorrection(
-            lineWidthSamples: 100.0,
-            syncPeakOffsetSamples: 20.0,
-            isScottieFamily: true,
-            lineCount: 4,
-            envelopeAt: n => (n % 100) == 10 ? 1000.0 : 0.0);
-
-        Assert.Equal(-10, delta);
     }
 
     [Fact]
@@ -85,7 +54,6 @@ public class SyncAnchorCorrectorTests
         var delta = SyncAnchorCorrector.ComputeAnchorCorrection(
             lineWidthSamples: 1653.75,
             syncPeakOffsetSamples: 0.0, // isolate the bin-placement question; no OFP shift
-            isScottieFamily: false,
             lineCount: 2,
             envelopeAt: n => n == 2153 ? 1000.0 : 0.0);
 
