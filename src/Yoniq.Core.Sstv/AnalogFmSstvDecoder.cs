@@ -1030,6 +1030,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // samples for Robot 36, applied very early in a short buffer could clamp) but expected to be
         // rare in practice: real transmissions carry several seconds of lead-in before the image.
         _consumedSamples = Math.Max(0, origin + delta);
+
+        // Round-1-Opus-review fix: Commit() already fast-forwarded _visLockProcessedUpTo/
+        // _visLockOriginSample past the PROVISIONAL (pre-correction) _consumedSamples via its own
+        // Math.Max -- see Commit()'s own doc comment for why that fast-forward exists at all
+        // (piece 6c's re-verification must never re-examine samples already accounted for, or it
+        // spuriously rediscovers the header that just committed and fires a self-triggered restart).
+        // A positive delta here moves the FINAL _consumedSamples past that provisional value without
+        // this line, leaving a [origin, origin+delta) gap that piece 6c's first catch-up call
+        // (TryVisLockStateMachine, on this image's very first decoded line) would scan fresh --
+        // exactly the failure mode Commit()'s own Math.Max exists to prevent, just reopened one step
+        // later by this piece. Negative delta needs no equivalent fix: _visLockProcessedUpTo is
+        // already >= the (now smaller) final _consumedSamples, matching Commit()'s existing
+        // Math.Max semantics (never move this cursor backward).
+        _visLockProcessedUpTo = Math.Max(_visLockProcessedUpTo, _consumedSamples);
+        _visLockOriginSample = _visLockProcessedUpTo;
+
         return true;
     }
 
