@@ -59,14 +59,11 @@ tests for every DSP change, small reviewable commits, ask before pushing to orig
   `HilbertFmDemodulator.DoFir`'s pattern) — back to 4min44s, 387/387 passing. **Noise-floor comparison
   against the piece-15 baseline (the actual acceptance criterion) — real improvement**: martin-m1
   9.0dB→3.0dB, robot-36 16.0dB→9.0dB (6-7dB lower noise floor, both meaningfully more noise-tolerant).
-  21 new unit tests. Full writeup: spec/14-roadmap.md "Piece B" section. **Not yet committed.**
+  21 new unit tests. Full writeup: spec/14-roadmap.md "Piece B" section. Commit `c3b9f46`.
 
-All committed and pushed through Piece 15 + the noise harness (`14b4144`), 366/366 tests passing.
-Piece B implemented and measured on top of that, not yet committed.
+All committed and pushed through Piece B (`c3b9f46`), 387/387 tests passing.
 
 ## Other open items (after Piece B)
-- **Commit Piece B** — implementation + tests done, measured against baseline, not yet committed/pushed.
-  Ask before pushing per usual.
 - **Real TX/WebSDR recapture** — still a separately-weighed, stronger-evidence option for noise
   robustness (would also double as a new golden-vector fixture) — bigger practical lift, not yet
   arranged. No longer blocking anything (Piece B already shipped/measured against the synthetic
