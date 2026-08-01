@@ -17,24 +17,32 @@ Root cause: `ilammy/msvc-dev-cmd@v1` set `Platform=x64` as a job-level env var; 
 three legs green each time. Full writeup: `spec/14-roadmap.md`, search "Windows CI fix".
 **All three CI legs (Windows/Linux/macOS) now green on `master` — nothing blocking.**
 
-## Next task: not yet chosen — candidates below, pick one to start a session on
+## Current task (IN PROGRESS, session paused ~2026-08-01 23:30 CEST, resume ~01:35)
 
-**Correction (2026-08-01): "sync-search + AFC state machine" is DONE, not a candidate.** A prior
-session's summary line in `spec/14-roadmap.md` Phase 1 (~line 48) called this "not yet started" and
-that stale line got quoted here and to the user before the rest of the roadmap (below that line) was
-read — AFC (`AfcTracker`), Auto Slant (`SlantTracker`), the full 7-piece VIS/preamble-lock state
-machine, and the actual root cause of the residual decode gap (a missing per-image sync-anchor
-re-correction, "piece 8"/`SyncAnchorCorrector`) are all ported, tested against real golden-vector
-legacy audio, and committed (`23b025a`→`8f87146`, predates piece 9). Both roadmap and this file are now
-corrected. There is no known open DSP-correctness gap in Phase 1.
+**Pre-Phase-2 gate: shortcut/simplification audit.** User's call: before running the milestone-audit
+playbook's Phase 3 chain audit (see `docs/audit-playbook.md`) or moving to Phase 2, first inventory
+every known DSP-in-pipeline simplification this port carries, triage/fix the important ones, THEN
+capture more real golden-vector fixtures, THEN run Phase 3. Full writeup + inventory table + sequencing:
+`spec/14-roadmap.md`, search "Pre-Phase-2 gate".
+
+**Status right now**: inventory compiled (a fork research pass, ~20 items found across 3 risk tiers).
+Handed to the `auditor` subagent to independently verify each claim against real source, re-derive risk
+tiers, hunt for anything missed, and produce a full must-fix-to-nice-to-have priority ranking covering
+every item — **launched, not yet returned as of this entry.** Do not start fixing anything until that
+comes back and gets reviewed. Session tasks #5 (done, inventory reviewed)→#6 (fix)→#7 (capture ~5-6 new
+golden-vector fixtures for uncovered mode families: Scottie S1, Robot72/R24, a PD/MP mode, RM8/RM12, a
+narrow MN/MC mode, AVT)→#8 (Phase 3 chain audit).
+
+**Correction (2026-08-01, still valid): "sync-search + AFC state machine" is DONE, not open work.** A
+prior session's stale summary line in `spec/14-roadmap.md` Phase 1 (~line 48) called this "not yet
+started"; it's actually fully ported (AFC/`AfcTracker`, Auto Slant/`SlantTracker`, the 7-piece
+VIS/preamble-lock state machine, and piece 8's sync-anchor fix), golden-vector-tested, committed
+(`23b025a`→`8f87146`). No known open DSP-correctness gap in Phase 1 beyond what the audit above finds.
+
+## Other candidates (deprioritized behind the audit above, not urgent)
 
 - **Phase 2 — Radio layer**: `IRadioController` reference implementation against a fake
   transport/protocol, then `rigctld` client mode ([[02-radio-layer]], [[04-rigctld]] in the roadmap).
-  Natural next phase now that Phase 1's DSP/audio core is essentially complete (43/43 modes, filter
-  chain, Windows CI).
-- **Real TX/WebSDR recapture** (backburnered 2026-08-01): would give a real golden-vector fixture
-  beyond the synthetic noise-injection harness. Not urgent — Piece B was already measured against the
-  synthetic harness instead.
 - **Windows/macOS real-hardware audio verification** (`spec/14-roadmap.md` Phase 1, Audio 1b): the
   native-shim build now compiles in CI on both, but neither has been run against real/virtual hardware
   — needs a human on each OS, not agent-doable from this Linux sandbox.

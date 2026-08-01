@@ -977,6 +977,70 @@ all passing again on the second. Commits `8be35b7` (fix), `761ef1a` (doc update)
 
 **Status: fixed and committed. Windows/Linux/macOS all green on `master`.**
 
+## Pre-Phase-2 gate: shortcut/simplification audit — IN PROGRESS
+
+User's call, before committing to Phase 2 (radio layer): rather than run the milestone-audit
+playbook's Phase 3 chain audit immediately, first inventory every known DSP-in-pipeline
+simplification/deferral this port already carries (distinct from `docs/removed-features.md`'s
+whole-capability removals), triage which are worth fixing now, fix the important ones, THEN capture
+more real golden-vector fixtures, THEN run the Phase 3 chain audit — so the audit runs against the
+best available code and the widest available real-audio coverage, not the other way around.
+
+**Sequencing (tracked as tasks #5-8 in this session):**
+1. Compile inventory of simplifications (done, see table below — a fork/subagent research pass).
+2. Independently verify that inventory with the `auditor` subagent — check each claim against real
+   source, re-derive risk tiers, search for anything missed in roadmap ranges the first pass
+   under-covered, and produce a full must-fix-to-nice-to-have priority ranking. **IN PROGRESS as of
+   this entry, not yet returned.**
+3. Fix the prioritized items (expected to be more involved than initially hoped — user's own
+   assessment before seeing the auditor's ranking).
+4. Capture ~5-6 new real golden-vector fixtures from the legacy binary, covering mode
+   families/mechanisms the existing two fixtures (Martin M1 = `RgbSequential`, Robot 36 =
+   `YCbCrRobot`) don't exercise: Scottie S1 (mid-line sync — the exact family that already produced
+   one real synthetic-test-passes-while-wrong incident, `CLAUDE.md` §4), Robot 72 or R24
+   (`YCbCrSequential`), a PD/MP mode (`YCbCrLinePaired`), RM8 or RM12 (`MonoAveragedPaired`, no
+   chroma), a narrow MN/MC mode (FSK mode-announce header instead of VIS), AVT (training-lock state
+   machine). Capturing is bottlenecked on the user's time with the real legacy Windows binary, not on
+   dev work, so it can start any time independent of step 3's progress.
+5. Run the milestone-audit playbook's Phase 3 (chain/integration audit) only — skip Phase 1/2, units
+   are already individually verified to an unusual degree (`docs/audit-playbook.md`).
+
+**Inventory (first pass, NOT YET independently verified — auditor review pending):**
+
+| Item | Legacy mechanism (citation) | Why deferred | Risk tier | Roadmap/source citation |
+|---|---|---|---|---|
+| Lock-dependent bandpass filter never switches — Piece B's `SearchBandpassFilter` (H2) runs continuously regardless of lock state | Legacy switches `HBPFS` (search/pre-lock) vs `HBPF`/`HBPFN` (locked) (`sstv.cpp:1826-1832`) | Auditor-assessed (earlier, scoping pass) as "the only version without correctness risk" given this port's upfront-buffer architecture has no real-time lock state at filter-selection time; deliberate safety-first scope cut, not an oversight | C | roadmap lines 136, 161, 757-764, 880-882 |
+| Unbounded memory growth: `_rawSamples`/`_demodulatedFrequencies`/`_agcSamples` never trimmed (~1.1GB/hr @11025Hz, ~4.4GB/hr @44100Hz) | No legacy equivalent needed — legacy processes one sample at a time in real time, never buffers a whole session | Harmless for today's test-only callers; explicitly flagged as relevant "once a production caller wires this decoder to real capture" | C | roadmap line 171 |
+| `TryDecodeVisDataBits` reconstructs 4 fresh detectors and replays from `headerStart` on *every* `PushSamples` call while unlocked — no persistent cursor, unlike every other detector in the file | N/A — port-specific architecture gap vs. legacy's real-time incremental processing | Assessed as "probably still realtime-feasible," not urgent at the time; matters most "for a streaming caller pushing small chunks frequently while unlocked" | C | roadmap line 282 |
+| AFC/Auto Slant's deferred correction passes are chunk-timing-sensitive: whole-push vs. chunked-push decodes of the same signal differ by ~1.75 avg per-channel delta | N/A — port-specific: these run as "whatever is available so far" bulk passes, not legacy's true per-sample real-time loop | Root cause not chased ("off-scope for this piece"); magnitude across arbitrary real-world chunk sizes/timings never characterized | C | roadmap lines 798-807 |
+| `MiniAudioCaptureSession`'s bare `try/catch` around `SamplesAvailable` would silently swallow the `InvalidOperationException` this port relies on for one real bug's guard, once a production caller wires the decoder to real capture | N/A — infra gap | Named as forward-looking, not yet a live caller to break | C | roadmap line 169 (round-2 finding #5) |
+| While-locked tone-envelope detectors (`d11`/`d12`/`d13`/`d19`/`dsp`) never retune after an AFC correction is applied | Legacy's real detectors retune for free via `InitTone`'s side effect (`sstv.cpp:2362`); this port's stay fixed-frequency | Explicitly named by an Opus outline review as deferred, not silently absorbed | B | roadmap line 136 |
+| Mid-image AVT re-lock not supported | `sstv.cpp:2139-2144`; `VisLockStateMachine` deliberately never reports AVT | Same batch as above | B | roadmap line 136 |
+| Mid-image narrow-mode (MN/MC) FSK-announce re-lock not supported | `sstv.cpp:2592` | Needs a sample-by-sample FSK decoder this port doesn't have; `TryDecodeNarrowModeHeader` is a fixed-window analytic shortcut with no real-time counterpart | B | roadmap line 136 |
+| MN/MC narrow-mode PLL further-narrowing (2044-2300Hz) not implemented — this port narrows flat to 1500-2300Hz for all modes | `CSSTVDEM::SetWidth`/`IsNarrowMode` (`sstv.cpp:1707-1719`, `266-279`) | "A documented simplification, not a bug" — pixel tones stay in-band either way, but loop/VCO-gain dynamics genuinely differ from legacy's real narrower band | B | roadmap line 255 |
+| Extended-VIS escape byte decided from 7 bits, not legacy's full 8-bit pattern (incl. parity=0) | `sstv.cpp:2066` | Pre-existing, noted not fixed in piece 9's scope; a malformed byte (e.g. `0xA3`) would diverge between port and legacy | B | roadmap line 258 |
+| AVT training-lock's dedicated PLL reads this port's raw/bandpass-filtered domain, not legacy's real post-2-tap-LPF/post-bandpass/**post-AGC** domain | `sstv.cpp:1835`'s `ad` (AGC'd, unscaled) | "AGC-domain gap stays exactly as already flagged and deferred from the Hilbert demodulator piece, not expanded into here" | B | `AnalogFmSstvDecoder.cs:1561-1565`; roadmap lines 788-789 |
+| `m_sint1`/`m_sint2`/`m_sint3`'s legacy case-0/1/2/9 "freeze while decoding VIS bits" gating has no equivalent — this port's merged loop evaluates them unconditionally | `sstv.cpp` case structure | Real, low-severity structural divergence, documented rather than left silent | B | roadmap line 121; `AnalogFmSstvDecoder.cs:693` |
+| `VisLockStateMachine`'s omitted `m_SLvl`/`m_SLvl2` absolute-amplitude gates, originally flagged as a mid-image false-positive-lock risk once Piece 6c made it run per decoded line | Legacy's absolute AGC'd-scale thresholds | Blocked at the time on the not-yet-built `CLVL` AGC port; **Piece 7c later reintroduced these exact gates into `VisLockStateMachine`'s own trigger conditions** — plausibly resolved, status sent to auditor to confirm | B (status needs confirming) | roadmap lines 142, 153-154 |
+| Per-channel TX gain trim (`m_VariOut`) not modeled for any mode | `sstv.cpp:2880` | Confirmed zero effect on transmitted frequency/waveform — optional, off-by-default legacy feature; gain-tag bits are masked off before use regardless | A | roadmap line 44; `SstvModeRegistry.cs:599` |
+| `CLVL`'s peak-hold bookkeeping (`m_PeakMax`/`m_PeakAGC`/`m_Peak`/`m_CntPeak`) omitted | `sstv.h` peak-hold fields | Write-only in legacy too — only reader is the UI level-meter bar (`Main.cpp:6186-6192`) | A | roadmap line 149 |
+| `m_agcfast==0` branch (averaged-5-window AGC recompute) not ported | `sstv.h:272-279` | Confirmed dead code in legacy itself — constructor unconditionally overwrites to 1 | A | roadmap line 149 |
+| No int-truncation replication in RM8/RM12's gain-corrected gray path (and generally, this port keeps doubles where legacy truncates) | `Main.cpp:4437-4449` truncates twice | Measured: a couple of levels' asymmetric divergence around mid-gray, well inside existing tolerances | A | roadmap lines 468-471 |
+| `H1`/`H3` bandpass filter width variants (Narrow/VeryNarrow) not ported | `fir.cpp` `MakeFilter` presets | Only reachable via a `DEMBPF` .ini setting this port's settings/UI layer doesn't expose yet; shipped default (Wide/H2) is the only reachable preset | A | roadmap lines 880-887 |
+| Same-sample `m_sint1`-then-`m_sint3` double-fire structurally can't happen in this port (return-immediately-on-any-match) | Legacy's straight-line code lets both evaluate the same sample | Explicitly assessed as low severity, "close to a no-op" since `m_Sync` is already 1 by the time it would matter | A | roadmap line 158 |
+| `m_ReqSave` (legacy saves a ≥65%-complete abandoned image) not ported | `sstv.cpp:2134-2138`, `Main.cpp:4931-4934` | Correctly blocked on the not-yet-built logging/history feature (Phase 4) | A | roadmap line 143 |
+| `m_SyncRestart` hard-wired on, no user toggle | `sstv.cpp:1486`, `Main.cpp:10907`/`11887` | Correctly blocked on the not-yet-built settings/UI layer | A | roadmap line 143 |
+| AVT training-lock case 8 folded into case 6's `h==0x40` transition | `sstv.cpp:2234-2239` | Confirmed legacy's own case 8 is unreachable dead code too — no functional effect either side | A | roadmap lines 105, 107-108 |
+| `MakeHilbert`'s final unreachable `else{x1=x2=1.0;}` branch not ported | `fir.cpp:432-474` | Provably unreachable — the preceding `n==L` check already excludes the only case that would reach it | A | `HilbertFmDemodulator.cs:211-214` |
+
+Coverage note from the compiling pass: roadmap lines 293-326, 337-373, 377-426, 486-546, 606-638,
+666-720, 825-873, 893-954 got lighter/no line-by-line coverage — sent to the auditor as ranges to
+specifically re-check for missed items.
+
+**Status: auditor verification pass launched, not yet returned. Session paused here — resuming
+~01:35 (2026-08-02) per user instruction. Do not start step 3 (fixes) until the auditor's revised
+table + priority ranking is back and reviewed.**
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
