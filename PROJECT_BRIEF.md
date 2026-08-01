@@ -397,7 +397,7 @@ fix like Piece 9's.
 **Done**: committed and pushed (`be938d4`), `spec/14-roadmap.md` updated with the full narrative as the
 durable log. Piece 11 complete.
 
-## Piece 12 — RM8/RM12 gain correction — COMPLETE
+## Piece 12 — RM8/RM12 gain correction — COMPLETE, committed and pushed (`1bbcfc7`)
 
 Open-items list's `MonoAveragedPairedScanlineDecoder` RM8/RM12 gain-correction item. Looked small
 ("multiply by a constant") but turned out to require overturning a previously-documented design
@@ -440,7 +440,8 @@ the auditor's explicit guidance not to pre-add a tolerance override — passed a
 as predicted. Full suite: 327/327 passing (unchanged count — no new test files needed, this was a
 decoder-internals fix with existing coverage).
 
-**Done**: implementation complete, all tests passing.
+**Done**: committed and pushed (`1bbcfc7`), `spec/14-roadmap.md` updated with the full narrative as the
+durable log. Piece 12 complete.
 
 ## Other still-open items (not started, for context/prioritization)
 From `spec/14-roadmap.md`'s "Secondary, smaller, independently-source-verified divergences" list:
