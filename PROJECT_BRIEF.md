@@ -18,16 +18,9 @@ tests for every DSP change, small reviewable commits, ask before pushing to orig
 - **Piece 13**: `TryDecodeNarrowModeHeader` FSK bit decode replaced a PLL-stream-average proxy with a
   literal port of `CSSTVDEM::DecodeFSK`'s real 5-phase state machine (new `NarrowFskHeaderDecoder`
   class + 13 isolated unit tests). Two rounds of auditor plan-review, both caught real issues before
-  code was written. Not yet committed — see "Immediate next steps" below.
+  code was written. Commit `469e44f`.
 
-All committed and pushed through Piece 12 (`1bbcfc7`), 327/327 tests passing. Piece 13 implemented and
-passing (340/340) but **uncommitted** as of this brief.
-
-## Immediate next steps
-1. Review Piece 13's diff (`NarrowFskHeaderDecoder.cs`, `AnalogFmSstvDecoder.cs`'s
-   `TryDecodeNarrowModeHeader` rewrite, `NarrowFskHeaderDecoderTests.cs`, `docs/removed-features.md`'s
-   new FSK-callsign-ID entry, `spec/14-roadmap.md`'s Piece 13 entry) and commit if satisfied.
-2. Then move to the open items below.
+All committed and pushed through Piece 13 (`469e44f`), 340/340 tests passing.
 
 ## Other open items (after piece 13)
 - **Hilbert demodulator (`CHILL`) research/scoping pass** — legacy's real shipped default demodulator
