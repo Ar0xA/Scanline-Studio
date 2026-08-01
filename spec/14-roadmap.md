@@ -488,6 +488,61 @@ exercises this decoder).
 
 **Piece 12 status: implemented, 327/327 passing.**
 
+## Piece 13 — `TryDecodeNarrowModeHeader` FSK bit decode
+
+**The bug**: `AnalogFmSstvDecoder.TryDecodeNarrowModeHeader` decoded each of the 24 MN/MC mode-ID bits
+by averaging the shared PLL's demodulated-frequency stream over a fixed 22ms window and comparing to a
+fixed midpoint threshold — a proxy that only worked by coincidence, reading off the general PLL stream
+rather than replicating a dedicated detector. Same bug shape Piece 9 already fixed for VIS-bit decode.
+
+**Legacy ground truth**: `CSSTVDEM::DecodeFSK(int m, int s)` (`sstv.cpp:2378-2606`), called every
+sample with `m=int(d19)` (1900Hz mark envelope) and `s=int(dsp)` (2100Hz/`FSKSPACE` space envelope,
+`m_iirfsk`, 100Hz bandwidth — same as `m_iir19`, not the 80Hz VIS-bit detectors). A 5-phase
+`m_fskmode` state machine, not a simple threshold race.
+
+**Two rounds of auditor plan-review, both substantive**: round 1 caught 3 real state-transition
+errors in the first plan draft (mode 1's actual 50ms hold conflated with mode 2's 100ms *timeout
+window*, which is a different thing; mode 3 mischaracterized as a debounce when it's really a single
+recheck at a fixed 11ms-later instant; the `|m-s|>=2048` amplitude gate treated as checked every
+sample when it's actually checked once per 22ms bit-sampling instant only) — each independently
+re-verified against `sstv.cpp:2378-2444`/`sstv.h:710-717` before accepting, not taken on the auditor's
+word alone. Also flagged: missing search-ceiling bound (this decoder is by construction a
+retry-on-reject scanner — same unbounded-scan trap `TryDecodeVisDataBits` already hit once, `:1207`),
+the `int`/`double` field-type contract (`m_fsktime`/`m_fsknexti` int, `m_fsknextd` double —
+drift-corrects the 24-bit stream; naive repeated integer addition drifts ~13 samples by bit 24 at
+11025Hz), collapsing to two caller-visible outcomes only (Locked/still-pending, matching the VIS-bit
+race's own already-fixed precedent — legacy never permanently aborts, every failure path resumes
+scanning from mode 0), and a `docs/removed-features.md` entry for the FSK callsign-ID packet (`0x2a`
+STX, modes 5-10) this piece deliberately doesn't port. Round 2 re-derived the corrected state machine
+fresh from source (not trusting round 1's own summary) and confirmed it clean, plus pinned down 3 final
+one-line decisions: commit at `headerStart + NarrowHeaderTotalDurationMs` (the fixed nominal duration,
+matching TX's real placement and the existing passing round-trip test) rather than wherever the state
+machine locks; `0x2a` at the STX dispatch is treated identically to any other unrecognized byte (reset,
+resume); and each `ProcessSample` call must read the mode once and run exactly one case's logic
+(mirroring legacy's `switch`+`break`-per-`Do()`-call structure) — a re-dispatch-within-one-call
+implementation would silently break the mode-2 zero-sample edge case. Verdict: "ready to build."
+
+**Fix**: new `NarrowFskHeaderDecoder` (`src/Yoniq.Core.Sstv/`) — a literal, sample-driven port of the
+state machine (modes 0/1/2/3/4/16/17/18 only; 5-10 out of scope, see `docs/removed-features.md`).
+`TryDecodeNarrowModeHeader` rewired to drive it with two dedicated `SyncEnvelopeDetector` instances
+(1900Hz mark / `VisHeader.NarrowSpaceFrequencyHz` space) over `AgcSampleAt`, bounded by an explicit
+local search ceiling mirroring `TryDecodeVisDataBits`'.
+
+**Tests**: isolated first, per this project's chop-into-pieces methodology —
+`NarrowFskHeaderDecoderTests` (13 tests) drives the state machine directly with synthetic int m/s
+pairs, no audio/AGC/filter pipeline involved: all 6 registered mode codes lock correctly, an
+unregistered-but-checksum-valid code returns its raw byte (mapping to "no mode" is
+`SstvModeRegistry.FindByNarrowCode`'s job, one layer up, not this class's), wrong STX/bad checksum
+reject-then-resume-scanning, a `0x2a` callsign-ID preamble followed immediately by a valid `0x2d`
+packet still locks (confirms the carve-out is truly independent), and the `|m-s|=2048` vs `2047`
+amplitude boundary and the 49ms-vs-50ms guard-hold boundary are both pinned exactly (the latter
+surfaced a real, legacy-faithful off-by-one: mode 0's trigger sample is consumed before mode 1's
+countdown starts, so completing the hold needs 551+1 samples, not exactly `MsToSamples(50)` — real TX's
+100ms guard swallows this invisibly, but the boundary test needed the extra sample to pass). Full
+suite: 340/340 passing (327 + 13 new).
+
+**Piece 13 status: implemented, 340/340 passing.**
+
 **Demo:** a console/test harness encodes a test image to a `.wav`, decodes it back, and the round-trip image matches within tolerance — provable before any UI exists.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)

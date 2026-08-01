@@ -15,50 +15,19 @@ tests for every DSP change, small reviewable commits, ask before pushing to orig
 - **Piece 10**: `GetPictureLevel` peak-picking ported across all 5 scanline decoders (`SstvModeRegistry.GetPeakPickParameters`/`PixelSampleReader`). Commit `ee74bfd`.
 - **Piece 11**: `m_KSS`/`m_KS2S` horizontal pixel-pitch trim (`GetPixelPitchTrimFactor`). Commit `be938d4`.
 - **Piece 12**: RM8/RM12 RX gain correction, bypassing `YCbCr.ToRgb` to match legacy's direct-gray-write branch. Commit `1bbcfc7`.
+- **Piece 13**: `TryDecodeNarrowModeHeader` FSK bit decode replaced a PLL-stream-average proxy with a
+  literal port of `CSSTVDEM::DecodeFSK`'s real 5-phase state machine (new `NarrowFskHeaderDecoder`
+  class + 13 isolated unit tests). Two rounds of auditor plan-review, both caught real issues before
+  code was written. Not yet committed — see "Immediate next steps" below.
 
-All committed and pushed, 327/327 tests passing as of Piece 12.
+All committed and pushed through Piece 12 (`1bbcfc7`), 327/327 tests passing. Piece 13 implemented and
+passing (340/340) but **uncommitted** as of this brief.
 
-## Piece 13 — `TryDecodeNarrowModeHeader` FSK bit decode — NOT STARTED, current task
-
-**The bug**: `AnalogFmSstvDecoder.cs:1070-1126`'s `TryDecodeNarrowModeHeader` decodes each of the 24
-MN/MC mode-ID bits by averaging the shared PLL's demodulated-frequency stream over a fixed 22ms window
-and comparing to a fixed midpoint threshold (`AverageFrequencyInWindow`/`NarrowDiscriminatorThresholdHz`,
-`:1090-1091`) — reading off the general PLL stream rather than replicating a dedicated detector. **Same
-bug shape Piece 9 already fixed for VIS-bit decode** (a PLL-stream proxy that only worked by
-coincidence, replaced with legacy's real dual-envelope-detector tone race).
-
-**Legacy's real mechanism, located but not fully read yet**: `CSSTVDEM::DecodeFSK(int m, int s)`
-(`sstv.cpp:2378` onward — read through the state machine's cases 0-4 entry only, not the full
-byte/sync-check tail past `sstv.cpp:2450` — read the rest before implementing). Called every sample
-(`sstv.cpp:1858`, `DecodeFSK(int(d19), int(dsp))`) with:
-- `m = d19` — the SAME continuously-running 1900Hz envelope detector (`m_iir19`/`m_lpf19`) Piece 9
-  already ported and uses for the VIS tone race — likely directly reusable, verify before rebuilding.
-- `s = dsp` — a SEPARATE envelope detector on `m_iirfsk`, tuned to `FSKSPACE + g_dblToneOffset` =
-  **2100Hz**, bandwidth param `100.0` (`sstv.cpp:1450/1702`) — NOT yet ported anywhere in this codebase;
-  check whether `100.0` matches `SyncEnvelopeDetector`'s existing constructor shape (Piece 9's d11/d13
-  detectors use 80Hz bandwidth — a different value, don't assume interchangeable).
-- Decode is a difference-of-amplitudes race, not a frequency read: `d = ABS(m-s)`, gated on `d >= 2048`
-  (amplitude threshold, not Hz) and which of `m`/`s` is larger — structurally the same shape as Piece
-  9's `d11`/`d13`/`d19` VIS-bit race, just against a different tone pair (1900Hz mark / 2100Hz space).
-- 5-phase state machine (`m_fskmode` 0-4+): guard-tone detection (debounced, `FSKGARD=100`ms),
-  start-bit detection (debounced), then per-bit sampling at fixed `FSKINTVAL=22`ms intervals
-  (`sstv.h:705-707`) — **`FSKINTVAL=22` already matches this port's `VisHeader.NarrowBitDurationMs=22`
-  exactly**, so the timing constant is right; only the per-sample decision mechanism is the proxy.
-- Byte sync check in the case-4 default path references `0x2a` ("First SYNC") — **this port's current
-  `VisHeader.NarrowStxByte = 0x2d` doesn't match that number.** Not yet resolved whether this is a real
-  mismatch or `0x2a` is something else entirely (a preamble marker distinct from what this port calls
-  "STX") — verify by reading the rest of `DecodeFSK`'s tail before assuming either way.
-
-**Scope note**: `AnalogFmSstvDecoder.cs:468-492`'s `TryDecodeHeader` narrow-vs-normal-VIS discriminator
-also uses `AverageFrequencyInWindow`/`NarrowDiscriminatorThresholdHz` — **not part of this bug**, it's a
-separate, already-justified coarse classification (which decode path to try, not decoding data bits).
-Only the per-bit decode inside `TryDecodeNarrowModeHeader` (`:1084-1092`) is in scope.
-
-**Suggested next steps**: read `DecodeFSK`'s full body and `m_iirfsk`'s full setup, resolve the
-`0x2a`-vs-`0x2d` question, scope whether this reuses Piece 9's `SyncEnvelopeDetector`/tone-race
-machinery directly or needs its own variant — likely warrants at least one auditor plan-review round
-given the DSP/state-machine complexity and this session's track record of "small-looking" items turning
-out bigger (pieces 11, 12).
+## Immediate next steps
+1. Review Piece 13's diff (`NarrowFskHeaderDecoder.cs`, `AnalogFmSstvDecoder.cs`'s
+   `TryDecodeNarrowModeHeader` rewrite, `NarrowFskHeaderDecoderTests.cs`, `docs/removed-features.md`'s
+   new FSK-callsign-ID entry, `spec/14-roadmap.md`'s Piece 13 entry) and commit if satisfied.
+2. Then move to the open items below.
 
 ## Other open items (after piece 13)
 - **Hilbert demodulator (`CHILL`) research/scoping pass** — legacy's real shipped default demodulator
