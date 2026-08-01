@@ -1038,12 +1038,39 @@ Coverage note from the compiling pass: roadmap lines 293-326, 337-373, 377-426, 
 specifically re-check for missed items.
 
 **Status: first auditor verification pass was stopped before returning (too broad a scope for one
-call). Restarted 2026-08-02 ~01:35, split into 3 smaller calls this time: (1) verify the existing
-inventory table row-by-row against real source + resolve the Piece 7c question, (2) search the
-previously under-covered roadmap ranges (293-326, 337-373, 377-426, 486-546, 606-638, 666-720,
-825-873, 893-954) for missed items, (3, not yet launched) full must-fix-to-nice-to-have priority
-ranking, once (1) and (2) are both back. (1) and (2) launched in parallel, in progress as of this
-entry. Do not start step 3/task #6 (fixes) until all three complete and are reviewed.**
+call). Restarted 2026-08-02 ~01:35, split into 3 smaller calls: (1) verify the existing inventory
+table row-by-row + resolve the Piece 7c question — IN PROGRESS, not yet returned. (2) search the
+previously under-covered roadmap ranges for missed items — DONE, results below. (3, not yet launched)
+full must-fix-to-nice-to-have priority ranking, once (1) and (2) are both back. Do not start step
+3/task #6 (fixes) until all three complete and are reviewed.**
+
+**Call (2) results — gap search over ranges 293-326, 337-373, 377-426, 486-546, 606-638, 666-720,
+825-873, 893-954, all 8 confirmed read in full:**
+
+Correction caught up front: the biggest gap those ranges originally described — PLL-instead-of-Hilbert
+demodulator (`sstv.cpp:1492`/`2256`) — is **closed by Piece 14**, not open. Ranges 293-326, 337-373,
+377-426, 825-873 confirmed nothing new (findings already fixed pre-implementation, or — for the noise
+harness at 825-873 — genuinely new test infra with no legacy mechanism to diverge from).
+
+New items found (same table shape as the existing inventory):
+
+| Item | Legacy mechanism (citation) | Why deferred | Risk tier | Roadmap/source citation |
+|---|---|---|---|---|
+| `m_Type` demodulator selector: only the Hilbert branch exists in the picture path; zero-crossing (`m_fqc`) never used for picture demod, no user toggle | 3-way dispatch `case 0: m_pll / case 1: m_fqc / default: m_hill` (`sstv.cpp:2256-2268`, `2310-2318`); user setting `Option.cpp RGDemType`/.ini `DemType` (`Main.cpp:1937`) | No settings/UI layer yet to expose an equivalent toggle | B — default-path parity holds (Hilbert IS legacy's compiled-in default), but legacy users can switch to PLL/zero-crossing for hard signals; no removed-features.md entry | roadmap 565-569, 604 |
+| `CHILL` narrow-mode retune not ported — `HilbertFmDemodulator` fixed at 1900Hz/800Hz non-narrow for ALL modes incl. MN/MC | `CSSTVDEM::SetWidth` retunes all 3 demodulators per mode (`sstv.cpp:1707-1715`); `CHILL::SetWidth`'s narrow branch (`sstv.cpp:3024-3031`) | Mirrors `PllFmDemodulator`'s already-accepted same simplification; verified affine-only (`m_OFF`/`m_OUT`), not tap count/`m_df` | B — this is now the LIVE picture-demod path (unlike the old PLL-based MN/MC-narrowing item), unmeasured | roadmap 676; `HilbertFmDemodulator.cs:58-65` |
+| CQ100 mode (`-i` switch) not modeled: FIR tap-tripling AND -1000Hz global tone offset | `sys.m_bCQ100` tap*=3 (`sstv.cpp:3048-3050`); `g_dblToneOffset=-1000.0` under `-i` (`Main.cpp:1065-1077`) | No CQ100-equivalent hardware modeled anywhere in this port | A — no removed-features.md entry; code's "g_dblToneOffset confirmed always 0.0" claim is true only absent `-i` | roadmap 676; `HilbertFmDemodulator.cs:72-76` |
+| Narrow-FSK header commits at fixed nominal `headerStart + NarrowHeaderTotalDurationMs`, not the state machine's actual lock sample | Legacy `DecodeFSK` fires `Start()` at the lock instant (`sstv.cpp:2378-2606`) | Chosen against TX's real placement (`Main.cpp:7423-7424`) + already-passing round-trip test | B — supporting evidence is a round-trip test, the exact "both sides agree while wrong" shape CLAUDE.md §4 warns about; drift/jitter unmeasured | roadmap 519-521; `AnalogFmSstvDecoder.cs:1176-1181` |
+| Bounded local search ceiling on narrow-FSK header/VIS data bits — port gives up; legacy never permanently aborts | Every legacy FSK failure path resets to `m_fskmode=0` and rescans indefinitely (`sstv.cpp:2378-2444`) | Unbounded scan was "a real, reverted regression"; `m_sint3` fallback kept as mitigation | B — mitigated by fallback, but ceiling is architectural not legacy-derived; off-nominal-header behavior unmeasured | roadmap 510-511, 529-530; `AnalogFmSstvDecoder.cs:1168-1174`, `1307-1323` |
+| AVT's dedicated PLL warmed up on a clamped 2000-sample window, not continuous stream history | Legacy's `m_pll` runs continuously from stream start (`sstv.cpp:2129/2159/2169/2187/2222`) | Upfront-buffer architecture has no continuously-running detector; mirrors `TryResolveSyncAnchorCorrection`'s technique | B — same family as the inventoried "detector reconstruction per push" but a distinct instance/constant; effect on AVT lock unmeasured | roadmap 683; `AnalogFmSstvDecoder.cs:1540-1558` |
+| AVT training entry restructured: port skips all 3 VIS repeats before constructing the lock state machine, rescopes timeout budget | Legacy enters case 4 right after the FIRST repeat, burns repeats 2/3 as marker-search noise | Simplification; fixed `AvtExtraHeaderDurationMs` kept as ceiling on the argument legacy's fallback converges near the same duration | B — convergence argument reasoned, not measured | `AnalogFmSstvDecoder.cs:1513-1522` (no roadmap line — found in code) |
+| `MakeFilter`'s Kaiser/Bessel (`I0`) design branch not ported | `fir.cpp:346-427`, activates only at attenuation >=21dB | Provably unreachable today: H2 is always attenuation 20 | A today, but becomes reachable the moment H1/H3 (already inventoried as a separate item) is added — silently gates that follow-up | roadmap 888-890; `SearchBandpassFilter.cs:20` |
+| `MakeFilter` odd-tap trailing-zero asymmetry: symmetry test scoped to even taps only | `fir.cpp` mirroring loop writes `2*(tap/2)+1` entries, trailing coeff stays zero for odd tap | Only reachable tap counts (24@11025Hz, 96@44100Hz) are even — latent, not currently wrong | A | roadmap 913-917 |
+| `CHILL` middle decimation tier (16-40kHz -> 24 taps, `m_df=1`) implemented but never exercised | `CHILL::SetWidth` tiering (`sstv.cpp:3032-3047`) | Implemented for completeness, untested until/unless a rate in that range is used | A | roadmap 573-574; `HilbertFmDemodulator.cs:54-57` |
+
+Off-scope notes from this pass (not chased, per scope discipline): FSK callsign-ID packet already has
+a `docs/removed-features.md` entry, correctly excluded here. RM8/RM12 golden-vector deltas worsened
+slightly post-Piece-14 but confirmed legacy-faithful (legacy's own 48-tap CHILL window also exceeds
+RM12's pixel dwell at 44100Hz) — not a port simplification.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
