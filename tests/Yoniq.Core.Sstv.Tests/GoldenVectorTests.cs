@@ -121,6 +121,13 @@ public class GoldenVectorTests
         // 16.995 -> 14.809 (improved). Both fixtures are group E (239/240 trim on both axes), so the
         // ~0.4% horizontal correction moved each fixture a small, opposite-signed amount -- expected
         // given it's a scale fix, not a settling-time fix like Piece 9's was.
+        // Re-measured again after the Hilbert demodulator port (spec/14-roadmap.md, replacing
+        // PllFmDemodulator with HilbertFmDemodulator as this port's main picture demodulator, matching
+        // legacy's real compiled-in default): martin-m1 1.438 -> 1.312, robot-36 14.809 -> 14.307 --
+        // both improved, consistent with Hilbert's faster/bounded settling transient vs. PLL's
+        // undershoot-then-recover tail (measured directly, not assumed; see spec/14-roadmap.md's
+        // Hilbert scoping-pass and implementation entries for the full derivation). Neither tolerance
+        // needed to change.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 15.0,

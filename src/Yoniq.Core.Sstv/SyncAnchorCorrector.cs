@@ -76,10 +76,15 @@ internal static class SyncAnchorCorrector
     /// stride is purely a C++ circular-buffer memory layout detail, not part of the actual DSP
     /// algorithm, so a simple 0-based relative index is a faithful (not simplified) equivalent.
     ///
-    /// Omits legacy's Hilbert-demodulator tap adjustment (`if (m_Type==2) n -= m_hill.m_htap/4`,
-    /// `Main.cpp:3794`) -- this port has no Hilbert demodulator path (only the PLL), so that term
-    /// has no equivalent to port; see <see cref="PllFmDemodulator"/>'s own doc comment for the
-    /// separately-logged gap that legacy's shipped DEFAULT demodulator is actually Hilbert, not PLL.
+    /// This method itself omits legacy's Hilbert-demodulator tap adjustment (`if (m_Type==2)
+    /// n -= m_hill.m_htap/4`, `Main.cpp:3794`) -- it stays scoped to the mode/argmax/wraparound
+    /// arithmetic only. The Hilbert-specific term (now that this port's main picture demodulator is
+    /// <see cref="HilbertFmDemodulator"/>, not PLL) is applied by the caller
+    /// (<see cref="AnalogFmSstvDecoder.TryResolveSyncAnchorCorrection"/>) on top of this method's
+    /// return value, using <see cref="HilbertFmDemodulator.HalfTap"/> -- see that call site for the
+    /// sign derivation (the same `-n` convention established above applies: legacy's term makes its
+    /// own `n` more negative, so the correction to this method's return value is ADDED, not
+    /// subtracted).
     /// </summary>
     public static int ComputeAnchorCorrection(
         double lineWidthSamples,
