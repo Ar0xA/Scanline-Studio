@@ -1037,12 +1037,50 @@ Coverage note from the compiling pass: roadmap lines 293-326, 337-373, 377-426, 
 666-720, 825-873, 893-954 got lighter/no line-by-line coverage — sent to the auditor as ranges to
 specifically re-check for missed items.
 
-**Status: first auditor verification pass was stopped before returning (too broad a scope for one
-call). Restarted 2026-08-02 ~01:35, split into 3 smaller calls: (1) verify the existing inventory
-table row-by-row + resolve the Piece 7c question — IN PROGRESS, not yet returned. (2) search the
-previously under-covered roadmap ranges for missed items — DONE, results below. (3, not yet launched)
-full must-fix-to-nice-to-have priority ranking, once (1) and (2) are both back. Do not start step
-3/task #6 (fixes) until all three complete and are reviewed.**
+**Status: calls (1) and (2) both done. Call (3) (priority ranking, merging both outputs) launched
+next. Do not start step 3/task #6 (fixes) until call (3) is back and reviewed.**
+
+**Call (1) results — verify existing table row-by-row. Verdict: EQUIVALENT-WITH-RISKS — mostly
+accurate, but 1 row flat-out wrong, 1 stale-resolved, 2 stale/mis-attributed citations, 2 tier changes:**
+
+- **Flat-out wrong (4 things):** (a) the "H1/H3 width variants not ported" row (tier A) is mis-framed
+  — H1/H3 aren't width variants gated behind a `.ini` setting, they're the SAME lock-state-selected
+  filters as row 1 (`sstv.cpp:1827-1831`), fully reachable at the shipped default — this row duplicates
+  row 1's gap at the wrong (too-low) tier, not a separate item. (b) the narrow-further-narrowing row's
+  citation (`CPLL::SetWidth`) is stale — legacy's default demod is Hilbert (`m_Type=2`), so the PLL is
+  AVT-only now and AVT is never narrow; the real live gap is `CHILL::SetWidth`/`CFQC::SetWidth`, and
+  "loop/VCO-gain dynamics" reasoning doesn't even apply to a Hilbert transformer. (c) memory-growth
+  figures are pre-Piece-B: actually 5 buffers not 3 (Piece B added `_bandpassFilteredSamples`), ~1.43
+  GB/hr @11025Hz / ~5.7 GB/hr @44100Hz, not 1.1/4.4. (d) the `m_sint1/2/3` freeze-gating row claims all
+  three are ungated; `m_sint1` was actually already fixed by an earlier holistic-review pass
+  (roadmap 163) — only `m_sint2`/`m_sint3` remain ungated.
+- **Stale-resolved:** `VisLockStateMachine`'s `m_SLvl`/`m_SLvl2` amplitude gates — verified CLOSED.
+  Piece 7c reintroduced every gate legacy has at all 4 real call sites, including the correct
+  3-term/2-term asymmetry (case-0/1 use the 3-term `d12>d19 && d12>SLvl && (d12-d19)>=SLvl` form,
+  case-3-verify correctly uses only the 2-term form with no difference gate) and the right
+  `SLvl=3500/SLvl2=1750` values (`SetSenseLvl` case 1, matching the real ctor default). Downgrade to A
+  / fold into row 1 (the only remaining delta is AGC/threshold calibration seeing H2 instead of H1
+  while locked — that's row 1's gap, not a separate one).
+- **Tier changes:** `TryDecodeVisDataBits` rebuild-per-push: C→**B** (the replay is bounded by a
+  search ceiling, ~1.07-1.31s of samples, so it's O(1) per push not O(buffer) — no correctness risk).
+  `MiniAudioCaptureSession`'s bare catch: stays C but **broader than stated** — swallows every decoder
+  exception, not just the one specific guard originally named.
+- **Everything else CONFIRMED** as originally logged, verified line-for-line against real source
+  (full detail: this session's auditor transcript, not reproduced here in full).
+
+**Call (2) results — gap search over the 8 under-covered ranges, all confirmed read in full. Found 9
+new items** (full table + citations: see this file's own history a few entries up, "Call (2) results"
+heading). One of the 9 (`CHILL` narrow-mode retune not ported) is the SAME gap as call (1)'s corrected
+narrow-further-narrowing row — a duplicate discovered independently by both calls, which is itself a
+good cross-check signal. The other 8 are net-new: `m_Type` demodulator selector has no user toggle
+(only Hilbert branch exists); CQ100 mode entirely unmodeled; narrow-FSK header commits at a fixed
+nominal offset instead of the real lock sample; a bounded local search ceiling on narrow-FSK/VIS-bit
+decode where legacy never permanently gives up; AVT's dedicated PLL warmed up on a clamped 2000-sample
+window instead of continuous stream history; AVT training entry skips all 3 VIS repeats before
+constructing the lock state machine (legacy enters after the first); `MakeFilter`'s Kaiser/Bessel
+design branch unported (dependency note: becomes reachable the moment row 1/H1/H3 ever gets fixed);
+`MakeFilter` odd-tap trailing-zero asymmetry (latent, current tap counts are all even); `CHILL`'s
+middle decimation tier implemented but never exercised.
 
 **Call (2) results — gap search over ranges 293-326, 337-373, 377-426, 486-546, 606-638, 666-720,
 825-873, 893-954, all 8 confirmed read in full:**
