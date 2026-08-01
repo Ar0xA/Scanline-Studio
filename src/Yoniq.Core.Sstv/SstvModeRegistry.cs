@@ -559,14 +559,16 @@ public static class SstvModeRegistry
     // otherwise this port's RM12 TX would have been unrecognizable to a real legacy receiver. RX is
     // unaffected either way: VisHeader.DecodeVisCode only ever reads the 7 data bits.
     //
-    // NOT ported: legacy's RX applies an RM-specific gain correction (`d *= 256.0/(256.0-32.0)`,
-    // Main.cpp) on top of its own GetPictureLevel/GetPixelLevel calibration pipeline before writing
-    // the pixel. This port's decoder doesn't replicate that calibration pipeline for *any* mode
-    // (see AnalogFmSstvDecoder's parity notes; every mode here uses a simpler direct
-    // frequency-averaging inverse instead) -- the correction is meaningful only relative to that
-    // specific pipeline's own internal scale, so applying it inside this port's linear
-    // frequency-to-pixel mapping would be a mismatched, uninterpretable value, not a faithful port.
-    // Flagged rather than silently dropped or silently guessed at.
+    // RX applies an RM-specific gain correction (`d *= 256.0/(256.0-32.0)`, Main.cpp:4438) on top of
+    // its own GetPictureLevel/GetPixelLevel calibration pipeline before writing the pixel -- see
+    // MonoAveragedPairedScanlineDecoder for the port (piece 12). An earlier version of this comment
+    // said this correction couldn't be faithfully ported because this port's decoder "doesn't
+    // replicate that calibration pipeline for any mode" -- that premise was wrong: legacy's
+    // GetPixelLevel(freq)+128, for any mode on the standard 1500-2300Hz band (which RM8/RM12 both use,
+    // unmodified defaults), is algebraically identical to this port's own linear
+    // frequency-to-pixel-level formula (independently re-derived and verified via 2 different
+    // demodulator paths during piece 12's plan review, not assumed) -- so the two pipelines were never
+    // actually mismatched, just expressed differently.
     private static SstvModeDefinition CreateMonoAveragedMode(string id, string displayName, int visCode, int transmissionUnits, double scanDurationMs) => new(
         Id: id,
         DisplayName: displayName,
