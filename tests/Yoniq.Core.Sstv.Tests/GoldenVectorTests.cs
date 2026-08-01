@@ -128,6 +128,13 @@ public class GoldenVectorTests
         // undershoot-then-recover tail (measured directly, not assumed; see spec/14-roadmap.md's
         // Hilbert scoping-pass and implementation entries for the full derivation). Neither tolerance
         // needed to change.
+        // Re-measured again after Piece A (spec/14-roadmap.md, legacy's always-on 2-tap
+        // moving-average pre-filter, `d=(s+m_ad)*0.5`, `sstv.cpp:1824-1825`): martin-m1 1.312 ->
+        // 1.263 (improved), robot-36 14.307 -> 14.476 (worsened slightly) -- both changes tiny (<0.2)
+        // and expected: these fixtures are already-documented clean/low-noise real captures, so a
+        // smoothing filter has little noise to remove here -- its real motivation is noise robustness
+        // for the noisier real-world reception these fixtures don't exercise (see spec/14-roadmap.md's
+        // bandpass-filter-chain scoping discussion). Neither tolerance needed to change.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 15.0,
