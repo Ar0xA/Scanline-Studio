@@ -30,11 +30,17 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      # msvc-dev-cmd (above) exports Platform=x64 as a job-level env var so cl.exe's toolchain
+      # resolves correctly, but Yoniq.sln only defines "Any CPU" solution configurations -- MSBuild
+      # otherwise reads that ambient env var as a default property and fails restore with MSB4126
+      # ("solution configuration Debug|x64 is invalid"). Override explicitly on every dotnet
+      # invocation; cl.exe itself (BuildNativeShimWindows) is invoked via Exec, not MSBuild's
+      # $(Platform), so it's unaffected.
       - name: Restore
-        run: dotnet restore Yoniq.sln
+        run: dotnet restore Yoniq.sln /p:Platform="Any CPU"
 
       - name: Build (warnings as errors)
-        run: dotnet build Yoniq.sln --no-restore --configuration Release
+        run: dotnet build Yoniq.sln --no-restore --configuration Release /p:Platform="Any CPU"
 
       - name: Test
-        run: dotnet test Yoniq.sln --no-build --configuration Release --logger "console;verbosity=normal"
+        run: dotnet test Yoniq.sln --no-build --configuration Release /p:Platform="Any CPU" --logger "console;verbosity=normal"
