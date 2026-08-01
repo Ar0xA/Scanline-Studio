@@ -183,6 +183,56 @@ public class SstvRoundTripTests
         Assert.Equal(mode.Id, detectedMode!.Id);
     }
 
+    [Fact]
+    public async Task DecodedImage_MatchesWithinTolerance_WhetherSamplesArriveInOneChunkOrMany()
+    {
+        // Piece A (FilteredRawSampleAt, the always-on 2-tap moving-average pre-filter): the ONE new
+        // behavior it introduces that could regress under chunked delivery is reaching back into the
+        // PREVIOUS chunk's last raw sample at a chunk boundary (PushSamples indexes by
+        // _rawSamples.Count-1, not span[i], specifically so this works) -- this test locks in that
+        // property, per auditor review's own recommendation, rather than relying only on the
+        // full-suite tolerance-based tests to catch a regression here indirectly.
+        //
+        // NOT exact pixel identity -- investigated when a first version of this test asserted that
+        // and failed with avg delta ~1.75 (well inside every other tolerance in this file), confirmed
+        // via git-stash to be PRE-EXISTING (identical failure on pre-Piece-A code too), not caused by
+        // this piece: this port's deferred/incremental correction passes (AFC/Auto Slant) already
+        // process "whatever's available so far" as data streams in, so chunk timing can shift their
+        // exact correction values by a small amount -- a real, small, already-existing characteristic
+        // of this port's architecture, not chased further here (off-scope for this piece). A 5.0
+        // tolerance (real margin over the measured ~1.75) still catches a genuine Piece-A-specific
+        // regression -- an actually-wrong previous-sample reference at a chunk boundary would produce
+        // a structural misalignment, not a small ambient delta like this.
+        var mode = SstvModeRegistry.MartinM1;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(44100);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var wholeDecoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        IImageSource? wholeImage = null;
+        wholeDecoder.LineDecoded += update => wholeImage = update.Image;
+        wholeDecoder.PushSamples(samples.ToArray());
+
+        var chunkedDecoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        IImageSource? chunkedImage = null;
+        chunkedDecoder.LineDecoded += update => chunkedImage = update.Image;
+        const int chunkSize = 500; // deliberately small and not aligned to any header/line boundary
+        for (var offset = 0; offset < samples.Count; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, samples.Count - offset);
+            chunkedDecoder.PushSamples(samples.GetRange(offset, length).ToArray());
+        }
+
+        Assert.NotNull(wholeImage);
+        Assert.NotNull(chunkedImage);
+        AssertImagesMatchWithinTolerance(wholeImage!, chunkedImage!, maxAveragePerChannelDelta: 5.0);
+    }
+
     [Theory]
     [MemberData(nameof(Modes))]
     public async Task EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance(SstvModeDefinition mode, double _)
