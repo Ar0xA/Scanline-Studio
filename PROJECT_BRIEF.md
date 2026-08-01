@@ -9,24 +9,34 @@ Secondary reference QSSTV lives locally (gitignored) at `QSSTV-main/` — inspir
 Full rules: `CLAUDE.md` (short, read it). Key ones: port legacy DSP exactly (no invention), golden-vector/round-trip
 tests for every DSP change, small reviewable commits, ask before pushing to origin.
 
-## Windows CI — fixed (2026-08-01), commit `8be35b7`
+## Windows CI — fixed and closed out (2026-08-01), commit `8be35b7`
 
-Root cause: `ilammy/msvc-dev-cmd@v1` (Windows leg only, needed for `Yoniq.Core.Audio.MiniAudio`'s
-`BuildNativeShimWindows`/`cl.exe` target) sets `Platform=x64` as a job-level env var. MSBuild/`dotnet
-restore` implicitly read that ambient var as a default property — `Yoniq.sln` only has "Any CPU"
-solution configs — so restore failed: `error MSB4126: The specified solution configuration
-"Debug|x64" is invalid.`
+Root cause: `ilammy/msvc-dev-cmd@v1` set `Platform=x64` as a job-level env var; `Yoniq.sln` only has
+"Any CPU" solution configs, so `dotnet restore` failed with MSB4126. Fixed with explicit
+`/p:Platform="Any CPU"` on restore/build/test steps. Verified against two real consecutive CI runs, all
+three legs green each time. Full writeup: `spec/14-roadmap.md`, search "Windows CI fix".
+**All three CI legs (Windows/Linux/macOS) now green on `master` — nothing blocking.**
 
-Fix: pass `/p:Platform="Any CPU"` explicitly on the `dotnet restore`/`build`/`test` steps in
-`.github/workflows/ci.yml`, overriding the ambient env var. `cl.exe` itself runs via an `Exec` command
-(not through MSBuild's `$(Platform)`), so it's unaffected by the override.
-**Verified against a real run**, not just eyeballed: all three legs green — macOS 2m31s, Windows
-5m25s, Linux 3m51s (`gh run watch 30717870027`).
+## Next task: not yet chosen — candidates below, pick one to start a session on
 
-## Backburnered (not blocking, come back to later)
-- **Real TX/WebSDR recapture** for noise-robustness evidence (would double as a new golden-vector
-  fixture) — deprioritized 2026-08-01 in favor of the Windows CI fix. No longer urgent: Piece B already
-  shipped and was measured against the synthetic noise-injection harness instead (see below).
+- **Sync-search + AFC state machine** (real DSP work, flagged in `spec/14-roadmap.md` Phase 1 line
+  ~48): root-caused, not yet started. This port's block-averaging pixel reconstruction needs ~4
+  samples/pixel to hit tolerance; legacy's real per-line sync-locked timing doesn't. Affects ~1/3 of
+  the mode table at the intended 11025Hz sample rate (currently masked by a 44100Hz stand-in). This is
+  the last known DSP-correctness gap in Phase 1.
+- **Phase 2 — Radio layer**: `IRadioController` reference implementation against a fake
+  transport/protocol, then `rigctld` client mode ([[02-radio-layer]], [[04-rigctld]] in the roadmap).
+  Natural next phase now that Phase 1's DSP/audio core is essentially complete (43/43 modes, filter
+  chain, Windows CI).
+- **Real TX/WebSDR recapture** (backburnered 2026-08-01): would give a real golden-vector fixture
+  beyond the synthetic noise-injection harness. Not urgent — Piece B was already measured against the
+  synthetic harness instead.
+- **Windows/macOS real-hardware audio verification** (`spec/14-roadmap.md` Phase 1, Audio 1b): the
+  native-shim build now compiles in CI on both, but neither has been run against real/virtual hardware
+  — needs a human on each OS, not agent-doable from this Linux sandbox.
+- **Small license-audit items**: cty.dat (Clublog callsign-prefix dataset) audit before Phase 4 bundles
+  it; confirm whether Chilkat/FastReport back a real legacy feature (needs the legacy binary, not just
+  source). Both quick, low-risk, no dependencies.
 
 ## Completed work (full narratives in `spec/14-roadmap.md`, search "Piece N" — that's the durable log)
 Pieces 8-13 (all committed, all green): Robot-36/Scottie sync fixes (piece 8), real VIS-bit dual-envelope
@@ -45,8 +55,8 @@ Recent filter-chain work (pieces 14/15/B + noise harness), just finished:
   suite to 12min; fixed). **Measured, real improvement**: noise floor martin-m1 9.0dB→3.0dB, robot-36
   16.0dB→9.0dB. Commit `c3b9f46`.
 
-All committed and pushed through Piece B (`c3b9f46`), 387/387 tests passing on Linux/macOS CI legs
-(Windows leg failing — see "Next task" above).
+All committed and pushed through Piece B (`c3b9f46`), 387/387 tests passing on all three CI legs
+(Windows/Linux/macOS all green — Windows CI fixed 2026-08-01, see above).
 
 ## Working methodology (established across this project)
 - Legacy is ground truth — verify against `yoniq-old/YONIQ-main/` source directly, no assumptions.
