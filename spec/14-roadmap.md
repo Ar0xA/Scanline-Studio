@@ -1111,6 +1111,76 @@ a `docs/removed-features.md` entry, correctly excluded here. RM8/RM12 golden-vec
 slightly post-Piece-14 but confirmed legacy-faithful (legacy's own 48-tap CHILL window also exceeds
 RM12's pixel dwell at 44100Hz) — not a port simplification.
 
+**Call (3) results — reconcile + priority rank. DONE, task #9 complete.** Corrected the item count:
+30 items, not ~20 (call (2)'s own prose undercounted its own 10-row table by one). Full reconciled
+table (30 items, S1-S30, tier C/B/A) lives in this session's auditor transcript — condensed version
+with priority bands below; the merges applied: H1/H3 folded into S1 (same gap, wrong tier — H1/H3
+aren't `.ini`-gated width variants, they're the same lock-state-selected filters, fully reachable at
+the shipped default), `VisLockStateMachine` amplitude-gates row dropped (closed, residual folded into
+S1's note), narrow-further-narrowing + call (2)'s independently-found CHILL-retune merged into one
+item (S9) with the citation corrected to `CHILL::SetWidth`/`CFQC::SetWidth` (not `CPLL::SetWidth` —
+legacy's live default is Hilbert, PLL is AVT-only now).
+
+**Priority ranking (5 bands, every item placed):**
+
+- **Band 1 — must fix before Phase 2 starts** (S4 exception-swallowing catch, S2 unbounded memory
+  growth [corrected: 5 buffers, ~1.43GB/hr@11025/~5.7GB/hr@44100], S3 AFC/Slant chunk-timing
+  sensitivity [the only item with a MEASURED delta, ~1.75], S1 lock-dependent bandpass filter switch,
+  S28 Kaiser/Bessel branch [ships in the SAME change as S1 or S1's filter is built by the wrong design
+  branch]). Rationale: each either breaks outright under live capture, has its deferral premise
+  invalidated by Phase 2 specifically, or destroys the evidence needed to judge everything else.
+- **Band 2 — should fix during Phase 2 bring-up, before trusting new fixtures** (S5 VIS-bit-decode
+  detector rebuild-per-push, S16 AVT PLL clamped warmup window, S15 bounded search ceiling, S14
+  narrow-FSK fixed-offset commit, S6 locked-detector no-retune). Rationale: batch-vs-streaming
+  correctness, only "correct" today because the only caller is a test harness pushing whole buffers.
+- **Band 3 — worth doing eventually, bundle with the matching new golden-vector fixture** (S9 MN/MC
+  narrow retune, S8 mid-image narrow re-lock, S7 mid-image AVT re-lock, S17 AVT training-entry
+  restructure, S11 AVT PLL domain, S10 extended-VIS 7-bit, S12 sint2/sint3 freeze gating [sint1
+  already fixed], S13 m_Type demodulator toggle [code blocked on Phase-3 settings UI, but its missing
+  removed-features.md entry is Band-4 work now]). 6 of 8 land on mode families step 4 already plans to
+  capture fixtures for — fix when measured, not reasoned.
+- **Band 4 — documentation/test-only, near-zero cost, no DSP change** (S27 CQ100 removed-features.md
+  entry + a stale code comment, S13's doc half, S29 odd-tap assert/guard, S30 add a decimation-tier
+  unit test, S21 record the already-measured tolerance rationale).
+- **Band 5 — not worth it / correctly blocked** (S18 per-channel TX gain, S19 CLVL peak-hold, S20
+  dead `m_agcfast` branch, S22 sint1/sint3 double-fire, S23 `m_ReqSave` [blocked on Phase 4], S24
+  `m_SyncRestart` toggle [blocked on Phase 3], S25 AVT case-8 dead code, S26 `MakeHilbert` unreachable
+  branch). Verified dead/no-effect/correctly-phase-blocked — do not touch.
+
+**5 bigger patterns found, most important first:**
+
+1. **The dominant one: "upfront buffer vs. real-time stream" is ONE architectural gap masquerading as
+   7 separate items** (S1, S2, S3, S5, S15, S16, and arguably S6) — this port processes a growing
+   buffer in bulk passes where legacy runs one continuous per-sample loop over persistent detector
+   state. That's 7 of 30 items, including 3 of 4 tier-C rows and the only measured defect.
+   **Recommendation: decide the streaming contract explicitly (persistent per-detector cursors + a
+   bounded ring buffer + one incremental pump) BEFORE writing individual fixes — most of Band 1/2
+   collapse into one design change with one test suite instead of seven patches that each get
+   revisited once Phase 2 lands anyway.**
+2. Filter-selection cluster (S1+S28+folded-H1/H3+folded-VisLockStateMachine-residual) is one fix, not
+   four — shipping S1 without S28 ships a filter built by the wrong design branch and looks correct
+   while being wrong.
+3. AVT (S7/S11/S16/S17) and MN/MC narrow (S8/S9/S14/S15) are mode-family holes, not 9 independent
+   bugs — each is one work package gated on the one fixture step 4 already plans to capture.
+4. Two missing `docs/removed-features.md` entries (S27 CQ100, S13 `m_Type` selector) are CLAUDE.md §2
+   process-rule debt, not DSP debt — one sitting, do alongside Band 1 regardless of code-fix ranking.
+5. **The evidence base is thin and it's fixable in parallel**: only S3 has a measured number; S21 is
+   measured-and-bounded; everything else in Bands 2-3 is reasoned, not measured. Starting golden-vector
+   capture (step 4) now, in parallel with Band 1 fixes, would let Bands 2-3 get re-ranked by
+   measurement instead of argument — directly settles S14/S9/S17/S7's self-described "unmeasured"
+   status.
+
+**One flagged, cheap pre-check before starting Band 1**: S28 (Kaiser/Bessel) is placed in Band 1
+purely on call (2)'s claim that H1/H3 use ≥21dB attenuation — never independently confirmed against
+`fir.cpp`. If H1/H3 also turn out to be 20dB (same as H2), S28 drops to Band 4. 5-minute check, worth
+doing before committing to Band 1's scope.
+
+**Status: task #9 (auditor verification) COMPLETE. Ready for user review before starting task #6
+(fixes). Session was auto-resumed via cron at ~01:35 2026-08-02 specifically to restart the auditor —
+that instruction is now fulfilled. Deliberately NOT starting Band 1 fixes autonomously: pattern 1
+above is a real architecture decision (the streaming-contract redesign), not a mechanical fix, and
+needs the user's own judgment call on scope before code gets written.**
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
