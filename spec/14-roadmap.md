@@ -1037,9 +1037,14 @@ Coverage note from the compiling pass: roadmap lines 293-326, 337-373, 377-426, 
 666-720, 825-873, 893-954 got lighter/no line-by-line coverage — sent to the auditor as ranges to
 specifically re-check for missed items.
 
-**Status: auditor verification pass launched, not yet returned. Session paused here — resuming
-~01:35 (2026-08-02) per user instruction. Do not start step 3 (fixes) until the auditor's revised
-table + priority ranking is back and reviewed.**
+**Status: auditor verification pass was launched, then deliberately STOPPED by user before returning
+(risk of hitting the session/token limit given the scope asked of it: full-file re-verification +
+gap search over under-covered ranges + a full must-fix-to-nice-to-have ranking, all in one shot).
+No usable output was produced — do not treat the inventory table above as verified. Session paused
+here — resuming ~01:35 (2026-08-02) per user instruction. Next step on resume: re-run the auditor
+verification with a narrower scope (e.g. split into 2-3 smaller calls instead of one large one) rather
+than assuming the first attempt's scope was right. Do not start step 3 (fixes) until a verification
+pass actually completes and is reviewed.**
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
