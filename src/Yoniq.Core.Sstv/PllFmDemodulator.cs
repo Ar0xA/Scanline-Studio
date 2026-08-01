@@ -8,6 +8,13 @@ namespace Yoniq.Core.Sstv;
 /// cutoffs, same AGC formula) rather than an invented technique — see CLAUDE.md's "port first,
 /// invent second" rule for DSP/codec math.
 ///
+/// No longer this port's main picture-decode demodulator (<c>AnalogFmSstvDecoder</c> uses
+/// <see cref="HilbertFmDemodulator"/> for that, matching legacy's real compiled-in default,
+/// <c>m_Type=2</c>) — but still genuinely load-bearing, not vestigial: a dedicated instance drives
+/// AVT training-lock detection (<see cref="AvtTrainingLockStateMachine"/>), matching legacy's own
+/// real behavior of always using PLL there regardless of which demodulator handles the picture
+/// stream (`sstv.cpp:2129/2159/2169/2187/2222`, all outside the `m_Type`-dispatched switch).
+///
 /// Legacy returns <c>outLPF.Do(m_out) * 32768 * vcogain</c> — an MMSSTV-internal scale. This port
 /// instead converts the loop's normalized frequency-deviation output back to Hz
 /// (<c>centerFrequencyHz - normalizedOutput * bandwidthHz</c>), since that's what this decoder's

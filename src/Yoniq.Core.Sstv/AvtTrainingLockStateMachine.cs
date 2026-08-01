@@ -3,19 +3,23 @@ namespace Yoniq.Core.Sstv;
 /// <summary>
 /// Direct port of legacy's AVT training-sequence lock (`sstv.cpp`'s <c>CSSTVDEM::Do</c>,
 /// <c>m_SyncMode</c> cases 4/5/6/7, `sstv.cpp:2155-2233`) -- decodes the 32-block shift-register
-/// counter AVT's own header transmits (<see cref="VisHeader.GenerateAvtSegments"/>) using the same
-/// PLL demodulator this port already runs continuously (fed via <see cref="AnalogFmSstvDecoder"/>'s
-/// existing demodulated-frequency buffer -- confirmed by direct measurement that this port's PLL,
-/// now matching legacy's own real 1500-2300Hz band exactly (piece 9 narrowed it from an earlier,
-/// wider 1100-2300Hz once VIS-bit decode stopped depending on this same demodulator, see
-/// spec/14-roadmap.md's "Piece 9" entry), settles cleanly within the tight acceptance bands cases
-/// 4/5/6 need, even within a single 9.7646ms bit window: re-measured at the narrowed band, steady-
-/// state ripple is ~9.0Hz for the bit-1 tone (1600Hz) and ~2.3Hz for bit-0 (2200Hz), both landing
-/// with a solid ~100Hz margin against case 6's threshold (`BitOneMaxHz`/`BitZeroMinHz`, +/-8000/
-/// 40.96 either side of 1900Hz) -- comfortably wider than the ripple either way, and
+/// counter AVT's own header transmits (<see cref="VisHeader.GenerateAvtSegments"/>) using
+/// <see cref="PllFmDemodulator"/> at legacy's own real 1500-2300Hz band (piece 9 narrowed it from an
+/// earlier, wider 1100-2300Hz once VIS-bit decode stopped depending on this same demodulator, see
+/// spec/14-roadmap.md's "Piece 9" entry) -- confirmed by direct measurement that PLL settles cleanly
+/// within the tight acceptance bands cases 4/5/6 need, even within a single 9.7646ms bit window:
+/// steady-state ripple is ~9.0Hz for the bit-1 tone (1600Hz) and ~2.3Hz for bit-0 (2200Hz), both
+/// landing with a solid ~100Hz margin against case 6's threshold (`BitOneMaxHz`/`BitZeroMinHz`,
+/// +/-8000/40.96 either side of 1900Hz) -- comfortably wider than the ripple either way, and
 /// <see cref="AvtTrainingLockStateMachineTests.FullTrainingSequence_CompletesWithinExpectedBudget"/>
-/// confirms a full 32-block sequence still locks correctly end to end at this band. No second PLL
-/// instance needed.
+/// confirms a full 32-block sequence still locks correctly end to end at this band.
+///
+/// **Dedicated `PllFmDemodulator` instance, not shared with the main picture-decode path** (a real
+/// wiring change from an earlier version of this class, made when the Hilbert demodulator piece
+/// landed): legacy's AVT lock calls (`sstv.cpp:2129/2159/2169/2187/2222`) always use PLL directly,
+/// independent of `CSSTVDEM::m_Type` -- true even now that <see cref="AnalogFmSstvDecoder"/>'s main
+/// picture path uses <see cref="HilbertFmDemodulator"/>. See <see cref="ProcessSample"/>'s own doc
+/// comment for the source citations and the caller's construction of this dedicated instance.
 ///
 /// Surprising finding from reading cases 4-8 in full, not assumed from a partial read: legacy's
 /// own case 8 (`sstv.cpp:2234-2239`) is dead code -- <c>m_SyncMode</c> is 8 on entry, so
@@ -84,12 +88,19 @@ internal sealed class AvtTrainingLockStateMachine
         _overallTimeoutCounter = MsToSamples(OverallTimeoutMarginMs + VisHeader.AvtTrainingSequenceDurationMs);
     }
 
-    /// <summary>Feeds one already-demodulated frequency (Hz) sample -- this class reuses
-    /// <see cref="AnalogFmSstvDecoder"/>'s existing continuously-running <see cref="PllFmDemodulator"/>
-    /// output rather than a second PLL instance, since both legacy's <c>m_pll</c> here and this
-    /// port's main decode path are the exact same demodulator (see class doc comment). Returns the
-    /// sample index (relative to the very first sample passed to this instance) at which the
-    /// overall timeout expired -- i.e. where line 0 begins -- or null if not yet done.</summary>
+    /// <summary>Feeds one already-demodulated frequency (Hz) sample -- caller-supplied, deliberately
+    /// NOT reused from <see cref="AnalogFmSstvDecoder"/>'s main picture-decode demodulator output.
+    /// Legacy's AVT lock state machine (`sstv.cpp:2129/2159/2169/2187/2222`) always calls
+    /// <c>m_pll.Do(ad)</c> directly, regardless of <c>CSSTVDEM::m_Type</c> -- every one of those call
+    /// sites sits outside the <c>m_Type</c>-dispatched switch the main picture demodulation goes
+    /// through (`sstv.cpp:2255-2269`). Legacy always uses PLL for AVT lock detection even when
+    /// Hilbert (or zero-crossing) is the active picture demodulator. Before the Hilbert demodulator
+    /// piece, this class's own caller reused the shared main-path stream on the (then-true, now-false)
+    /// premise that both were literally the same demodulator; the caller now feeds this method from a
+    /// dedicated <see cref="PllFmDemodulator"/> instance instead, matching legacy's real
+    /// dual-demodulator structure. Returns the sample index (relative to the very first sample passed
+    /// to this instance) at which the overall timeout expired -- i.e. where line 0 begins -- or null
+    /// if not yet done.</summary>
     public int? ProcessSample(double demodulatedHz)
     {
         var currentSample = _sampleCounter++;
