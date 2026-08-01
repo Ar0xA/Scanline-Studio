@@ -5,8 +5,14 @@ namespace Yoniq.Core.Sstv;
 
 /// <summary>
 /// Generic decoder counterpart to <see cref="AnalogFmSstvEncoder"/>, using a ported
-/// <see cref="PllFmDemodulator"/> (see that type's doc comment) run continuously over the incoming
-/// sample stream. Once VIS reveals the mode, per-line decoding is delegated to a
+/// <see cref="HilbertFmDemodulator"/> (see that type's doc comment) run continuously over the
+/// incoming sample stream for the main picture demodulation -- legacy's real compiled-in default
+/// (`m_Type=2`, `sstv.cpp:1492`), not the PLL this port used before the Hilbert demodulator piece.
+/// <see cref="PllFmDemodulator"/> stays genuinely in use, just no longer for the picture stream: a
+/// dedicated instance still drives AVT training-lock detection (see
+/// <see cref="AvtTrainingLockStateMachine"/>'s own doc comment for why legacy always uses PLL there
+/// regardless of the picture demodulator's own `m_Type`). Once VIS reveals the mode, per-line
+/// decoding is delegated to a
 /// <see cref="IScanlineDecoder"/> selected via <see cref="ScanlineCodecFactory"/> — the decoder
 /// can't know the family upfront the way the encoder does, since VIS detection is itself part of
 /// this shared, family-agnostic shell.
@@ -41,6 +47,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // continuously regardless, a further simplification. Previously 1100-2300Hz, a stale artifact of
     // an earlier design where VIS-bit decode read this same PLL's demodulated-frequency stream --
     // narrowed to the real band once that dependency was removed (spec/14-roadmap.md's "Piece 9").
+    //
+    // Piece: Hilbert demodulator port -- these constants now scope ONLY the AVT-dedicated
+    // PllFmDemodulator instance (_avtPllDemodulator), not the main picture path, which uses
+    // HilbertFmDemodulator's own fixed-width config instead (see that class's own doc comment).
     private const double DemodulatorLowHz = 1500;
     private const double DemodulatorHighHz = 2300;
 
@@ -60,7 +70,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly int _sampleRate;
     private readonly List<double> _demodulatedFrequencies = [];
     private readonly List<float> _rawSamples = [];
-    private readonly PllFmDemodulator _demodulator;
+    private readonly HilbertFmDemodulator _demodulator;
 
     private int _consumedSamples;
     private SstvModeDefinition? _mode;
@@ -80,7 +90,6 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // Opus plan-review before this piece was implemented).
     private SstvModeDefinition? _pendingAnchorCorrectionMode;
 
-    private ZeroCrossingFrequencyCounter? _afcFrequencyCounter;
     private AfcTracker? _afcTracker;
     private int _afcProcessedUpTo;
     private int _afcBoundSample; // see Commit -- never correct past this image's own generous nominal extent
@@ -170,6 +179,21 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // comment) -- once TryDecodeVisHeader identifies AVT from its VIS byte, resolution moves into
     // this multi-call pending phase instead of committing atomically with a fixed-duration skip,
     // since the training lock's completion point is data-dependent, not a fixed duration.
+    //
+    // Piece: Hilbert demodulator port. Legacy's AVT lock state machine (sstv.cpp:2129/2159/2169/
+    // 2187/2222) always calls m_pll.Do(ad) directly, regardless of CSSTVDEM::m_Type -- confirmed by
+    // reading every one of those call sites, all outside the m_Type-dispatched switch the main
+    // picture demodulation goes through (sstv.cpp:2255-2269). Legacy always uses PLL for AVT lock
+    // detection even when Hilbert (or zero-crossing) is the active picture demodulator. Before this
+    // piece, _demodulatedFrequencies (then PLL-sourced) was reused directly for AVT, justified on the
+    // (now-false) grounds that both paths were literally the same demodulator -- see
+    // AvtTrainingLockStateMachine's own doc comment. Now that the main picture path uses
+    // HilbertFmDemodulator, AVT needs its own independent PllFmDemodulator instance, fed the same raw
+    // samples, matching legacy's real dual-demodulator structure -- the exact "inferred one code path
+    // from a neighboring one" failure shape CLAUDE.md §4's Scottie incident warns about, caught by
+    // auditor plan-review before this was wired in.
+    private PllFmDemodulator? _avtPllDemodulator;
+    private bool _avtPllWarmedUp;
     private bool _avtTrainingPending;
     private AvtTrainingLockStateMachine? _avtTrainingLock;
     private int _avtTrainingOriginSample;
@@ -191,7 +215,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     public AnalogFmSstvDecoder(int sampleRate = 11025)
     {
         _sampleRate = sampleRate;
-        _demodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz);
+        _demodulator = new HilbertFmDemodulator(sampleRate);
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _syncBypass1900Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
@@ -430,13 +454,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _pixels = null;
         _nextLine = 0;
 
-        _afcFrequencyCounter = null;
         _afcTracker = null;
         _syncEnvelopeDetector = null;
         _slantTracker = null;
 
         _avtTrainingPending = false;
         _avtTrainingLock = null;
+        _avtPllDemodulator = null;
 
         _syncBypass1Tracker.Reset();
         _syncBypass1PrimaryHeld = false;
@@ -1040,6 +1064,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             lineCount,
             n => detector.ProcessSample(AgcSampleAt(origin + n)));
 
+        // Piece: Hilbert demodulator port -- Main.cpp:3794's Hilbert-specific term,
+        // `if (dp->m_Type == 2) n -= dp->m_hill.m_htap/4;`, applied to legacy's own `n` (a PHASE,
+        // per SyncAnchorCorrector's own doc comment on the sign derivation this class already
+        // established: the correction to a SAMPLE-CURSOR variable is `-n`, the OPPOSITE sign of
+        // legacy's literal `n`). Legacy's term makes `n` MORE NEGATIVE, so by that same established
+        // sign flip the correction here is INCREASED (added, not subtracted) -- confirmed two
+        // independent ways during plan-review (algebraic substitution into the `-n` relationship, and
+        // a physical cross-check: the Hilbert path delays the picture stream by ~htap samples
+        // relative to the sync envelope this fold tracks, so the picture arrives later and the anchor
+        // must move later too). Unconditional here, unlike legacy's `m_Type==2` check -- this port's
+        // main picture path is always HilbertFmDemodulator now, no PLL/Hilbert branching needed.
+        delta += _demodulator.HalfTap / 4;
+
         // Legacy's own equivalent of a negative result is DrawSSTVNormal skipping samples whose
         // phase is still negative (`if (n<0) continue`, Main.cpp:4146) rather than reading earlier
         // samples that were never buffered. Clamping to 0 here is the direct equivalent for a
@@ -1437,14 +1474,40 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _avtTrainingLock = new AvtTrainingLockStateMachine(_sampleRate);
         _avtTrainingProcessedUpTo = _avtTrainingOriginSample;
         _avtTrainingPending = true;
+        _avtPllDemodulator = new PllFmDemodulator(_sampleRate, DemodulatorLowHz, DemodulatorHighHz);
+        _avtPllWarmedUp = false;
+
         return TryResolveAvtTraining();
     }
 
     private bool TryResolveAvtTraining()
     {
-        while (_avtTrainingProcessedUpTo < _demodulatedFrequencies.Count)
+        // Fresh PllFmDemodulator instance -- unlike legacy's continuously-running m_pll, this starts
+        // cold with no filter history. Warm it up on real, already-buffered raw samples before origin
+        // (mirroring TryResolveSyncAnchorCorrection's own established technique for the identical
+        // fresh-detector-vs-continuous-legacy-filter gap, clamped 2000-sample warm-up) -- AVT's own
+        // training origin is always well past 1835ms+ of real preceding audio, so this is comfortably
+        // available in practice. Deferred here (not done eagerly in TryStartAvtTraining) and gated on
+        // _avtTrainingOriginSample itself being fully buffered -- a real bug caught by the full test
+        // suite immediately after wiring this in ("test early, test often"): a streaming/chunked
+        // PushSamples caller can invoke TryStartAvtTraining before _rawSamples has grown as far as
+        // _avtTrainingOriginSample yet, so warming up eagerly there indexed past the end of the
+        // buffer. Runs exactly once per training attempt, whenever enough data first exists.
+        if (!_avtPllWarmedUp && _rawSamples.Count >= _avtTrainingOriginSample)
         {
-            var completedAt = _avtTrainingLock!.ProcessSample(_demodulatedFrequencies[_avtTrainingProcessedUpTo]);
+            var warmupSamples = Math.Min(_avtTrainingOriginSample, 2000);
+            for (var w = _avtTrainingOriginSample - warmupSamples; w < _avtTrainingOriginSample; w++)
+            {
+                _avtPllDemodulator!.ProcessSample(_rawSamples[w] * 32768.0);
+            }
+
+            _avtPllWarmedUp = true;
+        }
+
+        while (_avtTrainingProcessedUpTo < _rawSamples.Count)
+        {
+            var avtDemodulatedHz = _avtPllDemodulator!.ProcessSample(_rawSamples[_avtTrainingProcessedUpTo] * 32768.0);
+            var completedAt = _avtTrainingLock!.ProcessSample(avtDemodulatedHz);
             _avtTrainingProcessedUpTo++;
 
             if (completedAt is not null)
@@ -1471,6 +1534,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // narrow family (NARROW_SYNC=1900/NARROW_AFCLOW=1800/NARROW_AFCHIGH=1950/NARROW_BWH=128 vs.
     // normal 1200/1000/1325/400); AFCB/AFCW timing switches on a different, overlapping grouping
     // (SstvModeRegistry.IsFastAfcGroup) -- see AfcTracker's doc comment for both.
+    //
+    // Piece: Hilbert demodulator port -- no longer constructs a ZeroCrossingFrequencyCounter here.
+    // Legacy's real AFC source depends on m_Type (sstv.cpp:2255-2269): case 0/PLL feeds SyncFreq from
+    // m_fqc.Do(...) (the zero-crossing counter, independent of the picture demodulator's own output);
+    // cases 1/2 (zero-crossing/Hilbert) feed SyncFreq from the SAME `d` already used for the picture
+    // stream. This port's main picture path is now HilbertFmDemodulator (case 2's real shape), so AFC
+    // now reads directly from the already-demodulated buffer instead -- see ApplyAfcCorrections.
     private void InitializeAfc(SstvModeDefinition mode)
     {
         // Math.Max, not a bare assignment -- bug found by independent review. A mid-reception
@@ -1485,15 +1555,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
         if (mode == SstvModeRegistry.Avt)
         {
-            _afcFrequencyCounter = null;
             _afcTracker = null;
             return;
         }
 
         var isNarrow = mode.NarrowModeCode is not null;
-        _afcFrequencyCounter = new ZeroCrossingFrequencyCounter(_sampleRate);
-        _afcFrequencyCounter.SetWidth(isNarrow);
-
         var (syncTargetHz, bandLowHz, bandHighHz, bandwidthHalfHz) = isNarrow
             ? (1900.0, 1800.0, 1950.0, 128.0)
             : (1200.0, 1000.0, 1325.0, 400.0);
@@ -1503,13 +1569,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     }
 
     // Legacy applies AFC in the same single per-sample pass as the main demod ("if(m_Sync) d +=
-    // m_AFCDiff" right after m_pll.Do(...), sstv.cpp:2255-2270). This decoder demodulates samples
+    // m_AFCDiff" right after m_hill.Do(...), sstv.cpp:2255-2270 -- case 2/Hilbert, this port's real
+    // main-path demodulator as of the Hilbert demodulator port). This decoder demodulates samples
     // upfront (PushSamples), before mode detection can know whether/how AFC should apply to them --
     // so this instead corrects the already-demodulated buffer in place, in a separate pass, once the
     // mode (and therefore the AFC parameters) are known. This is a deferred, not an approximated,
-    // adaptation: the zero-crossing counter and AFC state machine below still see the exact same raw
-    // samples in the exact same order, one at a time, that legacy's own would have -- only the wall-
-    // clock timing of *when* that processing happens (relative to VIS decode) differs.
+    // adaptation: the AFC state machine below still sees the exact same already-demodulated values,
+    // in the exact same order, that legacy's own SyncFreq(d) call would have -- only the wall-clock
+    // timing of *when* that processing happens (relative to VIS decode) differs.
     //
     // Bounded by upperBoundSample AND _afcBoundSample, NOT _demodulatedFrequencies.Count: never
     // correct samples beyond this image's own generous nominal extent -- otherwise a single
@@ -1546,16 +1613,26 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var bound = Math.Min(Math.Min(_demodulatedFrequencies.Count, _afcBoundSample), upperBoundSample);
         for (; _afcProcessedUpTo < bound; _afcProcessedUpTo++)
         {
-            // Piece 7c: sstv.cpp:2258 (case 0/PLL -- the case this method's own doc comment cites as
-            // what it models) calls m_fqc.Do(...) *only inside* the `m_lvl.m_CurMax > 16` gate -- if
-            // the gate fails, legacy's frequency counter doesn't even see this sample, so this port's
-            // ZeroCrossingFrequencyCounter must skip ProcessSample entirely too, not just have its
-            // correction discarded afterward (`m_afc` itself is legacy's own always-on default,
-            // sstv.cpp:1471 -- no separate toggle to model; AVT's exclusion is already handled by
-            // _afcTracker staying null, see InitializeAfc).
+            // Piece: Hilbert demodulator port -- re-sourced from sstv.cpp:2265-2270 (case 2/Hilbert),
+            // not case 0/PLL as an earlier version of this method modeled (case 0 feeds SyncFreq from
+            // a SEPARATE zero-crossing counter, m_fqc.Do(...), independent of the picture
+            // demodulator's own output; case 2 feeds SyncFreq from the SAME `d` already used for the
+            // picture stream: `d = m_hill.Do(m_lvl.m_Cur); ...; SyncFreq(d);`). The `m_CurMax > 16`
+            // gate's own rationale differs from before too, though the CODE shape stays the same:
+            // under case 0 the gate wraps the frequency counter's own read; under case 2 the
+            // demodulator (HilbertFmDemodulator) already ran unconditionally as part of the main
+            // per-sample demodulation pass in PushSamples -- only feeding AfcTracker is gated here,
+            // matching legacy's real case-2 shape (`m_afc && m_CurMax>16 && mode!=AVT`, wrapping only
+            // the SyncFreq call, not the m_hill.Do() call before it). `m_afc` itself is legacy's own
+            // always-on default (sstv.cpp:1471 -- no separate toggle to model; AVT's exclusion is
+            // already handled by _afcTracker staying null, see InitializeAfc).
+            //
+            // Reads _demodulatedFrequencies BEFORE this same iteration's own correction is added to
+            // it below -- matching legacy's exact sequencing, where SyncFreq(d) is called with the
+            // pre-correction `d`, and `d += m_AFCDiff` happens afterward (sstv.cpp:2270).
             if (AgcCurMaxAt(_afcProcessedUpTo) > 16.0)
             {
-                var measuredFrequencyHz = _afcFrequencyCounter!.ProcessSample(_rawSamples[_afcProcessedUpTo]);
+                var measuredFrequencyHz = _demodulatedFrequencies[_afcProcessedUpTo];
                 var correctionHz = _afcTracker.ProcessSample(measuredFrequencyHz);
                 _demodulatedFrequencies[_afcProcessedUpTo] += correctionHz;
             }

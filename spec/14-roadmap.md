@@ -543,6 +543,180 @@ suite: 340/340 passing (327 + 13 new).
 
 **Piece 13 status: implemented, 340/340 passing.**
 
+## Hilbert demodulator (`CHILL`) scoping pass — investigation only, no code changed
+
+Follow-up to piece 10's flagged next step ("read `CHILL`'s real implementation and get an actual
+settling-time comparison before deciding whether to implement it"). Read `sstv.cpp:3005-3087`/
+`sstv.h:374-395` directly; no code written, no decision made on whether to implement — logged per
+CLAUDE.md §8 so this doesn't need re-deriving cold next time.
+
+**What `CHILL` is**: a Hilbert-transform-based instantaneous-phase (quadrature/arctan) FM
+discriminator — structurally unrelated to `PllFmDemodulator`. Feedforward, not closed-loop: a Hilbert
+FIR (`MakeHilbert`, Hamming-windowed sinc-difference -- corrected from an earlier misidentification as
+Hann; the real formula is `0.54 - 0.46*cos(2*pi*n/N)`, `fir.cpp:458`, not Hann's `0.5 - 0.5*cos(...)` --
+`fir.cpp:432`) produces a quadrature component,
+paired with the delayed real signal (delay = half the tap count) to form an analytic signal;
+`atan2(quadrature, delayedReal)` gives instantaneous phase; consecutive-sample phase difference
+(unwrapped to ±π, lag depends on a sample-rate-tiered decimation factor `m_df`) gives frequency; a
+final order-3/1800Hz Butterworth IIR smooths the result. No VCO, no loop filter, no lock-acquisition
+transient in the PLL sense.
+
+**Confirmed directly** (re-verified, not re-trusted from the earlier flag): `sstv.cpp:1492`'s
+`CSSTVDEM` constructor sets `m_Type = 2` — Hilbert really is legacy's compiled-in default (PLL=0,
+zero-crossing=1 are the non-default alternatives, `sstv.cpp:2256-2268`'s dispatch switch). It's a real
+user-facing setting (`Option.cpp`'s `RGDemType` radio group, `.ini` `DemType` key, `Main.cpp:1937`) —
+this port has no settings/UI layer yet to expose an equivalent toggle.
+
+**Settling-time comparison, partly measured directly (not guessed)**:
+- CHILL's FIR stage is a fixed-length window: legacy tiers tap count by sample rate (`SetWidth`,
+  `sstv.cpp:3022-3051`) — 12 taps below 16kHz `SampBase`, 24 up to 40kHz, 48 above. That's a
+  deterministic (no asymptotic tail) 13-sample transient at 11025Hz, 49 samples at 44100Hz.
+- CHILL's final smoothing IIR is the exact same filter design this port already has and trusts
+  (`IirFilter.Design` — already order-agnostic, confirmed by reading it, no new filter-design code
+  needed). Instantiated it with CHILL's real params (order 3, 1800Hz cutoff) in a throwaway test
+  (written, measured, then deleted — not committed) and measured its unit-step response directly:
+  **3 samples to 95-99% at 11025Hz, 14 samples at 44100Hz.**
+- Combined worst-case CHILL transient ≈ ~16 samples at 11025Hz, ~62 samples at 44100Hz — bounded and
+  monotonic, no overshoot below the target.
+- Against that: piece 10's own already-measured PLL number — undershoots BELOW the starting value
+  within ~5 samples, then recovers over 30+ samples. Open-ended feedback-loop dynamics, and actively
+  wrong-direction during recovery, not just slower.
+- **Honest caveat, not smoothed over**: RM12 at 44100Hz has only ~12.7 samples/pixel dwell time
+  (piece 10's own cited number) — shorter than CHILL's own 49-sample FIR window at that rate. CHILL
+  would not fully settle within one RM12 pixel either. It would very likely still beat PLL there
+  (bounded/monotonic vs. an active wrong-direction dip), but "Hilbert fixes RM12 outright" is not a
+  safe claim without actually simulating per-pixel error — window-length comparison alone doesn't
+  prove it, and this pass did not go that far.
+
+**Integration cost, now concrete rather than vague**:
+- AFC's `SyncFreq` call sites are already demodulator-agnostic in legacy (same call shape for all
+  three `m_Type` branches, `sstv.cpp:2256-2268`) — this port's existing `AfcTracker`/
+  `ApplyAfcCorrections` should accept a swap with no rework, just a different `d` source.
+- A previously-just-flagged gap is now pinned down exactly: `Main.cpp:3794`/`5528` apply an extra
+  `n -= dp->m_hill.m_htap/4` sync-anchor correction specific to Hilbert's own group delay, on top of
+  the anchor correction piece 8's `SyncAnchorCorrector` already ports for the PLL case. Real, small,
+  additive follow-on work if this gets implemented — not blocking, but not free either.
+- The final smoothing-IIR stage needs zero new filter-design code (existing `IirFilter` already
+  covers it, order 3 included). The Hilbert coefficient generator (`MakeHilbert`) and a tap-delay
+  line (`DoFIR` — no equivalent utility exists anywhere in this port yet, checked) would be genuinely
+  new, but small and mechanical (~40-50 lines combined).
+- This replaces the demodulator for ALL modes, not just narrow ones — a full test-suite regression
+  risk (golden-vector + round-trip, all 43 modes), not a scoped one like pieces 10-12 were.
+
+**Sizing**: medium, self-contained piece, comparable to piece 8 or 9 — new demodulator class, a small
+`SyncAnchorCorrector` addition, one construction-site swap in `AnalogFmSstvDecoder`, and a full-suite
+re-run. Real but not slam-dunk case for closing the narrow-pitch gap (see the RM12 caveat above).
+
+**Status: scoped, not decided.** User's call (2026-08-01): log findings, no decision yet on whether to
+implement — revisit later, alongside or after Windows CI per the existing sequencing note.
+
+**QSSTV cross-check (secondary reference, not authoritative per CLAUDE.md precedence) — worth noting
+for whenever this is picked back up.** Checked `QSSTV-main/src/dsp/filter.cpp:184-229`
+(`filter::processFIRDemod`) and `QSSTV-main/src/sstv/` for how QSSTV's own SSTV video demodulator
+works: **no PLL anywhere in its SSTV/DSP code** (confirmed by grep across `src/dsp/` and `src/sstv/`,
+excluding the unrelated DRM module). QSSTV mixes the input to baseband I/Q via an NCO, FIR-filters
+both channels (**181 taps**, `VIDEOFIRNUMTAPS`, centered 1900Hz — far longer/sharper than `CHILL`'s
+12-48 tap Hilbert filter), then does a delay-and-conjugate-multiply + `atan2` between consecutive I/Q
+samples for the phase-difference/frequency reading, plus a sanity clamp (500-2600Hz, holds previous
+value on violation) and a final FIR smoothing stage. Architecturally the same family as `CHILL` —
+instantaneous/feedforward phase-difference discrimination, no closed loop — just via NCO down-mixing
+instead of a wideband Hilbert transform on the passband signal directly.
+
+Two independently-developed SSTV decoders (legacy YONIQ's real default, and QSSTV) both landed on
+non-PLL discrimination for video decode — real corroborating evidence that the approach works in
+practice, tempering the "PLL is probably safer for noisy real-world reception" caution above somewhat.
+**But not without a caveat that matters if Hilbert ever gets implemented here**: QSSTV's 181-tap
+front-end FIR is doing substantial noise-rejection work before its memoryless discriminator runs —
+plausibly compensating for giving up PLL's loop-based noise integration with heavy front-end
+filtering instead, not because instantaneous discrimination is inherently noise-robust on its own.
+`CHILL` has no equivalent front-end weight. This connects directly to an already-flagged, still-unported
+gap in this codebase: legacy's real pre-AGC/pre-demodulator bandpass filter chain (`sstv.cpp:1824-1833`,
+logged elsewhere in this file). If Hilbert is implemented without also addressing that gap, real-world
+noise robustness may not match either legacy's own Hilbert path or QSSTV's — worth treating that filter
+chain as more load-bearing than it looked in isolation, not assumed away.
+
+## Piece 14 — Hilbert demodulator (`CHILL`) port, implemented
+
+Follow-up to the scoping pass above. Two rounds of auditor plan-review (soft-3-round backstop; round 2
+verdict said round 3 wasn't needed), then implementation, then a real before/after measurement across
+all 43 modes plus both golden-vector real-audio fixtures.
+
+**Plan-review round 1 found 4 real blockers** in the first draft (all independently re-verified against
+source before accepting): missing `m_OFF`/`m_OUT` per-tier multipliers (`sstv.cpp:3032-3047` — a 4x
+error at 44100Hz, existing specifically to cancel the `2^df` phase-lag scaling); no output-domain spec
+at all (legacy's scaled value is `(1900-f)*32768/800`, confirmed three ways, and the final smoothing
+IIR filters THIS scaled value directly, not Hz — filtering in Hz first would give the filter a false
+0Hz cold-start instead of the correct 1900Hz one, reproducing exactly the settling problem this piece
+exists to fix); AFC re-sourcing (legacy's PLL branch feeds AFC from a *separate* zero-crossing counter,
+but Hilbert's branch feeds AFC from its own output — this port's existing AFC modeled the PLL branch
+specifically, would have kept modeling the wrong branch after the swap); `DoFIR`'s impulse response is
+the REVERSED coefficient array (newest sample at the last buffer index), which a "natural" forward
+convolution would silently get backwards, compounding with `MakeHilbert`'s own antisymmetry into a
+sign error that could cancel invisibly in a self-consistency test while still being wrong.
+
+**User decided to bundle the AFC re-sourcing into this piece's scope** (not defer it).
+
+**Round 2 re-verified every round-1 fix from source independently** (not from round 1's own summary)
+and confirmed all four correct, with MORE supporting evidence than round 1 found for two of them (the
+output-domain derivation, and the fixed-width-simplification precedent). It also found ONE genuinely
+new blocker: **legacy's AVT training-lock state machine always calls `m_pll.Do(ad)` directly**
+(`sstv.cpp:2129/2159/2169/2187/2222`), completely outside the `m_Type`-dispatched picture-demodulation
+switch — legacy always uses PLL for AVT lock detection regardless of which demodulator handles the
+picture stream. This port's `AvtTrainingLockStateMachine` previously reused the main decode path's
+stream on the explicit (soon-to-be-false) premise that "both legacy's `m_pll` here and this port's main
+decode path are the exact same demodulator" — exactly the "inferred one code path from a neighboring
+one" failure shape CLAUDE.md §4's Scottie incident warns about, caught before any code was wrong.
+**User decided: keep a dedicated `PllFmDemodulator` instance feeding AVT**, matching legacy's real
+dual-demodulator structure, rather than accepting the divergence. Two smaller paper fixes also applied:
+both `MakeHilbert` buffers are `tap+1` elements, not `tap` (`sstv.h:380/381`, inclusive loop bounds);
+the `m_df` warm-up assertions can't hold on the whole assembled class (FIR fill + IIR settling sit on
+top of the phase-diff stage), so they're tested against the phase-diff logic in isolation instead.
+
+**Implementation**: new `HilbertFmDemodulator` (`src/Yoniq.Core.Sstv/`) — a literal port of `CHILL`,
+with `MakeHilbert`/`DoFir`/`ComputePhaseDifference` each extracted as independently-testable
+`internal static` methods (mirroring legacy's own free-function shapes) specifically so the riskiest
+details (reversed-kernel indexing, `2^df` lag/warm-up counts) could be tested in isolation before
+wiring. `AnalogFmSstvDecoder`'s main picture-decode demodulator swapped from `PllFmDemodulator` to
+this class; `ApplyAfcCorrections`/`InitializeAfc` re-sourced from `_demodulatedFrequencies` directly
+(no more `ZeroCrossingFrequencyCounter` in the mainline path); `AvtTrainingLockStateMachine` now fed by
+a dedicated `PllFmDemodulator` instance (warmed up on real preceding audio, mirroring
+`TryResolveSyncAnchorCorrection`'s own established technique); `SyncAnchorCorrector`'s caller adds the
+`+htap/4`-samples term (sign independently confirmed two ways during review: algebraic substitution
+into this port's already-established `-n` sign-flip convention, and a physical cross-check that the
+Hilbert path delays the picture stream relative to the sync envelope this fold tracks). Both
+`PllFmDemodulator` and `ZeroCrossingFrequencyCounter` stay in the codebase, genuinely used (AVT and
+their own dedicated test suites respectively) — no `docs/removed-features.md` entries needed.
+
+**A real bug caught by "test early, test often," not by review**: the AVT warm-up loop originally ran
+eagerly in `TryStartAvtTraining`, unconditionally reading raw samples up to `_avtTrainingOriginSample`
+-- `ArgumentOutOfRangeException` on the very first full-suite run, because a chunked/streaming
+`PushSamples` caller can invoke `TryStartAvtTraining` before the buffer has actually grown that far.
+Fixed by deferring the warm-up into `TryResolveAvtTraining`, gated on the origin point being fully
+buffered, running exactly once whenever that becomes true.
+
+**Full before/after measurement, all 43 modes + both golden-vector real-audio fixtures (measured
+directly via a temporary diagnostic added to each test file, then removed -- not assumed, not
+estimated): 43 of 45 measurements improved, 2 worsened.** The 2 that worsened are RM8 (1.766→2.065)
+and RM12 (1.439→1.670) — exactly the narrow-pitch modes the original Piece 10 finding and the scoping
+pass's own caveat both flagged as marginal (RM12's ~12.7 samples/pixel dwell time at 44100Hz is shorter
+than `CHILL`'s own 49-sample FIR window there, so it can't fully settle within one pixel either). Both
+worsenings are small and stay comfortably inside the existing flat 10.0 tolerance. Every other mode
+improved, typically by 0.6-1.9 points (avg/max-per-channel delta). Golden-vector real-audio fixtures
+also improved: martin-m1 1.438→1.312, robot-36 14.809→14.307 (`GoldenVectorTests.cs`'s own tolerance
+comment updated with these numbers). No tolerance values needed to change anywhere in the suite.
+
+**Tests**: `HilbertFmDemodulatorTests` (23 tests) — `MakeHilbert` coefficients checked against
+independently-computed (Python, not derived from or captured against the C# implementation) fixture
+values plus a structural antisymmetry check; `DoFir`'s reversed-kernel impulse response;
+`ComputePhaseDifference`'s `2^df` lag and warm-up counts in isolation; settled-tone output at 1500/
+1900/2300Hz (not just the center frequency, which can't catch a sign inversion); an exact-zero-real-
+component case (confirmed to correctly read 0Hz, not the center frequency -- a genuinely non-oscillating
+signal has no instantaneous frequency to report, a distinction an earlier draft of this test itself
+got wrong before the code). Full suite: 363/363 passing.
+
+**Status: implemented, committed.** Bandpass-filter-chain follow-up (the QSSTV-cross-check item above)
+remains logged as a separate, deliberately deferred piece, not bundled here per user instruction.
+
 **Demo:** a console/test harness encodes a test image to a `.wav`, decodes it back, and the round-trip image matches within tolerance — provable before any UI exists.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)

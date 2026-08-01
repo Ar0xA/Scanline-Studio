@@ -19,17 +19,27 @@ tests for every DSP change, small reviewable commits, ask before pushing to orig
   literal port of `CSSTVDEM::DecodeFSK`'s real 5-phase state machine (new `NarrowFskHeaderDecoder`
   class + 13 isolated unit tests). Two rounds of auditor plan-review, both caught real issues before
   code was written. Commit `469e44f`.
+- **Piece 14**: Hilbert demodulator (`CHILL`) port — new `HilbertFmDemodulator` replaces
+  `PllFmDemodulator` as this port's main picture-decode demodulator, matching legacy's real compiled-in
+  default (`m_Type=2`). Bundled AFC re-sourcing (legacy's PLL/Hilbert branches feed AFC differently) and
+  a second scope expansion: AVT training lock always uses PLL in legacy regardless of the picture
+  demodulator, so it now gets its own dedicated `PllFmDemodulator` instance. Two rounds of auditor
+  plan-review (4 blockers round 1, 1 new blocker + 2 small fixes round 2, all independently
+  re-verified). Full before/after measurement across all 43 modes + both golden-vector fixtures: 43/45
+  improved, only RM8/RM12 worsened slightly (the exact narrow-pitch modes already flagged as marginal
+  in the scoping pass) — both stay well inside existing tolerances, none needed changing. 23 new
+  isolated unit tests. Not yet committed as of this brief.
 
-All committed and pushed through Piece 13 (`469e44f`), 340/340 tests passing.
+All committed and pushed through Piece 13 (`469e44f`), 340/340 tests passing. Piece 14 implemented and
+passing (363/363) but **uncommitted** as of this brief.
 
-## Other open items (after piece 13)
-- **Hilbert demodulator (`CHILL`) research/scoping pass** — legacy's real shipped default demodulator
-  is Hilbert, not PLL (`sstv.cpp:1492`/`2256`); this port only has PLL. Empirically measured to cause
-  small golden-vector delta increases via slow/undershooting PLL settling on narrow-pitch modes (piece
-  10's finding). Not committing to implementing Hilbert yet — read `CHILL`'s real implementation in
-  `sstv.cpp`, get an actual settling-time comparison, scope the size of the piece.
+## Other open items (after piece 14)
+- **Pre-AGC/pre-demodulator bandpass filter chain** (`sstv.cpp:1824-1833`) — deliberately deferred out
+  of Piece 14's scope per user instruction ("Hilbert first, filter chain after"). QSSTV cross-check
+  (spec/14-roadmap.md's scoping-pass section) suggests this matters more for real-world noise
+  robustness than `HilbertFmDemodulator` alone provides — not started.
 - **Windows CI** — `windows-latest` fails as of the Engine 0-6 push, not investigated. User (2026-07-31):
-  do this after piece 13 and the Hilbert scoping pass, not before, but "shouldn't wait too long either."
+  do this after the Hilbert work, not before, but "shouldn't wait too long either."
 
 ## Working methodology (established across this project)
 - Legacy is ground truth — verify against `yoniq-old/YONIQ-main/` source directly, no assumptions.
