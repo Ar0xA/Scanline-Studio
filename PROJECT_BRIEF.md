@@ -19,11 +19,15 @@ three legs green each time. Full writeup: `spec/14-roadmap.md`, search "Windows 
 
 ## Next task: not yet chosen — candidates below, pick one to start a session on
 
-- **Sync-search + AFC state machine** (real DSP work, flagged in `spec/14-roadmap.md` Phase 1 line
-  ~48): root-caused, not yet started. This port's block-averaging pixel reconstruction needs ~4
-  samples/pixel to hit tolerance; legacy's real per-line sync-locked timing doesn't. Affects ~1/3 of
-  the mode table at the intended 11025Hz sample rate (currently masked by a 44100Hz stand-in). This is
-  the last known DSP-correctness gap in Phase 1.
+**Correction (2026-08-01): "sync-search + AFC state machine" is DONE, not a candidate.** A prior
+session's summary line in `spec/14-roadmap.md` Phase 1 (~line 48) called this "not yet started" and
+that stale line got quoted here and to the user before the rest of the roadmap (below that line) was
+read — AFC (`AfcTracker`), Auto Slant (`SlantTracker`), the full 7-piece VIS/preamble-lock state
+machine, and the actual root cause of the residual decode gap (a missing per-image sync-anchor
+re-correction, "piece 8"/`SyncAnchorCorrector`) are all ported, tested against real golden-vector
+legacy audio, and committed (`23b025a`→`8f87146`, predates piece 9). Both roadmap and this file are now
+corrected. There is no known open DSP-correctness gap in Phase 1.
+
 - **Phase 2 — Radio layer**: `IRadioController` reference implementation against a fake
   transport/protocol, then `rigctld` client mode ([[02-radio-layer]], [[04-rigctld]] in the roadmap).
   Natural next phase now that Phase 1's DSP/audio core is essentially complete (43/43 modes, filter
@@ -39,9 +43,19 @@ three legs green each time. Full writeup: `spec/14-roadmap.md`, search "Windows 
   source). Both quick, low-risk, no dependencies.
 
 ## Completed work (full narratives in `spec/14-roadmap.md`, search "Piece N" — that's the durable log)
-Pieces 8-13 (all committed, all green): Robot-36/Scottie sync fixes (piece 8), real VIS-bit dual-envelope
-tone race (piece 9), `GetPictureLevel` peak-picking (piece 10), horizontal pixel-pitch trim (piece 11),
-RM8/RM12 RX gain correction (piece 12), `DecodeFSK`'s real 5-phase FSK state machine (piece 13).
+Before piece numbering started: AFC (`AfcTracker`, direct port of `CSSTVDEM::SyncFreq`), Auto Slant
+(`SlantTracker`, clock-drift correction), and the full 7-piece VIS/preamble-lock state machine
+(`SyncIntervalTracker`/`VisLockStateMachine`/`AvtTrainingLockStateMachine`) — commit `8dbe790` onward.
+
+Piece 8 — **the actual root-caused fix for the Robot-36-at-11025Hz decode gap**: real golden-vector
+capture from a working legacy install exposed a 5x-worse-than-synthetic gap; investigation found a
+missing per-image sync-anchor re-correction (legacy's `SyncSSTV`/`m_wBgn` fold-and-argmax) — ported as
+`SyncAnchorCorrector`, plus a real Scottie-family wraparound bug caught and fixed along the way.
+Measured: Robot 36 68.06→9.95, Martin M1 11.78→2.40 average per-channel delta. Commits `23b025a`→`8f87146`.
+
+Pieces 9-13 (all committed, all green): real VIS-bit dual-envelope tone race (piece 9), `GetPictureLevel`
+peak-picking (piece 10), horizontal pixel-pitch trim (piece 11), RM8/RM12 RX gain correction (piece 12),
+`DecodeFSK`'s real 5-phase FSK state machine (piece 13).
 
 Recent filter-chain work (pieces 14/15/B + noise harness), just finished:
 - **Piece 14**: Hilbert demodulator (`CHILL`) replaces PLL as the main picture demodulator (legacy's
