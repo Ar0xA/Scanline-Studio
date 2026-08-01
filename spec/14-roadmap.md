@@ -870,6 +870,85 @@ scope being "the weakest filter legacy ever runs") turning out correct.
 baseline now exists to measure it against, decision on WHEN to build Piece B (now vs. after arranging a
 real TX/WebSDR capture too) not yet made.
 
+## Piece B — the Kaiser/search bandpass filter (`H2`), implemented and measured against baseline
+
+User's call: build Piece B now rather than waiting on a real TX/WebSDR capture. `SearchBandpassFilter`
+-- a literal port of `CSSTVDEM::Do`'s pre-AGC bandpass stage (`sstv.cpp:1826-1833`), scoped to ONLY
+legacy's `H2`/"search" width variant (`sstv.cpp:1522-1551`'s `CalcBPF`) per the earlier scoping
+discussion's adopted recommendation: the widest, most permissive of the three lock-state-selected
+variants, run continuously rather than gated by `m_Sync`/`m_SyncMode` (this port's upfront-buffer
+architecture has no real-time lock state available at the point legacy would switch filters). `H1`/`H3`
+and the lock-state switch itself deliberately not ported.
+
+**Scope confirmed narrower than `MakeFilter`'s full generality once traced**: `H2`'s parameters
+(400-2500Hz, attenuation 20) are identical across all three legacy width presets -- only tap count
+differs (24/64/96, scaled by sample rate) -- and this port's only reachable preset is the shipped
+default (Wide, confirmed `sstv.cpp:1416` and the `.ini` `DEMBPF` fallback, `Main.cpp:1855`). The
+Kaiser/Bessel branch of `MakeFilter` (`fir.cpp:346-427`) only activates at attenuation >=21dB; `H2` is
+always 20 -- provably unreachable for this filter, not an approximation, so not ported (matches piece
+14's `MakeHilbert` precedent of omitting a provably-unreachable branch).
+
+Chains onto piece 15's `FilteredRawSampleAt` output (`sstv.cpp:1824-1834`'s real order: 2-tap
+pre-filter -> `if(m_bpf) m_BPF.Do` -> AGC), applied at the same four consumption sites piece 15 already
+touches (`AgcSampleAt`, the main demod feed in `PushSamples`, both of AVT's dedicated-PLL call sites) via
+a new forward-fill cache (`BandpassFilteredSampleAt`, mirroring `AgcSampleAt`'s own established pattern).
+
+**Auditor plan-review, one round, found one load-bearing issue and one latent correctness gap, both
+independently re-verified against source before fixing**:
+- **Causal-vs-centered window (the important one).** `CFIR2::Do`'s real convolution (`fir.cpp:1131-1144`)
+  pairs `H[0]` with the NEWEST sample and walks backward -- a genuine, constant `tap/2`-sample group
+  delay (~1.09ms at every reachable rate, since tap scales with rate), not a centered window. `MakeFilter`'s
+  output kernel is symmetric by construction for this port's only reachable (even) tap counts, which rules
+  out a coefficient-REVERSAL sign risk (unlike `HilbertFmDemodulator`'s antisymmetric kernel) but does
+  NOT make causal-vs-centered alignment irrelevant: a centered window would pass a symmetry check, a
+  coefficient-fixture check, and a frequency-response check identically while silently shifting every
+  downstream sync/slant/line anchor by `tap/2` samples -- the exact "restructured-but-provably-equivalent"
+  failure shape CLAUDE.md §4's Scottie incident warns about. Reasoned explicitly, not assumed, why this
+  needs NO new sync-anchor correction term (unlike piece 14's Hilbert `+htap/4`): the filter sits upstream
+  of ALL four consumption sites uniformly, so the sync-envelope path and the picture-demod path see the
+  same new delay together -- no differential delay for `SyncAnchorCorrector`'s argmax search to be wrong
+  about. Defended primarily by an impulse-response test (`ProcessSample_ImpulseResponse_IsCausal_NotCentered`),
+  the only test shape that can distinguish causal from centered.
+- **Odd-tap symmetry claim was over-broad.** The mirroring loop in `MakeFilter` only writes `2*(tap/2)+1`
+  entries (integer division) -- for odd tap, the trailing coefficient is never written and stays
+  zero-init, genuinely asymmetric. This port's only reachable tap counts (24@11025Hz, 96@44100Hz) are
+  both even, so latent, not currently wrong -- ported to mirror legacy's EXACT loop bounds rather than
+  assume full-array coverage, and the symmetry test scoped explicitly to even tap only.
+
+**Performance regression found and fixed, not predicted (though flagged by the auditor as a possible
+follow-up if it happened): full suite went from ~3min baseline to 12min2s (387/387 still passing) after
+first wiring Piece B in.** Root cause, two compounding issues: (1) the original design was
+`ProcessSample(Func<int,double> filteredSampleAt, int index)`, recomputing the O(tap) convolution from
+scratch on every call with no cache, and multiple call sites frequently requesting the same index; (2)
+`Func<int,double>` delegate-call overhead, multiplied by up to 97 taps per convolution at 44100Hz. Fixed
+in two steps: a forward-fill cache alone brought a `SstvRoundTripTests` subset from timeout territory to
+6min57s for 41 tests -- still not enough -- so `SearchBandpassFilter` itself was redesigned from the
+stateless `Func`-based window lookup to a genuine streaming delay line (`ProcessSample(double input)`,
+`Array.Copy`-shift + dot-product), explicitly modeled on `HilbertFmDemodulator.DoFir`'s already-proven
+pattern. Full suite after the redesign: **387/387 passing, 4min44s** -- close to the pre-Piece-B baseline,
+the remaining difference being genuine new per-sample work, not overhead.
+
+**Noise-floor comparison against the established baseline (the actual acceptance criterion, per
+`NoiseRobustnessTests.cs`'s own stated test-plan item) -- meaningful improvement in both modes**:
+
+| Mode | Baseline (piece 15, no Piece B) | With Piece B | Improvement |
+|---|---|---|---|
+| martin-m1 | 9.0dB | 3.0dB | 6dB lower noise floor |
+| robot-36 | 16.0dB | 9.0dB | 7dB lower noise floor |
+
+Both modes now decode usably (average per-channel delta <= 30.0) at meaningfully worse SNR than before
+-- real, measured evidence the filter is worth its cost, not just legacy-parity-for-its-own-sake. This
+directly answers the auditor's own stated skepticism (the safe/H2-only scope being "the weakest filter
+legacy ever runs, may not deliver the benefit") with a measurement rather than more argument either way.
+
+**Tests**: `SearchBandpassFilterTests.cs`, 21 new tests (coefficient fixtures at two tap/rate
+combinations independently computed in Python, not derived from the C# implementation; the causal
+impulse-response test; an 8-point frequency-response sweep against independently-computed magnitudes).
+Full suite: 387/387 passing, 4min44s. `NoiseRobustnessTests.cs` re-run: 2/2 passing, new noise floors
+recorded above.
+
+**Status: implemented, measured against baseline, not yet committed as of this entry.**
+
 **Demo:** a console/test harness encodes a test image to a `.wav`, decodes it back, and the round-trip image matches within tolerance — provable before any UI exists.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)

@@ -48,17 +48,32 @@ tests for every DSP change, small reviewable commits, ask before pushing to orig
   pre-filter, no Kaiser bandpass yet)**: martin-m1 noise floor 9.0dB, robot-36 16.0dB. This is the real
   comparison target for the Kaiser bandpass filter (Piece B) — re-run once it exists and compare.
   Both committed together, commit `14b4144`.
+- **Piece B**: `SearchBandpassFilter` — literal port of `CSSTVDEM::Do`'s pre-AGC bandpass stage,
+  scoped to legacy's `H2`/"search" width variant only (widest/weakest preset, run continuously, no
+  lock-state gating — matches this port's upfront-buffer architecture). One auditor plan-review round
+  found the causal-vs-centered window distinction (load-bearing, no new sync-anchor correction needed
+  since applied uniformly to all 4 consumption sites) and an over-broad odd-tap symmetry claim (latent,
+  this port's tap counts are both even). Performance regression found and fixed after first wiring in:
+  full suite went 3min→12min2s with the original `Func<int,double>`-based design (delegate overhead +
+  redundant re-reads); redesigned to a genuine streaming delay line (matching
+  `HilbertFmDemodulator.DoFir`'s pattern) — back to 4min44s, 387/387 passing. **Noise-floor comparison
+  against the piece-15 baseline (the actual acceptance criterion) — real improvement**: martin-m1
+  9.0dB→3.0dB, robot-36 16.0dB→9.0dB (6-7dB lower noise floor, both meaningfully more noise-tolerant).
+  21 new unit tests. Full writeup: spec/14-roadmap.md "Piece B" section. **Not yet committed.**
 
 All committed and pushed through Piece 15 + the noise harness (`14b4144`), 366/366 tests passing.
+Piece B implemented and measured on top of that, not yet committed.
 
-## Other open items (after piece 15 + noise harness)
-- **Kaiser bandpass filter (Piece B)** — not started. Baseline noise floors now exist to measure it
-  against (martin-m1 9.0dB, robot-36 16.0dB). A real TX/WebSDR recapture remains a separately-weighed,
-  stronger-evidence option (would also double as a new golden-vector fixture) — bigger practical lift,
-  not yet arranged. **Decision point**: build Piece B now and measure against the synthetic baseline, or
-  wait for a real capture first.
+## Other open items (after Piece B)
+- **Commit Piece B** — implementation + tests done, measured against baseline, not yet committed/pushed.
+  Ask before pushing per usual.
+- **Real TX/WebSDR recapture** — still a separately-weighed, stronger-evidence option for noise
+  robustness (would also double as a new golden-vector fixture) — bigger practical lift, not yet
+  arranged. No longer blocking anything (Piece B already shipped/measured against the synthetic
+  baseline instead).
 - **Windows CI** — `windows-latest` fails as of the Engine 0-6 push, not investigated. User (2026-07-31):
-  do this after the Hilbert/filter-chain work, not before, but "shouldn't wait too long either."
+  do this after the Hilbert/filter-chain work, not before, but "shouldn't wait too long either." The
+  filter-chain work (Pieces 14/15/B) is now done — this is next up.
 
 ## Working methodology (established across this project)
 - Legacy is ground truth — verify against `yoniq-old/YONIQ-main/` source directly, no assumptions.
