@@ -951,6 +951,31 @@ recorded above.
 
 **Demo:** a console/test harness encodes a test image to a `.wav`, decodes it back, and the round-trip image matches within tolerance — provable before any UI exists.
 
+## Windows CI fix — `dotnet restore`/`build`/`test` failing since Engine 0-6, root cause found and fixed
+
+Not a DSP/port item — CI infrastructure, tracked here because it blocked seeing green Windows results
+for everything above. `windows-latest` had been failing since Engine 0-6 (2026-07-30); Linux/macOS legs
+were unaffected.
+
+**Root cause:** `.github/workflows/ci.yml`'s Windows-only `ilammy/msvc-dev-cmd@v1` step (added for
+`Yoniq.Core.Audio.MiniAudio`'s `BuildNativeShimWindows`/`cl.exe` target) sets `Platform=x64` as a
+job-level env var. MSBuild/`dotnet restore` implicitly reads ambient `Platform`/`Configuration` env vars
+as default property values, and `Yoniq.sln` only defines "Any CPU" solution configurations (no
+"Debug|x64") — so restore failed on every Windows run: `error MSB4126: The specified solution
+configuration "Debug|x64" is invalid.` Build/Test steps never ran. Confirmed via `gh run view <id>
+--log-failed` across several failing runs, all showing the identical Restore-step error.
+
+**Fix:** pass `/p:Platform="Any CPU"` explicitly on the `restore`/`build`/`test` steps, overriding the
+ambient env var. `cl.exe` itself is invoked via an `Exec` command in `BuildNativeShimWindows`, not
+through MSBuild's `$(Platform)` property, so it's unaffected by the override and still gets the
+x64 toolchain msvc-dev-cmd set up.
+
+**Verified against real CI runs, not just eyeballed:** two consecutive pushes both green on all three
+legs (`gh run watch <id>`) — Windows 5m25s / macOS 2m31s / Linux 3m51s on the first, Windows/macOS/Linux
+all passing again on the second. Commits `8be35b7` (fix), `761ef1a` (doc update).
+
+**Status: fixed and committed. Windows/Linux/macOS all green on `master`.**
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
