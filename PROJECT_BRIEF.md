@@ -9,27 +9,19 @@ Secondary reference QSSTV lives locally (gitignored) at `QSSTV-main/` — inspir
 Full rules: `CLAUDE.md` (short, read it). Key ones: port legacy DSP exactly (no invention), golden-vector/round-trip
 tests for every DSP change, small reviewable commits, ask before pushing to origin.
 
-## Next task: fix Windows CI (`windows-latest` failing since Engine 0-6, 2026-07-30)
+## Windows CI — fixed (2026-08-01), commit `8be35b7`
 
-**Root cause found (2026-08-01), not yet fixed.** `.github/workflows/ci.yml`'s Windows leg runs
-`ilammy/msvc-dev-cmd@v1` (added for `Yoniq.Core.Audio.MiniAudio`'s `BuildNativeShimWindows`/`cl.exe`
-target) BEFORE `dotnet restore Yoniq.sln`, same job. That action sets `Platform=x64` as a job-level env
-var (confirmed in the failing run's own env dump). MSBuild/`dotnet restore` implicitly reads ambient
-`Platform`/`Configuration` env vars as default property values — `Yoniq.sln` only has an "Any CPU"
-solution configuration (no "Debug|x64"), so restore fails:
-`error MSB4126: The specified solution configuration "Debug|x64" is invalid.`
-Build/Test steps never run — every Windows failure since Engine 0-6 shows this identical error at the
-Restore step (checked via `gh run view <id> --log-failed` across several runs), so this is very likely
-the sole root cause, not one of several.
+Root cause: `ilammy/msvc-dev-cmd@v1` (Windows leg only, needed for `Yoniq.Core.Audio.MiniAudio`'s
+`BuildNativeShimWindows`/`cl.exe` target) sets `Platform=x64` as a job-level env var. MSBuild/`dotnet
+restore` implicitly read that ambient var as a default property — `Yoniq.sln` only has "Any CPU"
+solution configs — so restore failed: `error MSB4126: The specified solution configuration
+"Debug|x64" is invalid.`
 
-**Likely fix, not yet applied or verified — pick the cleanest, then confirm against a real CI run
-(`gh run view <id> --log-failed`), don't just eyeball the YAML:**
-(a) pass `/p:Platform="Any CPU"` explicitly to the `dotnet restore`/`build`/`test` steps, overriding the
-ambient env var; or
-(b) unset `Platform` (and check `Configuration`) between the msvc-dev-cmd step and restore; or
-(c) scope `ilammy/msvc-dev-cmd` down so it only wraps the native-shim build target, not the whole job.
-
-Useful commands: `gh run list --branch master --limit 15`, `gh run view <id>`, `gh run view <id> --log-failed`.
+Fix: pass `/p:Platform="Any CPU"` explicitly on the `dotnet restore`/`build`/`test` steps in
+`.github/workflows/ci.yml`, overriding the ambient env var. `cl.exe` itself runs via an `Exec` command
+(not through MSBuild's `$(Platform)`), so it's unaffected by the override.
+**Verified against a real run**, not just eyeballed: all three legs green — macOS 2m31s, Windows
+5m25s, Linux 3m51s (`gh run watch 30717870027`).
 
 ## Backburnered (not blocking, come back to later)
 - **Real TX/WebSDR recapture** for noise-robustness evidence (would double as a new golden-vector
