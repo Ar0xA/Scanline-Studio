@@ -4,7 +4,7 @@
 # clone at yoniq-old/YONIQ-main/ for convenience during development; it is intentionally
 # gitignored, not tracked, per LICENSES.md.
 yoniq-old/
-
+QSSTV-main/
 # Local Claude Code settings — machine/session-specific, not shared project config.
 .claude/settings.local.json
 
