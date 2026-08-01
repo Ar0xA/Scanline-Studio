@@ -1037,8 +1037,9 @@ Coverage note from the compiling pass: roadmap lines 293-326, 337-373, 377-426, 
 666-720, 825-873, 893-954 got lighter/no line-by-line coverage — sent to the auditor as ranges to
 specifically re-check for missed items.
 
-**Status: calls (1) and (2) both done. Call (3) (priority ranking, merging both outputs) launched
-next. Do not start step 3/task #6 (fixes) until call (3) is back and reviewed.**
+**Status: calls (1) and (2) both done and logged above. Call (3) (reconcile + priority ranking,
+merging both outputs) launched, in progress as of this entry. Do not start step 3/task #6 (fixes)
+until call (3) is back and reviewed.**
 
 **Call (1) results — verify existing table row-by-row. Verdict: EQUIVALENT-WITH-RISKS — mostly
 accurate, but 1 row flat-out wrong, 1 stale-resolved, 2 stale/mis-attributed citations, 2 tier changes:**
