@@ -71,6 +71,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly List<double> _demodulatedFrequencies = [];
     private readonly List<float> _rawSamples = [];
     private readonly HilbertFmDemodulator _demodulator;
+    private readonly SearchBandpassFilter _searchBandpassFilter;
 
     private int _consumedSamples;
     private SstvModeDefinition? _mode;
@@ -212,10 +213,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly List<double> _agcCurMaxSamples = []; // LevelAgc.CurMax snapshotted at the same index -- see AgcCurMaxAt
     private int _levelAgcProcessedUpTo;
 
+    // Piece B: forward-fill cache for BandpassFilteredSampleAt, mirroring _agcSamples' own established
+    // pattern -- computed at most once per index regardless of call order between the several
+    // independent consumers that read this (AgcSampleAt, PushSamples' demodulator feed, both AVT
+    // sites). Added after measuring a real, not hypothetical, ~4x full-suite slowdown without it: the
+    // filter's O(tap) convolution (up to 97 taps at 44100Hz) was being recomputed from scratch on every
+    // call, including redundantly for the SAME index from multiple call sites.
+    private readonly List<double> _bandpassFilteredSamples = [];
+    private int _bandpassFilteredProcessedUpTo;
+
     public AnalogFmSstvDecoder(int sampleRate = 11025)
     {
         _sampleRate = sampleRate;
         _demodulator = new HilbertFmDemodulator(sampleRate);
+        _searchBandpassFilter = new SearchBandpassFilter(sampleRate);
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _syncBypass1900Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
@@ -235,14 +246,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // for whatever index it's currently at; the cache fills forward monotonically the first time any
     // of them reaches a new index.
     //
-    // Piece A: the `d` fed into m_lvl.Do here is legacy's real POST-2-tap-LPF value
-    // (sstv.cpp:1824-1825's `d=(s+m_ad)*0.5`, unconditional, not gated by m_bpf) -- FilteredRawSampleAt
-    // applies that filter before the existing AGC+scale+clip logic below, which was already correct.
+    // Piece A/B: the `d` fed into m_lvl.Do here is legacy's real POST-2-tap-LPF-POST-bandpass-filter
+    // value (sstv.cpp:1824-1834) -- BandpassFilteredSampleAt applies both filters before the existing
+    // AGC+scale+clip logic below, which was already correct.
     private double AgcSampleAt(int index)
     {
         for (; _levelAgcProcessedUpTo <= index; _levelAgcProcessedUpTo++)
         {
-            var scaled = FilteredRawSampleAt(_levelAgcProcessedUpTo) * 32768.0;
+            var scaled = BandpassFilteredSampleAt(_levelAgcProcessedUpTo) * 32768.0;
             _levelAgc.Do(scaled);
             _levelAgc.Fix();
             var ad = _levelAgc.Agc(scaled) * 32.0;
@@ -263,6 +274,28 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // rounding step legacy's real computation never has).
     private double FilteredRawSampleAt(int index) =>
         index > 0 ? ((double)_rawSamples[index] + _rawSamples[index - 1]) * 0.5 : _rawSamples[index] * 0.5;
+
+    // Piece: pre-AGC bandpass filter (search/H2 variant, run continuously -- see
+    // SearchBandpassFilter's own doc comment for the full scope decision and the causal-window/
+    // group-delay reasoning). Chains onto FilteredRawSampleAt exactly as legacy chains m_BPF.Do onto
+    // its own 2-tap LPF output (sstv.cpp:1824-1833), applied at the same 4 sites piece 15 already
+    // touches. Forward-fill CACHED, feeding SearchBandpassFilter's own streaming, one-sample-at-a-time
+    // API in strict index order (unlike FilteredRawSampleAt, which stays a cheap stateless
+    // recomputation) -- the O(tap) convolution (up to 97 taps at 44100Hz) is expensive enough that an
+    // earlier stateless-window-lookup version was measured to cause a real ~4x full-suite slowdown
+    // (delegate-call overhead plus redundant re-reads of overlapping windows from multiple call sites --
+    // AgcSampleAt, the main demodulator feed, both AVT sites -- that frequently request the SAME index).
+    // Mirrors _agcSamples' own established forward-fill pattern: computed at most once per index
+    // regardless of call order.
+    private double BandpassFilteredSampleAt(int index)
+    {
+        for (; _bandpassFilteredProcessedUpTo <= index; _bandpassFilteredProcessedUpTo++)
+        {
+            _bandpassFilteredSamples.Add(_searchBandpassFilter.ProcessSample(FilteredRawSampleAt(_bandpassFilteredProcessedUpTo)));
+        }
+
+        return _bandpassFilteredSamples[index];
+    }
 
     // sstv.cpp:2258/2263/2267's `m_lvl.m_CurMax > 16` AFC silence gate reads m_CurMax as of the exact
     // sample being processed at that moment in legacy's single real-time pass -- not "whatever
@@ -292,12 +325,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // int16-scaled input, this port's raw samples are float in [-1.0, 1.0]. Same bridge
             // AgcSampleAt already applies for LevelAgc.
             //
-            // Piece A: FilteredRawSampleAt (not span[i] directly) -- legacy's real demodulator input
-            // is m_Cur = d (sstv.cpp:1834/sstv.h:256-257), the POST-2-tap-LPF value, not the raw
-            // sample. Indexing by _rawSamples.Count-1 (not span[i]) correctly reaches into the
-            // previous chunk's last sample at a chunk boundary -- _rawSamples already has it, added
-            // on the line above this same iteration.
-            _demodulatedFrequencies.Add(_demodulator.ProcessSample(FilteredRawSampleAt(_rawSamples.Count - 1) * 32768.0));
+            // Piece A/B: BandpassFilteredSampleAt (not span[i] directly) -- legacy's real demodulator
+            // input is m_Cur = d (sstv.cpp:1834/sstv.h:256-257), the POST-2-tap-LPF-POST-bandpass-
+            // filter value, not the raw sample. Indexing by _rawSamples.Count-1 (not span[i]) correctly
+            // reaches into the previous chunk's last sample at a chunk boundary -- _rawSamples already
+            // has it, added on the line above this same iteration.
+            _demodulatedFrequencies.Add(_demodulator.ProcessSample(BandpassFilteredSampleAt(_rawSamples.Count - 1) * 32768.0));
         }
 
         TryProcessBuffer();
@@ -1519,20 +1552,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             var warmupSamples = Math.Min(_avtTrainingOriginSample, 2000);
             for (var w = _avtTrainingOriginSample - warmupSamples; w < _avtTrainingOriginSample; w++)
             {
-                _avtPllDemodulator!.ProcessSample(FilteredRawSampleAt(w) * 32768.0);
+                _avtPllDemodulator!.ProcessSample(BandpassFilteredSampleAt(w) * 32768.0);
             }
 
             _avtPllWarmedUp = true;
         }
 
-        // Piece A: FilteredRawSampleAt, not raw -- legacy's real AVT input is `ad` (sstv.cpp:1835,
-        // POST-2-tap-LPF, post-AGC, unscaled), a domain this port doesn't model at all (only "raw"
-        // and "AGC+x32+clip" exist here). Adding the LPF closes one of the two missing stages and is
-        // unambiguously closer to legacy; the AGC-domain gap stays exactly as already flagged and
-        // deferred from the Hilbert demodulator piece, not expanded into here.
+        // Piece A/B: BandpassFilteredSampleAt, not raw -- legacy's real AVT input is `ad` (sstv.cpp:1835,
+        // POST-2-tap-LPF-POST-bandpass-filter, post-AGC, unscaled), a domain this port doesn't model
+        // at all (only "raw" and "AGC+x32+clip" exist here). Adding both filters closes two of the
+        // three missing stages and is unambiguously closer to legacy; the AGC-domain gap stays exactly
+        // as already flagged and deferred from the Hilbert demodulator piece, not expanded into here.
         while (_avtTrainingProcessedUpTo < _rawSamples.Count)
         {
-            var avtDemodulatedHz = _avtPllDemodulator!.ProcessSample(FilteredRawSampleAt(_avtTrainingProcessedUpTo) * 32768.0);
+            var avtDemodulatedHz = _avtPllDemodulator!.ProcessSample(BandpassFilteredSampleAt(_avtTrainingProcessedUpTo) * 32768.0);
             var completedAt = _avtTrainingLock!.ProcessSample(avtDemodulatedHz);
             _avtTrainingProcessedUpTo++;
 
