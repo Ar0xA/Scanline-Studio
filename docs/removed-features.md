@@ -40,3 +40,9 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 - **Legacy**: `CkRsa.h`/`chilkatDefs.h` (Chilkat, commercial) and `frxClass.hpp`/`frxCrypt.hpp` (FastReport VCL, commercial, package `frx22`), referenced from `Option.h`.
 - **Investigation result**: no call sites for Chilkat types found anywhere in the source tree; FastReport is included but no `Tfrx*` components appear in `Option.cpp`/`Option.dfm`. Both appear to be unused, orphaned, or build-time-only dependencies with no observed runtime feature — see [LICENSES.md](../LICENSES.md) for the license reasoning.
 - **Impact**: assumed none, pending confirmation against a built legacy binary (tracked as an open item in [[spec/14-roadmap]]). If either turns out to back a real feature, this entry must be corrected and the feature re-scoped.
+
+## FSK callsign-ID packet (RX)
+
+- **Legacy**: `CSSTVDEM::DecodeFSK`'s modes 5–10 (`sstv.cpp:2465-2551`) — a distinct FSK-coded packet (STX `0x2a`, distinguishable from the mode-announce packet's `0x2d`) carrying a station callsign and optional numeric ID, decoded and surfaced via `m_fskcall`/`m_fskNRS` (referenced at `Main.cpp:3618`). TX side: `CSSTVMOD::OutputFSKID` (`Main.cpp:6904-6965`).
+- **Replacement**: none. `Yoniq.Core.Sstv.NarrowFskHeaderDecoder` (Piece 13, [[spec/14-roadmap]]) ports only modes 0–4/16/17/18 — the MN/MC narrow-mode-announce packet sharing the same guard-tone/start-bit/bit-sampling mechanism and mode-4 STX dispatch. A `0x2a` STX byte is treated identically to any other unrecognized value (reset, resume scanning) rather than routed to a callsign decode.
+- **Impact**: no RX support for legacy's FSK callsign-ID feature. Structurally independent from the mode-announce packet (own leader/guard tone, own TX call sites) — not a partial replacement of a feature this port needs elsewhere, a standalone capability gap.
