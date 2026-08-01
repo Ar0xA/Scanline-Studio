@@ -1067,6 +1067,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         return true;
     }
 
+    // Piece 13: replaces a prior proxy (averaged the shared PLL's demodulated-frequency stream over
+    // fixed windows against a midpoint threshold) with a literal port of legacy's real per-sample
+    // decoder, NarrowFskHeaderDecoder (CSSTVDEM::DecodeFSK, sstv.cpp:2378-2606) -- the same bug shape
+    // Piece 9 already fixed for VIS-bit decode. Two rounds of auditor plan-review verified the state
+    // machine itself line-by-line against source before this was written; see that class's own doc
+    // comment for the full state-transition derivation.
+    //
+    // Search ceiling mirrors TryDecodeVisDataBits' own (:1207-1212) for the same reason: an unbounded
+    // retry-on-reject scanner is by construction what this decoder is (every legacy failure path
+    // resumes scanning from mode 0), and an unbounded version was a real, reverted regression there.
+    // Narrow modes keep their existing _syncBypassNarrowTracker fallback (m_sint3) if this local,
+    // bounded scan misses a rare edge case. Ceiling = guard(100ms) + timeout(100ms) + start-bit(22ms)
+    // + 24 data bits' worth (24*22ms) + a 200ms retry margin, matching TryDecodeVisDataBits' own
+    // generous-but-local shape.
+    //
+    // Commit point: headerStart + the packet's fixed nominal duration (VisHeader.NarrowHeaderTotalDurationMs),
+    // NOT whatever sample NarrowFskHeaderDecoder happens to lock on -- confirmed by round-2 auditor
+    // review against TX's real placement (Main.cpp:7423-7424 puts image data at a fixed offset after
+    // the checksum bits, not at Start()'s slightly-earlier legacy firing point) and matching this
+    // method's own prior (buggy) behavior, which the currently-passing
+    // SstvRoundTripTests.NarrowModeHeader_IsDetected_ForMnFamily test already relies on.
     private bool TryDecodeNarrowModeHeader()
     {
         var totalHeaderSampleCount = (int)Math.Round(VisHeader.NarrowHeaderTotalDurationMs / 1000.0 * _sampleRate);
@@ -1076,53 +1097,52 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         }
 
         var headerStart = _consumedSamples;
-        var idealSamples = (VisHeader.NarrowLeaderDurationMs + VisHeader.NarrowGuardDurationMs + VisHeader.NarrowBitDurationMs)
-            / 1000.0 * _sampleRate; // bits start right after leader + guard + start-bit train
+        var searchCeiling = headerStart + MsToSamples(
+            VisHeader.NarrowGuardDurationMs * 2 // guard hold + mode-2's own timeout window
+            + VisHeader.NarrowBitDurationMs * (1 + 24) // start-bit training pulse + 24 data bits
+            + 200); // retry margin, matching TryDecodeVisDataBits' own shape
+        var availableUpTo = Math.Min(_demodulatedFrequencies.Count, searchCeiling);
 
-        const int totalBits = 6 * 4; // 4 bytes (STX, marker, mode code, checksum), 6 bits each
-        var bits = new int[totalBits];
-        for (var bitIndex = 0; bitIndex < totalBits; bitIndex++)
+        var markDetector = new SyncEnvelopeDetector(_sampleRate, 1900.0);
+        var spaceDetector = new SyncEnvelopeDetector(_sampleRate, VisHeader.NarrowSpaceFrequencyHz);
+        var fskDecoder = new NarrowFskHeaderDecoder(_sampleRate);
+
+        for (var sample = headerStart; sample < availableUpTo; sample++)
         {
-            var startSample = headerStart + (int)Math.Round(idealSamples);
-            idealSamples += VisHeader.NarrowBitDurationMs / 1000.0 * _sampleRate;
-            var endSample = headerStart + (int)Math.Round(idealSamples);
+            var agcSample = AgcSampleAt(sample);
+            var m = (int)markDetector.ProcessSample(agcSample);
+            var s = (int)spaceDetector.ProcessSample(agcSample);
 
-            var avgFreq = AverageFrequencyInWindow(startSample, endSample);
-            bits[bitIndex] = avgFreq < NarrowDiscriminatorThresholdHz ? 1 : 0; // closer to 1900Hz (mark) => bit=1
+            var modeCode = fskDecoder.ProcessSample(m, s);
+            if (modeCode is null)
+            {
+                continue;
+            }
+
+            var mode = SstvModeRegistry.FindByNarrowCode(modeCode.Value);
+            if (mode is null)
+            {
+                // Unregistered mode code -- legacy resumes scanning rather than giving up
+                // (sstv.cpp:2588-2597), and so does NarrowFskHeaderDecoder internally; this port's
+                // caller has no further chances at this headerStart, matching TryDecodeVisDataBits'
+                // own "not part of this bug" out-of-scope note for the equivalent VIS case.
+                return false;
+            }
+
+            _consumedSamples = headerStart + totalHeaderSampleCount;
+
+            // Direct port of a real regression caught by independent review: this used to duplicate
+            // Commit()'s body inline instead of calling it, which meant _afcBoundSample (added when
+            // Commit() gained it, see ApplyAfcCorrections' doc comment) was never assigned for a
+            // narrow transmission -- staying at its default 0, silently disabling AFC entirely for
+            // every MN/MC mode. Routing through the same Commit() every other detection path already
+            // uses closes this and keeps future Commit()-side fixes from needing to be duplicated a
+            // second time here.
+            Commit(mode, _consumedSamples);
+            return true;
         }
 
-        _consumedSamples = headerStart + totalHeaderSampleCount;
-
-        var stxByte = VisHeader.DecodeRawByte(bits.AsSpan(0, 6));
-        var markerByte = VisHeader.DecodeRawByte(bits.AsSpan(6, 6));
-        var modeCode = VisHeader.DecodeRawByte(bits.AsSpan(12, 6));
-        var checksumByte = VisHeader.DecodeRawByte(bits.AsSpan(18, 6));
-        var expectedChecksum = (modeCode ^ VisHeader.NarrowMarkerByte) & 0x3F; // WriteFSK only ever sends 6 bits
-
-        if (stxByte != VisHeader.NarrowStxByte || markerByte != VisHeader.NarrowMarkerByte || checksumByte != expectedChecksum)
-        {
-            // Invalid packet. As with the unknown-VIS-code case below, a fuller implementation
-            // would keep scanning for a valid header instead of giving up — out of scope here.
-            return false;
-        }
-
-        var mode = SstvModeRegistry.FindByNarrowCode(modeCode);
-        if (mode is null)
-        {
-            return false;
-        }
-
-        // Direct port of a real regression caught by independent review: this used to duplicate
-        // Commit()'s body inline instead of calling it, which meant _afcBoundSample (added when
-        // Commit() gained it, see ApplyAfcCorrections' doc comment) was never assigned for a narrow
-        // transmission -- staying at its default 0, silently disabling AFC entirely for every
-        // MN/MC mode (Math.Min(_demodulatedFrequencies.Count, 0) == 0, so ApplyAfcCorrections'
-        // loop never ran). No existing test caught this: nothing in this suite exercises a
-        // mistuned-audio narrow-mode decode end to end. Routing through the same Commit() every
-        // other detection path already uses closes this and keeps future Commit()-side fixes from
-        // needing to be duplicated a second time here.
-        Commit(mode, _consumedSamples);
-        return true;
+        return false; // not enough data yet, or the bounded scan found nothing
     }
 
     // Ported mechanism: sstv.cpp's case 2/9 (1974-2126) -- the tone race between m_iir11/m_iir13
