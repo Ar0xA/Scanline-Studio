@@ -17,21 +17,40 @@ Root cause: `ilammy/msvc-dev-cmd@v1` set `Platform=x64` as a job-level env var; 
 three legs green each time. Full writeup: `spec/14-roadmap.md`, search "Windows CI fix".
 **All three CI legs (Windows/Linux/macOS) now green on `master` — nothing blocking.**
 
-## Current task (IN PROGRESS, session paused ~2026-08-01 23:30 CEST, resume ~01:35)
+## Current task: auditor verification DONE, waiting on user to pick Band-1 scope before fixes start
 
 **Pre-Phase-2 gate: shortcut/simplification audit.** User's call: before running the milestone-audit
 playbook's Phase 3 chain audit (see `docs/audit-playbook.md`) or moving to Phase 2, first inventory
 every known DSP-in-pipeline simplification this port carries, triage/fix the important ones, THEN
-capture more real golden-vector fixtures, THEN run Phase 3. Full writeup + inventory table + sequencing:
-`spec/14-roadmap.md`, search "Pre-Phase-2 gate".
+capture more real golden-vector fixtures, THEN run Phase 3. Full writeup + 30-item table + priority
+bands + patterns: `spec/14-roadmap.md`, search "Pre-Phase-2 gate" (results are near the very end).
 
-**Status right now**: inventory compiled (a fork research pass, ~20 items found across 3 risk tiers).
-Handed to the `auditor` subagent to independently verify each claim against real source, re-derive risk
-tiers, hunt for anything missed, and produce a full must-fix-to-nice-to-have priority ranking covering
-every item — **launched, not yet returned as of this entry.** Do not start fixing anything until that
-comes back and gets reviewed. Session tasks #5 (done, inventory reviewed)→#6 (fix)→#7 (capture ~5-6 new
-golden-vector fixtures for uncovered mode families: Scottie S1, Robot72/R24, a PD/MP mode, RM8/RM12, a
-narrow MN/MC mode, AVT)→#8 (Phase 3 chain audit).
+**Status: task #9 (auditor verification, run as 3 split calls after a first too-broad attempt got
+stopped) is COMPLETE.** Reconciled, deduplicated list = **30 items** (not the ~20 first estimated),
+ranked into 5 priority bands. Key results, full detail in the roadmap:
+- **Band 1 (must-fix before Phase 2, 5 items)**: an exception-swallowing bare `catch` in the audio
+  capture path, unbounded memory growth in the decoder's sample buffers (~5.7GB/hr @44100Hz),
+  AFC/Slant's chunk-timing sensitivity (the **only item with a measured defect**, ~1.75 avg
+  per-channel delta), the lock-dependent bandpass filter that's never switched (this port has never
+  once run legacy's real locked-state filter), and the Kaiser/Bessel filter-design branch that must
+  ship in the same change as the filter fix or it looks correct while being wrong.
+- **Biggest single finding**: 7 of the 30 items (including 3 of 4 tier-C/highest-severity ones) are
+  really **one architectural gap wearing seven names** — this port processes audio in bulk
+  upfront-buffer passes where legacy runs one continuous per-sample loop over persistent detector
+  state. Auditor's recommendation: decide the streaming contract explicitly (persistent per-detector
+  cursors + bounded ring buffer + one incremental pump) before writing individual fixes, since most of
+  Bands 1-2 collapse into one design change otherwise.
+- **One cheap pre-check flagged before starting Band 1**: confirm H1/H3's real attenuation value in
+  `fir.cpp` (5 min) — if it's 20dB like H2, the Kaiser/Bessel item drops out of Band 1 entirely.
+
+**Deliberately NOT started autonomously**: the "decide the streaming contract" recommendation above is
+a real architecture decision, not a mechanical fix — needs the user's own scope call before any code
+gets written. This session was cron-resumed at ~01:35 2026-08-02 specifically to restart the auditor;
+that's done. Next real step (task #6) is the user picking how much of Band 1 to take on, then chopping
+it into sub-pieces per this project's established methodology (isolate-test each piece, auditor
+plan-review before code, CLAUDE.md §7). Then task #7 (capture ~5-6 new golden-vector fixtures for
+uncovered mode families: Scottie S1, Robot72/R24, a PD/MP mode, RM8/RM12, a narrow MN/MC mode, AVT —
+several Band-3 items are gated on these) → task #8 (Phase 3 chain audit).
 
 **Correction (2026-08-01, still valid): "sync-search + AFC state machine" is DONE, not open work.** A
 prior session's stale summary line in `spec/14-roadmap.md` Phase 1 (~line 48) called this "not yet
