@@ -421,7 +421,72 @@ the wrong field). 327/327 passing (was 317).
 (improved). No regression; small opposite-signed movement is the expected shape for a scale fix (unlike
 piece 10's settling-time-driven regression, this doesn't touch demodulator dynamics at all).
 
-**Piece 11 status: implemented, 327/327 passing, not yet committed.**
+**Piece 11 status: implemented, 327/327 passing, committed (`be938d4`), pushed.**
+
+## Piece 12 — RM8/RM12 gain correction
+
+Open-items list's `MonoAveragedPairedScanlineDecoder` RM8/RM12 gain item. Looked small ("multiply by a
+constant"), same as piece 11 turned out to be — overturned a previously-documented design decision
+instead.
+
+**The bug**: legacy's RX applies an RM-specific gain (`d *= 256.0/(256.0-32.0)`, `Main.cpp:4438`) on
+top of `GetPictureLevel`/`GetPixelLevel`'s calibration pipeline, RM8/RM12 only. A prior piece had left
+a "NOT ported" comment in `SstvModeRegistry.cs` reasoning this port's simpler linear
+frequency-to-pixel formula couldn't faithfully carry the correction, since it doesn't replicate
+legacy's actual calibration internals.
+
+**Re-derivation (round 1 of 2 auditor plan-review rounds)**: that premise was wrong. Traced
+`GetPixelLevel`'s real chain: `m_Buf[n] = -d` where `d` comes from the discriminator
+(`sstv.cpp:2278/2289`); `GetPixelLevel` applies global constants `m_DemOff=0`,
+`m_DemWhite=m_DemBlack=128/16384` (`Main.cpp:875-877`). Independently re-derived via TWO different
+demodulator paths (`CPLL::Do`'s VCO gain chain, and `CFQC`'s zero-crossing path, `sstv.cpp:280-345` and
+`376-488`) that for the demodulator's 1500-2300Hz FM band this reduces to
+`GetPixelLevel(freq) = (freq-1900)*128/400`, confirming a prior piece's own derivation
+(`RobotScanlineDecoder.cs`'s `AmbiguityHalfWidthHz` constant) rather than re-trusting it blind.
+Algebraically, `GetPixelLevel(freq)+128 = (freq-1500)*256/800` — exactly this port's own
+`(freq-LuminanceMinHz)*256/(LuminanceMaxHz-LuminanceMinHz)` formula for the standard band RM8/RM12 both
+use (confirmed: unmodified `LuminanceMinHz`/`MaxHz` defaults, 1500/2300, in the registry). The two
+pipelines were never mismatched, just expressed differently.
+
+**Round-1 finding (real blocker, not just documentation)**: legacy's RM8/RM12 RX branch
+(`Main.cpp:4437-4449`) writes gray straight into R=G=B with no `YCtoRGB` matrix call at all — but this
+port's existing decoder routed luma through `YCbCr.ToRgb(y[x], 128, 128)`, which applies its own
+different studio-to-full-swing expansion (`1.164457*(y-16)`). Naively applying the RM correction to
+`y[x]` and still routing through `ToRgb` stacks two different corrections and produces worse output
+(worked example: mid-gray 128→130.4 instead of 128; TX-white 235→272.8, clipped to 255, instead of
+~250). Fix: bypass `YCbCr.ToRgb` entirely for this decoder, write gray directly, matching legacy's real
+branch field-for-field. This also retires a second, separately-wrong previous design decision — an
+earlier version of `MonoAveragedPairedScanlineDecoder`'s own doc comment justified routing through
+`ToRgb` as "the same path every other Y-bearing family already uses, rather than inventing a third,
+RM-specific reconstruction convention" — but legacy already has a second, genuinely different
+convention here (direct gray write, no matrix); porting it isn't inventing a third one.
+
+**Round-2 auditor verdict**: "Yes — build it." Confirmed the corrected plan matches
+`Main.cpp:4437-4449` step-for-step (no other clamp/offset/matrix step missed), confirmed two remaining
+judgment calls both hold:
+- **No truncation replication**: legacy truncates to `int` twice (once inside `GetPixelLevel`, once at
+  `d *= gain`); this port keeps doubles throughout, matching every other decoder in this codebase.
+  Documented as an accepted, asymmetric-across-mid-gray divergence of a couple of levels, well inside
+  existing 10.0-25.0 tolerances.
+- **No compensating TX-side gain**: legacy's TX (`LineRM`, `Main.cpp:6785-6801`) has no matching
+  correction — confirmed RX-only. Round-trip is genuinely non-identity by design (predicted delta
+  ~2.4 avg/~4.7 max: the offset terms cancel exactly, `112*8/7=128`, leaving pure gain error), but this
+  is legacy's real asymmetry, not a port bug to "fix" by inventing symmetry legacy doesn't have (the
+  Scottie-incident failure mode CLAUDE.md warns about). Predicted to stay under the existing flat 10.0
+  round-trip tolerance without needing a Robot36-style override — and measurement confirmed this: no
+  override needed.
+
+**Fix**: `MonoAveragedPairedScanlineDecoder.cs` — `y` now a `byte[]` storing the final clamped value
+directly; `(rawValue-128)*256/224+128` clamped to `[0,255]`, written straight into
+`new Rgb24(gray,gray,gray)`, no `YCbCr.ToRgb` call. Rewrote both stale comments (the decoder's own, and
+`SstvModeRegistry.cs`'s "NOT ported" note).
+
+**Tests**: isolate-tested `EncodeThenDecode_RoundTripsWithinTolerance_MonoFamily` (RM8/RM12) first, per
+the auditor's explicit instruction not to pre-add a tolerance override — passed at the existing flat
+10.0, as predicted. Full suite: 327/327 passing (no new test files needed — existing coverage already
+exercises this decoder).
+
+**Piece 12 status: implemented, 327/327 passing.**
 
 **Demo:** a console/test harness encodes a test image to a `.wav`, decodes it back, and the round-trip image matches within tolerance — provable before any UI exists.
 

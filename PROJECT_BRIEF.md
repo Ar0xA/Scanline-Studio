@@ -397,6 +397,51 @@ fix like Piece 9's.
 **Done**: committed and pushed (`be938d4`), `spec/14-roadmap.md` updated with the full narrative as the
 durable log. Piece 11 complete.
 
+## Piece 12 — RM8/RM12 gain correction — COMPLETE
+
+Open-items list's `MonoAveragedPairedScanlineDecoder` RM8/RM12 gain-correction item. Looked small
+("multiply by a constant") but turned out to require overturning a previously-documented design
+decision and restructuring the decoder — same pattern as piece 11.
+
+**Investigation**: legacy's RX applies an RM-specific gain (`d *= 256.0/(256.0-32.0)`, `Main.cpp:4438`)
+on top of `GetPictureLevel`/`GetPixelLevel`'s calibration pipeline. A prior piece in this project had
+left a "NOT ported" comment in `SstvModeRegistry.cs` reasoning this port's simpler linear
+frequency-to-pixel formula couldn't faithfully carry the correction, since it doesn't replicate
+legacy's actual calibration internals. Re-derived the math from scratch and found that premise false:
+legacy's `GetPixelLevel(freq)+128`, for any mode on the standard 1500-2300Hz luminance band (which
+RM8/RM12 both use, unmodified defaults), reduces algebraically to exactly this port's own
+`(freq-LuminanceMinHz)*256/(LuminanceMaxHz-LuminanceMinHz)` — independently re-derived and confirmed
+via 2 different demodulator code paths (`CPLL::Do` and `CFQC`) during the auditor's round-1 review.
+The two pipelines were never actually mismatched, just expressed differently.
+
+**Round-1 auditor finding (real blocker)**: legacy's RM8/RM12 RX branch (`Main.cpp:4437-4449`) writes
+gray straight into R=G=B with no `YCtoRGB` matrix call at all — but this port's existing decoder routed
+luma through `YCbCr.ToRgb(y[x], 128, 128)`, which applies its own different studio-to-full-swing
+expansion (`1.164457*(y-16)`). Stacking the RM correction on top of that compounds two different
+corrections and produces worse output (mid-gray 128→130.4 instead of 128, TX-white 235→272.8 clipped
+to 255 instead of ~250). Fix: bypass `YCbCr.ToRgb` entirely for this decoder, write gray directly,
+matching legacy's real branch field-for-field.
+
+**Round-2 auditor verdict**: "Yes — build it." Confirmed the corrected plan matches
+`Main.cpp:4437-4449` step-for-step, confirmed the no-truncation-replication and
+no-compensating-TX-gain reasoning both hold, and predicted the round-trip delta (~2.4 avg/~4.7 max —
+the TX/RX asymmetry doesn't cancel to zero but the offset terms do, leaving pure gain error) would
+stay comfortably under the existing flat 10.0 tolerance without needing an RM-specific override
+(unlike Robot36's precedent).
+
+**Fix**: `MonoAveragedPairedScanlineDecoder.cs` — `y` array now stores the final clamped byte value
+directly; `(rawValue-128)*256/224+128`, clamped 0-255, written straight to `new Rgb24(gray,gray,gray)`,
+no `YCbCr.ToRgb` call. Rewrote the class's own doc comment (kept the correct factual premise about
+legacy's real RX branch, replaced the wrong conclusion) and `SstvModeRegistry.cs`'s stale "NOT ported"
+comment.
+
+**Tests**: isolate-tested `EncodeThenDecode_RoundTripsWithinTolerance_MonoFamily` (RM8/RM12) first, per
+the auditor's explicit guidance not to pre-add a tolerance override — passed at the existing flat 10.0,
+as predicted. Full suite: 327/327 passing (unchanged count — no new test files needed, this was a
+decoder-internals fix with existing coverage).
+
+**Done**: implementation complete, all tests passing.
+
 ## Other still-open items (not started, for context/prioritization)
 From `spec/14-roadmap.md`'s "Secondary, smaller, independently-source-verified divergences" list:
 5. **Legacy's shipped default demodulator is actually the Hilbert path (`CHILL`), not PLL at all** —
@@ -413,8 +458,13 @@ From `spec/14-roadmap.md`'s "Secondary, smaller, independently-source-verified d
 - `TryDecodeNarrowModeHeader`'s FSK bit decode (`AnalogFmSstvDecoder.cs:1072`) has the identical
   PLL-proxy-instead-of-real-detector shape as piece 9's original bug — survives piece 9 untouched,
   logged for later.
-- `MonoAveragedPairedScanlineDecoder`'s missing RM8/RM12 gain correction — see piece 10's off-scope
-  findings above.
+
+## Windows CI (deferred, but not indefinitely)
+User (2026-07-31): "its prolly also not a bad idea to soon look at why the windows CI keeps failing and
+try fix that...not before finishing these 3 tasks, but shouldnt wait too long either." The "3 tasks"
+were: piece 11 (pixel-pitch fix, done), piece 12 (RM8/RM12 gain, done), and the 2 items above. 2 of the
+3 are now done — after the FSK bit decode fix and the Hilbert scoping pass, Windows CI should be picked
+up next rather than waiting for the user to ask again.
 
 ## Working methodology (established across this project, apply here too)
 - Legacy is ground truth — verify against `yoniq-old/YONIQ-main/` source directly, no assumptions.
