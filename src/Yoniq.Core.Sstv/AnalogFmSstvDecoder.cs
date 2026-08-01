@@ -234,11 +234,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // (TrySyncIntervalDetectionStep's, TryVisLockStateMachine's, ApplySlantTracking's) -- each just asks
     // for whatever index it's currently at; the cache fills forward monotonically the first time any
     // of them reaches a new index.
+    //
+    // Piece A: the `d` fed into m_lvl.Do here is legacy's real POST-2-tap-LPF value
+    // (sstv.cpp:1824-1825's `d=(s+m_ad)*0.5`, unconditional, not gated by m_bpf) -- FilteredRawSampleAt
+    // applies that filter before the existing AGC+scale+clip logic below, which was already correct.
     private double AgcSampleAt(int index)
     {
         for (; _levelAgcProcessedUpTo <= index; _levelAgcProcessedUpTo++)
         {
-            var scaled = _rawSamples[_levelAgcProcessedUpTo] * 32768.0;
+            var scaled = FilteredRawSampleAt(_levelAgcProcessedUpTo) * 32768.0;
             _levelAgc.Do(scaled);
             _levelAgc.Fix();
             var ad = _levelAgc.Agc(scaled) * 32.0;
@@ -248,6 +252,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
         return _agcSamples[index];
     }
+
+    // sstv.cpp:1824-1825 -- always-on, never gated by m_bpf. m_ad zeroed once at construction
+    // (sstv.cpp:1417), never reset in Start()/Stop() (confirmed by reading both) -- matches this
+    // port's existing continuously-running-filter precedent (LevelAgc/CLVL, SyncEnvelopeDetector).
+    // Pure function of _rawSamples (no adaptive state -- unlike AGC, calling this independently from
+    // multiple sites gives bit-identical results, no shared cache/streaming object needed). Returns
+    // double, matching legacy's own double-domain arithmetic exactly (casting the first operand to
+    // double before adding promotes the whole expression, avoiding an avoidable float-precision
+    // rounding step legacy's real computation never has).
+    private double FilteredRawSampleAt(int index) =>
+        index > 0 ? ((double)_rawSamples[index] + _rawSamples[index - 1]) * 0.5 : _rawSamples[index] * 0.5;
 
     // sstv.cpp:2258/2263/2267's `m_lvl.m_CurMax > 16` AFC silence gate reads m_CurMax as of the exact
     // sample being processed at that moment in legacy's single real-time pass -- not "whatever
@@ -276,7 +291,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // Scale bridge -- see PllFmDemodulator's own doc comment: legacy's CPLL AGC assumes
             // int16-scaled input, this port's raw samples are float in [-1.0, 1.0]. Same bridge
             // AgcSampleAt already applies for LevelAgc.
-            _demodulatedFrequencies.Add(_demodulator.ProcessSample(span[i] * 32768.0));
+            //
+            // Piece A: FilteredRawSampleAt (not span[i] directly) -- legacy's real demodulator input
+            // is m_Cur = d (sstv.cpp:1834/sstv.h:256-257), the POST-2-tap-LPF value, not the raw
+            // sample. Indexing by _rawSamples.Count-1 (not span[i]) correctly reaches into the
+            // previous chunk's last sample at a chunk boundary -- _rawSamples already has it, added
+            // on the line above this same iteration.
+            _demodulatedFrequencies.Add(_demodulator.ProcessSample(FilteredRawSampleAt(_rawSamples.Count - 1) * 32768.0));
         }
 
         TryProcessBuffer();
@@ -1498,15 +1519,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             var warmupSamples = Math.Min(_avtTrainingOriginSample, 2000);
             for (var w = _avtTrainingOriginSample - warmupSamples; w < _avtTrainingOriginSample; w++)
             {
-                _avtPllDemodulator!.ProcessSample(_rawSamples[w] * 32768.0);
+                _avtPllDemodulator!.ProcessSample(FilteredRawSampleAt(w) * 32768.0);
             }
 
             _avtPllWarmedUp = true;
         }
 
+        // Piece A: FilteredRawSampleAt, not raw -- legacy's real AVT input is `ad` (sstv.cpp:1835,
+        // POST-2-tap-LPF, post-AGC, unscaled), a domain this port doesn't model at all (only "raw"
+        // and "AGC+x32+clip" exist here). Adding the LPF closes one of the two missing stages and is
+        // unambiguously closer to legacy; the AGC-domain gap stays exactly as already flagged and
+        // deferred from the Hilbert demodulator piece, not expanded into here.
         while (_avtTrainingProcessedUpTo < _rawSamples.Count)
         {
-            var avtDemodulatedHz = _avtPllDemodulator!.ProcessSample(_rawSamples[_avtTrainingProcessedUpTo] * 32768.0);
+            var avtDemodulatedHz = _avtPllDemodulator!.ProcessSample(FilteredRawSampleAt(_avtTrainingProcessedUpTo) * 32768.0);
             var completedAt = _avtTrainingLock!.ProcessSample(avtDemodulatedHz);
             _avtTrainingProcessedUpTo++;
 

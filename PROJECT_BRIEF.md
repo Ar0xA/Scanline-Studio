@@ -29,16 +29,37 @@ tests for every DSP change, small reviewable commits, ask before pushing to orig
   improved, only RM8/RM12 worsened slightly (the exact narrow-pitch modes already flagged as marginal
   in the scoping pass) — both stay well inside existing tolerances, none needed changing. 23 new
   isolated unit tests. Commit `aeccfcc`.
+- **Piece 15**: legacy's always-on 2-tap moving-average pre-filter (`d=(s+m_ad)*0.5`,
+  `sstv.cpp:1824-1825`) — split off the deferred bandpass-filter-chain item after an auditor second
+  opinion on scope/value (see spec/14-roadmap.md's full writeup: it found legacy's demodulator input is
+  literally the post-filter value, a real structural gap, not an optional add-on; recommended splitting
+  into this small piece + a deferred Kaiser-bandpass piece behind a not-yet-built noise-fixture harness).
+  New `FilteredRawSampleAt`, applied at all 4 raw-sample consumption sites. One real, pre-existing,
+  unrelated bug found by a new chunk-boundary test (confirmed via `git stash` to predate this piece) —
+  a small (~1.75 delta), already-tolerance-safe chunking sensitivity in the deferred AFC/Slant
+  correction passes, not chased. Measured before/after: 18 improved/26 worsened/1 same, but every
+  change tiny (<0.2) — expected signature of a smoothing filter on already-clean fixtures, not a
+  regression. Not yet committed as of this brief.
+- **Noise-robustness harness** (`NoiseRobustnessTests.cs`) — new test infrastructure (not a legacy
+  port), built per user instruction as an interim check while a real TX/WebSDR capture is separately
+  weighed. Injects calibrated Gaussian noise into the encoded audio at a target SNR, measures decode
+  quality across a sweep, reports a "noise floor" (lowest SNR still meeting a documented 30.0-delta
+  usable-decode bar). **Baseline measured, this port's CURRENT state (Hilbert + piece 15's 2-tap
+  pre-filter, no Kaiser bandpass yet)**: martin-m1 noise floor 9.0dB, robot-36 16.0dB. This is the real
+  comparison target for the Kaiser bandpass filter (Piece B) — re-run once it exists and compare. Not
+  yet committed.
 
-All committed and pushed through Piece 14 (`aeccfcc`), 363/363 tests passing.
+All committed and pushed through Piece 14 (`aeccfcc`), 363/363 tests passing. Piece 15 + the noise
+harness implemented and passing (366/366) but **uncommitted** as of this brief.
 
-## Other open items (after piece 14)
-- **Pre-AGC/pre-demodulator bandpass filter chain** (`sstv.cpp:1824-1833`) — deliberately deferred out
-  of Piece 14's scope per user instruction ("Hilbert first, filter chain after"). QSSTV cross-check
-  (spec/14-roadmap.md's scoping-pass section) suggests this matters more for real-world noise
-  robustness than `HilbertFmDemodulator` alone provides — not started.
+## Other open items (after piece 15 + noise harness)
+- **Kaiser bandpass filter (Piece B)** — not started. Baseline noise floors now exist to measure it
+  against (martin-m1 9.0dB, robot-36 16.0dB). A real TX/WebSDR recapture remains a separately-weighed,
+  stronger-evidence option (would also double as a new golden-vector fixture) — bigger practical lift,
+  not yet arranged. **Decision point**: build Piece B now and measure against the synthetic baseline, or
+  wait for a real capture first.
 - **Windows CI** — `windows-latest` fails as of the Engine 0-6 push, not investigated. User (2026-07-31):
-  do this after the Hilbert work, not before, but "shouldn't wait too long either."
+  do this after the Hilbert/filter-chain work, not before, but "shouldn't wait too long either."
 
 ## Working methodology (established across this project)
 - Legacy is ground truth — verify against `yoniq-old/YONIQ-main/` source directly, no assumptions.

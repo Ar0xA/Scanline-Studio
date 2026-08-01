@@ -717,6 +717,159 @@ got wrong before the code). Full suite: 363/363 passing.
 **Status: implemented, committed.** Bandpass-filter-chain follow-up (the QSSTV-cross-check item above)
 remains logged as a separate, deliberately deferred piece, not bundled here per user instruction.
 
+## Pre-AGC bandpass filter chain — scoping, second opinion, and split into Piece A / harness / Piece B
+
+Picked up the deferred bandpass-filter-chain item next. Investigation (`sstv.cpp:1819-1839`'s
+`CSSTVDEM::Do`) found it bigger and more architecturally invasive than expected: `MakeFilter`
+(`fir.cpp:332-427`) is a full Kaiser-windowed arbitrary FIR designer (not a one-off formula like
+`MakeHilbert`); three filter variants (H1/H2/H3) across 3 width presets; the convolution engine used at
+the call site (`CFIR2::Do`) uses a DIFFERENT addressing convention than `HilbertFmDemodulator`'s own
+`DoFir` (`H[0]` pairs with the newest sample, not the oldest); and filter *selection* depends on
+legacy's real-time per-sample lock state (`m_Sync`/`m_SyncMode`), which this port's upfront-buffer-
+demodulation architecture doesn't have available at the point it would need it.
+
+**Requested and got an independent second opinion (the `auditor` agent, framed explicitly as a scope/
+value judgment, not a code-fidelity check) before committing effort.** It verified every technical
+claim from source directly and found real corrections to both directions:
+- The scope was overstated in one way: `MakeFilter` skips the Kaiser/Bessel branch entirely below 21dB
+  attenuation, and every "Wide"-preset call (the default) uses `att=20` — so a Wide/H2-only slice never
+  touches the Bessel `I0` function at all, comparable in size to `MakeHilbert`, not bigger.
+- It was understated in another, more important way: legacy's real demodulator input (`m_Cur`,
+  `sstv.h:256-257`) IS the post-filter, pre-AGC value — independently confirmed by reading `CLVL::Do`
+  directly. This port's demodulator has always been fed raw, unfiltered samples. This isn't an optional
+  noise-robustness bonus sitting off to the side; it's a real, structural input-pipeline gap, and it
+  means the filter chain's effect IS measurable (it reshapes the demodulator's own input), contradicting
+  an earlier "can't measure this" framing.
+- It also caught a real risk this session had missed (group-delay skew between the picture-demod path
+  and the sync/envelope path if the filter were applied to only one) and downgraded an overweighted one
+  (the `CFIR2`/`DoFir` addressing-convention mismatch doesn't matter here — `MakeFilter`'s output is
+  symmetric by construction, unlike `MakeHilbert`'s antisymmetric kernel, so reversal is a mathematical
+  no-op for this filter specifically).
+- Its recommendation, adopted: **split into Piece A** (the always-on, unconditional 2-tap
+  moving-average pre-filter, `d=(s+m_ad)*0.5` — small, no filter design, no lock-state dependency, do
+  immediately) **and defer the Kaiser bandpass filter itself (Piece B) behind a noise-fixture harness**
+  that doesn't exist yet, converting "we think this helps" into an actual measurement rather than a
+  judgment call. Explicitly recommended over a deferred-second-pass correction (AFC's own pattern):
+  since this filter sits upstream of AGC, a deferred correction would mean re-running AGC, the
+  demodulator, and every sync/envelope detector for the whole post-lock buffer — not a correction, a
+  second full decode.
+- On Piece B's expected value specifically, the auditor was MORE skeptical than this session's own
+  framing, not just hedging alongside it: the *safe* scope (H2, run continuously, no lock-state
+  switching — the only version without correctness risk) is also, by construction, the WEAKEST filter
+  legacy ever runs (widest band, lowest attenuation, fewest taps) — so even a faithful port of the safe
+  slice may not deliver the QSSTV-comparison noise-robustness benefit that motivated wanting this at
+  all. Its verdict on deferring Piece B: not "can't measure the win" but "the only measurable outcome
+  available today is regression detection... weak return" — defer specifically because the noise
+  harness would make it a decidable question instead.
+- User, after this discussion, raised a stronger alternative to the synthetic-noise harness: an actual
+  TX'd picture recaptured over a real WebSDR (real atmospheric/propagation noise and receiver
+  characteristics, not a synthetic AWGN approximation) — agreed this is categorically better evidence
+  than the synthetic harness, and if also run through legacy's own decoder, would double as a genuine
+  new golden-vector fixture (this project currently has exactly two, both already documented as
+  unusually clean captures). Bigger practical lift (needs real TX+WebSDR access, not just code) but
+  strictly better evidence for the exact question at hand. Not yet done — next-step decision point.
+
+## Piece 15 — legacy's always-on 2-tap moving-average pre-filter, implemented
+
+`CSSTVDEM::Do`, `sstv.cpp:1824-1825`: `d=(s+m_ad)*0.5; m_ad=s;` — unconditional (not gated by `m_bpf`),
+applied before AGC and before the demodulator. `m_ad` zeroed once at construction (`sstv.cpp:1417`),
+confirmed never reset in either `Start()` overload or `Stop()` — matches this port's existing
+continuously-running-filter precedent. Traced all three post-filter signal domains directly from
+source (independently re-verified during plan-review, not just accepted): `m_Cur` (post-filter,
+pre-AGC) feeds the picture demodulator; `ad` (post-filter, post-AGC, unscaled) feeds AVT's dedicated
+PLL call; the final scaled+clipped `d` (`ad*32`, clip ±16384) feeds the sync/tone-envelope detectors.
+
+New `FilteredRawSampleAt(int index)` -- a pure function of `_rawSamples` (no adaptive state, so safe to
+call independently from multiple sites with bit-identical results, no shared cache needed). Applied at
+all four sites that previously fed raw samples directly: `AgcSampleAt` (upstream of the existing AGC
+logic, which was already otherwise correct), `PushSamples`'s main demodulator feed, and both of
+`AvtTrainingLockStateMachine`'s dedicated-`PllFmDemodulator` call sites (closes part of that class's
+already-flagged, still-only-partially-resolved input-domain gap from Piece 14 -- the deeper
+unscaled-AGC-domain mismatch stays exactly as previously deferred, not expanded into here). One
+single-round auditor plan-review before implementation (matching the piece's small size) found the
+helper should return `double`, not `float` (legacy computes entirely in double; an earlier draft's
+`float` return introduced an avoidable rounding step) -- fixed before coding.
+
+**A real, pre-existing bug found by the new chunk-boundary test, unrelated to this piece.** Following
+the auditor's recommended test (decode the same signal as one `PushSamples` call vs. many small
+chunks, assert identical results), a first version asserting EXACT pixel identity failed -- confirmed
+via `git stash` to fail IDENTICALLY on pre-Piece-A code too, so not a regression from this piece.
+Measured severity: ~1.75 average per-channel delta between whole-push and chunked-push decodes of the
+same signal, comfortably inside every tolerance already in this suite. Root cause not chased (off-scope
+for this piece): this port's deferred/incremental correction passes (AFC, Auto Slant) process "whatever
+is available so far" as data streams in, so chunk timing can shift their exact correction values by a
+small amount -- a real, small, pre-existing characteristic of the port's architecture that no existing
+test had caught (every other chunked test in this suite only checks mode-detection equality, not full
+pixel identity). Test adjusted to a 5.0-tolerance comparison instead of exact identity -- still catches
+a genuine Piece-A-specific regression (a wrong previous-sample reference at a chunk boundary would
+produce a structural misalignment, not a small ambient delta like this), without being blocked by the
+unrelated pre-existing gap.
+
+**Measured before/after, all 43 modes + both golden-vector fixtures (same methodology as Piece 14): 18
+improved, 26 worsened, 1 unchanged -- but every change is tiny** (mostly <0.1, largest is robot-36's
+real-audio fixture at +0.169). This is the expected signature of a smoothing filter applied to fixtures
+with little noise to remove: the synthetic round-trip fixtures carry zero noise, and both real
+golden-vector captures are already-documented as unusually clean -- a mixed, small-magnitude result is
+consistent with "correctly implemented, real value not provable with what we currently have to test
+against," not a regression. Everything stays comfortably inside existing tolerances; none needed to
+change. `GoldenVectorTests.cs`'s own tolerance comment updated with the new numbers.
+
+**Tests**: the new chunk-boundary consistency test (`SstvRoundTripTests.cs`) described above. Full
+suite: 364/364 passing.
+
+**Status: implemented, not yet committed as of this entry.** Piece B (the Kaiser bandpass filter
+itself) remains deferred behind either a synthetic noise-injection harness or, if arranged, a real
+TX/WebSDR capture -- decision point, not yet started.
+
+## Noise-robustness harness — built, baseline measured
+
+User's call: build the synthetic noise-injection harness now as an interim check, while separately
+weighing a real TX/WebSDR recapture (categorically better evidence -- real propagation/receiver
+characteristics, not synthetic AWGN -- and would double as a new golden-vector fixture if also run
+through legacy's own decoder) as a longer-lead-time follow-up. Not a legacy port (legacy has no
+synthetic-noise-injection concept of its own) -- new test infrastructure, built directly rather than
+through the usual plan+auditor-review cycle since there's no legacy source to verify fidelity against;
+the judgment calls (noise model, SNR calibration, the "usable decode" quality bar) are documented
+inline in `NoiseRobustnessTests.cs` instead.
+
+**Design**: additive Gaussian noise injected into the ENCODED AUDIO SAMPLES (post-encode, pre-decode --
+the domain a real receiver's front-end noise actually occupies), calibrated to a target SNR by
+measuring the real encoded signal's own RMS power first (`SNR_dB = 20*log10(signalRms/noiseRms)`), not
+an assumed/fixed noise amplitude. Deterministic (fixed seed) for reproducible, genuinely comparable
+results run to run. Sweeps a fixed set of SNR levels (40 down to 0dB) per mode, measures average
+per-channel delta at each, and reports the "noise floor" -- the lowest SNR still meeting a documented
+"usable decode" bar (30.0 average delta, a judgment call noted as such, not derived from source: looser
+than `SstvRoundTripTests`' own noiseless-signal tolerances, which measure DSP self-consistency, not
+real noise tolerance). One regression-guard assertion (the noiseless/infinite-SNR case must still
+decode correctly) catches the harness itself being broken; the SNR sweep itself is informational,
+logged via `ITestOutputHelper`, not strictly asserted per level -- there's no known-correct threshold
+to assert against yet, that's what this harness exists to discover.
+
+**Baseline measured (this port's CURRENT state: `HilbertFmDemodulator` + piece 15's 2-tap pre-filter,
+no Kaiser bandpass filter yet)**:
+- **martin-m1**: noise floor **9.0dB** SNR. Degrades roughly monotonically from 2.72 (40dB, clean) to
+  25.24 (9dB, still usable) to 33.48 (6dB, fails the bar).
+- **robot-36**: noise floor **16.0dB** SNR -- meaningfully worse tolerance than martin-m1, consistent
+  with this mode's already-documented fragility to small timing perturbations (piece 8's tone-selector-
+  ambiguity finding). Degrades roughly monotonically down to 16dB (22.18, still usable), then becomes
+  NON-monotonic at more extreme noise (12dB=45.90, 9dB=122.18, 6dB=58.19, 3dB=73.50) -- expected, not a
+  harness bug: at very low SNR, header/VIS detection can fail outright in qualitatively different,
+  effectively chaotic ways (wrong-mode misdetection, garbage decode) rather than smoothly degrading,
+  which the harness's own doc comment already flagged as an unproven assumption, not asserted.
+
+**These two numbers are the actual comparison target for Piece B**, not a pass/fail gate on their own --
+re-run this same harness (`NoiseRobustnessTests.cs`) once the Kaiser bandpass filter exists and compare
+the new noise floors against 9.0dB/16.0dB. A meaningful improvement (materially lower noise floor, i.e.
+usable decode at a WORSE SNR than today) is the actual evidence this piece is worth its cost; no
+meaningful change would be real, measured evidence for the auditor's own skepticism (the safe/H2-only
+scope being "the weakest filter legacy ever runs") turning out correct.
+
+**Tests**: `NoiseRobustnessTests.cs`, 2 new tests (martin-m1, robot-36). Full suite: 366/366 passing.
+
+**Status: implemented, not yet committed as of this entry.** Piece B itself still not started --
+baseline now exists to measure it against, decision on WHEN to build Piece B (now vs. after arranging a
+real TX/WebSDR capture too) not yet made.
+
 **Demo:** a console/test harness encodes a test image to a `.wav`, decodes it back, and the round-trip image matches within tolerance — provable before any UI exists.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
