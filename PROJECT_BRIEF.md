@@ -28,10 +28,9 @@ tests for every DSP change, small reviewable commits, ask before pushing to orig
   re-verified). Full before/after measurement across all 43 modes + both golden-vector fixtures: 43/45
   improved, only RM8/RM12 worsened slightly (the exact narrow-pitch modes already flagged as marginal
   in the scoping pass) — both stay well inside existing tolerances, none needed changing. 23 new
-  isolated unit tests. Not yet committed as of this brief.
+  isolated unit tests. Commit `aeccfcc`.
 
-All committed and pushed through Piece 13 (`469e44f`), 340/340 tests passing. Piece 14 implemented and
-passing (363/363) but **uncommitted** as of this brief.
+All committed and pushed through Piece 14 (`aeccfcc`), 363/363 tests passing.
 
 ## Other open items (after piece 14)
 - **Pre-AGC/pre-demodulator bandpass filter chain** (`sstv.cpp:1824-1833`) — deliberately deferred out
