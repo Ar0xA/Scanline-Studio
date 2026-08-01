@@ -39,18 +39,17 @@ tests for every DSP change, small reviewable commits, ask before pushing to orig
   a small (~1.75 delta), already-tolerance-safe chunking sensitivity in the deferred AFC/Slant
   correction passes, not chased. Measured before/after: 18 improved/26 worsened/1 same, but every
   change tiny (<0.2) — expected signature of a smoothing filter on already-clean fixtures, not a
-  regression. Not yet committed as of this brief.
+  regression.
 - **Noise-robustness harness** (`NoiseRobustnessTests.cs`) — new test infrastructure (not a legacy
   port), built per user instruction as an interim check while a real TX/WebSDR capture is separately
   weighed. Injects calibrated Gaussian noise into the encoded audio at a target SNR, measures decode
   quality across a sweep, reports a "noise floor" (lowest SNR still meeting a documented 30.0-delta
   usable-decode bar). **Baseline measured, this port's CURRENT state (Hilbert + piece 15's 2-tap
   pre-filter, no Kaiser bandpass yet)**: martin-m1 noise floor 9.0dB, robot-36 16.0dB. This is the real
-  comparison target for the Kaiser bandpass filter (Piece B) — re-run once it exists and compare. Not
-  yet committed.
+  comparison target for the Kaiser bandpass filter (Piece B) — re-run once it exists and compare.
+  Both committed together, commit `14b4144`.
 
-All committed and pushed through Piece 14 (`aeccfcc`), 363/363 tests passing. Piece 15 + the noise
-harness implemented and passing (366/366) but **uncommitted** as of this brief.
+All committed and pushed through Piece 15 + the noise harness (`14b4144`), 366/366 tests passing.
 
 ## Other open items (after piece 15 + noise harness)
 - **Kaiser bandpass filter (Piece B)** — not started. Baseline noise floors now exist to measure it
