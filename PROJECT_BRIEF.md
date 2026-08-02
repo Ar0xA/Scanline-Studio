@@ -17,7 +17,7 @@ Root cause: `ilammy/msvc-dev-cmd@v1` set `Platform=x64` as a job-level env var; 
 three legs green each time. Full writeup: `spec/14-roadmap.md`, search "Windows CI fix".
 **All three CI legs (Windows/Linux/macOS) now green on `master` — nothing blocking.**
 
-## Current task: working Band 1 fixes one by one (task #6, in progress)
+## Current task: Band 1 fixes, working one by one (task #6, in progress)
 
 **Pre-Phase-2 gate: shortcut/simplification audit.** User's call: before running the milestone-audit
 playbook's Phase 3 chain audit (see `docs/audit-playbook.md`) or moving to Phase 2, first inventory
@@ -25,29 +25,40 @@ every known DSP-in-pipeline simplification this port carries, triage/fix the imp
 capture more real golden-vector fixtures, THEN run Phase 3. Full writeup + 30-item table + priority
 bands + patterns: `spec/14-roadmap.md`, search "Pre-Phase-2 gate" (results are near the very end).
 
-**Task #9 (auditor verification, 3 split calls) COMPLETE.** Reconciled, deduplicated list = 30 items,
-ranked into 5 priority bands. **Pre-check done (2026-08-02): confirmed directly in `fir.cpp`/`sstv.cpp`
-that at the Wide preset (the only one this port reaches), H1's attenuation is 20dB, identical to
-H2 — no Kaiser/Bessel branch needed. Band 1 is now 4 items, not 5:**
-1. Exception-swallowing bare `catch` in `MiniAudioCaptureSession` (audio capture path)
-2. Unbounded memory growth in the decoder's sample buffers (~5.7GB/hr @44100Hz, 5 buffers)
-3. AFC/Slant's chunk-timing sensitivity (the only item with a MEASURED defect, ~1.75 avg per-channel
-   delta between whole-push and chunked-push decode of the same signal)
-4. The lock-dependent bandpass filter that's never switched (this port has never once run legacy's
-   real locked-state filter, only the weaker pre-lock one)
+**Band 1 = 4 items** (5th, Kaiser/Bessel filter design, dropped after confirming H1's attenuation is
+20dB at the only reachable preset — no Kaiser/Bessel work needed):
+1. **DONE** (commit `288d5d0`) — exception-swallowing bare `catch` in `MiniAudioCaptureSession`.
+   `LastSubscriberException`/`SubscriberExceptionCount` added, plus a real second bug the auditor
+   caught on its own initiative: one throwing subscriber used to starve every OTHER subscriber (and
+   every later chunk) of delivery — fixed in the same change (per-handler `try/catch` via
+   `GetInvocationList()`, not one catch around the whole multicast call).
+2. **NOT STARTED** — unbounded memory growth in the decoder's 5 sample buffers (~5.7GB/hr @44100Hz).
+3. **DONE** (commits `365d57b`, `765ba3c`) — chunk-timing sensitivity. Root cause was NOT AFC/Slant
+   (both proven fully chunk-invariant) — a real race between two header-detection paths
+   (`TryDecodeVisHeader`'s fixed-window path vs. `TryInterleavedHeaderScan`'s fallback), whose
+   priority depended on call-boundary timing instead of absolute sample position. Empirically
+   confirmed via temporary instrumentation (added and fully reverted same session), fixed with a
+   one-shot `_fixedWindowExhausted` gate (an auditor plan-review caught the first draft's rolling-cap
+   approach was wrong — drops stream tails, imposes needless permanent latency). Verified: decode is
+   now provably deterministic regardless of chunking — exact pixel identity across chunk sizes
+   {1, 500, 4096}, not just tolerance. Full suite 390/390, golden vectors 8/8 unaffected.
+4. **NOT STARTED** — lock-dependent bandpass filter never switches (this port has never once run
+   legacy's real locked-state filter, only the weaker pre-lock one).
 
-**Note (auditor's Pattern 1, still relevant even with the re-scope):** items 2 and 3 (and part of item
-4's underlying cause) are really one architectural gap — this port processes audio in bulk
-upfront-buffer passes where legacy runs one continuous per-sample loop over persistent detector state.
-Auditor recommended deciding the streaming contract explicitly before individual fixes. Working items
-one by one per user instruction, but watch for this pattern resurfacing once past item 1 — may be
-worth surfacing to the user again before items 2/3 rather than patching them as unrelated bugs.
+**Items 2 and 3 were combined per user instruction, following the auditor's own Pattern-1
+recommendation** (both trace to the same "upfront buffer vs. real-time stream" architectural
+question) — one coherent piece, not two unrelated patches. Item 3's fix is done; **item 2 (buffer
+trimming) is next, and is the bigger, riskier remaining piece** — the auditor-reviewed plan needs a
+`_bufferBase` abstraction touching ~25 call sites, a pre-lock trim watermark (my first draft had this
+backwards — excluded exactly the never-locks/open-squelch case the fix exists for), and an
+`EndOfImage` AGC force-feed change. Full plan-review detail: `spec/14-roadmap.md`, search "Band-1
+items 2+3". Genuine refactor — treat with full effort/rigor, not a quick patch.
 
-**Now working through the normal process (plan → auditor plan-review → implement → test) for each
-item in order.** Per-item plans/status logged in `spec/14-roadmap.md` as each one starts. Next: task
-#7 (capture ~5-6 new golden-vector fixtures for
-uncovered mode families: Scottie S1, Robot72/R24, a PD/MP mode, RM8/RM12, a narrow MN/MC mode, AVT —
-several Band-3 items are gated on these) → task #8 (Phase 3 chain audit).
+**Item 4 not started yet** — after item 2.
+
+**Next after Band 1**: task #7 (capture ~5-6 new golden-vector fixtures for uncovered mode families:
+Scottie S1, Robot72/R24, a PD/MP mode, RM8/RM12, a narrow MN/MC mode, AVT — several Band-3 items from
+the 30-item audit are gated on these) → task #8 (Phase 3 chain audit).
 
 **Correction (2026-08-01, still valid): "sync-search + AFC state machine" is DONE, not open work.** A
 prior session's stale summary line in `spec/14-roadmap.md` Phase 1 (~line 48) called this "not yet
