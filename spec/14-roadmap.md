@@ -1852,6 +1852,73 @@ invariant.
 
 **Status: Band 2 scoped, no design pass needed. Starting S5.**
 
+### Band-2 item S5 — persistent VIS-bit-decode detectors, implemented
+
+`TryDecodeVisDataBits` used to construct 4 fresh `SyncEnvelopeDetector`s (d11/d12/d13/d19) on every
+call, cold-started at `headerStart` on every retry. Verified against legacy directly (auditor
+plan-review): `CIIRTANK` (`m_iir11/12/19`) has no `Clear()` method at all and `SetFreq` only ever
+writes coefficients, never the resonator's internal state (`z1`/`z2`) — these detectors run with
+continuous, never-reset state for the CSSTVDEM object's whole life, even across AFC-triggered retunes.
+`m_iir12`/`m_iir19` (d12/d19) are fed unconditionally every sample; `m_iir11` (d11) effectively every
+sample too (`m_SyncRestart` hardwired on).
+
+**Real design correction found by plan-review before any code was written**: `m_iir13` (d13) is
+NOT the same shape — legacy only feeds it during case 2/9 (`sstv.cpp:1976`), so its value at a given
+sample depends on trigger history, not just that sample's own index. An index-keyed forward-fill cache
+is structurally wrong for it. **d13 stays method-local, exactly as before** — its cold start costs
+nothing measurable anyway (first read is 30ms after it starts being fed; an 80Hz-bandwidth resonator
+settles in ~4ms). d11/d12/d19 converted to persistent instance fields behind lazy forward-fill caches
+(`D11At`/`D12At`/`D19At`), mirroring `AgcSampleAt`'s own established pattern exactly.
+
+Deliberately NOT unified with the existing `_syncBypass1200Detector`/`_syncBypass1900Detector` (which
+already faithfully port legacy's literal SHARING of one d12/d19 pair for the continuous
+`TryInterleavedHeaderScan` fallback path) — `_syncBypassProcessedUpTo` being caught up to whatever
+`TryDecodeVisDataBits` needs at call time is unverified (the fixed-window path is tried first). Not a
+permanent scope cut: converting d12/d19 to index-keyed caches here is exactly the prerequisite that
+makes that future unification mechanical instead of a redesign, when/if it's ever done (same deferred-
+unification family as `_syncBypass1PrimaryHeld`'s own doc comment already describes).
+
+**`TrimBuffers` trap, correctly anticipated this time (not rediscovered the hard way like item 4a)**:
+these 3 new cursors are read ONLY pre-lock, by `TryDecodeVisDataBits` alone — so they're excluded from
+BOTH branches' watermark `Min()` chain (not just pre-lock like `_demodulatedFrequenciesProcessedUpTo`,
+since post-lock they'd otherwise freeze the watermark at whatever value they held at the moment of
+lock, blocking trimming for the entire image). Safety guaranteed purely by an extended catch-up-before-
+trim step, same load-bearing invariant as item 4a's own catch-up (`watermark <= _levelAgcProcessedUpTo`
+in both branches, so the catch-up's `AgcSampleAt` calls are always pure cache reads).
+
+**Real test gap closed before committing (auditor plan-review flagged it)**: `BufferedSampleCount` only
+tracks `_rawSamples`, so these 3 new `List<double>`s silently failing to trim (same bug class Band-1
+item 2/4a each hit once already, different cursors) would have passed
+`BufferedSampleCount_StaysBounded_ForLongNeverLockingStream` without any warning. Added
+`VisDataDetectorBufferedSampleCount` (combined physical length of the 3 new caches) and asserted it in
+both existing `BufferTrimTests` tests, not a new test file.
+
+**Verified**: full suite 415/415, no regressions, no new test count (extended existing assertions,
+didn't add new test methods). Golden-vector and noise-robustness tests unaffected.
+
+**Final code-level auditor review: EQUIVALENT, ready to commit.** Confirmed d13 genuinely untouched
+(same construction/feed/read-timing as before); confirmed the exclude-from-both-branches `TrimBuffers`
+reasoning is correct (traced the actual call chain: `TryDecodeVisDataBits` is only ever reachable while
+`_mode is null`); confirmed the catch-up safety invariant holds with 3 more consumers (all pure reads
+off `AgcSampleAt`, fully order-independent, and trim-timing itself provably can't affect decode output
+since the caches are index-keyed with a strictly monotonic feed); confirmed nothing from 4a/4b reopened.
+One stale comment found and fixed (the `sample++`-after-reject comment cited "these are stateful
+streaming filters, not a cache" as its reason — no longer true for d11/d12/d19, restated against the
+real legacy citation, `sstv.cpp:1983`, instead). One useful non-blocking note: the locked-branch
+catch-up now runs all three detectors over every sample of every image (previously idle there) — not a
+bug, actually a fidelity GAIN (legacy's real `m_iir11/12/19` run every sample too, so the next
+transmission's header decode now sees real carried-over state exactly like legacy, not just a
+memory-bounded cache) — worth knowing so the added per-sample cost isn't a surprise later. One
+recommended (non-blocking) test gap: nothing directly proves the persistence behavior itself (a
+regression back to cold-start-per-call would still pass all 415 tests) — deferred, since the 3 new
+fields are `private readonly` (structurally can't be silently reassigned to a fresh instance without an
+obviously-visible code change), and the auditor itself called this "recommended, not a commit blocker."
+If picked up later, pairs naturally with S16 (same detector-persistence shape).
+
+**Status: S5 DONE, committed.**
+
+### Band-2 item S16 — up next (same conversion as S5, do while the pattern's loaded)
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
