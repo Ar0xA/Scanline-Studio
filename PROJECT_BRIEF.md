@@ -20,29 +20,35 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-03) — S14 and S6 DONE, S15 next (last Band-2 item)
+## Resume here (2026-08-03) — Band 2 is FULLY DONE. Autonomous session stopped here deliberately.
 
-**S14 and S6 are both done** (commits `7a153a0`, `6da0a65`, pushed) — see the "Current status" section
-below for the full narrative. Full detail in `spec/14-roadmap.md`, search "Band-2 item S14" / "Band-2
-item S6". S6's real finding, worth knowing before touching this area again: `HilbertFmDemodulator`'s
-`isNarrow` selection is algebraically representationally-inert at steady state in this port's Hz
-representation (two independent derivations, this session + an auditor review) — its only observable
-effect is a brief, bounded, legacy-faithful transient at a width switch, not a decode-accuracy fix.
+**S14, S6, and S15 are all resolved** (S14/S6 shipped as code — commits `7a153a0`, `6da0a65` — S15
+closed via documentation, no code needed). **Band 2 is complete.** Full detail in `spec/14-roadmap.md`,
+search "Band-2 item S14" / "Band-2 item S6" / "Band-2 item S15".
 
-**Do this next**: Band-2 item S15 — the LAST item, and the one explicitly flagged all session as
-needing extra care: it's coupled to Band 1's `TrimBuffers` pre-lock watermark via `_fixedWindowExhausted`
-(`AnalogFmSstvDecoder.cs`) — re-verify that watermark computation as part of doing S15, not as an
-afterthought (per the auditor's own explicit warning, `spec/14-roadmap.md` search "S15 is coupled to
-Band 1"). No verified plan exists yet for S15 — start with a fresh legacy read of whatever S15's actual
-scope is (search `spec/14-roadmap.md` for its own inventory-row description before assuming shape from
-memory), draft a plan, then auditor plan-review before any code (CLAUDE.md §7).
+**S15's resolution, briefly**: before drafting a plan, found this port's own doc comments (from Band-1
+item 2/S2, predating Band 2) had already investigated S15's core concern once — a "more ambitious
+earlier draft" that tried periodically re-anchoring `_consumedSamples` to give the fixed-window header
+paths another shot, reverted after confirming empirically it changed nothing (the existing continuous
+fallback, `TryInterleavedHeaderScan`, finds the same headers at its own already-accepted precision
+either way). An auditor plan-review round confirmed this settles S15's broader concern too, via 3
+independent arguments (VisLockStateMachine covers extended VIS same as the fixed-window path; the
+post-commit sync-anchor fold washes out the ~10ms precision difference; already observed working via an
+existing test) — with one real, narrower exception: MN/MC's FSK packet decode genuinely has no
+continuous equivalent, but that's not a new gap, it's the ALREADY-TRACKED Band-3 item S8 ("mid-image
+narrow re-lock"), whose own load-bearing registry-coverage assumption got independently re-verified
+along the way (confirmed real, `SstvModeRegistry.cs:998-999`/`1023-1026`). Auditor's explicit verdict:
+building S15 as originally scoped would mean relitigating an already-evidenced-and-reverted design
+decision, unattended, on a load-bearing (`TrimBuffers`) coupling, with an unmeasured benefit — exactly
+this session's own hold criterion. Closed via documentation instead; **no code, deliberately.**
 
-**Normal process**: fresh legacy read → draft plan → auditor plan-review → implement → full suite +
-golden vectors → final code-level auditor review → commit → push → update `spec/14-roadmap.md` + this
-file. **S15 is the last Band-2 item** — once it lands, Band 2 is fully done; next up after that is
-Task #7 (golden-vector fixture capture, needs the user) or Task #8 (Phase 3 chain audit).
+**Nothing is queued for further autonomous work right now.** The three explicit next steps below (Task
+#7, Task #8, remaining Band 3/4/5 items) each either need the user's own time with the real legacy
+binary (#7) or should follow it (#8, most Band-3 mode-family items). If resuming cold: read this file
+fully, then `spec/14-roadmap.md`'s Band-2 S15 closing section for the complete reasoning before touching
+this area again — don't re-open S15 without re-reading why it was closed.
 
-## Current status: Band 1 DONE (all 4 items); Band 2 in progress (2 of 5 done)
+## Current status: Band 1 DONE (all 4 items); Band 2 DONE (all 5 items)
 
 **Pre-Phase-2 gate: shortcut/simplification audit.** User's call: before running the milestone-audit
 playbook's Phase 3 chain audit (see `docs/audit-playbook.md`) or moving to Phase 2, first inventory
@@ -56,7 +62,8 @@ lock-dependent bandpass filter switch, split into 4a (`fbafdea`, lazy forward-fi
 (`028bc8e`, the actual H1/H2 switch, gated on a *captured* lock-anchor index not live state). Full
 per-item detail: `spec/14-roadmap.md`, search "Band-1 item".
 
-**Band 2 (should-fix-during-Phase-2-bring-up) — 4 of 5 DONE, order: S5 → S16 → S14 → S6 → S15.**
+**Band 2 (should-fix-during-Phase-2-bring-up) — 5 of 5 DONE (4 code + 1 closed via documentation),
+order: S5 → S16 → S14 → S6 → S15.**
 Before starting, asked the auditor to revisit its own "decide the streaming contract explicitly first"
 recommendation now that Band 1 had real outcomes — withdrawn: the port already has both patterns that
 recommendation wanted decided (persistent-detector+cursor, lazy-forward-fill+ring-buffer), so patching
@@ -93,9 +100,9 @@ mid-stream (see below) — **don't assume similarly-shaped items share a fix, ve
   domain (encode/descale are exact algebraic inverses) — the only observable effect is a bounded,
   legacy-faithful transient at a width switch, not a decode-accuracy fix. Full detail: `spec/14-roadmap.md`,
   search "Band-2 item S6".
-- **S15 NEXT, last Band-2 item, no plan yet.** Coupled to Band 1's `TrimBuffers` pre-lock watermark
-  (`_fixedWindowExhausted`) — re-verify that watermark as part of it, per the auditor's own explicit
-  warning. See the "Resume here" section at the top of this file.
+- **S15 CLOSED via documentation, no code needed** — see the "Resume here" section at the top of this
+  file for the full reasoning. Its one real remaining gap is the already-tracked Band-3 item S8, not a
+  new item.
 
 **Test count**: 423/423 `Yoniq.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
 unaffected throughout, noise-robustness tests unaffected (existing tolerance).
@@ -105,23 +112,21 @@ Full per-item plan-review + implementation + code-review detail: `spec/14-roadma
 
 ## Next up
 
-1. **S15** (Band 2, last item) — no plan yet, start with a fresh legacy read (see "Resume here" at top
-   for the `TrimBuffers`/`_fixedWindowExhausted` coupling this one needs extra care for), then draft
-   plan → auditor plan-review → implement → full suite + golden vectors → auditor code-level review →
-   commit → push. Once this lands, Band 2 is fully done.
-2. **Task #7 — capture ~5-6 new real golden-vector fixtures** from the legacy binary, covering mode
+**Band 1 and Band 2 are both fully done.** No DSP item is queued for autonomous continuation right now
+— the remaining work below either needs the user's own time or should deliberately follow it:
+
+1. **Task #7 — capture ~5-6 new real golden-vector fixtures** from the legacy binary, covering mode
    families the existing two fixtures (Martin M1, Robot 36) don't exercise: Scottie S1 (mid-line sync —
    the exact family that already produced one real synthetic-test-passes-while-wrong incident,
    `CLAUDE.md` §4), Robot 72 or R24, a PD/MP mode, RM8 or RM12, a narrow MN/MC mode, AVT. Bottlenecked
-   on the user's time with the real legacy Windows binary, not on dev work — can start any time,
-   independent of Band 2's own progress.
-3. **Task #8 — Phase 3 chain/integration audit** (milestone-audit playbook, `docs/audit-playbook.md`) —
+   on the user's time with the real legacy Windows binary, not on dev work.
+2. **Task #8 — Phase 3 chain/integration audit** (milestone-audit playbook, `docs/audit-playbook.md`) —
    skip Phase 1/2, units are already individually verified to an unusual degree. Should follow #7, not
    precede it, so the audit runs against the widest available real-audio coverage.
-4. Band 3/4/5 items from the 30-item DSP-simplification inventory (S1-S30) are cataloged in
-   `spec/14-roadmap.md` but not yet scheduled — several Band-3 items are gated on task #7's new
-   fixtures (mode-family gaps get fixed when measured, not reasoned, per the auditor's own
-   recommendation).
+3. Band 3/4/5 items from the 30-item DSP-simplification inventory (S1-S30) are cataloged in
+   `spec/14-roadmap.md` but not yet scheduled — most Band-3 items (including S8/S9 MN/MC narrow-family
+   work and S7/S11/S16/S17 AVT work) are gated on task #7's new fixtures (mode-family gaps get fixed
+   when measured, not reasoned, per the auditor's own recommendation).
 
 ## Other candidates (not urgent)
 
