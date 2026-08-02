@@ -70,6 +70,13 @@ internal sealed class SyncIntervalTracker
         _maxIntervalSamples = 1390.0 * 3 / 1000.0 * sampleRate; // m_MSH, sstv.cpp:585
     }
 
+    /// <summary>Band-1 S2 fix (pre-Phase-2 audit): exposes <see cref="_maxIntervalSamples"/> (m_MSH)
+    /// so <c>AnalogFmSstvDecoder</c>'s pre-lock buffer-trim retention window can share it rather than
+    /// re-deriving the same `1390*3` formula independently and risking the two silently desyncing --
+    /// this is the longest interval <see cref="TryStart"/> can ever match against, i.e. the deepest a
+    /// caller anchoring off <see cref="LastPeakPositionSamples"/> might need to look back.</summary>
+    public double MaxIntervalSamples => _maxIntervalSamples;
+
     /// <summary><c>CSYNCINT::Reset</c> (`sstv.cpp:576-582`) -- clears the rolling interval history and
     /// all peak-tracking state. Legacy calls this from <c>Stop()</c> (`sstv.cpp:1782-1784`) at the end
     /// of every image, so a subsequent transmission's periodicity is judged fresh, not against stale

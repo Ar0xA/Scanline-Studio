@@ -1419,6 +1419,76 @@ legacy audio, the highest-value check): 8/8 unaffected.
 **Status: S3 (Band-1 item 3) fully done. Moving to S2 (Band-1 item 2, buffer trimming) -- sub-pieces
 C/D/E next.**
 
+### Band-1 item 2 (S2) — unbounded sample-buffer memory growth, DONE
+
+**Implementation**: single `_bufferBase` field + `Rel(int absoluteIndex)` translator (throws
+`InvalidOperationException`, loudly not silently, if asked to read behind the trim watermark) --
+avoided rewriting ~25 individual call sites by routing every read through `Rel()`, either directly or
+via the 4 existing forward-fill accessors (`AgcSampleAt`/`FilteredRawSampleAt`/
+`BandpassFilteredSampleAt`/`AgcCurMaxAt`). `TotalSamplesReceived = _bufferBase + _rawSamples.Count`
+replaces every `.Count` read used as an absolute total. `TrimBuffers()` (called once per `PushSamples`)
+computes a watermark two ways (locked: `min(_afcProcessedUpTo, _slantProcessedUpTo,
+_visLockProcessedUpTo, _levelAgcProcessedUpTo, _bandpassFilteredProcessedUpTo, _consumedSamples) -
+AnchorWarmupSamples`, deliberately excluding `_syncBypassProcessedUpTo` since it's frozen while
+locked; pre-lock: a fixed trailing retention window sized to `max(VisHeader.MaxSearchCeilingMs,
+SyncIntervalTracker.MaxIntervalSamples) + AnchorWarmupSamples`, further bounded by the same live
+cursors), amortized behind a `MinTrimSamples` (44100) threshold before actually calling
+`List<T>.RemoveRange` on all 5 buffers. `AdvanceAgcThroughDeadZone`/`_agcDeadZoneCatchUpTarget`:
+defers `EndOfImage`'s AGC dead-zone force-feed (preserving the documented "AGC advances monotonically
+regardless of dead-time skip" legacy-fidelity property) until the dead-zone's own samples have
+actually arrived, rather than assuming they're already available synchronously inside `EndOfImage`.
+
+**A real bug found and fixed DURING implementation, not anticipated by the plan-review**: the first
+working version's pre-lock watermark included `_consumedSamples` in its `min()` unconditionally.
+`_consumedSamples` is NEVER advanced pre-lock except by `Commit()`/`EndOfImage()` -- for a stream
+that never locks (an idle receiver on open squelch, the EXACT scenario this fix exists for), it stays
+0 forever, permanently blocking all trimming. Caught by actually running the intended test
+(`BufferedSampleCount_StaysBounded_ForLongNeverLockingStream`, 30s of real noise) rather than assuming
+the implementation matched the reviewed design.
+
+**Two designs tried for the fix, second one kept**: (1) skip `TryDecodeVisHeader`/
+`TryDecodeNarrowModeHeader` entirely once `_fixedWindowExhausted` (they're pure functions of
+`(headerStart, buffered data)`, provably dead for the epoch), excluding `_consumedSamples` from the
+watermark only then. (2) periodically RE-ANCHOR `_consumedSamples` forward to track each trim,
+re-arming `_fixedWindowExhausted` for a "fresh" shot each time. (2) was tried first and reverted: a
+second real test (`DecodedImage_StillDecodesCorrectly_WhenPrecededByLongSilence_ThatTriggeredTrimming`,
+a real Martin M1 transmission after 20s of silence) showed the re-anchor point is arbitrary relative
+to any real header's actual start -- the odds of landing exactly there are negligible, so the extra
+complexity (re-arming, re-closing `TryInterleavedHeaderScan`'s gate, real risk of subtly reopening the
+S3 race) bought back no actual precision. Kept (1): simpler, no race risk, and the practical outcome
+is identical either way -- a header arriving well after the epoch's one fixed-window opportunity is
+exhausted is found via `TryInterleavedHeaderScan`'s fallback, at that path's own already-documented,
+already-accepted anchor precision (29.0 tolerance, matching `SyncBypassDetectionTests`' own precedent
+for the same mode/mechanism) -- a pre-existing architectural property, not a regression this fix
+causes. The test asserts detection succeeds + structural correctness within that established
+tolerance, not exact pixel identity.
+
+**Final code-level auditor review (after implementation, before commit): "Ready to commit," no
+blockers.** Independently re-verified every `Rel()` call site (confirmed complete, no bypasses),
+re-derived both watermark branches' safety from scratch (found one additional real coupling the
+implementation relies on but hadn't stated explicitly: `TryResolveAvtTraining`'s own warm-up reads
+aren't directly in the pre-lock `min()`, safe only because `_fixedWindowExhausted` is provably false
+for the whole AVT-pending window), confirmed the never-locking-stream fix is correct and doesn't break
+AVT detection, confirmed `AdvanceAgcThroughDeadZone` preserves the monotonic-AGC property with no
+out-of-order reads or lost catch-up targets across multiple images. 6 lower-severity findings, all
+addressed with documentation (not code changes, since none were actual bugs): an `int`-overflow
+session-length limit (~13.5h @44100Hz, flagged explicitly rather than silently accepted, widening to
+`long` deliberately out of scope for this fix); the AVT-warmup coupling above; two warm-up clamps
+(`TryResolveSyncAnchorCorrection`/`TryResolveAvtTraining`) that assume `_bufferBase==0`, safe only via
+the watermark's own `AnchorWarmupSamples` margin, now stated explicitly rather than left implicit; a
+1-3 sample extended-VIS ceiling rounding mismatch, now a one-way gate instead of a harmless per-call
+retry (practically unreachable, flagged not fixed); `FilteredRawSampleAt`'s 1-sample-deeper read
+relying on tail margin rather than being directly covered by the `min()`.
+
+**Tests**: `BufferedSampleCount_StaysBounded_ForLongNeverLockingStream` (30s of real noise, asserts
+buffered count stays well below what unbounded growth would produce) and
+`DecodedImage_StillDecodesCorrectly_WhenPrecededByLongSilence_ThatTriggeredTrimming` (real Martin M1
+transmission after 20s of silence that's guaranteed to trigger multiple trims first, asserts correct
+mode detection + full line count + structural correctness within the established fallback tolerance).
+Full suite: 392/392, solution-wide build clean. Golden-vector tests re-run: 8/8 unaffected.
+
+**Status: S2 (Band-1 item 2) DONE, not yet committed as of this entry.**
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
