@@ -1333,6 +1333,63 @@ just corroborating it.
 to follow the auditor's own Pattern-1 recommendation -- one coherent piece, not two unrelated
 patches) before any production code is written.**
 
+**Auditor plan-review verdict: NOT ready to build. 7 real, paper-level defects found, each cheap to
+fix now and expensive to retrofit after ~25 call sites are rewritten.**
+
+1. **[blocker] Rolling cap is the wrong mechanism, not just a latency cost.** `bound = Count - L`
+   permanently drops the tail of a finite stream (a headerless transmission in the last ~1.3s of a
+   bulk/file decode becomes undetectable -- a NEW bug) and imposes a needless per-sample latency
+   penalty forever (the fixed-window path's search is one-shot, not rolling -- once exhausted it's
+   provably dead for the epoch). **Fix: one-shot `_fixedWindowExhausted` gate instead** (`scanBound =
+   (Count >= _consumedSamples + L) ? Count : _consumedSamples`, cleared in `EndOfImage`). Cost:
+   ~395ms one-time delay for the VisLock path per epoch; typically ZERO added delay for the
+   genuinely-headerless m_sint1/2/3 path (already needs ≥0.6-1.34s of consecutive-interval matching).
+2. **[blocker] `L` must be the max SEARCH CEILING (1305ms, extended-VIS's own retry margin), not max
+   commit-gate duration (1150ms)** -- using the smaller number reopens the race, just narrower.
+   Derive in `VisHeader` (not `SstvModeRegistry` -- not per-mode), and have
+   `TryDecodeVisDataBits`/`TryDecodeNarrowModeHeader` compute their own `searchCeiling` from the SAME
+   helper so the two can't silently desync.
+3. **[blocker] Trim watermark formula had 3 real bugs**, independently re-derived by enumerating
+   every backward-read site: missing `_levelAgcProcessedUpTo`/`_bandpassFilteredProcessedUpTo` from
+   the `min()` (reachable today, not hypothetical -- AGC lags `_consumedSamples` right after
+   `Commit`); `_syncBypassProcessedUpTo` is frozen while locked, so including it pins the watermark
+   for a WHOLE IMAGE (up to ~380MB at PD290/44100 before it can advance again); lookback derivation
+   was wrong (`SearchBandpassFilter`/`HilbertFmDemodulator` are streaming, tap counts don't belong;
+   the real raw lookback is 1; the load-bearing 2000 constant is for the sync-anchor-correction
+   warm-up specifically, not a generic safety margin -- needs sharing with those warm-up sites, not
+   re-derived independently).
+4. **[risk] `EndOfImage`'s 0.5s dead-time skip means AGC never gets fed through it** (deliberate,
+   matches legacy's own continuous-feed behavior, `:204-210`'s existing doc comment) -- once
+   `_levelAgcProcessedUpTo` joins the watermark (per #3), this PINS the watermark forever after image
+   1 unless addressed. Recommended: force-feed `AgcSampleAt` through the dead zone in `EndOfImage`
+   (0.5s of extra filter work per image, preserves the documented legacy-fidelity property).
+5. **[blocker] The biggest one -- "never trim while `_mode is null`" is EXACTLY BACKWARDS.** The
+   5.7GB/hr memory-growth scenario this whole fix exists for IS the never-locks case (an idle
+   receiver on open squelch) -- excluding it from trimming means the actual motivating case is never
+   fixed at all; the locked case is already naturally bounded by one image's duration. **Real fix:
+   pre-lock trimming at a ~5s retention window** (`max(L=1.3s, SyncIntervalTracker's own max interval
+   ×3 ≈4.17s, + anchor warm-up)` ≈8MB @44100 instead of unbounded) -- keep the "never trim while
+   `_pendingAnchorCorrectionMode is not null`" half of the original rule, drop the `_mode is null`
+   half entirely.
+6. **[structural recommendation, not a blocker]** implement via a single `_bufferBase` + accessor
+   methods (`RawAt(i)`, `DemodAt(i)`, etc.) rather than rewriting all ~25 absolute-index call sites
+   individually -- contains the change, preserves existing anchor arithmetic verbatim. `List<T>.RemoveRange`
+   is O(remaining); amortize trims (only trim once accumulated slack passes ~1s worth) to avoid O(n²).
+7. **New test needed**: assert anchor EQUALITY across chunk sizes {1, 500, 4096, one-shot}, not a
+   pixel-delta tolerance -- the existing tolerance-based test is exactly why the wrong AFC/Slant
+   attribution survived undetected this long.
+
+Verdict explicitly: "the underlying diagnosis is correct, the two problems genuinely do share one
+root... resolve these five [now seven, folding in 6/7], and the piece is well-scoped and ready" --
+no second plan-review round required, apply corrections directly (same pattern as Band-1 item 1).
+
+**Status: revising plan per the 7 points above, then implementing in sub-pieces (chop into
+independently-tested parts, per this project's established methodology): (A) VisHeader search-ceiling
+helper, zero behavior change; (B) one-shot gate + the actual race fix, tested via anchor-equality
+across chunk sizes; (C) `_bufferBase` abstraction, zero behavior change; (D) pre-lock trim watermark +
+EndOfImage AGC force-feed, tested via a long-non-locking-stream memory-bound test; (E) full-suite
+regression + update the stale AFC/Slant test comment. Not yet started as of this entry.**
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
