@@ -9,10 +9,7 @@ Secondary reference QSSTV lives locally (gitignored) at `QSSTV-main/` — inspir
 Full rules: `CLAUDE.md` (short, read it). Key ones: port legacy DSP exactly (no invention), golden-vector/round-trip
 tests for every DSP change, small reviewable commits, ask before pushing to origin.
 
-## Current task: Band 1 fixes, one by one — STOPPED after 3 of 4, resume with item 4
-
-Session paused here deliberately (hit ~90% of session budget) rather than start item 4 rushed —
-everything below is committed and pushed; `master` is a clean, safe resume point.
+## Current status: Band 1 (must-fix-before-Phase-2) is DONE — all 4 items
 
 **Pre-Phase-2 gate: shortcut/simplification audit.** User's call: before running the milestone-audit
 playbook's Phase 3 chain audit (see `docs/audit-playbook.md`) or moving to Phase 2, first inventory
@@ -20,53 +17,56 @@ every known DSP-in-pipeline simplification this port carries, triage/fix the imp
 capture more real golden-vector fixtures, THEN run Phase 3. Full writeup + 30-item table + priority
 bands + patterns: `spec/14-roadmap.md`, search "Pre-Phase-2 gate".
 
-**Band 1 = 4 items** (5th, Kaiser/Bessel filter design, dropped after confirming H1's attenuation is
-20dB at the only reachable preset — no Kaiser/Bessel work needed). **3 of 4 done:**
 1. **DONE** (commit `288d5d0`) — exception-swallowing bare `catch` in `MiniAudioCaptureSession`.
-   `LastSubscriberException`/`SubscriberExceptionCount` added, plus a real second bug the auditor
-   caught on its own initiative: one throwing subscriber used to starve every OTHER subscriber (and
-   every later chunk) of delivery — fixed in the same change.
-2. **DONE** (commit `86e3af6`) — unbounded memory growth in the decoder's 5 sample buffers
-   (~5.7GB/hr @44100Hz). Single `_bufferBase`+`Rel()` index-translation choke point, watermark
-   computed from live cursors. Real bug found DURING implementation (not caught by the plan-review):
-   first working version's pre-lock watermark included `_consumedSamples` unconditionally, which
-   never advances pre-lock except via `Commit()`/`EndOfImage()` — for a stream that never locks (the
-   exact scenario this fix exists for), it stayed 0 forever and permanently blocked all trimming. A
-   more ambitious re-anchoring fix was tried and reverted (didn't actually restore precision, added
-   real race-reopening risk) in favor of a simpler skip-based fix with an identical practical outcome.
-   Final code-level auditor review: "ready to commit," no blockers.
-3. **DONE** (commits `365d57b`, `765ba3c`) — chunk-timing sensitivity. Root cause was NOT AFC/Slant
-   (both proven fully chunk-invariant) — a real race between two header-detection paths
-   (`TryDecodeVisHeader`'s fixed-window path vs. `TryInterleavedHeaderScan`'s fallback), whose
-   priority depended on call-boundary timing instead of absolute sample position. Fixed with a
-   one-shot `_fixedWindowExhausted` gate (an auditor plan-review caught the first draft's rolling-cap
-   approach was wrong). Verified: decode is now provably deterministic regardless of chunking — exact
-   pixel identity across chunk sizes {1, 500, 4096}, not just tolerance.
-4. **NOT STARTED — next task.** Lock-dependent bandpass filter never switches: this port has never
-   once run legacy's real locked-state filter (`HBPF`/`H1`), only the weaker pre-lock/search one
-   (`HBPFS`/`H2`, `SearchBandpassFilter`). Expected to be a real DSP change, not a quick patch —
-   likely needs: a second filter instance for H1 (confirmed no Kaiser/Bessel branch needed at the
-   Wide preset — H1's attenuation is 20dB, same as H2), a decision on how the switch interacts with
-   `BandpassFilteredSampleAt`'s lazy forward-fill cache (the lock transition point matters — samples
-   before lock need H2, after need H1, but computation is lazy/index-based, not necessarily in lock-
-   state order), filter-state continuity (H1 needs to be "warmed up" by the time it's actually used,
-   same category of issue as the anchor-correction/AVT warm-ups elsewhere in this file), and the
-   auditor flagged a real group-delay-skew risk between the picture-demod and sync/envelope paths if
-   the filter differs between them — needs explicit discussion, not just implementation. Follow the
-   normal process: plan → auditor plan-review → implement → test incrementally → full suite + golden
-   vectors → final code-level auditor review, matching items 2/3's own pattern.
+2. **DONE** (commit `86e3af6`) — unbounded memory growth in the decoder's 5 sample buffers.
+3. **DONE** (commits `365d57b`, `765ba3c`) — chunk-timing sensitivity in header detection.
+4. **DONE** (commits `fbafdea`, `028bc8e`) — lock-dependent bandpass filter switch (H2 search vs. H1
+   locked). This was the biggest item, split into two pieces per an auditor plan-review finding that
+   the original single-piece design had a real blocker:
+   - **4a** (`fbafdea`): made `_demodulatedFrequencies` a lazy forward-fill cache (mirroring
+     `AgcSampleAt`/`BandpassFilteredSampleAt`'s own established pattern) instead of filling it eagerly
+     inside `PushSamples`' per-sample loop — the eager version raced the shared bandpass cache all the
+     way to the end of the buffer before `Commit()` ever got a chance to run, for any bulk-push caller
+     (measured: ~115 real seconds of wrongly-filtered content, vs. single-digit ms for realistic small
+     chunks). Hit and fixed a real bug during implementation (a `List<T>.RemoveRange` crash, same
+     failure class as item 2's own bug, different cursor) — see `spec/14-roadmap.md`'s "Band-1 item 4a"
+     entry for the full story.
+   - **4b** (`028bc8e`): the actual H1/H2 filter switch on top of 4a's foundation. `SearchBandpassFilter`
+     now carries both coefficient tables over one shared delay line (no separate H1 warm-up needed —
+     legacy's `CFIR2::Do` doesn't have two filter instances either, just one delay line and a
+     coefficient-table choice). Gated on a *captured* lock-anchor sample index, not live `_mode` state —
+     a correction that came directly out of 4a's own measured numbers (the bandpass cache trails the
+     lock anchor slightly, so naively gating on live state would have mis-classified a handful of
+     pre-anchor samples).
 
-Full per-item plan-review + implementation + code-review detail: `spec/14-roadmap.md`, search
-"Band-1 item".
+   Both pieces went through a full plan → auditor plan-review → implement → test → auditor code-level
+   review cycle (2 plan-review rounds for the initial blocker + design correction, 2 code-level reviews
+   — one per piece). Real, measured chunk-invariance (not just reasoned): a spike test, later converted
+   to a permanent regression (`BandpassCacheChunkInvarianceTests.cs`), confirmed the bandpass-cache-to-
+   lock-anchor gap is now identical across chunk sizes {1, 500, 4096, bulk-whole-file}.
 
-**Test count as of this entry**: 392/392 `Yoniq.Core.Sstv.Tests`, solution-wide build clean,
-golden-vector tests (real captured legacy audio) 8/8 unaffected throughout.
+**Test count**: 415/415 `Yoniq.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
+unaffected throughout, noise-robustness tests unaffected (existing tolerance).
 
-**Next after Band 1**: task #7 (capture ~5-6 new golden-vector fixtures for uncovered mode families:
-Scottie S1, Robot72/R24, a PD/MP mode, RM8/RM12, a narrow MN/MC mode, AVT — several Band-3 items from
-the 30-item audit are gated on these) → task #8 (Phase 3 chain audit).
+Full per-item plan-review + implementation + code-review detail for all 4 items: `spec/14-roadmap.md`,
+search "Band-1 item".
 
-## Other candidates (deprioritized behind Band 1, not urgent)
+## Next up
+
+1. **Task #7 — capture ~5-6 new real golden-vector fixtures** from the legacy binary, covering mode
+   families the existing two fixtures (Martin M1, Robot 36) don't exercise: Scottie S1 (mid-line sync —
+   the exact family that already produced one real synthetic-test-passes-while-wrong incident,
+   `CLAUDE.md` §4), Robot 72 or R24, a PD/MP mode, RM8 or RM12, a narrow MN/MC mode, AVT. Bottlenecked
+   on the user's time with the real legacy Windows binary, not on dev work — can start any time.
+2. **Task #8 — Phase 3 chain/integration audit** (milestone-audit playbook, `docs/audit-playbook.md`) —
+   skip Phase 1/2, units are already individually verified to an unusual degree. Should follow #7, not
+   precede it, so the audit runs against the widest available real-audio coverage.
+3. The remaining Band-2/3/4/5 items from the 30-item DSP-simplification inventory (S1-S30) are cataloged
+   in `spec/14-roadmap.md` but not yet scheduled — several Band-3 items are gated on task #7's new
+   fixtures (mode-family gaps get fixed when measured, not reasoned, per the auditor's own
+   recommendation).
+
+## Other candidates (not urgent)
 
 - **Phase 2 — Radio layer**: `IRadioController` reference implementation against a fake
   transport/protocol, then `rigctld` client mode ([[02-radio-layer]], [[04-rigctld]] in the roadmap).
@@ -100,8 +100,9 @@ peak-picking (piece 10), horizontal pixel-pitch trim (piece 11), RM8/RM12 RX gai
 Pieces 14/15/B + noise harness: Hilbert demodulator (`CHILL`) replaces PLL as the main picture
 demodulator (piece 14, commit `aeccfcc`); legacy's always-on 2-tap pre-filter (piece 15); noise-
 robustness test harness (new infra, not a port); `SearchBandpassFilter` — legacy's `H2`/"search"
-pre-AGC bandpass filter, continuous scope, no lock-state gating (piece B, commit `c3b9f46`) — **this
-is the exact filter Band-1 item 4 above now needs to extend with the locked-state H1 counterpart.**
+pre-AGC bandpass filter, continuous scope, no lock-state gating (piece B, commit `c3b9f46`) — extended
+with the locked-state H1 counterpart by Band-1 item 4 above, closing the gap this piece's own doc
+comment flagged.
 Measured noise-floor improvement: martin-m1 9.0dB→3.0dB, robot-36 16.0dB→9.0dB.
 
 **Windows CI fixed** (2026-08-01, commit `8be35b7`): `ilammy/msvc-dev-cmd@v1` was setting `Platform=x64`
@@ -115,19 +116,27 @@ as a job-level env var, and `Yoniq.sln` only has "Any CPU" configs — fixed wit
   the auditor directly "is this ready to build now?" each round; soft 3-round backstop, then loop in the
   user. Restate the ADHD/scope rule and the ported-behavior framing in every subagent prompt.
 - For a substantial piece, a final CODE-LEVEL auditor review after implementation (not just a plan
-  review before it) is worth doing before calling it done — caught real issues in Band-1 items 2/3
-  that plan-review alone couldn't (bugs only visible once the code actually exists).
+  review before it) is worth doing before calling it done — caught real issues in every Band-1 item's
+  own implementation that plan-review alone couldn't (bugs only visible once the code actually exists).
 - Independently re-verify Opus/agent findings against actual source before trusting/acting on them.
 - When investigating a suspected bug, confirm the mechanism empirically (temporary instrumentation,
-  added and fully reverted, `git status`/`git diff` confirmed clean) before designing a fix — don't
-  fix blind. Used successfully for Band-1 item 3's root cause and item 2's mid-implementation bug.
+  added and fully reverted or converted to a permanent regression test, `git status`/`git diff`
+  confirmed clean) before designing a fix — don't fix blind. Used successfully across every Band-1 item.
 - If a fix's design doesn't demonstrably achieve what it's meant to (measured via a real test, not
-  assumed), revert to the simpler alternative rather than keep the more complex one "just in case" —
-  done for item 2's re-anchoring attempt.
+  assumed), revert to the simpler alternative rather than keep the more complex one "just in case."
+- When a design choice has real, uncertain tradeoffs (not a lookup, not a bug with a known root cause),
+  the `/adhd` skill (parallel divergent ideation across cognitive frames, scored/clustered, top ideas
+  deepened) is worth running before committing to a direction — used for the "move to a streaming
+  architecture now vs. defer" question during Band-1 item 4; the deepening pass surfaced a concrete,
+  buildable design (4a) that a straight architecture debate hadn't converged on.
+- A throwaway spike to get a REAL number beats reasoning about magnitude in the abstract — but measure
+  the thing that actually matters (an early spike measured the wrong quantity — raw pushed-sample count
+  instead of the actual cache cursor position — and had to be corrected before its result meant anything).
 - Document steps + results durably in `spec/14-roadmap.md` as you go; keep this file trimmed to
   "what's needed to resume," not a running history (that's the roadmap's job).
 - Cloud-scheduled routines (RemoteTrigger/`/schedule`) run in an isolated environment with a fresh git
   checkout — no access to `yoniq-old/YONIQ-main/` or `QSSTV-main/` (both gitignored, local-only).
+  Session-local `CronCreate` reminders work fine instead (no isolation issue) but only last the session.
 
 ## Build/test commands
 ```
