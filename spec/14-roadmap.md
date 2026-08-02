@@ -1229,8 +1229,68 @@ pass-through added, mirroring `CaptureOverrunCount`.
 own invocations; asserts the second handler keeps firing (proves per-handler isolation) AND
 `LastSubscriberException`/`SubscriberExceptionCount` are correctly recorded. Full suite: 387/387
 `Yoniq.Core.Sstv.Tests`, 51/51 `Yoniq.Core.Audio.MiniAudio.Tests` (49 previous + this new one +
-one other pre-existing), solution-wide build clean. **Status: DONE, not yet committed as of this
-entry.**
+one other pre-existing), solution-wide build clean. **Status: DONE, committed `288d5d0`.**
+
+### Band-1 items 2+3 (S2 memory growth, S3 chunk-timing sensitivity) — per user instruction, following
+the auditor's Pattern-1 recommendation: treated as one combined piece rather than two independent
+patches, since both were flagged as likely tracing to the same "upfront buffer vs. real-time stream"
+architectural gap.
+
+**Investigation phase first** (not a blind fix — matches this project's established methodology):
+dispatched a dedicated investigative pass (read-only, no code changes) to find S3's actual root cause
+before drafting any plan, since the original inventory's attribution ("AFC/Auto Slant process
+'whatever's available so far'") was itself unverified.
+
+**Root cause found, high-confidence, source-cited (not yet empirically confirmed by the investigator
+itself — no Bash access in that pass; confirmation is the next step, done in this session directly
+since Bash is available here):**
+
+**AFC and Slant are NOT the cause — both confirmed already fully chunk-invariant** (`ApplyAfcCorrections`'s
+bound can never be limited by `_demodulatedFrequencies.Count` since the enclosing per-line guard at
+`AnalogFmSstvDecoder.cs:388` already guarantees enough data exists; `ApplySlantTracking` is bounded
+only by `_consumedSamples`, never by `Count`). The original test comment attributing this to AFC/Slant
+is wrong and needs correcting once the real fix lands.
+
+**The real mechanism: two header-detection paths race, and priority is decided by call-boundary
+timing, not absolute sample position.** `TryDecodeVisHeader` (the fixed-window, analytically-precise
+path) refuses to commit until the full 910ms header is buffered (`:1443`,
+`_demodulatedFrequencies.Count - headerStart < totalHeaderSampleCount` → `return false`) — when that
+happens, `TryDecodeHeader` falls through (`:621`) to `TryInterleavedHeaderScan`, whose loop bound is
+explicitly "whatever has arrived so far" (`:871`, `_syncBypassProcessedUpTo < _rawSamples.Count`) and
+which commits at a DIFFERENT anchor (`VisLockStateMachine`'s own empirically-triggered lock, with a
+self-documented, uncorrected group-delay lag — measured ~80 samples @11025Hz elsewhere in this file,
+scaling to ~320 samples/~7.3ms @44100Hz). In a one-shot push, the fixed-window path is satisfied on
+the very first `TryProcessBuffer` call and the fallback never runs at all. In a chunked push, the
+fallback runs on every chunk from sample 0 onward and gets a real chance to win — a race window
+several hundred samples wide (Martin M1 @44100: fixed-window needs `Count>=40131`; fallback can
+commit as early as `trigger+12569`), and if it wins, the committed anchor is off by roughly the
+group-delay lag (~7.3ms ≈ ~16 pixels of a Martin M1 scan) before `TryResolveSyncAnchorCorrection`'s
+fold absorbs most of it — which is exactly why the symptom is a small ~1.75 ambient delta rather than
+a visibly torn image, not evidence it's a small/unimportant bug.
+
+**Structural, not a one-liner**, per the investigator: `TryDecodeHeader`'s own doc comment states the
+intent "header wins, every time" but the implementation only delivers that when the fixed-window
+path's availability gate happens to be satisfied on the same call it's checked — a call-scoped,
+not sample-scoped, priority decision. Proposed principled fix (not yet plan-reviewed): scope the
+fallback's own bound to lag the fixed-window path's own commit latency
+(`_rawSamples.Count - maxFixedWindowHeaderLatency`), so the fixed-window path always gets first
+refusal at the same absolute sample index regardless of how push calls are chunked.
+
+**S2 (buffer trimming) is separable from S3 — confirmed, does not need to wait.** Hard rule for
+correctness: the trim watermark must be `min(every processed-up-to cursor) - lookback` (never a
+single cursor — some cursors run far ahead of others, e.g. AGC/bandpass-filter cursors vs.
+AFC/Slant/VIS-lock cursors), AND trimming must never happen while `_mode is null` or
+`_pendingAnchorCorrectionMode is not null` (exactly the region S3's bug lives in, and where every
+long backward-read — AVT PLL warm-up, sync-anchor fold, header retry rescans — also lives). ~25
+call sites need offset-translation (every buffer is indexed by absolute sample index today). The one
+coupling: if S3's fix adds a new cursor (the fallback's lagged bound), it just joins the trim
+watermark's `min(...)` — a one-line addition, not a redesign.
+
+**Status: investigation done. Next: empirically confirm the race hypothesis (chunk-size sweep +
+targeted temporary instrumentation at the 4 commit call sites, reverted before any real fix), THEN
+get an auditor plan-review of the actual fix (both S3's priority-scoping fix and S2's trim-watermark
+design) before writing production code. Test comment at `SstvRoundTripTests.cs:198-205` needs
+correcting once the real fix lands (currently misattributes this to AFC/Slant).**
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
