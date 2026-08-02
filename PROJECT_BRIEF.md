@@ -20,24 +20,27 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-03) — S14 DONE, S6 next (needs a fresh legacy read first, no plan yet)
+## Resume here (2026-08-03) — S14 and S6 DONE, S15 next (last Band-2 item)
 
-**S14 is done** (commit `7a153a0`, pushed) — see the "Current status" section below for the full
-narrative. Full detail in `spec/14-roadmap.md`, search "Band-2 item S14".
+**S14 and S6 are both done** (commits `7a153a0`, `6da0a65`, pushed) — see the "Current status" section
+below for the full narrative. Full detail in `spec/14-roadmap.md`, search "Band-2 item S14" / "Band-2
+item S6". S6's real finding, worth knowing before touching this area again: `HilbertFmDemodulator`'s
+`isNarrow` selection is algebraically representationally-inert at steady state in this port's Hz
+representation (two independent derivations, this session + an auditor review) — its only observable
+effect is a brief, bounded, legacy-faithful transient at a width switch, not a decode-accuracy fix.
 
-**Do this next**: Band-2 item S6 — `HilbertFmDemodulator.SetWidth` persistence/lifecycle. Unlike S14,
-there is **no verified plan yet** — this item was explicitly flagged all session as needing its OWN
-fresh legacy read of `CSSTVDEM::SetWidth` (`sstv.cpp`) before writing any code, because it changes BOTH
-tap count AND phase-diff lag, unlike Band-1 item 4b's H1/H2 swap (constant tap count, no warm-up needed).
-**Do not reuse 4b's "no warm-up needed" reasoning without re-verifying against source first.** Start by
-reading `CSSTVDEM::SetWidth` and `HilbertFmDemodulator.SetWidth` side by side, work out what actually
-changes on a width switch, draft a plan, then get an auditor plan-review before any implementation
-(CLAUDE.md §7 — non-trivial DSP port).
+**Do this next**: Band-2 item S15 — the LAST item, and the one explicitly flagged all session as
+needing extra care: it's coupled to Band 1's `TrimBuffers` pre-lock watermark via `_fixedWindowExhausted`
+(`AnalogFmSstvDecoder.cs`) — re-verify that watermark computation as part of doing S15, not as an
+afterthought (per the auditor's own explicit warning, `spec/14-roadmap.md` search "S15 is coupled to
+Band 1"). No verified plan exists yet for S15 — start with a fresh legacy read of whatever S15's actual
+scope is (search `spec/14-roadmap.md` for its own inventory-row description before assuming shape from
+memory), draft a plan, then auditor plan-review before any code (CLAUDE.md §7).
 
 **Normal process**: fresh legacy read → draft plan → auditor plan-review → implement → full suite +
 golden vectors → final code-level auditor review → commit → push → update `spec/14-roadmap.md` + this
-file. Then S15 last (coupled to Band 1's `TrimBuffers` pre-lock watermark via `_fixedWindowExhausted` —
-re-verify that watermark as part of doing S15, per the auditor's own explicit warning).
+file. **S15 is the last Band-2 item** — once it lands, Band 2 is fully done; next up after that is
+Task #7 (golden-vector fixture capture, needs the user) or Task #8 (Phase 3 chain audit).
 
 ## Current status: Band 1 DONE (all 4 items); Band 2 in progress (2 of 5 done)
 
@@ -53,7 +56,7 @@ lock-dependent bandpass filter switch, split into 4a (`fbafdea`, lazy forward-fi
 (`028bc8e`, the actual H1/H2 switch, gated on a *captured* lock-anchor index not live state). Full
 per-item detail: `spec/14-roadmap.md`, search "Band-1 item".
 
-**Band 2 (should-fix-during-Phase-2-bring-up) — 3 of 5 DONE, order: S5 → S16 → S14 → S6 → S15.**
+**Band 2 (should-fix-during-Phase-2-bring-up) — 4 of 5 DONE, order: S5 → S16 → S14 → S6 → S15.**
 Before starting, asked the auditor to revisit its own "decide the streaming contract explicitly first"
 recommendation now that Band 1 had real outcomes — withdrawn: the port already has both patterns that
 recommendation wanted decided (persistent-detector+cursor, lazy-forward-fill+ring-buffer), so patching
@@ -80,14 +83,21 @@ mid-stream (see below) — **don't assume similarly-shaped items share a fix, ve
   the one non-blocking follow-up (pin the D19-reuse decision itself, not just the new cache's own
   persistence) was closed before commit, not deferred. Full detail: `spec/14-roadmap.md`, search
   "Band-2 item S14".
-- **S6 NEXT, no plan yet — needs its OWN fresh legacy read first.** Hilbert's `SetWidth` changes tap
-  count AND phase-diff lag, unlike H1/H2's constant-tap swap (Band-1 item 4b) — do NOT reuse 4b's
-  "no warm-up needed" reasoning without re-verifying against `CSSTVDEM::SetWidth` (`sstv.cpp`) first.
-  See the "Resume here" section at the top of this file.
-- **S15 not started.** Coupled to Band 1's `TrimBuffers` pre-lock watermark (`_fixedWindowExhausted`) —
-  do LAST, re-verify that watermark as part of it, per the auditor's own explicit warning.
+- **S6 DONE** (`6da0a65`) — `HilbertFmDemodulator.ProcessSample` gained an `isNarrow` parameter
+  (precomputed wide/narrow `(off, out)` pairs, mirroring 4b's per-call `useLocked` shape), gated via
+  4b's own `_bandpassLockedFromSample` anchor. A prior trap note claiming `SetWidth` changes tap count
+  cited the wrong legacy function (`SetBPF`'s `m_Skip`, an unrelated bandpass-quality setting) — fresh
+  read found `CHILL::SetWidth` only changes two scalars, so 4b's "no warm-up needed" finding DID
+  transfer after all, just for a different reason than originally assumed. Real finding, confirmed
+  algebraically twice over: `isNarrow` is representationally inert at steady state in this port's Hz
+  domain (encode/descale are exact algebraic inverses) — the only observable effect is a bounded,
+  legacy-faithful transient at a width switch, not a decode-accuracy fix. Full detail: `spec/14-roadmap.md`,
+  search "Band-2 item S6".
+- **S15 NEXT, last Band-2 item, no plan yet.** Coupled to Band 1's `TrimBuffers` pre-lock watermark
+  (`_fixedWindowExhausted`) — re-verify that watermark as part of it, per the auditor's own explicit
+  warning. See the "Resume here" section at the top of this file.
 
-**Test count**: 419/419 `Yoniq.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
+**Test count**: 423/423 `Yoniq.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
 unaffected throughout, noise-robustness tests unaffected (existing tolerance).
 
 Full per-item plan-review + implementation + code-review detail: `spec/14-roadmap.md`, search
@@ -95,9 +105,10 @@ Full per-item plan-review + implementation + code-review detail: `spec/14-roadma
 
 ## Next up
 
-1. **S6** (Band 2, next in order) — no plan yet, start with a fresh legacy read of `CSSTVDEM::SetWidth`
-   (see "Resume here" at top for why this one can't reuse 4b's reasoning), then draft plan → auditor
-   plan-review → implement → full suite + golden vectors → auditor code-level review → commit → push.
+1. **S15** (Band 2, last item) — no plan yet, start with a fresh legacy read (see "Resume here" at top
+   for the `TrimBuffers`/`_fixedWindowExhausted` coupling this one needs extra care for), then draft
+   plan → auditor plan-review → implement → full suite + golden vectors → auditor code-level review →
+   commit → push. Once this lands, Band 2 is fully done.
 2. **Task #7 — capture ~5-6 new real golden-vector fixtures** from the legacy binary, covering mode
    families the existing two fixtures (Martin M1, Robot 36) don't exercise: Scottie S1 (mid-line sync —
    the exact family that already produced one real synthetic-test-passes-while-wrong incident,
