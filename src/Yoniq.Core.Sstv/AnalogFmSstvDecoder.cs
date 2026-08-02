@@ -2226,8 +2226,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     }
 
     /// <summary>Averages the (already fully demodulated) frequency stream over [startSample,
-    /// endSample), skipping a settling margin at the start for the PLL loop's transient response
-    /// after the preceding frequency change.</summary>
+    /// endSample), skipping a settling margin at the start for the demodulator's own transient
+    /// response after the preceding frequency change -- stale reference to "PLL loop" fixed (third
+    /// flag, an auditor code-level review each time): this port's main picture demodulator has been
+    /// <see cref="HilbertFmDemodulator"/> since Piece 14, not a PLL.</summary>
     private double AverageFrequencyInWindow(int startSample, int endSample)
     {
         var sampleCount = Math.Max(1, endSample - startSample);
