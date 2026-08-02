@@ -53,6 +53,17 @@ public class BufferTrimTests
             bufferedSeconds < 15.0,
             $"Expected buffered sample count to stay well below the full 30s pushed (bounded pre-lock retention), " +
             $"but {decoder.BufferedSampleCount} samples ({bufferedSeconds:F1}s) are still held -- trimming did not run.");
+
+        // Band-2 item S5: BufferedSampleCount alone only covers _rawSamples -- an auditor code-level
+        // review flagged that the 3 new persistent VIS-bit-detector caches (D11At/D12At/D19At) have
+        // their own independent Lists that could silently fail to trim (the exact bug class Band-1
+        // item 2/4a each hit once already) without this test noticing. Same bound as above: real
+        // growth would leave this at totalSamples too.
+        var visDataSeconds = decoder.VisDataDetectorBufferedSampleCount / (double)sampleRate;
+        Assert.True(
+            visDataSeconds < 15.0,
+            $"Expected the VIS-bit-detector caches to stay well below the full 30s pushed too, " +
+            $"but {decoder.VisDataDetectorBufferedSampleCount} combined samples ({visDataSeconds:F1}s) are still held -- trimming did not run.");
     }
 
     [Fact]
@@ -100,6 +111,7 @@ public class BufferTrimTests
         }
 
         Assert.True(decoder.BufferedSampleCount < silenceSamples.Length, "Expected trimming to have already reduced the buffered sample count below the full silence lead-in.");
+        Assert.True(decoder.VisDataDetectorBufferedSampleCount < silenceSamples.Length, "Expected the VIS-bit-detector caches (Band-2 item S5) to have been trimmed below the full silence lead-in too.");
 
         for (var offset = 0; offset < transmissionSamples.Count; offset += chunkSize)
         {
