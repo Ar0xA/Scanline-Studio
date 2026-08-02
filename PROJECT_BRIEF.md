@@ -9,6 +9,36 @@ Secondary reference QSSTV lives locally (gitignored) at `QSSTV-main/` — inspir
 Full rules: `CLAUDE.md` (short, read it). Key ones: port legacy DSP exactly (no invention), golden-vector/round-trip
 tests for every DSP change, small reviewable commits, ask before pushing to origin.
 
+## Resume here (2026-08-02, session paused at 92% budget) — S14, plan verified, NOT implemented yet
+
+**Do this first, before anything else**: implement Band-2 item S14. The plan below is fully verified
+by an auditor plan-review (round done, no code written yet) — go straight to implementing, no need to
+re-derive or re-verify the plan itself. Full spec: `spec/14-roadmap.md`, search "Band-2 item S14" (has
+the complete, ready-to-execute detail — read that section, not just this summary, before coding).
+
+**The fix, in short**: `TryDecodeNarrowModeHeader`'s `markDetector`/`spaceDetector` (~line 1774 as of
+last commit `b95366a`) are cold-started fresh every call, same shape S5 already fixed for d11/d12/d19.
+1. Mark detector (1900Hz): **reuse `D19At`** (S5's existing persistent cache) — do NOT add a third
+   1900Hz instance. Legacy's mark tone literally IS `d19`, same object. Requires updating `D19At`'s
+   `TrimBuffers` exclusion comment to name both readers (still correct, just needs the citation fixed).
+2. Space detector (2100Hz, `VisHeader.NarrowSpaceFrequencyHz`): genuinely new — add a persistent field +
+   `FskSpaceAt(int index)` lazy forward-fill cache + cursor, mirroring `D11At`/`D12At`/`D19At` exactly,
+   plus its own `TrimBuffers` catch-up + `RemoveRange` + diagnostic entry.
+3. `NarrowFskHeaderDecoder`'s own bit-accumulation state machine stays fresh-per-call — confirmed
+   correctly out of scope (same already-accepted shape as `TryDecodeVisDataBits`'s own untouched search
+   logic in S5).
+4. The "anchor-precision half" of S14 (fixed-nominal-duration commit point) is **already closed** —
+   verified against `Main.cpp:7422-7424` (TX places image data at a fixed offset, not RX's lock sample).
+   Nothing to do there.
+
+Auditor's own sizing: **small, smaller than S5** — one new detector+cache+cursor, one catch-up, one
+`RemoveRange`, one diagnostic extension, two comment updates. Comfortably a single session.
+
+**Normal process from here**: implement → full suite + golden vectors → final code-level auditor review
+→ commit → push → update `spec/14-roadmap.md` + this file. Then continue Band 2: S6 next (needs its OWN
+fresh legacy read, `HilbertFmDemodulator.SetWidth` changes tap count/lag unlike H1/H2's constant-tap
+swap — don't reuse 4b reasoning), then S15 last (coupled to Band 1's `TrimBuffers` pre-lock watermark).
+
 ## Current status: Band 1 DONE (all 4 items); Band 2 in progress (2 of 5 done)
 
 **Pre-Phase-2 gate: shortcut/simplification audit.** User's call: before running the milestone-audit
@@ -43,8 +73,8 @@ mid-stream (see below) — **don't assume similarly-shaped items share a fix, ve
 - Both plus 4b closed a systemic gap an auditor review flagged: 3 items in a row changed real behavior
   invisible to the test suite (decode outcomes stayed correct, but nothing pinned the mechanism). Closed
   in `LegacyDerivedSpansTests.cs` (S5/S16) + `BandpassCacheChunkInvarianceTests.cs` (4b, done earlier).
-- **S14 NEXT** — splits into two halves per the auditor's own classification: a detector-persistence
-  half (rides with S5's pattern) and a separate anchor-precision half. Not yet scoped in detail.
+- **S14 NEXT, plan verified, not yet implemented** (session paused here at 92% budget) — see the
+  "Resume here" section at the top of this file for the full ready-to-execute plan.
 - **S6, S15 not started.** S6 needs its OWN fresh legacy read before reusing any 4b reasoning (Hilbert's
   `SetWidth` changes tap count/lag, unlike H1/H2's constant-tap swap — a flagged trap, not yet hit).
   S15 is coupled to Band 1's `TrimBuffers` pre-lock watermark (`_fixedWindowExhausted`) — do LAST,
@@ -58,9 +88,8 @@ Full per-item plan-review + implementation + code-review detail: `spec/14-roadma
 
 ## Next up
 
-1. **S14** (Band 2, next in order) — scope both halves (detector-persistence + anchor-precision)
-   before implementing either, per the normal process: plan → auditor plan-review → implement → test
-   → auditor code-level review.
+1. **S14** (Band 2, next in order) — plan already verified (see "Resume here" at top), go straight to
+   implementing: implement → full suite + golden vectors → auditor code-level review → commit → push.
 2. **Task #7 — capture ~5-6 new real golden-vector fixtures** from the legacy binary, covering mode
    families the existing two fixtures (Martin M1, Robot 36) don't exercise: Scottie S1 (mid-line sync —
    the exact family that already produced one real synthetic-test-passes-while-wrong incident,

@@ -1976,7 +1976,59 @@ diagnostics added to support them (`AvtPllWarmupStartSample`/`AvtTrainingOriginS
 
 **Status: S16 DONE, committed.**
 
-### Band-2 item S14 — up next (detector half rides with S5's pattern; anchor-precision half is separate)
+### Band-2 item S14 — plan verified, NOT YET IMPLEMENTED (session paused at 92% budget)
+
+`TryDecodeNarrowModeHeader`'s own `markDetector`/`spaceDetector` (1900Hz/2100Hz `SyncEnvelopeDetector`s,
+~line 1774) are constructed fresh every call — same cold-start shape as S5's d11/d12/d19. Legacy's real
+equivalents: `m` is literally `d19` (`m_iir19`+`m_lpf19`, unconditional every sample, `sstv.cpp:1851-1853`
+— the SAME detector S5 already made persistent as `D19At`), `s` is `dsp` from `m_iirfsk`+`m_lpffsk`
+(2100Hz `FSKSPACE`, also unconditional every sample, `sstv.cpp:1855-1857`, not yet covered anywhere).
+
+**Plan-review verdict, confirmed against source, ready to implement:**
+1. **Mark detector: REUSE `D19At`, don't add a third 1900Hz instance.** Initial instinct was to keep
+   narrow-mode's own separate persistent 1900Hz detector (matching S5's own precedent of NOT reusing
+   `_syncBypass1200Detector`/`_syncBypass1900Detector`) — auditor correction: that precedent doesn't
+   apply here. S5's non-unification was specifically about `_syncBypass1900Detector`, which is driven by
+   a *separate scan cursor* whose caught-up-ness at call time is unverifiable. `D19At` is a plain
+   index-keyed cache (ask for index i, it forward-fills and returns) — no cursor-lag question exists.
+   Legacy's mark literally *is* d19, same object, same value — reusing `D19At` is MORE faithful, cheaper,
+   and stops 3x duplication (`_syncBypass1900Detector`, `_visDataD19Detector`, a hypothetical third)
+   becoming 4x. **Required follow-through**: `D19At`'s existing `TrimBuffers` exclusion comment
+   (currently justified by "read ONLY by `TryDecodeVisDataBits`") becomes false once
+   `TryDecodeNarrowModeHeader` also reads it — update to name both readers (exclusion logic itself stays
+   correct, both are pre-lock-only readers).
+2. **Space detector: genuinely new.** New persistent field + `FskSpaceAt(int index)` lazy forward-fill
+   cache + cursor, exactly mirroring `D11At`/`D12At`/`D19At`'s own shape — plus its own `TrimBuffers`
+   catch-up-before-trim call, `RemoveRange`, and a diagnostic-count entry (matching S5's own
+   `VisDataDetectorBufferedSampleCount` pattern — fold the new list into that combined count, or add a
+   sibling; decide at implementation time).
+3. **`NarrowFskHeaderDecoder`'s own bit-accumulation state machine stays fresh-per-call, NOT converted.**
+   Real finding: legacy's `DecodeFSK`/`m_fskmode` (`sstv.cpp:2378-2606`) is ALSO called unconditionally
+   every sample with no `headerStart` concept at all — a genuinely bigger architectural gap than d13/S16
+   ever were. Confirmed correctly OUT of scope for S14 specifically: this port's bounded-fixed-window-
+   plus-`_syncBypassNarrowTracker`-fallback architecture is the same, already-accepted shape as the VIS
+   path's own `TryDecodeVisHeader`/`TryInterleavedHeaderScan` split — `NarrowFskHeaderDecoder`'s bit
+   accumulation is the direct analogue of `TryDecodeVisDataBits`'s own trigger-search logic, which S5
+   correctly left fresh-per-call too. Safe specifically BECAUSE once both tone detectors are index-keyed
+   caches, the state machine becomes a pure function of `(headerStart, cached values)` — same reasoning
+   that already applies to S5's own untouched search loop.
+4. **Anchor-precision half: ALREADY CLOSED, no work needed.** The original S14 audit row's own concern
+   ("supporting evidence is [only] a round-trip test... drift/jitter unmeasured") is stale — an existing
+   doc comment on this method (predating this session's Band-2 audit) already independently verified the
+   fixed-nominal-duration commit point against `Main.cpp:7422-7424`: TX writes the mode byte then the
+   checksum byte, and the guard-tone write immediately after is commented out in legacy's own TX code —
+   image data follows at a fixed offset determined entirely by TX, not by wherever RX's state machine
+   happens to lock. `headerStart + VisHeader.NarrowHeaderTotalDurationMs` is confirmed correct, TX-source-
+   verified rather than round-trip-self-consistent. Nothing to change here.
+
+**Sizing (auditor's own assessment): small — smaller than S5.** One new detector+cache+cursor (space),
+one catch-up, one `RemoveRange`, one diagnostic extension, two comment updates (the `TrimBuffers`
+exclusion citation above, plus swapping two local constructions for cache reads in
+`TryDecodeNarrowModeHeader` itself). Comfortably a single session once resumed.
+
+**Status: plan fully verified by auditor plan-review, ready to implement. Session paused here
+(budget) before any code was written — this section is the complete, ready-to-execute spec for
+whoever picks this up next.**
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
