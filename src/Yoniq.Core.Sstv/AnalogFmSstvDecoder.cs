@@ -503,7 +503,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     {
         for (; _demodulatedFrequenciesProcessedUpTo <= index; _demodulatedFrequenciesProcessedUpTo++)
         {
-            _demodulatedFrequencies.Add(_demodulator.ProcessSample(BandpassFilteredSampleAt(_demodulatedFrequenciesProcessedUpTo) * 32768.0));
+            var thisIndex = _demodulatedFrequenciesProcessedUpTo;
+
+            // Band-2 item S6: reuses item 4b's own _bandpassLockedFromSample anchor (captured in
+            // Commit(), reset to int.MaxValue in EndOfImage()) -- both gates fire off the same lock
+            // event, and auditor plan-review confirmed the same negative-gap property 4a discovered
+            // for the bandpass cache recurs here (this cursor also trails the anchor at Commit() time,
+            // so pre-anchor samples correctly stay wide -- see HilbertFmDemodulator's own doc comment).
+            var isNarrow = _mode is not null && _mode.NarrowModeCode is not null && thisIndex >= _bandpassLockedFromSample;
+            _demodulatedFrequencies.Add(_demodulator.ProcessSample(BandpassFilteredSampleAt(thisIndex) * 32768.0, isNarrow));
         }
 
         return _demodulatedFrequencies[Rel(index)];
