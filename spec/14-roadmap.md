@@ -2050,9 +2050,62 @@ exclusion citation above, plus swapping two local constructions for cache reads 
 
 </details>
 
-**Status: plan fully verified by auditor plan-review, ready to implement. Session paused here
-(budget) before any code was written — this section is the complete, ready-to-execute spec for
-whoever picks this up next.**
+**Status: DONE (commit `7a153a0`).** Implemented per the plan above, no changes needed. 419/419 tests
+passing before this item (417 base + 2 new S14 tests).
+
+### Band-2 item S6 — DONE (commit `6da0a65`)
+
+`HilbertFmDemodulator.ProcessSample` gained an `isNarrow` parameter selecting between two precomputed
+`(off, out)` tuning pairs — normal (1900Hz/800Hz) and narrow (`NARROW_CENTER`=2172Hz, `NARROW_BW`=256Hz,
+`sstv.h:441-444`) — mirroring item 4b's per-call `useLocked` selection shape rather than a stateful
+mutator. `AnalogFmSstvDecoder.DemodulatedFrequencyAt` reuses item 4b's own `_bandpassLockedFromSample`
+anchor to gate the selection (`_mode.NarrowModeCode is not null && index >= _bandpassLockedFromSample`)
+— both fire off the same `Commit()` event, and an auditor plan-review round confirmed the same
+negative-gap property item 4a discovered for the bandpass cache recurs here (this cursor also trails
+the anchor at `Commit()` time, for a different reason — its only pre-lock driver,
+`AverageFrequencyInWindow`, ends at `headerStart+380ms`, well before a narrow anchor at
+`headerStart+NarrowHeaderTotalDurationMs` — but the same direction, so the same `index >= anchor` form
+absorbs it).
+
+**Roadmap correction, found via a fresh legacy re-read before writing any code**: the original S6 trap
+note (below, in the collapsed plan-review section) claimed `CHILL::SetWidth` changes tap count and
+cited `CSSTVDEM::SetBPF`'s `m_Skip = (newtap-oldtap)/2` compensation (`sstv.cpp:1602-1613`) as evidence
+this couldn't reuse 4b's "no warm-up needed" finding. Verified wrong: `SetBPF` is a different, unrelated
+feature entirely — the user-configurable Wide/Narrow/VeryNarrow bandpass QUALITY setting (`m_bpf`
+1/2/3), operating on `m_BPF` (`SearchBandpassFilter`, item 4b's own class), not on `m_hill`/CHILL at
+all. `CHILL::SetWidth` itself (`sstv.cpp:3022-3051`) only changes two scalars (`m_OFF`/`m_OUT`); tap
+count and `m_df` tier on sample rate ONLY, never on `fNarrow`. 4b's finding — a live scalar/coefficient
+switch on continuously-running state needs no warm-up — DOES transfer here, confirmed by an auditor
+plan-review round working from source independently. Also ruled out during the same fresh read: `m_fqc`
+(this port's `ZeroCrossingFrequencyCounter`, which already has a working but never-called `SetWidth`) is
+dead code in the live path — AFC now reads directly from `HilbertFmDemodulator`'s own output, post the
+Hilbert-demod architecture switch — so no separate CFQC wiring was needed; `HBPFN` (locked-narrow
+bandpass) is a separate, already-logged, deliberately-out-of-scope gap (`SearchBandpassFilter.cs`'s own
+doc comment), not S6's concern.
+
+**The real finding, confirmed algebraically by two independent derivations (this session and an
+auditor code-level review) and worth recording plainly**: at steady state, the `off`/`out` encode and
+`ProcessSample`'s final `centerHz - scaled*bandwidthHz/32768` descale are exact algebraic inverses for
+ANY consistent `(centerHz, bandwidthHz)` pair — both cancel completely, dynamically too (the smoothing
+filter is linear). So `isNarrow` has **no effect on the settled Hz readout** in this port's
+representation — unlike legacy, where `m_OFF`/`m_OUT` genuinely matter, because `CHILL::Do` returns the
+raw SCALED value directly (`sstv.cpp:3086`) and never converts to Hz at all; this port's Hz conversion
+is its own representational choice, and that choice is exactly what makes the selection cancel here.
+Sanity-checked against the ALREADY-EXISTING pre-fix test at 2300Hz, which was passing before any S6
+code existed. The ONLY observable effect of this item is a brief, bounded output-IIR transient right at
+a mid-stream width switch (the smoothing filter's stored state is in the OLD scale for one switch) —
+faithfully reproducing a transient legacy has too and does nothing to compensate (no `Clear()`/reset
+anywhere in `SetWidth` or its callers). **This is a legacy-fidelity port, not a decode-accuracy fix** —
+the original inventory row's "unmeasured, now the live picture-demod path" framing turned out to be a
+non-issue for this port's own representation, valuable to know rather than to have assumed.
+
+An earlier draft's regression test (`isNarrow=true` reads back 2044/2172/2300Hz correctly) was
+tautological — it would have passed with `isNarrow` silently ignored, for the exact reason above.
+Replaced per the auditor's own suggestion with two tests that pin real, executable facts:
+`ProcessSample_IsNarrowSelection_IsRepresentationallyInert_AtSteadyState` (wide vs. narrow settle to
+the identical value) and `ProcessSample_IsNarrowFlipMidStream_CausesBoundedTransient_ThenResettlesToSameValue`
+(a real deviation happens right at the flip, bounded/fast, resettles to the same value). 423/423 tests
+passing (419 before this item).
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
