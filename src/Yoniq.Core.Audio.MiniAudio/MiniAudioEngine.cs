@@ -114,6 +114,17 @@ public sealed class MiniAudioEngine : IAudioEngine
     /// deliberately does not take <see cref="_captureLock"/> either.</summary>
     public int CaptureOverrunCount => _captureSession?.OverrunCount ?? 0;
 
+    /// <summary>Piece Band-1 (pre-Phase-2 audit): diagnostic pass-through to the active capture
+    /// session's own <see cref="MiniAudioCaptureSession.LastSubscriberException"/> -- same shape
+    /// and same race caveat as <see cref="CaptureOverrunCount"/>'s own doc comment. Null when
+    /// capture isn't started or no subscriber has ever thrown.</summary>
+    public Exception? CaptureLastSubscriberException => _captureSession?.LastSubscriberException;
+
+    /// <summary>Piece Band-1 (pre-Phase-2 audit): diagnostic pass-through to the active capture
+    /// session's own <see cref="MiniAudioCaptureSession.SubscriberExceptionCount"/>. See
+    /// <see cref="CaptureOverrunCount"/>'s own doc comment for the same reasoning.</summary>
+    public int CaptureSubscriberExceptionCount => _captureSession?.SubscriberExceptionCount ?? 0;
+
     /// <summary>Piece Engine 5a: diagnostic pass-through to the active playback session's own
     /// <see cref="MiniAudioPlaybackSession.UnderrunCount"/>. See <see cref="CaptureOverrunCount"/>'s
     /// own doc comment for the same reasoning.</summary>
