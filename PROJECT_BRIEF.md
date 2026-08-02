@@ -20,35 +20,24 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-02, session paused at 92% budget) — S14, plan verified, NOT implemented yet
+## Resume here (2026-08-03) — S14 DONE, S6 next (needs a fresh legacy read first, no plan yet)
 
-**Do this first, before anything else**: implement Band-2 item S14. The plan below is fully verified
-by an auditor plan-review (round done, no code written yet) — go straight to implementing, no need to
-re-derive or re-verify the plan itself. Full spec: `spec/14-roadmap.md`, search "Band-2 item S14" (has
-the complete, ready-to-execute detail — read that section, not just this summary, before coding).
+**S14 is done** (commit `7a153a0`, pushed) — see the "Current status" section below for the full
+narrative. Full detail in `spec/14-roadmap.md`, search "Band-2 item S14".
 
-**The fix, in short**: `TryDecodeNarrowModeHeader`'s `markDetector`/`spaceDetector` (~line 1774 as of
-last commit `b95366a`) are cold-started fresh every call, same shape S5 already fixed for d11/d12/d19.
-1. Mark detector (1900Hz): **reuse `D19At`** (S5's existing persistent cache) — do NOT add a third
-   1900Hz instance. Legacy's mark tone literally IS `d19`, same object. Requires updating `D19At`'s
-   `TrimBuffers` exclusion comment to name both readers (still correct, just needs the citation fixed).
-2. Space detector (2100Hz, `VisHeader.NarrowSpaceFrequencyHz`): genuinely new — add a persistent field +
-   `FskSpaceAt(int index)` lazy forward-fill cache + cursor, mirroring `D11At`/`D12At`/`D19At` exactly,
-   plus its own `TrimBuffers` catch-up + `RemoveRange` + diagnostic entry.
-3. `NarrowFskHeaderDecoder`'s own bit-accumulation state machine stays fresh-per-call — confirmed
-   correctly out of scope (same already-accepted shape as `TryDecodeVisDataBits`'s own untouched search
-   logic in S5).
-4. The "anchor-precision half" of S14 (fixed-nominal-duration commit point) is **already closed** —
-   verified against `Main.cpp:7422-7424` (TX places image data at a fixed offset, not RX's lock sample).
-   Nothing to do there.
+**Do this next**: Band-2 item S6 — `HilbertFmDemodulator.SetWidth` persistence/lifecycle. Unlike S14,
+there is **no verified plan yet** — this item was explicitly flagged all session as needing its OWN
+fresh legacy read of `CSSTVDEM::SetWidth` (`sstv.cpp`) before writing any code, because it changes BOTH
+tap count AND phase-diff lag, unlike Band-1 item 4b's H1/H2 swap (constant tap count, no warm-up needed).
+**Do not reuse 4b's "no warm-up needed" reasoning without re-verifying against source first.** Start by
+reading `CSSTVDEM::SetWidth` and `HilbertFmDemodulator.SetWidth` side by side, work out what actually
+changes on a width switch, draft a plan, then get an auditor plan-review before any implementation
+(CLAUDE.md §7 — non-trivial DSP port).
 
-Auditor's own sizing: **small, smaller than S5** — one new detector+cache+cursor, one catch-up, one
-`RemoveRange`, one diagnostic extension, two comment updates. Comfortably a single session.
-
-**Normal process from here**: implement → full suite + golden vectors → final code-level auditor review
-→ commit → push → update `spec/14-roadmap.md` + this file. Then continue Band 2: S6 next (needs its OWN
-fresh legacy read, `HilbertFmDemodulator.SetWidth` changes tap count/lag unlike H1/H2's constant-tap
-swap — don't reuse 4b reasoning), then S15 last (coupled to Band 1's `TrimBuffers` pre-lock watermark).
+**Normal process**: fresh legacy read → draft plan → auditor plan-review → implement → full suite +
+golden vectors → final code-level auditor review → commit → push → update `spec/14-roadmap.md` + this
+file. Then S15 last (coupled to Band 1's `TrimBuffers` pre-lock watermark via `_fixedWindowExhausted` —
+re-verify that watermark as part of doing S15, per the auditor's own explicit warning).
 
 ## Current status: Band 1 DONE (all 4 items); Band 2 in progress (2 of 5 done)
 
@@ -64,7 +53,7 @@ lock-dependent bandpass filter switch, split into 4a (`fbafdea`, lazy forward-fi
 (`028bc8e`, the actual H1/H2 switch, gated on a *captured* lock-anchor index not live state). Full
 per-item detail: `spec/14-roadmap.md`, search "Band-1 item".
 
-**Band 2 (should-fix-during-Phase-2-bring-up) — 2 of 5 DONE, order: S5 → S16 → S14 → S6 → S15.**
+**Band 2 (should-fix-during-Phase-2-bring-up) — 3 of 5 DONE, order: S5 → S16 → S14 → S6 → S15.**
 Before starting, asked the auditor to revisit its own "decide the streaming contract explicitly first"
 recommendation now that Band 1 had real outcomes — withdrawn: the port already has both patterns that
 recommendation wanted decided (persistent-detector+cursor, lazy-forward-fill+ring-buffer), so patching
@@ -84,14 +73,21 @@ mid-stream (see below) — **don't assume similarly-shaped items share a fix, ve
 - Both plus 4b closed a systemic gap an auditor review flagged: 3 items in a row changed real behavior
   invisible to the test suite (decode outcomes stayed correct, but nothing pinned the mechanism). Closed
   in `LegacyDerivedSpansTests.cs` (S5/S16) + `BandpassCacheChunkInvarianceTests.cs` (4b, done earlier).
-- **S14 NEXT, plan verified, not yet implemented** (session paused here at 92% budget) — see the
-  "Resume here" section at the top of this file for the full ready-to-execute plan.
-- **S6, S15 not started.** S6 needs its OWN fresh legacy read before reusing any 4b reasoning (Hilbert's
-  `SetWidth` changes tap count/lag, unlike H1/H2's constant-tap swap — a flagged trap, not yet hit).
-  S15 is coupled to Band 1's `TrimBuffers` pre-lock watermark (`_fixedWindowExhausted`) — do LAST,
-  re-verify that watermark as part of it, per the auditor's own explicit warning.
+- **S14 DONE** (`7a153a0`) — `TryDecodeNarrowModeHeader`'s mark(1900Hz)/space(2100Hz) detectors were
+  cold-started fresh every call, same shape S5 fixed for d11/d12/d19. Mark reuses `D19At` directly
+  (legacy's narrow-mode mark IS d19, confirmed `sstv.cpp:1851/1858`); space gets a new `FskSpaceAt`
+  cache mirroring D11At/D12At/D19At. Two rounds of auditor code-level review, both EQUIVALENT/clean;
+  the one non-blocking follow-up (pin the D19-reuse decision itself, not just the new cache's own
+  persistence) was closed before commit, not deferred. Full detail: `spec/14-roadmap.md`, search
+  "Band-2 item S14".
+- **S6 NEXT, no plan yet — needs its OWN fresh legacy read first.** Hilbert's `SetWidth` changes tap
+  count AND phase-diff lag, unlike H1/H2's constant-tap swap (Band-1 item 4b) — do NOT reuse 4b's
+  "no warm-up needed" reasoning without re-verifying against `CSSTVDEM::SetWidth` (`sstv.cpp`) first.
+  See the "Resume here" section at the top of this file.
+- **S15 not started.** Coupled to Band 1's `TrimBuffers` pre-lock watermark (`_fixedWindowExhausted`) —
+  do LAST, re-verify that watermark as part of it, per the auditor's own explicit warning.
 
-**Test count**: 417/417 `Yoniq.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
+**Test count**: 419/419 `Yoniq.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
 unaffected throughout, noise-robustness tests unaffected (existing tolerance).
 
 Full per-item plan-review + implementation + code-review detail: `spec/14-roadmap.md`, search
@@ -99,8 +95,9 @@ Full per-item plan-review + implementation + code-review detail: `spec/14-roadma
 
 ## Next up
 
-1. **S14** (Band 2, next in order) — plan already verified (see "Resume here" at top), go straight to
-   implementing: implement → full suite + golden vectors → auditor code-level review → commit → push.
+1. **S6** (Band 2, next in order) — no plan yet, start with a fresh legacy read of `CSSTVDEM::SetWidth`
+   (see "Resume here" at top for why this one can't reuse 4b's reasoning), then draft plan → auditor
+   plan-review → implement → full suite + golden vectors → auditor code-level review → commit → push.
 2. **Task #7 — capture ~5-6 new real golden-vector fixtures** from the legacy binary, covering mode
    families the existing two fixtures (Martin M1, Robot 36) don't exercise: Scottie S1 (mid-line sync —
    the exact family that already produced one real synthetic-test-passes-while-wrong incident,
