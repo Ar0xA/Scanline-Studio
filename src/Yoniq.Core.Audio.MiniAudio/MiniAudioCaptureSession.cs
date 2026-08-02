@@ -94,7 +94,17 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     /// corrupted. A handler that blocks indefinitely also blocks <see cref="Dispose"/>'s
     /// <c>_drainThread.Join()</c> indefinitely -- unlike every native call this class makes, that
     /// join has no timeout, because the only thing that can make it hang is managed subscriber
-    /// code, not an external device/server.</summary>
+    /// code, not an external device/server.
+    ///
+    /// Band-1 fix (pre-Phase-2 audit): each subscriber in the invocation list is invoked and
+    /// guarded independently (own try/catch per handler, see <see cref="DrainLoop"/>) -- one
+    /// throwing subscriber no longer prevents every other subscriber, or every later chunk, from
+    /// being delivered. Real scenario this fixes, not hypothetical: `spec/05-audio-engine.md`
+    /// plans a VU-meter subscriber running alongside the DSP decode pipeline on this same stream --
+    /// a throwing decoder would previously have silently frozen the level meter too. Each throw is
+    /// still swallowed at the handler level (see <see cref="LastSubscriberException"/>/
+    /// <see cref="SubscriberExceptionCount"/>), for the same process-survival reason as
+    /// before.</summary>
     public event Action<ReadOnlyMemory<float>>? SamplesAvailable;
 
     /// <summary>True if the underlying device's own notification callback reported the stream
@@ -168,6 +178,38 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     /// smaller accepted leak alongside the abandoned thread itself.</summary>
     public bool TimedOutDuringClose { get; private set; }
 
+    // Band-1 fix (pre-Phase-2 audit): DrainLoop's per-subscriber catch below used to be silent --
+    // deliberately kept (a raw background Thread dying from an unhandled exception kills the whole
+    // process) but with zero way for a caller to learn a subscriber ever threw. `volatile` (not a
+    // plain auto-property like TimedOutDuringClose): that one is written once, under the write
+    // lock, during Dispose, with _drainThread.Join() supplying the happens-before for its single
+    // read site -- this is written repeatedly on a live drain thread with readers on arbitrary
+    // other threads, so it needs its own visibility guarantee. _subscriberExceptionCount is
+    // Interlocked-incremented/Volatile-read for the same reason, mirroring OverrunCount's "raw
+    // counter for the caller to interpret" shape.
+    private volatile Exception? _lastSubscriberException;
+    private int _subscriberExceptionCount;
+
+    /// <summary>The most recent exception thrown by a <see cref="SamplesAvailable"/> subscriber, or
+    /// null if none has thrown. This is the enabling half of exception visibility only -- nothing in
+    /// this assembly polls it today (only <see cref="MiniAudioEngine.CaptureLastSubscriberException"/>
+    /// passes it through); the eventual real production caller wiring this session's output into
+    /// decode is what owes the checking half. Readable even after <see cref="Dispose"/> (deliberately
+    /// not gated on <c>_disposed</c>/<see cref="ObjectDisposedException"/>, unlike
+    /// <see cref="OverrunCount"/> -- this is exactly the state you'd want to inspect right after a
+    /// session dies). Note: in the self-dispose path (see <see cref="Dispose"/>'s own comment, no
+    /// <c>Join()</c>) a caller reading this immediately after <see cref="Dispose"/> returns can miss
+    /// a write from a subscriber that threw after calling Dispose -- stale-by-one, not
+    /// corrupted.</summary>
+    public Exception? LastSubscriberException => _lastSubscriberException;
+
+    /// <summary>Cumulative count of subscriber exceptions across every <see cref="SamplesAvailable"/>
+    /// invocation list (each throwing handler counted independently -- see that event's own doc
+    /// comment: one throwing subscriber no longer prevents others in the same list from running).
+    /// Mirrors <see cref="OverrunCount"/>'s own shape: a raw counter for the caller to interpret, not
+    /// itself a verdict.</summary>
+    public int SubscriberExceptionCount => Volatile.Read(ref _subscriberExceptionCount);
+
     private void DrainLoop()
     {
         // Third-opus-review note: this native read call is deliberately NOT guarded by
@@ -203,16 +245,31 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
 
                 // Second-opus-review fix: an unhandled exception on this thread (a plain
                 // background Thread, not a thread-pool work item) would terminate the whole
-                // process -- one throwing subscriber must not be able to do that. Swallowed
-                // deliberately: this class has no logger of its own to report through, and adding
-                // one now would be scope creep beyond what this fix needs; subscribers are
-                // expected not to throw, this is a last-resort backstop, not a reporting channel.
-                try
+                // process -- one throwing subscriber must not be able to do that. Still no logger
+                // dependency added (same boundary as before -- scope creep beyond what this fix
+                // needs), but no longer silent: Band-1 fix records the fault via
+                // LastSubscriberException/SubscriberExceptionCount instead of discarding it.
+                //
+                // Band-1 fix: invoke each subscriber independently (GetInvocationList(), not a
+                // single SamplesAvailable?.Invoke(samples)) so one throwing subscriber can't starve
+                // every other subscriber -- or every later chunk -- of delivery. See
+                // SamplesAvailable's own doc comment for the real multi-subscriber scenario this
+                // guards (a VU-meter subscriber alongside the DSP decode pipeline).
+                var subscribers = SamplesAvailable;
+                if (subscribers is not null)
                 {
-                    SamplesAvailable?.Invoke(samples);
-                }
-                catch
-                {
+                    foreach (var handler in subscribers.GetInvocationList())
+                    {
+                        try
+                        {
+                            ((Action<ReadOnlyMemory<float>>)handler)(samples);
+                        }
+                        catch (Exception ex)
+                        {
+                            _lastSubscriberException = ex;
+                            Interlocked.Increment(ref _subscriberExceptionCount);
+                        }
+                    }
                 }
 
                 // Second-opus-review fix: defends the invariant Dispose's self-join guard relies

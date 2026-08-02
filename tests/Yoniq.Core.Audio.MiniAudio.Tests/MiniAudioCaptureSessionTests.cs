@@ -148,6 +148,66 @@ public class MiniAudioCaptureSessionTests
         }
     }
 
+    // Band-1 fix (pre-Phase-2 audit): a throwing subscriber used to be silently swallowed with zero
+    // trace, and a single try/catch around the whole invocation list meant one throwing subscriber
+    // starved every other subscriber of delivery too. This test exercises both halves of the fix
+    // against a real, continuously-running drain thread (not a synthetic/mocked one): a first
+    // handler throws on every chunk, a second handler counts its own invocations -- if the
+    // multicast-abort bug were still present, the second handler's count would stay 0.
+    [RequiresPipeWireFact]
+    public async Task SamplesAvailable_SubscriberThrows_IsRecordedAndDoesNotStarveOtherSubscribers()
+    {
+        var sinkName = $"sstv_throw_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Throw_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        Process? toneProcess = null;
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator();
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            toneProcess = StartToneIntoSink(sinkName, durationSeconds: 5);
+
+            var survivingHandlerInvocations = 0;
+            var enoughInvocations = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var thrownException = new InvalidOperationException("Deliberate test exception from a SamplesAvailable subscriber.");
+
+            using var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100);
+            session.SamplesAvailable += _ => throw thrownException;
+            session.SamplesAvailable += chunk =>
+            {
+                if (chunk.Length > 0 && Interlocked.Increment(ref survivingHandlerInvocations) >= 3)
+                {
+                    enoughInvocations.TrySetResult();
+                }
+            };
+
+            var completed = await Task.WhenAny(enoughInvocations.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+            Assert.Same(enoughInvocations.Task, completed);
+
+            // The surviving handler kept firing after the throwing one -- proves per-handler
+            // isolation, not just that the drain thread itself survived.
+            Assert.True(Volatile.Read(ref survivingHandlerInvocations) >= 3);
+
+            Assert.Same(thrownException, session.LastSubscriberException);
+            Assert.True(session.SubscriberExceptionCount >= 3, $"Expected the throwing subscriber to have been counted at least 3 times, got {session.SubscriberExceptionCount}.");
+        }
+        finally
+        {
+            if (toneProcess is not null && !toneProcess.HasExited)
+            {
+                toneProcess.Kill(entireProcessTree: true);
+            }
+
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
     private static Process StartToneIntoSink(string sinkName, int durationSeconds)
     {
         var startInfo = new ProcessStartInfo

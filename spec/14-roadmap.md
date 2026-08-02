@@ -1185,6 +1185,53 @@ implemented, which stays its own separate, correctly-blocked (no settings/UI) ti
 one through the normal process (plan -> auditor plan-review -> implement -> test), per user
 instruction. Order and per-item plans logged as each one starts, below.**
 
+### Band-1 item 1 (S4) — exception-swallowing catch in `MiniAudioCaptureSession`, DONE
+
+Started with this one first since it's the smallest and most standalone (no dependency on the
+"streaming contract" architecture question Pattern 1 flagged).
+
+**Draft plan**: keep the existing catch (deliberately added by an earlier opus-review pass -- a
+raw background `Thread`, unlike a thread-pool work item, dies the whole process on an unhandled
+exception, so some catch is required), but stop it being silent -- add a `LastCallbackException`
+property mirroring the file's existing `TimedOutDuringClose` pattern.
+
+**Auditor plan-review verdict: buildable, but 3 things needed fixing on paper first (no second round
+needed):**
+1. `TimedOutDuringClose`'s plain-auto-property pattern doesn't transfer -- that one is written once
+   under a write lock during `Dispose`, with `_drainThread.Join()` supplying the happens-before for
+   its single read site. The new field is written repeatedly on a live thread with readers on
+   arbitrary other threads -- needs `volatile` (reference field) / `Interlocked`+`Volatile.Read`
+   (counter), not a plain auto-property.
+2. Needed a counter alongside the exception, not just the last value (`OverrunCount`'s own "raw
+   counter for the caller to interpret" shape is the in-file precedent) -- otherwise "threw once" and
+   "threw on every single chunk of a 2-minute transmission" are indistinguishable.
+3. The class is `internal` with `InternalsVisibleTo` scoped to tests only -- as drafted, the property
+   would be unreachable from any real production caller. Needed a `MiniAudioEngine` pass-through,
+   mirroring the existing `CaptureOverrunCount` pattern exactly.
+4. (Judgment call, not a blocker) auditor also caught a real second bug on its own initiative:
+   `SamplesAvailable?.Invoke(samples)` is a single try/catch around the WHOLE invocation list -- one
+   throwing subscriber silently starves every other subscriber, and every later chunk, from being
+   delivered. Real designed-for scenario per `spec/05-audio-engine.md:89` (a VU-meter subscriber
+   running alongside the DSP decode pipeline on the same stream) -- fixed in the same commit.
+5. (Nit) renamed away from "Callback" (already means the native real-time callback everywhere in
+   this file's vocabulary) -- `LastSubscriberException`/`SubscriberExceptionCount` instead.
+
+**Implemented**: `volatile Exception? _lastSubscriberException` + `Interlocked`-incremented
+`_subscriberExceptionCount`, exposed as `LastSubscriberException`/`SubscriberExceptionCount`
+(deliberately NOT gated on `_disposed`, unlike `OverrunCount` -- this is exactly the state a caller
+wants to inspect right after a session dies). `DrainLoop` now iterates
+`SamplesAvailable.GetInvocationList()` with a per-handler try/catch instead of one catch around the
+whole multicast call. `MiniAudioEngine.CaptureLastSubscriberException`/`CaptureSubscriberExceptionCount`
+pass-through added, mirroring `CaptureOverrunCount`.
+
+**Tested**: new `SamplesAvailable_SubscriberThrows_IsRecordedAndDoesNotStarveOtherSubscribers` test
+(real virtual-sink audio, not mocked) — one handler throws every chunk, a second handler counts its
+own invocations; asserts the second handler keeps firing (proves per-handler isolation) AND
+`LastSubscriberException`/`SubscriberExceptionCount` are correctly recorded. Full suite: 387/387
+`Yoniq.Core.Sstv.Tests`, 51/51 `Yoniq.Core.Audio.MiniAudio.Tests` (49 previous + this new one +
+one other pre-existing), solution-wide build clean. **Status: DONE, not yet committed as of this
+entry.**
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
