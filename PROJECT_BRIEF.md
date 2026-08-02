@@ -9,7 +9,7 @@ Secondary reference QSSTV lives locally (gitignored) at `QSSTV-main/` — inspir
 Full rules: `CLAUDE.md` (short, read it). Key ones: port legacy DSP exactly (no invention), golden-vector/round-trip
 tests for every DSP change, small reviewable commits, ask before pushing to origin.
 
-## Current status: Band 1 (must-fix-before-Phase-2) is DONE — all 4 items
+## Current status: Band 1 DONE (all 4 items); Band 2 in progress (2 of 5 done)
 
 **Pre-Phase-2 gate: shortcut/simplification audit.** User's call: before running the milestone-audit
 playbook's Phase 3 chain audit (see `docs/audit-playbook.md`) or moving to Phase 2, first inventory
@@ -17,52 +17,61 @@ every known DSP-in-pipeline simplification this port carries, triage/fix the imp
 capture more real golden-vector fixtures, THEN run Phase 3. Full writeup + 30-item table + priority
 bands + patterns: `spec/14-roadmap.md`, search "Pre-Phase-2 gate".
 
-1. **DONE** (commit `288d5d0`) — exception-swallowing bare `catch` in `MiniAudioCaptureSession`.
-2. **DONE** (commit `86e3af6`) — unbounded memory growth in the decoder's 5 sample buffers.
-3. **DONE** (commits `365d57b`, `765ba3c`) — chunk-timing sensitivity in header detection.
-4. **DONE** (commits `fbafdea`, `028bc8e`) — lock-dependent bandpass filter switch (H2 search vs. H1
-   locked). This was the biggest item, split into two pieces per an auditor plan-review finding that
-   the original single-piece design had a real blocker:
-   - **4a** (`fbafdea`): made `_demodulatedFrequencies` a lazy forward-fill cache (mirroring
-     `AgcSampleAt`/`BandpassFilteredSampleAt`'s own established pattern) instead of filling it eagerly
-     inside `PushSamples`' per-sample loop — the eager version raced the shared bandpass cache all the
-     way to the end of the buffer before `Commit()` ever got a chance to run, for any bulk-push caller
-     (measured: ~115 real seconds of wrongly-filtered content, vs. single-digit ms for realistic small
-     chunks). Hit and fixed a real bug during implementation (a `List<T>.RemoveRange` crash, same
-     failure class as item 2's own bug, different cursor) — see `spec/14-roadmap.md`'s "Band-1 item 4a"
-     entry for the full story.
-   - **4b** (`028bc8e`): the actual H1/H2 filter switch on top of 4a's foundation. `SearchBandpassFilter`
-     now carries both coefficient tables over one shared delay line (no separate H1 warm-up needed —
-     legacy's `CFIR2::Do` doesn't have two filter instances either, just one delay line and a
-     coefficient-table choice). Gated on a *captured* lock-anchor sample index, not live `_mode` state —
-     a correction that came directly out of 4a's own measured numbers (the bandpass cache trails the
-     lock anchor slightly, so naively gating on live state would have mis-classified a handful of
-     pre-anchor samples).
+**Band 1 (must-fix-before-Phase-2) — all 4 DONE**: S4 exception-swallowing catch (`288d5d0`); S2
+unbounded buffer memory growth (`86e3af6`); S3 chunk-timing sensitivity (`365d57b`/`765ba3c`); S1
+lock-dependent bandpass filter switch, split into 4a (`fbafdea`, lazy forward-fill cache) + 4b
+(`028bc8e`, the actual H1/H2 switch, gated on a *captured* lock-anchor index not live state). Full
+per-item detail: `spec/14-roadmap.md`, search "Band-1 item".
 
-   Both pieces went through a full plan → auditor plan-review → implement → test → auditor code-level
-   review cycle (2 plan-review rounds for the initial blocker + design correction, 2 code-level reviews
-   — one per piece). Real, measured chunk-invariance (not just reasoned): a spike test, later converted
-   to a permanent regression (`BandpassCacheChunkInvarianceTests.cs`), confirmed the bandpass-cache-to-
-   lock-anchor gap is now identical across chunk sizes {1, 500, 4096, bulk-whole-file}.
+**Band 2 (should-fix-during-Phase-2-bring-up) — 2 of 5 DONE, order: S5 → S16 → S14 → S6 → S15.**
+Before starting, asked the auditor to revisit its own "decide the streaming contract explicitly first"
+recommendation now that Band 1 had real outcomes — withdrawn: the port already has both patterns that
+recommendation wanted decided (persistent-detector+cursor, lazy-forward-fill+ring-buffer), so patching
+individually, reusing those patterns, was the right call. Auditor also corrected the shape mapping
+mid-stream (see below) — **don't assume similarly-shaped items share a fix, verify each against source**.
+- **S5 DONE** (`e0563f5`) — `TryDecodeVisDataBits`' d11/d12/d19 tone detectors were cold-started fresh
+  every call; converted to persistent lazy-forward-fill caches (mirroring `AgcSampleAt`). d13
+  deliberately NOT converted — a plan-review round caught that legacy only feeds `m_iir13` during
+  case 2/9, so it's not a pure function of sample index (same shape as S16's own d13-like surprise
+  below); an index-keyed cache would have been wrong for it.
+- **S16 DONE** (`c0b09ca`) — AVT's dedicated PLL had a clamped 2000-sample warm-up. First plan-review
+  round caught its OWN initial misclassification before any code was written: legacy's `m_pll` is fed
+  only during SyncMode cases 3-7 (intermittent, same shape as d13), so "make it fully persistent"
+  (the S5-style fix) would have been a real regression — a PLL's phase has no fast, data-independent
+  re-settling the way a resonator does. Real fix: kept per-attempt construction, widened the warm-up to
+  legacy's actual ~1850ms contiguous pre-training feed span (derived from source, not guessed).
+- Both plus 4b closed a systemic gap an auditor review flagged: 3 items in a row changed real behavior
+  invisible to the test suite (decode outcomes stayed correct, but nothing pinned the mechanism). Closed
+  in `LegacyDerivedSpansTests.cs` (S5/S16) + `BandpassCacheChunkInvarianceTests.cs` (4b, done earlier).
+- **S14 NEXT** — splits into two halves per the auditor's own classification: a detector-persistence
+  half (rides with S5's pattern) and a separate anchor-precision half. Not yet scoped in detail.
+- **S6, S15 not started.** S6 needs its OWN fresh legacy read before reusing any 4b reasoning (Hilbert's
+  `SetWidth` changes tap count/lag, unlike H1/H2's constant-tap swap — a flagged trap, not yet hit).
+  S15 is coupled to Band 1's `TrimBuffers` pre-lock watermark (`_fixedWindowExhausted`) — do LAST,
+  re-verify that watermark as part of it, per the auditor's own explicit warning.
 
-**Test count**: 415/415 `Yoniq.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
+**Test count**: 417/417 `Yoniq.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
 unaffected throughout, noise-robustness tests unaffected (existing tolerance).
 
-Full per-item plan-review + implementation + code-review detail for all 4 items: `spec/14-roadmap.md`,
-search "Band-1 item".
+Full per-item plan-review + implementation + code-review detail: `spec/14-roadmap.md`, search
+"Band-1 item" or "Band-2 item".
 
 ## Next up
 
-1. **Task #7 — capture ~5-6 new real golden-vector fixtures** from the legacy binary, covering mode
+1. **S14** (Band 2, next in order) — scope both halves (detector-persistence + anchor-precision)
+   before implementing either, per the normal process: plan → auditor plan-review → implement → test
+   → auditor code-level review.
+2. **Task #7 — capture ~5-6 new real golden-vector fixtures** from the legacy binary, covering mode
    families the existing two fixtures (Martin M1, Robot 36) don't exercise: Scottie S1 (mid-line sync —
    the exact family that already produced one real synthetic-test-passes-while-wrong incident,
    `CLAUDE.md` §4), Robot 72 or R24, a PD/MP mode, RM8 or RM12, a narrow MN/MC mode, AVT. Bottlenecked
-   on the user's time with the real legacy Windows binary, not on dev work — can start any time.
-2. **Task #8 — Phase 3 chain/integration audit** (milestone-audit playbook, `docs/audit-playbook.md`) —
+   on the user's time with the real legacy Windows binary, not on dev work — can start any time,
+   independent of Band 2's own progress.
+3. **Task #8 — Phase 3 chain/integration audit** (milestone-audit playbook, `docs/audit-playbook.md`) —
    skip Phase 1/2, units are already individually verified to an unusual degree. Should follow #7, not
    precede it, so the audit runs against the widest available real-audio coverage.
-3. The remaining Band-2/3/4/5 items from the 30-item DSP-simplification inventory (S1-S30) are cataloged
-   in `spec/14-roadmap.md` but not yet scheduled — several Band-3 items are gated on task #7's new
+4. Band 3/4/5 items from the 30-item DSP-simplification inventory (S1-S30) are cataloged in
+   `spec/14-roadmap.md` but not yet scheduled — several Band-3 items are gated on task #7's new
    fixtures (mode-family gaps get fixed when measured, not reasoned, per the auditor's own
    recommendation).
 
@@ -132,6 +141,14 @@ as a job-level env var, and `Yoniq.sln` only has "Any CPU" configs — fixed wit
 - A throwaway spike to get a REAL number beats reasoning about magnitude in the abstract — but measure
   the thing that actually matters (an early spike measured the wrong quantity — raw pushed-sample count
   instead of the actual cache cursor position — and had to be corrected before its result meant anything).
+- A pre-computed "this item is shaped like that other item" classification (even the auditor's own) is a
+  starting hypothesis, not a fact — verify each item's actual legacy feed schedule from source before
+  reusing a sibling's fix. S16 was pre-classified "same conversion as S5"; a plan-review round caught
+  that AVT's PLL is fed intermittently (like d13), not every sample (like S5's d11/d12/d19), BEFORE any
+  code was written — the fix that shape actually needed was much smaller than planned.
+- When a review flags the same finding more than once across rounds (e.g. "this doc comment is stale"),
+  verify against the CURRENT file before re-fixing — an already-applied fix can show up as a stale
+  finding in a later round if the reviewer's own context predates it.
 - Document steps + results durably in `spec/14-roadmap.md` as you go; keep this file trimmed to
   "what's needed to resume," not a running history (that's the roadmap's job).
 - Cloud-scheduled routines (RemoteTrigger/`/schedule`) run in an isolated environment with a fresh git
