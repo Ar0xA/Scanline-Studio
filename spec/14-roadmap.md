@@ -1831,7 +1831,7 @@ shape at `AnalogFmSstvDecoder.cs:327-333`, not 4a's lazy-cache shape).
 | S16 | Same as S5 — fresh `PllFmDemodulator` per call (`:1960`) + a clamped 2000-sample warm-up hack | Same conversion as S5 |
 | S14 | Half S5 (fresh mark/space detectors, `:1626-1627`), half anchor-precision — split it | Detector half rides with S5 |
 | S6 | 4b's shape, not 4a's — a lock-dependent parameter switch on a continuously-running filter | `_bandpassLockedFromSample` directly |
-| S15 | Materially different — one-shot fixed window vs. legacy's continuously-retriggering state machine; a semantics change, not a cursor refactor | Nothing existing |
+| S15 | ~~Materially different... a semantics change~~ **Correction (see S15's own closing section below): "nothing existing to reuse" was right, but "genuinely new design work" was wrong — it's *previously-attempted-and-reverted* design work (the S2-era re-anchoring draft), a different and more useful status. Closed via documentation, no code needed.** | Nothing existing (the obvious implementation was already tried and reverted during Band-1 S2) |
 
 **Two traps flagged for when Band 2 actually starts** (not yet acted on):
 - **S6**: `HilbertFmDemodulator.SetWidth` changes tap count AND phase-diff lag (`HilbertFmDemodulator.cs:46`)
@@ -2106,6 +2106,74 @@ Replaced per the auditor's own suggestion with two tests that pin real, executab
 the identical value) and `ProcessSample_IsNarrowFlipMidStream_CausesBoundedTransient_ThenResettlesToSameValue`
 (a real deviation happens right at the flip, bounded/fast, resettles to the same value). 423/423 tests
 passing (419 before this item).
+
+### Band-2 item S15 — CLOSED via documentation, no code needed. Band 2 fully done.
+
+Before drafting a plan, re-read `AnalogFmSstvDecoder.cs`'s own doc comments from Band-1 item 2 (S2,
+pre-Band-2) and found this item's core concern had already been investigated once: `TryDecodeHeader`'s
+own doc comment describes a "more ambitious earlier draft" that tried periodically re-anchoring
+`_consumedSamples` forward to give the fixed-window paths (`TryDecodeVisHeader`/`TryDecodeNarrowModeHeader`)
+another shot after each trim, instead of the current one-shot `_fixedWindowExhausted` gate — reverted,
+confirmed empirically that it "produces the identical practical outcome" either way, since any header
+found after exhaustion is found via `TryInterleavedHeaderScan`'s fallback (which is ALREADY continuous,
+never one-shot) at that path's own already-accepted anchor precision. Sent this finding to an auditor
+plan-review to settle whether that narrower (trimming-safety-only) result actually closes S15's broader
+concern (legacy's real per-sample-forever `m_SyncMode` search vs. this port's one-shot-then-fallback
+architecture) or whether a real gap remains.
+
+**Auditor verdict: close S15, no code tonight.** Three points settle the main concern:
+1. **The fallback has the same mode-identification power for normal + extended VIS.** `VisLockStateMachine`
+   is a full VIS decoder including the extended path (`LockState.DecodeExtendedVis`,
+   `EscapeVisByte = 0x23`) — MR/MP/ML stay covered post-exhaustion, not orphaned.
+2. **Initial anchor precision is largely washed out downstream.** `TryResolveSyncAnchorCorrection` runs
+   after every non-AVT `Commit()`, re-deriving the anchor from a multi-line sync-envelope fold
+   regardless of which path committed. The S3 measurement put the two paths ~440 samples (~10ms) apart
+   for the affected modes — comfortably inside a line period, so the fold recovers it. This is the
+   *mechanism* behind the S2-era empirical result, not just a restatement of it.
+3. **Already observed working end-to-end** via `BufferTrimTests.DecodedImage_StillDecodesCorrectly_WhenPrecededByLongSilence_ThatTriggeredTrimming`.
+
+**One real, narrower gap the S2 investigation didn't cover — NOT a new item, it's already tracked as
+S8** ("mid-image narrow re-lock", line 136/1137 above: "mid-image narrow-mode FSK-announce re-lock
+(`sstv.cpp:2592`, needs a sample-by-sample FSK decoder this port doesn't have — `TryDecodeNarrowModeHeader`
+is a fixed-window analytic shortcut with no real-time legacy counterpart)"). Legacy's `DecodeFSK` runs
+every sample, forever (`sstv.cpp:1858`, confirmed during S14); this port's only FSK packet decoder lives
+inside the fixed-window `TryDecodeNarrowModeHeader` — the same missing capability whether framed as
+"initial detection post-exhaustion" (what this S15 investigation found) or "mid-image re-lock" (S8's
+original framing). Re-verified S8's own load-bearing assumption while here, since an auditor flagged it
+unverified (`SstvModeRegistry.cs:998-999`/`1023-1026`): `GetSyncIntervalCandidates` returns ALL non-AVT
+modes including the whole MN/MC family, and `GetSyncIntervalMatchDepth` has an explicit MN73/110/140/
+MC110/140/180 row (`isNarrow ? 8-5 : null`) — so `_syncBypassNarrowTracker` genuinely covers MN/MC, and
+since its candidate list carries each mode's own distinctive line-duration interval, it can plausibly
+identify the SPECIFIC MN/MC submode by timing alone, not just detect "some narrow signal" generically —
+a different (not equivalent, but real) mechanism than legacy's FSK-payload-based identification, likely
+narrowing S8's gap further than "no coverage at all." Still gated on the MN/MC golden-vector fixture
+task #7 already plans to capture, per the roadmap's own "fix when measured, not reasoned" rule for this
+item family — not rescheduled here, stays Band 3.
+
+**Why building S15 as originally scoped would be the wrong call for an unattended session, even though
+closing it isn't**: its own obvious implementation IS the already-tried-and-reverted re-anchoring draft
+— a continuously-retriggering high-precision path structurally needs a rolling anchor, and a bounded
+pre-lock buffer (Band-1 S2's own concern) needs one too. **These are the same underlying problem, not
+two coincidentally-similar ones** — confirmed by the fact that the one existing attempt at solving
+either one attempted to solve both at once, and was reverted because an arbitrary re-anchor point almost
+never lands on a real header start — a property of the problem itself, not of that one attempt. Building
+this unattended (nothing existing to reuse, unmeasured benefit, touches the load-bearing
+`_fixedWindowExhausted`/`TrimBuffers` coupling) would mean relitigating an already-evidenced decision,
+not executing a verified plan — exactly what this session's autonomous-continuation authorization
+excludes.
+
+**Worth recording for whoever revisits this**: exhaustion is the NORMAL case, not an edge case — pre-lock,
+`_consumedSamples` never advances, so `_fixedWindowExhausted` fires ~`MaxSearchCeilingMs` (~1s) into
+every epoch regardless of real signal content. In Phase 2's real target deployment (live capture, not a
+test fixture starting at sample 0), any transmission not beginning within ~1s of decoder start or ~1s
+after the previous `EndOfImage` is found ONLY by the fallback — the fixed-window path is close to
+vestigial there, not "the main path with an occasional fallback." Doesn't change the verdict above, but
+is the single most useful sentence to leave here.
+
+**Band 2 is now fully done**: S5, S16, S14, S6 shipped as code; S15 closed via this documentation entry
+(no code needed — its one real remaining gap turned out to be the already-tracked Band-3 item S8, whose
+own load-bearing assumption got independently re-verified along the way). 423/423 tests unchanged (no
+code this item).
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
