@@ -183,8 +183,11 @@ public class SstvRoundTripTests
         Assert.Equal(mode.Id, detectedMode!.Id);
     }
 
-    [Fact]
-    public async Task DecodedImage_MatchesWithinTolerance_WhetherSamplesArriveInOneChunkOrMany()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(500)]
+    [InlineData(4096)]
+    public async Task DecodedImage_IsPixelIdentical_WhetherSamplesArriveInOneChunkOrMany(int chunkSize)
     {
         // Piece A (FilteredRawSampleAt, the always-on 2-tap moving-average pre-filter): the ONE new
         // behavior it introduces that could regress under chunked delivery is reaching back into the
@@ -193,16 +196,19 @@ public class SstvRoundTripTests
         // property, per auditor review's own recommendation, rather than relying only on the
         // full-suite tolerance-based tests to catch a regression here indirectly.
         //
-        // NOT exact pixel identity -- investigated when a first version of this test asserted that
-        // and failed with avg delta ~1.75 (well inside every other tolerance in this file), confirmed
-        // via git-stash to be PRE-EXISTING (identical failure on pre-Piece-A code too), not caused by
-        // this piece: this port's deferred/incremental correction passes (AFC/Auto Slant) already
-        // process "whatever's available so far" as data streams in, so chunk timing can shift their
-        // exact correction values by a small amount -- a real, small, already-existing characteristic
-        // of this port's architecture, not chased further here (off-scope for this piece). A 5.0
-        // tolerance (real margin over the measured ~1.75) still catches a genuine Piece-A-specific
-        // regression -- an actually-wrong previous-sample reference at a chunk boundary would produce
-        // a structural misalignment, not a small ambient delta like this.
+        // Band-1 S3 fix (pre-Phase-2 audit): this test used to assert only a loose 5.0-tolerance
+        // match, with a comment attributing the ~1.75 residual delta to AFC/Auto Slant "processing
+        // whatever's available so far." That attribution was investigated and found WRONG: both are
+        // fully chunk-invariant (proven -- their loop bounds can never be limited by how much data
+        // has arrived, only by how much has already been consumed/decoded). The real cause was a
+        // header-detection RACE between the fixed-window path and TryInterleavedHeaderScan's own
+        // fallback, whose priority depended on call-boundary timing instead of absolute sample
+        // position -- see AnalogFmSstvDecoder.TryInterleavedHeaderScan's own doc comment for the
+        // fix. With that fixed, decode is provably deterministic regardless of chunking (every stage
+        // downstream of header detection was already confirmed to process samples one at a time, in
+        // order, regardless of call boundaries) -- so this now asserts EXACT pixel identity, not a
+        // tolerance, across three chunk sizes including the pathological chunkSize=1 (maximally
+        // misaligned with every header/line boundary).
         var mode = SstvModeRegistry.MartinM1;
         var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
 
@@ -221,7 +227,6 @@ public class SstvRoundTripTests
         var chunkedDecoder = new AnalogFmSstvDecoder(encoder.SampleRate);
         IImageSource? chunkedImage = null;
         chunkedDecoder.LineDecoded += update => chunkedImage = update.Image;
-        const int chunkSize = 500; // deliberately small and not aligned to any header/line boundary
         for (var offset = 0; offset < samples.Count; offset += chunkSize)
         {
             var length = Math.Min(chunkSize, samples.Count - offset);
@@ -230,7 +235,7 @@ public class SstvRoundTripTests
 
         Assert.NotNull(wholeImage);
         Assert.NotNull(chunkedImage);
-        AssertImagesMatchWithinTolerance(wholeImage!, chunkedImage!, maxAveragePerChannelDelta: 5.0);
+        AssertImagesMatchWithinTolerance(wholeImage!, chunkedImage!, maxAveragePerChannelDelta: 0.0);
     }
 
     [Theory]
