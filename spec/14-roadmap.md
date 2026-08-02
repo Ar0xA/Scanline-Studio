@@ -1976,7 +1976,29 @@ diagnostics added to support them (`AvtPllWarmupStartSample`/`AvtTrainingOriginS
 
 **Status: S16 DONE, committed.**
 
-### Band-2 item S14 — plan verified, NOT YET IMPLEMENTED (session paused at 92% budget)
+### Band-2 item S14 — DONE (commit `7a153a0`)
+
+Implemented per the verified plan below, no changes to the plan itself needed. `FskSpaceAt` added
+mirroring `D11At`/`D12At`/`D19At` exactly; `D19At` reuse for mark confirmed correct by two rounds of
+auditor code-level review this session (one against current source, one against the actual diff — both
+EQUIVALENT). Key legacy confirmation from the code-level review: `InitTone` (`sstv.cpp:1695-1705`)
+retunes `m_iir19` and `m_iirfsk` together, inside the same `if( m_AFCFQ != dfq )` block with the same
+`dfq` — mark and space always move together in legacy, so sharing `D19At` with the VIS path introduces
+no relative divergence for narrow mode specifically (neither retune is modeled by this port at all yet —
+pre-existing, S6-adjacent, unchanged by this item).
+
+Non-blocking gap the first review round found (closed before commit, not deferred): the space-cursor
+persistence test alone didn't pin the *D19-reuse decision* itself — reverting mark to its own fresh
+detector would still pass it. Added `VisDataD19ProcessedUpTo` diagnostic + a narrow-mode-only decode test
+(`NarrowHeaderDecode_AdvancesTheSharedD19Cursor`) asserting it advances past 0 — MN/MC never runs
+`TryDecodeVisDataBits` at all, so this can only be explained by the narrow-header path itself reading
+`D19At`. 419/419 passing (417 before this item, +2 new tests:
+`FskSpaceCursor_NeverResets_AcrossBackToBackNarrowTransmissions` and the D19-reuse test above).
+
+<details>
+<summary>Original plan-review writeup (pre-implementation)</summary>
+
+#### Band-2 item S14 — plan verified, NOT YET IMPLEMENTED (session paused at 92% budget)
 
 `TryDecodeNarrowModeHeader`'s own `markDetector`/`spaceDetector` (1900Hz/2100Hz `SyncEnvelopeDetector`s,
 ~line 1774) are constructed fresh every call — same cold-start shape as S5's d11/d12/d19. Legacy's real
@@ -2025,6 +2047,8 @@ equivalents: `m` is literally `d19` (`m_iir19`+`m_lpf19`, unconditional every sa
 one catch-up, one `RemoveRange`, one diagnostic extension, two comment updates (the `TrimBuffers`
 exclusion citation above, plus swapping two local constructions for cache reads in
 `TryDecodeNarrowModeHeader` itself). Comfortably a single session once resumed.
+
+</details>
 
 **Status: plan fully verified by auditor plan-review, ready to implement. Session paused here
 (budget) before any code was written — this section is the complete, ready-to-execute spec for
