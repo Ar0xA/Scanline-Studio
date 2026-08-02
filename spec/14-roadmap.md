@@ -1917,7 +1917,66 @@ If picked up later, pairs naturally with S16 (same detector-persistence shape).
 
 **Status: S5 DONE, committed.**
 
-### Band-2 item S16 — up next (same conversion as S5, do while the pattern's loaded)
+### Band-2 item S16 — AVT PLL warm-up, corrected scope and implemented
+
+**Plan-review round 1 caught its own earlier misclassification before any code was written**: S16 is
+NOT the same shape as S5. Legacy's real `m_pll` (AVT's dedicated PLL) is fed only during `SyncMode`
+cases 3-7 (`sstv.cpp:2129/2159/2169/2187/2222`) — intermittent, not a pure function of absolute sample
+index, the SAME shape as d13's own case-2/9-only feed that already ruled out an index-keyed cache for
+IT in S5. A PLL also has no equivalent of a resonator's fast, data-independent re-settling (its phase
+state carries indefinitely) — making "just leave it running forever" (the original plan) an actual
+regression, not a neutral simplification: it would make AVT training entry a function of the ENTIRE
+preceding stream, which legacy's real per-attempt `m_pll` usage never is.
+
+**The real defect, and the actual fix**: `_avtPllDemodulator` stays fresh-per-training-attempt exactly
+as before (no persistence, no new cache, no new cursor, no `TrimBuffers` changes) — but its old
+clamped-2000-sample warm-up was far too short relative to legacy's real contiguous feed window. This
+port's own `_avtTrainingOriginSample` deliberately skips past all 3 VIS repeats before ever
+constructing a training-lock instance at all — but legacy spends that entire skipped span (cases 4-7,
+~1820ms) continuously feeding `m_pll` real failed-marker-search audio, plus case 3's own 30ms VIS-
+stop-bit window right before that (`sstv.cpp:2127-2129`, verified directly, not assumed — the
+plan-review flagged this specific 30ms as a judgment call worth checking rather than guessing).
+Widened the warm-up from the arbitrary `AnchorWarmupSamples` (2000) constant to a legacy-derived start
+point (`_avtPllWarmupStartSample = headerStart + totalHeaderSampleCount - one VIS bit period`), computed
+once in `TryStartAvtTraining` and consumed by `TryResolveAvtTraining`'s existing warm-up loop (now
+looping from that point instead of a clamped window). Updated the `TrimBuffers` comment that used to
+cite the old `AnchorWarmupSamples`-based coverage to cite the new, correct span instead.
+
+**Verified**: full suite 415/415, no regressions (including AVT's own round-trip tests).
+
+**Final code-level auditor review: EQUIVALENT, ready to commit.** Confirmed the case-3 boundary
+(`sstv.cpp:2127-2130`: `if(!m_Sync){ m_pll.Do(ad); }`, unconditional through the whole 30ms countdown)
+and the 30ms figure itself (`m_SyncTime = 30*SampFreq/1000`, `sstv.cpp:1986`) match exactly. Flagged one
+derivation detail to settle, not guess: whether `totalHeaderSampleCount` includes the VIS stop bit
+(if not, the warm-up start would be 30ms early). **Settled directly from `VisHeader.cs`**:
+`NormalTailDurationMs = BitDurationMs (parity) + BitDurationMs (stop)`, and `totalHeaderSampleCount` is
+computed from `PrefixDurationMs + NormalTailDurationMs` — the stop bit IS included, so the derivation is
+exactly right, not off by one bit period. Confirmed numerical safety at the new, much longer warm-up
+length (~80k samples through `PllFmDemodulator` before first real read): AGC resets every zero-crossing
+(no accumulation), loop drive is hard-clamped, VCO phase accumulates but with `double`-precision error
+around 1e-12 rad even at this length — no new failure mode versus the old 2000-sample window, just
+smaller in degree. Confirmed the `TrimBuffers` transitive-safety margin actually GREW (from ~45ms to
+~580ms) rather than shrank.
+
+**Systemic finding, addressed before committing (not per-item deferred debt)**: the auditor noted this
+is the THIRD consecutive item (4b, S5, S16) whose real behavior change was structurally invisible to
+the existing suite — decode outcomes stayed correctly identical in all three, but nothing pinned the
+underlying MECHANISM, so each would have silently passed if reverted to its old (wrong) behavior. 4b's
+own gate is already covered (`BandpassCacheChunkInvarianceTests.FirstLockedFilterSample_EqualsTheLockAnchor`,
+added during that item's own final review — the auditor's context was stale on this one, flagged as
+still-missing when it wasn't). Closed the other two in one sitting rather than deferring further:
+new `tests/Yoniq.Core.Sstv.Tests/LegacyDerivedSpansTests.cs` — `AvtPllWarmupSpan_MatchesLegacyDerivedDuration`
+(pins S16's warm-up span as a pure, headerStart-independent constant derived the same way the source
+computes it) and `VisDataD11Cursor_NeverResets_AcrossBackToBackTransmissions` (pins S5's persistence
+across an image boundary, the property a revert-to-cold-start would actually violate). Two small new
+diagnostics added to support them (`AvtPllWarmupStartSample`/`AvtTrainingOriginSample`,
+`VisDataD11ProcessedUpTo`), same pattern as every other diagnostic already in this file.
+
+**Verified (final)**: full suite 417/417 (415 baseline + 2 new tests), no regressions.
+
+**Status: S16 DONE, committed.**
+
+### Band-2 item S14 — up next (detector half rides with S5's pattern; anchor-precision half is separate)
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
