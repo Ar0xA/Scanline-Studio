@@ -1170,16 +1170,20 @@ legacy's live default is Hilbert, PLL is AVT-only now).
    measurement instead of argument — directly settles S14/S9/S17/S7's self-described "unmeasured"
    status.
 
-**One flagged, cheap pre-check before starting Band 1**: S28 (Kaiser/Bessel) is placed in Band 1
-purely on call (2)'s claim that H1/H3 use ≥21dB attenuation — never independently confirmed against
-`fir.cpp`. If H1/H3 also turn out to be 20dB (same as H2), S28 drops to Band 4. 5-minute check, worth
-doing before committing to Band 1's scope.
+**Pre-check RESOLVED (2026-08-02): S28 drops out of Band 1.** Read `CalcBPF` directly
+(`sstv.cpp:1522-1551` + `CalcNarrowBPF`): at the Wide preset (`bpf=1` — the ONLY preset this port
+currently reaches; Narrow/VeryNarrow are gated behind a `.ini` DEMBPF setting with no UI yet), H1's
+attenuation is **20**, matching H2's 20 exactly (`sstv.cpp:1530-1531`, `CalcNarrowBPF` case 1 for H3
+also 20). Confirmed in `fir.cpp:364` that the Kaiser/Bessel branch only activates at `att>=21`. So
+porting the lock-dependent H1/H3 switch (S1) at Wide-preset scope needs **no** Kaiser/Bessel work —
+S28 only resurfaces if Narrow/VeryNarrow (att 40/50, `sstv.cpp:1536-1537`/`1542-1543`) are ever
+implemented, which stays its own separate, correctly-blocked (no settings/UI) tier-A item.
 
-**Status: task #9 (auditor verification) COMPLETE. Ready for user review before starting task #6
-(fixes). Session was auto-resumed via cron at ~01:35 2026-08-02 specifically to restart the auditor —
-that instruction is now fulfilled. Deliberately NOT starting Band 1 fixes autonomously: pattern 1
-above is a real architecture decision (the streaming-contract redesign), not a mechanical fix, and
-needs the user's own judgment call on scope before code gets written.**
+**Band 1 is now 4 items, not 5: S4, S2, S3, S1.** No same-change coupling requirement for S1 anymore.
+
+**Status: task #9 complete, S28 pre-check resolved. Starting task #6 — working Band 1 items one by
+one through the normal process (plan -> auditor plan-review -> implement -> test), per user
+instruction. Order and per-item plans logged as each one starts, below.**
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
