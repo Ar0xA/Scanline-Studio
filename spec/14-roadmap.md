@@ -1797,6 +1797,61 @@ gate itself (the new pinning test).
 complete: S4 (`288d5d0`), S2 (`86e3af6`), S3 (`365d57b`/`765ba3c`), S1 4a+4b (this entry). Next:
 task #7 (capture new golden-vector fixtures) → task #8 (Phase 3 chain/integration audit).**
 
+## Band 2 — scoping, "Pattern 1" recommendation revisited and withdrawn
+
+Before starting Band 2 (S5, S16, S15, S14, S6 — "should fix during Phase 2 bring-up"), asked the
+auditor whether its own original Pattern-1 recommendation ("decide the streaming contract explicitly
+before writing individual fixes") still holds now that Band 1 has real outcomes to check it against.
+
+**Verdict: withdrawn. Start S5 directly, no design pass.** The recommendation was written before this
+port had a proven streaming pattern; it now has both halves it asked for, already in-tree and
+review-hardened: persistent-detector-plus-monotonic-cursor (`_syncBypass1200Detector`/`_visLockStateMachine`
+as instance fields, driven by `_syncBypassProcessedUpTo`/`_visLockProcessedUpTo`) and lazy forward-fill
+sample caching with a bounded ring buffer (`AgcSampleAt`/`BandpassFilteredSampleAt`/`DemodulatedFrequencyAt`
++ `TrimBuffers`). A design pass now would document code that already exists, not decide anything new.
+Empirical case: all 3 Pattern-1 Band-1 items (S1, S2, S3) landed as scoped incremental fixes and are
+stable — S1, the worst-shaped one, cost one session and added permanent regression infrastructure, not
+throwaway patches. Honest counterweight kept: a unified pass would catch cross-item invariants (like
+4a/4b's `watermark <= _bandpassFilteredProcessedUpTo` coupling) by construction instead of via review —
+real, but small, and already mitigated by documenting invariants at the site plus a per-item review gate
+that's caught one genuine issue each of the last three rounds.
+
+**Important correction to the original audit's own framing**: S5 is NOT the same shape as 4a. 4a was an
+*eagerness/ordering* defect (chunk-dependence). S5 is a *cold-start fidelity* defect — `TryDecodeVisDataBits`
+already builds fresh detectors as a "pure function of (headerStart, buffered data)" (already chunk-
+invariant, confirmed in-code), just missing legacy's continuously-running filter history
+(`m_iir11/12/13/19`+`m_lpf*`). Different failure mode, same destination pattern (the persistent-instance
+shape at `AnalogFmSstvDecoder.cs:327-333`, not 4a's lazy-cache shape).
+
+**Shape classification for all 5 Band-2 items** (which existing pattern each should reuse):
+
+| Item | Shape | Reuses |
+|---|---|---|
+| S5 | Cold-start detector rebuild (`TryDecodeVisDataBits`, `:1754-1757`) vs legacy's continuously-running detectors | The persistent-instance pattern (`:327-333`), NOT 4a's |
+| S16 | Same as S5 — fresh `PllFmDemodulator` per call (`:1960`) + a clamped 2000-sample warm-up hack | Same conversion as S5 |
+| S14 | Half S5 (fresh mark/space detectors, `:1626-1627`), half anchor-precision — split it | Detector half rides with S5 |
+| S6 | 4b's shape, not 4a's — a lock-dependent parameter switch on a continuously-running filter | `_bandpassLockedFromSample` directly |
+| S15 | Materially different — one-shot fixed window vs. legacy's continuously-retriggering state machine; a semantics change, not a cursor refactor | Nothing existing |
+
+**Two traps flagged for when Band 2 actually starts** (not yet acted on):
+- **S6**: `HilbertFmDemodulator.SetWidth` changes tap count AND phase-diff lag (`HilbertFmDemodulator.cs:46`)
+  — unlike H1/H2's constant-tap coefficient swap, legacy explicitly compensates a tap change
+  (`SetBPF`'s `m_Skip = (newtap-oldtap)/2`, `sstv.cpp:1602-1613`). 4b's "one shared delay line, no
+  warm-up, no delay compensation needed" finding does NOT transfer to S6 — read `CSSTVDEM::SetWidth`
+  (`sstv.cpp:1707-1715`) and `Start()` fresh before reusing any 4b reasoning. Exactly the "don't infer
+  from a similarly-shaped case" trap CLAUDE.md §3 warns about generally.
+- **S15 is coupled to Band 1 in a way the original audit predates**: `_fixedWindowExhausted` is
+  load-bearing for `TrimBuffers`' pre-lock watermark (`:523-526` — what makes trimming past a stale
+  `_consumedSamples` safe). Changing when the search window closes changes trimming safety. Do S15
+  LAST, and re-verify the pre-lock watermark as part of it, not as an afterthought.
+
+**Recommended order: S5 → S16 → S14 → S6 → S15.** S5/S16 are the same mechanical conversion (do them
+back to back while the pattern's loaded); S14's detector half rides along; S6 needs its own fresh
+`SetWidth` legacy read before anything is written; S15 goes last since it perturbs Band-1's own trimming
+invariant.
+
+**Status: Band 2 scoped, no design pass needed. Starting S5.**
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
