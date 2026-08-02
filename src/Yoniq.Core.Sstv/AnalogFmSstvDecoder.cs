@@ -117,6 +117,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// (a long, never-locking stream should NOT grow this linearly with total samples pushed).</summary>
     internal int BufferedSampleCount => _rawSamples.Count;
 
+    /// <summary>Diagnostic-only: combined physical length of the 3 new persistent VIS-bit-detector
+    /// caches added for Band-2 item S5 (<see cref="D11At"/>/<see cref="D12At"/>/<see cref="D19At"/>).
+    /// Exists because an auditor code-level review of this item's plan flagged a real test gap:
+    /// <see cref="BufferedSampleCount"/> only tracks <c>_rawSamples</c>, so these 3 new
+    /// <c>List&lt;double&gt;</c>s silently failing to trim (the exact bug class Band-1 item 2/4a each
+    /// hit once already, for different cursors) would have passed
+    /// <c>BufferedSampleCount_StaysBounded_ForLongNeverLockingStream</c> without this.</summary>
+    internal int VisDataDetectorBufferedSampleCount => _visDataD11Samples.Count + _visDataD12Samples.Count + _visDataD19Samples.Count;
+
     /// <summary>Diagnostic-only: how far the shared bandpass cache's forward-fill cursor has advanced.
     /// Kept as permanent test infrastructure (Band-1 item 4a, pre-Phase-2 audit) -- see
     /// <see cref="LockAnchorCommitted"/>'s own doc comment and
@@ -332,6 +341,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _syncBypassNarrowTracker = new SyncIntervalTracker(sampleRate, isNarrow: true, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _visLockStateMachine = new VisLockStateMachine(sampleRate, SLvl, SLvl2);
         _levelAgc = new LevelAgc(sampleRate);
+        // Band-2 item S5 -- params match TryDecodeVisDataBits' own previous cold-start construction
+        // (sstv.cpp:1446-1449).
+        _visDataD11Detector = new SyncEnvelopeDetector(sampleRate, 1080.0, bandwidthHz: 80.0);
+        _visDataD12Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
+        _visDataD19Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
     }
 
     // sstv.cpp:1834-1839: m_lvl.Do(d); ad = m_lvl.AGC(d); d = clamp(ad*32, +-16384). Scale bridge --
@@ -467,6 +481,87 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     {
         AgcSampleAt(index);
         return _agcCurMaxSamples[Rel(index)];
+    }
+
+    // Band-2 item S5 (pre-Phase-2 audit): TryDecodeVisDataBits' own d11/d12/d19 tone-envelope detectors
+    // -- legacy's m_iir11/m_iir12/m_iir19 (+ matching m_lpf11/12/19), sstv.h:609-612/614-617. Verified
+    // directly against source (auditor plan-review, round 1): CIIRTANK has no Clear() method at all
+    // (fir.cpp:40-74) and SetFreq (fir.cpp:46-63) only ever writes the coefficients (b1/b2/a0), never
+    // the resonator's own internal state (z1/z2) -- these detectors run with continuous, NEVER-RESET
+    // state for the entire life of the real CSSTVDEM object, even across legacy's own AFC-triggered
+    // SetFreq re-tunes (sstv.cpp:1698-1701). m_iir12/m_iir19 (d12/d19) are fed UNCONDITIONALLY on every
+    // sample (sstv.cpp:1847/1851); m_iir11 (d11) on every sample header-detection is active
+    // (sstv.cpp:1893, effectively every sample given m_SyncRestart's hardwired default). This port's
+    // TryDecodeVisDataBits used to construct all of these fresh, cold-started, on every single call --
+    // repeated on every retry with the SAME headerStart, so the FIRST few samples of every attempt were
+    // measurably weaker than legacy's real, long-since-settled detectors. Made persistent instead,
+    // mirroring AgcSampleAt/BandpassFilteredSampleAt/DemodulatedFrequencyAt's own established lazy
+    // forward-fill pattern exactly -- computed at most once per absolute sample index, regardless of
+    // how many times TryDecodeVisDataBits itself gets called or retried for the same headerStart.
+    //
+    // d13 (m_iir13) is deliberately NOT converted here, even though it looks like the same shape --
+    // auditor plan-review (round 1) caught this before it became a real regression: legacy only feeds
+    // m_iir13 during case 2/9 (sstv.cpp:1976), so d13's value at a given sample is NOT a pure function
+    // of that sample's own index -- it depends on which prior samples the bit-decode loop actually fed
+    // it, i.e. on trigger history. An index-keyed forward-fill cache is structurally the wrong container
+    // for that. d13 stays a genuine method-local, freshly-constructed, per-call stateful object inside
+    // TryDecodeVisDataBits itself, fed only in its own bit-decode loop, exactly as before -- and its
+    // cold start costs nothing measurable: its first read is a full BitDurationMs (30ms) after it starts
+    // being fed, while an 80Hz-bandwidth resonator settles in ~4ms, so it's fully rung up well before
+    // anything ever reads it. That asymmetry (d11/d12/d19 are read from the very first sample of the
+    // trigger search; d13 is read only after 30ms of its own settling) is the actual reason S5 matters
+    // for the first three and not the fourth.
+    //
+    // Deliberately NOT unified with the existing, separate _syncBypass1200Detector/_syncBypass1900Detector
+    // (which already faithfully port legacy's SAME shared d12/d19 values for the continuous
+    // TryInterleavedHeaderScan/TrySyncIntervalDetectionStep fallback path) -- auditor plan-review: doing
+    // so would require _syncBypassProcessedUpTo to already be caught up to whatever index
+    // TryDecodeVisDataBits needs at call time, which is unverified (TryDecodeVisHeader's fixed-window
+    // path is tried BEFORE TryInterleavedHeaderScan's fallback in TryDecodeHeader, so it may genuinely
+    // lag). This is not a permanent scope cut, just a smaller one: converting d12/d19 here to
+    // index-keyed caches is exactly the prerequisite that would make that future unification mechanical
+    // instead of a redesign, when/if it's ever done (see the existing _syncBypass1PrimaryHeld doc
+    // comment for the sibling case of this same deferred unification).
+    private readonly SyncEnvelopeDetector _visDataD11Detector;
+    private readonly List<double> _visDataD11Samples = [];
+    private int _visDataD11ProcessedUpTo;
+
+    private readonly SyncEnvelopeDetector _visDataD12Detector;
+    private readonly List<double> _visDataD12Samples = [];
+    private int _visDataD12ProcessedUpTo;
+
+    private readonly SyncEnvelopeDetector _visDataD19Detector;
+    private readonly List<double> _visDataD19Samples = [];
+    private int _visDataD19ProcessedUpTo;
+
+    private double D11At(int index)
+    {
+        for (; _visDataD11ProcessedUpTo <= index; _visDataD11ProcessedUpTo++)
+        {
+            _visDataD11Samples.Add(_visDataD11Detector.ProcessSample(AgcSampleAt(_visDataD11ProcessedUpTo)));
+        }
+
+        return _visDataD11Samples[Rel(index)];
+    }
+
+    private double D12At(int index)
+    {
+        for (; _visDataD12ProcessedUpTo <= index; _visDataD12ProcessedUpTo++)
+        {
+            _visDataD12Samples.Add(_visDataD12Detector.ProcessSample(AgcSampleAt(_visDataD12ProcessedUpTo)));
+        }
+
+        return _visDataD12Samples[Rel(index)];
+    }
+
+    private double D19At(int index)
+    {
+        for (; _visDataD19ProcessedUpTo <= index; _visDataD19ProcessedUpTo++)
+        {
+            _visDataD19Samples.Add(_visDataD19Detector.ProcessSample(AgcSampleAt(_visDataD19ProcessedUpTo)));
+        }
+
+        return _visDataD19Samples[Rel(index)];
     }
 
     public event Action<DecodedImageUpdate>? LineDecoded;
@@ -661,11 +756,44 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             DemodulatedFrequencyAt(watermark - 1);
         }
 
+        // Band-2 item S5: D11At/D12At/D19At's own cursors are deliberately excluded from BOTH branches'
+        // watermark computation above, not just the pre-lock one -- unlike _bandpassFilteredProcessedUpTo/
+        // _demodulatedFrequenciesProcessedUpTo (which get real, ongoing post-lock consumers), these three
+        // are read ONLY by TryDecodeVisDataBits, itself only ever called pre-lock (via TryDecodeVisHeader/
+        // TryDecodeHeader). Once locked, they simply freeze wherever they were at the moment of lock --
+        // the exact same "frozen once locked" shape _syncBypassProcessedUpTo's own doc comment above
+        // already describes for a different cursor, not a new pattern. Including them in the locked
+        // branch's Min() chain would pin the watermark at that frozen value for the whole image,
+        // blocking trimming during decode; including them in the pre-lock branch hits the exact
+        // permanently-pinned-near-0 failure shape _demodulatedFrequenciesProcessedUpTo's own comment
+        // documents. So: excluded from watermark in both branches, safety guaranteed purely by this
+        // catch-up instead -- same load-bearing invariant as DemodulatedFrequencyAt's own catch-up above
+        // (watermark <= _levelAgcProcessedUpTo in BOTH branches, so AgcSampleAt(watermark-1) inside these
+        // is always a pure cache read, never a new fill -- don't remove _levelAgcProcessedUpTo from
+        // either chain either).
+        if (watermark > _visDataD11ProcessedUpTo)
+        {
+            D11At(watermark - 1);
+        }
+
+        if (watermark > _visDataD12ProcessedUpTo)
+        {
+            D12At(watermark - 1);
+        }
+
+        if (watermark > _visDataD19ProcessedUpTo)
+        {
+            D19At(watermark - 1);
+        }
+
         _rawSamples.RemoveRange(0, trimAmount);
         _demodulatedFrequencies.RemoveRange(0, trimAmount);
         _agcSamples.RemoveRange(0, trimAmount);
         _agcCurMaxSamples.RemoveRange(0, trimAmount);
         _bandpassFilteredSamples.RemoveRange(0, trimAmount);
+        _visDataD11Samples.RemoveRange(0, trimAmount);
+        _visDataD12Samples.RemoveRange(0, trimAmount);
+        _visDataD19Samples.RemoveRange(0, trimAmount);
 
         _bufferBase = watermark;
     }
@@ -1751,10 +1879,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             + confirmHoldSamples + bitCount * MsToSamples(VisHeader.BitDurationMs);
         var availableUpTo = Math.Min(TotalSamplesReceived, searchCeiling);
 
-        var d11Detector = new SyncEnvelopeDetector(_sampleRate, 1080.0, bandwidthHz: 80.0);
-        var d12Detector = new SyncEnvelopeDetector(_sampleRate, 1200.0);
+        // Band-2 item S5: d13Detector stays local/fresh per call (see D11At/D12At/D19At's own doc
+        // comment for why -- legacy only feeds m_iir13 during case 2/9, so it's not a pure function of
+        // absolute sample index). d11/d12/d19 are read via the persistent D11At/D12At/D19At caches
+        // instead of local detector objects.
         var d13Detector = new SyncEnvelopeDetector(_sampleRate, 1320.0, bandwidthHz: 80.0);
-        var d19Detector = new SyncEnvelopeDetector(_sampleRate, 1900.0);
 
         var sample = headerStart;
         var holdCount = 0;
@@ -1766,10 +1895,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             var triggerFound = false;
             for (; sample < availableUpTo; sample++)
             {
-                var agcSample = AgcSampleAt(sample);
-                d11 = d11Detector.ProcessSample(agcSample);
-                var d12 = d12Detector.ProcessSample(agcSample);
-                d19 = d19Detector.ProcessSample(agcSample);
+                d11 = D11At(sample);
+                var d12 = D12At(sample);
+                d19 = D19At(sample);
 
                 if (d12 > d19 && d12 > SLvl && d12 - d19 >= SLvl)
                 {
@@ -1813,10 +1941,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                     return null;
                 }
 
-                var agcSample = AgcSampleAt(sample);
-                d11 = d11Detector.ProcessSample(agcSample);
-                d19 = d19Detector.ProcessSample(agcSample);
-                var d13 = d13Detector.ProcessSample(agcSample);
+                d11 = D11At(sample);
+                d19 = D19At(sample);
+                var d13 = d13Detector.ProcessSample(AgcSampleAt(sample));
 
                 if (sample == nextDecisionSample)
                 {
@@ -1824,8 +1951,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                     {
                         rejected = true;
                         sample++; // advance past this already-processed sample before the outer loop
-                                  // resumes searching -- these are stateful streaming filters, not a
-                                  // cache; re-processing the same sample would double-apply it
+                                  // resumes searching -- matches legacy exactly: a failed bit decision
+                                  // sets m_SyncMode=0 (sstv.cpp:1983), and case 0 resumes on the NEXT
+                                  // sample, not this one. (Band-2 item S5, auditor code-level review:
+                                  // the original rationale here -- "these are stateful streaming
+                                  // filters, not a cache, re-processing would double-apply it" -- no
+                                  // longer applies to d11/d12/d19, now caches where re-reads are
+                                  // idempotent; kept for d13, which the trigger-search loop never reads
+                                  // anyway, and restated against the real legacy citation instead.)
                         break;
                     }
 
