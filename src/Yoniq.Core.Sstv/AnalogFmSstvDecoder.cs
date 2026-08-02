@@ -126,6 +126,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// <c>BufferedSampleCount_StaysBounded_ForLongNeverLockingStream</c> without this.</summary>
     internal int VisDataDetectorBufferedSampleCount => _visDataD11Samples.Count + _visDataD12Samples.Count + _visDataD19Samples.Count;
 
+    /// <summary>Diagnostic-only: how far the persistent D11 tone-detector cache's forward-fill cursor
+    /// has advanced. Band-2 item S5 -- an auditor code-level review (round 4) noted that, unlike
+    /// <see cref="VisDataDetectorBufferedSampleCount"/> (which guards memory boundedness), nothing
+    /// directly pins the actual FIDELITY property S5 exists for: that this detector is fed
+    /// continuously from early in the stream, not cold-started at each decode attempt's own
+    /// <c>headerStart</c>. <c>LegacyDerivedSpansTests</c> uses this to close that gap.</summary>
+    internal int VisDataD11ProcessedUpTo => _visDataD11ProcessedUpTo;
+
+    /// <summary>Diagnostic-only: the absolute sample index AVT's dedicated PLL warm-up starts from
+    /// (Band-2 item S16) and the training origin it warms up TO. Exposed together so a test can pin
+    /// the derived span directly (<c>AvtTrainingOriginSample - AvtPllWarmupStartSample</c> is a pure
+    /// constant, independent of where in the stream the header actually started) rather than relying
+    /// solely on the doc comment at <see cref="TryStartAvtTraining"/>'s own call site.</summary>
+    internal int AvtPllWarmupStartSample => _avtPllWarmupStartSample;
+
+    internal int AvtTrainingOriginSample => _avtTrainingOriginSample;
+
     /// <summary>Diagnostic-only: how far the shared bandpass cache's forward-fill cursor has advanced.
     /// Kept as permanent test infrastructure (Band-1 item 4a, pre-Phase-2 audit) -- see
     /// <see cref="LockAnchorCommitted"/>'s own doc comment and
@@ -301,6 +318,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // auditor plan-review before this was wired in.
     private PllFmDemodulator? _avtPllDemodulator;
     private bool _avtPllWarmedUp;
+    private int _avtPllWarmupStartSample; // Band-2 item S16 -- see TryStartAvtTraining's own doc comment
     private bool _avtTrainingPending;
     private AvtTrainingLockStateMachine? _avtTrainingLock;
     private int _avtTrainingOriginSample;
@@ -664,13 +682,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 watermark = Math.Min(watermark, _consumedSamples);
             }
 
-            // Code-review finding: TryResolveAvtTraining's own warm-up (Math.Min(_avtTrainingOriginSample,
-            // AnchorWarmupSamples) below _avtTrainingOriginSample) is NOT separately included in this
-            // min() -- it's covered only transitively, because _fixedWindowExhausted is provably false
-            // for the entire _avtTrainingPending window (TryDecodeHeader returns before ever reaching
-            // TryInterleavedHeaderScan while pending), so the `if` above already pins the watermark at
-            // _consumedSamples, which sits before _avtTrainingOriginSample by a full header's worth of
-            // samples. Correct today; stated explicitly so a future change to when _fixedWindowExhausted
+            // Code-review finding: TryResolveAvtTraining's own warm-up (from _avtPllWarmupStartSample,
+            // Band-2 item S16 -- widened from a clamped constant to legacy's own real ~1850ms
+            // contiguous pre-origin m_pll feed span, see TryStartAvtTraining's own doc comment) is NOT
+            // separately included in this min() -- it's covered only transitively, because
+            // _fixedWindowExhausted is provably false for the entire _avtTrainingPending window
+            // (TryDecodeHeader returns before ever reaching TryInterleavedHeaderScan while pending), so
+            // the `if` above already pins the watermark at _consumedSamples (= headerStart), which sits
+            // before _avtPllWarmupStartSample too (headerStart + totalHeaderSampleCount - one bit
+            // period). Correct today; stated explicitly so a future change to when _fixedWindowExhausted
             // is set doesn't silently reopen this (it would fail LOUDLY via Rel()'s own throw if it did,
             // not silently -- but better to not need that safety net's help).
 
@@ -2093,29 +2113,50 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _avtPllDemodulator = new PllFmDemodulator(_sampleRate, DemodulatorLowHz, DemodulatorHighHz);
         _avtPllWarmedUp = false;
 
+        // Band-2 item S16 (pre-Phase-2 audit): auditor plan-review, round 1 -- the FIRST proposed fix
+        // for this item (make _avtPllDemodulator fully persistent/decoder-lifetime, like S5's tone
+        // detectors) was wrong and would have been a real regression, caught before any code was
+        // written. Unlike S5's d11/d12/d19 (fed unconditionally every sample in legacy), legacy's real
+        // m_pll for AVT is fed ONLY during SyncMode cases 3-7 (sstv.cpp:2129/2159/2169/2187/2222) --
+        // intermittent, not a pure function of absolute sample index, the exact same shape as d13's own
+        // case-2/9-only feed that blocked converting IT to an index-keyed cache. A PLL's phase state
+        // also has no equivalent of a resonator's fast, data-independent re-settling -- "just leave it
+        // running forever" would make AVT training entry a function of the ENTIRE preceding stream,
+        // which legacy's real per-attempt m_pll usage never is (case 3 gates its own feed on !m_Sync,
+        // i.e. this exact attempt's own unlocked window, not session history).
+        //
+        // The REAL defect (confirmed correct by that same plan-review round): _avtPllDemodulator stays
+        // fresh-per-training-attempt as before, but its old clamped 2000-sample warm-up was far too
+        // short relative to legacy's real contiguous feed window. This port's own _avtTrainingOriginSample
+        // deliberately skips past all 3 VIS repeats before ever constructing a training-lock instance at
+        // all (see the class-level comment above TryResolveAvtTraining's own call site for why) -- but
+        // legacy spends that entire skipped span, cases 4-7, continuously feeding m_pll real failed-
+        // marker-search audio. Widened to legacy's own real contiguous span instead of the arbitrary
+        // AnchorWarmupSamples constant: case 3's own 30ms VIS-stop-bit window (sstv.cpp:2127-2129,
+        // `if(!m_Sync) m_pll.Do(ad);`, unconditional during that case) through _avtTrainingOriginSample
+        // itself -- verified directly against source, not assumed, per the plan-review's own explicit
+        // flag that this needed checking rather than guessing.
+        _avtPllWarmupStartSample = headerStart + totalHeaderSampleCount - MsToSamples(VisHeader.BitDurationMs);
+
         return TryResolveAvtTraining();
     }
 
     private bool TryResolveAvtTraining()
     {
         // Fresh PllFmDemodulator instance -- unlike legacy's continuously-running m_pll, this starts
-        // cold with no filter history. Warm it up on real, already-buffered raw samples before origin
-        // (mirroring TryResolveSyncAnchorCorrection's own established technique for the identical
-        // fresh-detector-vs-continuous-legacy-filter gap, clamped 2000-sample warm-up) -- AVT's own
-        // training origin is always well past 1835ms+ of real preceding audio, so this is comfortably
-        // available in practice. Deferred here (not done eagerly in TryStartAvtTraining) and gated on
-        // _avtTrainingOriginSample itself being fully buffered -- a real bug caught by the full test
-        // suite immediately after wiring this in ("test early, test often"): a streaming/chunked
-        // PushSamples caller can invoke TryStartAvtTraining before _rawSamples has grown as far as
-        // _avtTrainingOriginSample yet, so warming up eagerly there indexed past the end of the
-        // buffer. Runs exactly once per training attempt, whenever enough data first exists.
+        // cold with no filter history. Warm it up on real, already-buffered raw samples before origin,
+        // over legacy's own real contiguous pre-origin feed span (_avtPllWarmupStartSample, see
+        // TryStartAvtTraining's own doc comment for the full derivation -- NOT a clamped constant
+        // window; this is derived from where legacy's case 3/4 handoff actually sits, not guessed).
+        // Deferred here (not done eagerly in TryStartAvtTraining) and gated on _avtTrainingOriginSample
+        // itself being fully buffered -- a real bug caught by the full test suite immediately after
+        // wiring this in ("test early, test often"): a streaming/chunked PushSamples caller can invoke
+        // TryStartAvtTraining before _rawSamples has grown as far as _avtTrainingOriginSample yet, so
+        // warming up eagerly there indexed past the end of the buffer. Runs exactly once per training
+        // attempt, whenever enough data first exists.
         if (!_avtPllWarmedUp && TotalSamplesReceived >= _avtTrainingOriginSample)
         {
-            // Code-review finding (Band-1 S2 fix): same as TryResolveSyncAnchorCorrection's own
-            // identical clamp -- assumes absolute 0, safe only via TrimBuffers' pre-lock retention
-            // margin (this runs while _mode is still null, during AVT's own pending-training window).
-            var warmupSamples = Math.Min(_avtTrainingOriginSample, AnchorWarmupSamples);
-            for (var w = _avtTrainingOriginSample - warmupSamples; w < _avtTrainingOriginSample; w++)
+            for (var w = _avtPllWarmupStartSample; w < _avtTrainingOriginSample; w++)
             {
                 _avtPllDemodulator!.ProcessSample(BandpassFilteredSampleAt(w) * 32768.0);
             }
