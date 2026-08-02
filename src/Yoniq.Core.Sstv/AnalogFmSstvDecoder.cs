@@ -69,6 +69,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
     private readonly int _sampleRate;
     private readonly List<double> _demodulatedFrequencies = [];
+    private int _demodulatedFrequenciesProcessedUpTo; // Band-1 item 4a: see DemodulatedFrequencyAt
     private readonly List<float> _rawSamples = [];
     private readonly HilbertFmDemodulator _demodulator;
     private readonly SearchBandpassFilter _searchBandpassFilter;
@@ -78,16 +79,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // until TrimBuffers (sub-piece D) starts advancing it. Every one of the 5 growing buffers is
     // conceptually indexed by the SAME absolute sample-index space (the index PushSamples' incoming
     // stream defines), even though each buffer's own List<T> only physically holds
-    // [_bufferBase, TotalSamplesReceived) for _rawSamples/_demodulatedFrequencies (which always grow
-    // 1:1, see PushSamples) or a shorter, independently-lazily-filled range for the other three (each
-    // has its own forward-fill cursor -- AgcSampleAt/BandpassFilteredSampleAt -- that may lag well
-    // behind TotalSamplesReceived). Rel() translates an absolute index to the current physical List<T>
-    // index for whichever buffer is being read; every accessor in this class must go through it rather
-    // than indexing a buffer directly, so a future trim can never silently read stale/wrong data --
-    // this is a `checked`-style guard, not just a convenience: Rel() throws if asked to translate an
-    // index that has already been trimmed away, matching this piece's auditor plan-review's own
-    // explicit warning that a silently-wrong (not throwing) site is the dangerous failure class here,
-    // not a loud one.
+    // [_bufferBase, TotalSamplesReceived) for _rawSamples (which always grows 1:1, see PushSamples) or
+    // a shorter, independently-lazily-filled range for the other four -- _demodulatedFrequencies
+    // included, as of Band-1 item 4a (it used to also always grow 1:1, filled eagerly inside
+    // PushSamples' own per-sample loop; see DemodulatedFrequencyAt's own doc comment for why that
+    // changed) -- each with its own forward-fill cursor (AgcSampleAt/BandpassFilteredSampleAt/
+    // DemodulatedFrequencyAt) that may lag well behind TotalSamplesReceived. Rel() translates an
+    // absolute index to the current physical List<T> index for whichever buffer is being read; every
+    // accessor in this class must go through it rather than indexing a buffer directly, so a future
+    // trim can never silently read stale/wrong data -- this is a `checked`-style guard, not just a
+    // convenience: Rel() throws if asked to translate an index that has already been trimmed away,
+    // matching this piece's auditor plan-review's own explicit warning that a silently-wrong (not
+    // throwing) site is the dangerous failure class here, not a loud one.
     private int _bufferBase;
 
     // Band-1 S2 fix (pre-Phase-2 audit): EndOfImage's 0.5s dead-time skip means nothing ever asks
@@ -113,6 +116,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// interpret, not a verdict. Exists so <see cref="TrimBuffers"/>'s bound can actually be verified
     /// (a long, never-locking stream should NOT grow this linearly with total samples pushed).</summary>
     internal int BufferedSampleCount => _rawSamples.Count;
+
+    /// <summary>Diagnostic-only: how far the shared bandpass cache's forward-fill cursor has advanced.
+    /// Kept as permanent test infrastructure (Band-1 item 4a, pre-Phase-2 audit) -- see
+    /// <see cref="LockAnchorCommitted"/>'s own doc comment and
+    /// <c>BandpassCacheChunkInvarianceTests</c> for what this measures and why it matters: item 4a's
+    /// whole point was to stop this cursor racing arbitrarily far ahead of the true lock anchor before
+    /// <c>Commit()</c> gets a chance to run, so the gap between the two staying small and chunk-size-
+    /// invariant is this fix's own acceptance criterion, not just a nice-to-have number.</summary>
+    internal int BandpassFilteredProcessedUpTo => _bandpassFilteredProcessedUpTo;
 
     // Code-review finding (Band-1 S2 fix, pre-Phase-2 audit): TrimBuffers bounds MEMORY but not this
     // absolute sample-index space, which is `int` -- _bufferBase + _rawSamples.Count overflows after
@@ -369,6 +381,38 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         return _bandpassFilteredSamples[Rel(index)];
     }
 
+    // Band-1 item 4a (pre-Phase-2 audit, S1 follow-up): _demodulatedFrequencies used to be filled
+    // EAGERLY, one sample at a time, directly inside PushSamples' per-sample loop -- for every raw
+    // sample as it arrived, regardless of lock state. That's what let this cache (transitively, via
+    // BandpassFilteredSampleAt) race arbitrarily far ahead of Commit()'s own lock decision: a bulk
+    // caller pushing a whole file in one PushSamples call drove this cache all the way to
+    // TotalSamplesReceived before TryProcessBuffer() (where Commit() actually runs) ever got a chance
+    // to execute even once -- measured directly (a throwaway spike, since removed) at ~115 SECONDS of
+    // wrongly-filtered content for a bulk push, vs. single-digit milliseconds for realistic small
+    // chunk sizes. Auditor plan-review (round 2) confirmed the fix: make this lazy, forward-fill
+    // CACHED like AgcSampleAt/BandpassFilteredSampleAt already are, driven only by an ACTUAL consumer
+    // asking for a specific index -- not by PushSamples eagerly draining ahead of any consumer's real
+    // need. This is a pure refactor of WHEN _demodulator.ProcessSample runs, not of what it computes:
+    // the same stateful streaming demodulator still gets fed every index exactly once, in strict
+    // monotonic order, the same guarantee AgcSampleAt/BandpassFilteredSampleAt already rely on for
+    // their own stateful filters (_levelAgc/_searchBandpassFilter) -- so this preserves bit-identical
+    // output for every existing caller (verified: full suite + golden vectors unchanged). This alone
+    // does NOT switch bandpass filters on lock (that's item 4b, separately scoped) -- it only removes
+    // ONE of the two drivers that raced BandpassFilteredSampleAt's own cache ahead of lock. The other,
+    // AgcSampleAt's own eager continuous scanning (genuinely required for header detection to ever
+    // find a header at all), stays -- auditor's assessment is that the residual gap it alone leaves is
+    // bounded by detection latency, not chunk size; re-measured directly once this lands (see the
+    // BufferedSampleCount-style diagnostic test this piece adds).
+    private double DemodulatedFrequencyAt(int index)
+    {
+        for (; _demodulatedFrequenciesProcessedUpTo <= index; _demodulatedFrequenciesProcessedUpTo++)
+        {
+            _demodulatedFrequencies.Add(_demodulator.ProcessSample(BandpassFilteredSampleAt(_demodulatedFrequenciesProcessedUpTo) * 32768.0));
+        }
+
+        return _demodulatedFrequencies[Rel(index)];
+    }
+
     // sstv.cpp:2258/2263/2267's `m_lvl.m_CurMax > 16` AFC silence gate reads m_CurMax as of the exact
     // sample being processed at that moment in legacy's single real-time pass -- not "whatever
     // LevelAgc's CurMax happens to be right now" (this port's AFC correction runs as a deferred bulk
@@ -393,18 +437,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         for (var i = 0; i < span.Length; i++)
         {
             _rawSamples.Add(span[i]);
-            // Scale bridge -- see PllFmDemodulator's own doc comment: legacy's CPLL AGC assumes
-            // int16-scaled input, this port's raw samples are float in [-1.0, 1.0]. Same bridge
-            // AgcSampleAt already applies for LevelAgc.
-            //
-            // Piece A/B: BandpassFilteredSampleAt (not span[i] directly) -- legacy's real demodulator
-            // input is m_Cur = d (sstv.cpp:1834/sstv.h:256-257), the POST-2-tap-LPF-POST-bandpass-
-            // filter value, not the raw sample. Indexing by TotalSamplesReceived-1 (not span[i])
-            // correctly reaches into the previous chunk's last sample at a chunk boundary --
-            // _rawSamples already has it, added on the line above this same iteration.
-            _demodulatedFrequencies.Add(_demodulator.ProcessSample(BandpassFilteredSampleAt(TotalSamplesReceived - 1) * 32768.0));
         }
 
+        // Band-1 item 4a: _demodulatedFrequencies is no longer filled eagerly here -- see
+        // DemodulatedFrequencyAt's own doc comment for why (this used to race the shared bandpass
+        // cache all the way to TotalSamplesReceived before Commit() ever got a chance to run, for any
+        // bulk-pushed caller). It's now driven lazily, on demand, by whichever real consumer
+        // (PixelSampleReader during line decode, ApplyAfcCorrections, or AverageFrequencyInWindow's
+        // pre-lock narrow-mode discriminator) actually needs a given index next.
         TryProcessBuffer();
         AdvanceAgcThroughDeadZone();
         TrimBuffers();
@@ -499,6 +539,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             watermark = Math.Min(watermark, _visLockProcessedUpTo);
             watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
             watermark = Math.Min(watermark, _bandpassFilteredProcessedUpTo);
+
+            // Band-1 item 4a: deliberately NOT including _demodulatedFrequenciesProcessedUpTo here,
+            // unlike _bandpassFilteredProcessedUpTo above. First attempt did include it (matching that
+            // sibling cursor's own pattern) and broke two real tests two different ways: (1) included
+            // unconditionally -> permanently pinned near 0 for a long-idle, never-locking stream (its
+            // ONLY pre-lock reader, AverageFrequencyInWindow's narrow-vs-normal-VIS discriminator, is
+            // itself gated behind `!_fixedWindowExhausted`, so it simply stops advancing once that
+            // flips -- the exact BufferedSampleCount_StaysBounded_ForLongNeverLockingStream failure
+            // shape, just for a different cursor than _consumedSamples' own already-documented case
+            // above); (2) included conditionally, matching _consumedSamples' own `if
+            // (!_fixedWindowExhausted)` pattern -> let the watermark advance PAST this cursor's actual
+            // fill position, which crashes: unlike _consumedSamples (a logical cursor value, safe to
+            // go stale), this one IS this list's own physical length -- RemoveRange(0, trimAmount)
+            // throws ArgumentException the moment trimAmount exceeds what _demodulatedFrequencies
+            // actually holds. Resolved below instead: an explicit catch-up right before the RemoveRange
+            // block guarantees this list is never asked to remove more than it has, without needing a
+            // watermark term here at all -- see that comment for the full reasoning.
         }
         else
         {
@@ -514,6 +571,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             watermark = Math.Min(watermark, _visLockProcessedUpTo);
             watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
             watermark = Math.Min(watermark, _bandpassFilteredProcessedUpTo);
+            watermark = Math.Min(watermark, _demodulatedFrequenciesProcessedUpTo); // Band-1 item 4a, see above
             watermark = Math.Min(watermark, _consumedSamples);
             watermark -= AnchorWarmupSamples; // margin for the NEXT lock's own anchor-correction warm-up
         }
@@ -530,6 +588,33 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         if (trimAmount < MinTrimSamples)
         {
             return;
+        }
+
+        // Band-1 item 4a: _demodulatedFrequencies' own forward-fill cursor is deliberately NOT a
+        // watermark term in the pre-lock branch above (see that comment) -- so, unlike the other 4
+        // buffers, its physical length can be shorter than trimAmount at this point. Catch it up
+        // before trimming, not because anything will ever read this range again (nothing will -- the
+        // watermark computation above already established that for every other buffer), but because
+        // List<T>.RemoveRange itself can never remove more elements than a list actually holds. A
+        // no-op in the locked branch, where _demodulatedFrequenciesProcessedUpTo already sits in the
+        // watermark's own Min() chain and can therefore never be exceeded here.
+        //
+        // Load-bearing invariant this relies on (auditor code-level review, round 3): watermark is
+        // ALWAYS <= _bandpassFilteredProcessedUpTo in both branches above (both include it directly in
+        // their own Min() chain) -- so DemodulatedFrequencyAt(watermark - 1) here can never advance
+        // _bandpassFilteredProcessedUpTo itself; its inner BandpassFilteredSampleAt calls are pure
+        // cache reads, not new fills. That is what stops this catch-up from reintroducing item 4a's own
+        // bug (the bandpass cache racing ahead of the lock anchor) from inside TrimBuffers. If a future
+        // change ever drops _bandpassFilteredProcessedUpTo from either branch's Min() chain, this catch-
+        // up can silently start driving that cache forward again -- don't remove it from either chain.
+        //
+        // Note this mostly defeats laziness, not cost, for a long pre-lock stream: the demodulator still
+        // eventually runs over ~all pre-lock audio (just lagged by preLockRetentionSamples behind the
+        // stream head instead of running at it) -- item 4a's actual win is ORDERING relative to Commit(),
+        // not CPU savings, and this catch-up is exactly where that trade becomes visible.
+        if (watermark > _demodulatedFrequenciesProcessedUpTo)
+        {
+            DemodulatedFrequencyAt(watermark - 1);
         }
 
         _rawSamples.RemoveRange(0, trimAmount);
@@ -613,7 +698,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // Main.cpp:4015/:5900-5903). lineEndSampleExclusive is this line's own extent, used
                 // only by the (currently unreachable at every real mode) line-end guard.
                 var reader = new PixelSampleReader(
-                    index => _demodulatedFrequencies[Rel(Math.Clamp(index, _bufferBase, TotalSamplesReceived - 1))],
+                    index => DemodulatedFrequencyAt(Math.Clamp(index, _bufferBase, TotalSamplesReceived - 1)),
                     SstvModeRegistry.GetKsbSamples(mode, effectiveSampleRate),
                     _consumedSamples + lineSampleCount,
                     mode.LuminanceMinHz,
@@ -1189,9 +1274,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         Commit(matched, lineStart);
     }
 
+    /// <summary>Diagnostic-only: fires the PROVISIONAL, immediate lock anchor the moment
+    /// <see cref="Commit"/> sets it -- not <see cref="ModeDetected"/>, which is deferred until
+    /// <c>TryResolveSyncAnchorCorrection</c> succeeds, several lines (and several buffered picture
+    /// lines) later. Kept as permanent test infrastructure (Band-1 item 4a, pre-Phase-2 audit): this
+    /// is what let a real spike measure how far <see cref="BandpassFilteredProcessedUpTo"/> had
+    /// already raced ahead of the true lock instant, which is exactly the quantity item 4a's fix
+    /// needed to bound -- see <c>BandpassCacheChunkInvarianceTests</c>.</summary>
+    internal event Action<int>? LockAnchorCommitted;
+
     private void Commit(SstvModeDefinition matched, int lineStartSample)
     {
         _consumedSamples = Math.Max(0, lineStartSample);
+        LockAnchorCommitted?.Invoke(_consumedSamples);
         _mode = matched;
         _lineDecoder = ScanlineCodecFactory.CreateDecoder(matched.ColorEncoding);
         _pixels = new Rgb24[matched.ImageWidth * matched.ImageHeight];
@@ -1982,7 +2077,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // pre-correction `d`, and `d += m_AFCDiff` happens afterward (sstv.cpp:2270).
             if (AgcCurMaxAt(_afcProcessedUpTo) > 16.0)
             {
-                var measuredFrequencyHz = _demodulatedFrequencies[Rel(_afcProcessedUpTo)];
+                // Band-1 item 4a: DemodulatedFrequencyAt (not direct indexing) ensures this index is
+                // actually filled before reading it -- the eager per-sample fill this used to rely on
+                // is gone. The in-place mutation below stays direct indexing: the accessor call above
+                // already guarantees the slot exists.
+                var measuredFrequencyHz = DemodulatedFrequencyAt(_afcProcessedUpTo);
                 var correctionHz = _afcTracker.ProcessSample(measuredFrequencyHz);
                 _demodulatedFrequencies[Rel(_afcProcessedUpTo)] += correctionHz;
             }
@@ -2104,7 +2203,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         double sum = 0;
         for (var i = from; i < to; i++)
         {
-            sum += _demodulatedFrequencies[Rel(i)];
+            // Band-1 item 4a: this is the one confirmed pre-lock reader of _demodulatedFrequencies
+            // (the narrow-vs-normal-VIS discriminator, called before Commit() from TryDecodeHeader) --
+            // DemodulatedFrequencyAt lazily fills it correctly either way, no special-casing needed.
+            sum += DemodulatedFrequencyAt(i);
         }
 
         return sum / (to - from);

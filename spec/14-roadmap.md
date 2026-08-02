@@ -1489,6 +1489,246 @@ Full suite: 392/392, solution-wide build clean. Golden-vector tests re-run: 8/8 
 
 **Status: S2 (Band-1 item 2) DONE, not yet committed as of this entry.**
 
+### Band-1 item 4 (S1) — lock-dependent bandpass filter switch (H2 search vs. H1 locked), PLANNED
+
+This port has never once run legacy's real locked-state filter (`HBPF`/`H1`) — only the weaker
+pre-lock/search one (`HBPFS`/`H2`, Piece B). Investigated by reading `sstv.cpp`/`fir.cpp` directly
+rather than working from the earlier speculative scope notes; findings below correct/simplify those
+earlier notes materially.
+
+**No filter-state warm-up problem, contrary to the earlier speculation.** Legacy's real convolution
+engine, `CFIR2::Do(d, hp)` (`fir.cpp:1131-1144`), maintains ONE shared delay line (`m_pZ`) and simply
+chooses which coefficient table (`H1` vs `H2`) to dot-product against, per call —
+`m_BPF.Do(d, m_Sync||m_SyncMode>=3 ? (m_fNarrow?HBPFN:HBPF) : HBPFS)` (`sstv.cpp:1826-1832`). It is
+NOT two independent filter instances. This port can mirror that exactly: one shared delay line inside
+`SearchBandpassFilter`, a second coefficient array for H1, and a `bool useLocked` parameter on
+`ProcessSample` — no second warmed-up filter object needed.
+
+**H1 params (Wide preset, `CalcBPF` case 1, `sstv.cpp:1522-1531`)**: passband 1100-2600Hz (`lfq=1100`
+since `m_SyncRestart` is hardwired on, `sstv.cpp:1486`; `g_dblToneOffset` confirmed 0 absent CQ100),
+attenuation 20 — same as H2, same tap-count formula (`24*SampFreq/11025.0`). Attenuation 20 reconfirms
+the already-resolved S28 pre-check (Kaiser/Bessel branch needs att>=21, unreached here either way).
+
+**Scoping decision — an early-switch window is NOT being ported, deliberately. Auditor plan-review
+corrected the window size: it's not a flat 30ms.** Legacy's real switch condition is
+`m_Sync || m_SyncMode>=3`, not just "locked". `SyncMode==3` is the VIS **stop-bit** confirmation window
+(a fixed 30ms) for a normal (single-byte) VIS code — so for most modes legacy starts using H1 about
+**one VIS bit-period (30ms) before** `m_Sync` itself goes to 1 / before `Start()` fires. But
+`sstv.cpp:2066-2070` sets `m_SyncMode = 9` (not straight to 3) for the extended-VIS escape byte `0x23`,
+and case 9 decodes 8 MORE 30ms bits (the real extended mode code) before falling through to
+`m_SyncMode = 3` (`sstv.cpp:2077`) — and case 9 is `>= 3` too. So for every extended-VIS mode (the
+MR/MP/ML families) legacy actually runs H1 for **~270ms** of *decision-critical bit-decode*, not a 30ms
+tail. Also unlisted originally: `Stop()` sets `m_SyncMode = 512` (`sstv.cpp:1786`), so legacy keeps H1
+through the entire 0.5s post-image dead window too (cases 512/513) — this port's `EndOfImage()` reverts
+to H2 immediately; harmless since the port doesn't do detection during that analytically-skipped window
+anyway, but noted for completeness.
+
+This port's natural hook point is `Commit()` (the single choke point every match path — fixed-window
+VIS, narrow, AVT-post-training, sync-bypass fallback — already funnels through), which switches exactly
+AT the lock anchor, i.e. LATER than legacy for that window (30ms for normal VIS, ~270ms for extended).
+Traced whether this actually matters before deciding to skip it: nothing in this port reads AGC/bandpass
+content from that specific window with any precision-sensitive purpose — VIS-bit decode (data + parity)
+finishes before the stop-bit position starts, and picture-line decode starts at Commit's anchor, not
+before it. The one thing that DOES read across that boundary, `TryResolveSyncAnchorCorrection`'s
+2000-sample pre-`origin` warm-up loop, explicitly discards its output (pure resonator/smoother settling,
+never accumulated into the fold-bin search) — auditor also found `TryStartAvtTraining`'s own AVT-PLL
+warm-up does the same backward read; neither accumulates into a real result. A differently-filtered tail
+out of a 2000-sample discarded warm-up read is not expected to matter. Chose NOT to build a
+retroactive-patch-and-re-run-demodulator mechanism to close a boundary condition nothing
+correctness-critical actually consumes — documented here explicitly (not silently absorbed) per this
+project's established pattern for similar small timing simplifications (extended-VIS 7-bit escape byte,
+sint2/sint3 freeze gating, etc.). **If a future finding ever shows something DOES read that window with
+real precision sensitivity, re-open this.**
+
+**Also explicitly out of scope, both already tracked separately, not new gaps introduced by this
+item**: narrow mode's `H3`/`HBPFN` (this port's narrow modes keep using H2/search always — part of the
+already-tracked MN/MC narrow-mode gap family, Band 3); AVT's *during-training* H1 usage (legacy uses H1
+for the entire AVT training sequence via the same `SyncMode>=3` condition staying true throughout,
+`sstv.cpp:2139-2144` — a materially bigger gap than the 30ms window above, tied to the already-tracked,
+separately-deferred AVT items). AVT's eventual real image-decode phase, once its own training-lock
+Commit() fires, correctly gets H1 for free via the same design (no special-casing needed there).
+
+**Chunk-invariance reasoning — WRONG, auditor found a real blocker (round 1 plan-review verdict: NOT
+READY).** The original claim was that `PushSamples`'s per-sample loop always bandpass-filters every new
+raw sample BEFORE `TryProcessBuffer()`/`Commit()` can run for that same push, so filter assignment per
+index is deterministic regardless of chunking. **True, but the conclusion drawn from it was backwards.**
+`PushSamples` (`AnalogFmSstvDecoder.cs:390-411`) runs its ENTIRE per-sample loop — which forward-fills
+`BandpassFilteredSampleAt` (and `_demodulatedFrequencies`) for *every* sample in the chunk — before
+`TryProcessBuffer()` (where `Commit()` actually happens) runs even once. A `_mode`-evaluated-at-first-
+computation gate reduces to "was `_mode` non-null at the START of the push containing this sample" —
+with two consequences, neither acceptable:
+- **Bulk push (whole file/WAV in one `PushSamples` call — almost certainly how the round-trip/e2e tests
+  drive the decoder)**: `_mode` is null for the ENTIRE per-sample loop, since `Commit()` can't fire until
+  AFTER that loop finishes. H1 is **never used at all** — a silent no-op the existing test suite would
+  not catch (it would just look like "no regression").
+- **Chunked push**: H1 only engages at the NEXT chunk boundary after the lock, not at the true anchor —
+  decode output becomes a function of chunk size again. **This is exactly the Band-1 item 3 race class,
+  reopened** — `BandpassFilteredSampleAt` never recomputes a cached index, so the wrong filter choice is
+  permanently frozen in, not just delayed.
+
+Root cause: this port's upfront-buffer architecture processes a whole pushed chunk in one bulk pass
+before header-detection/`Commit()` ever runs for that chunk's own content — a chunk can be, and in the
+bulk-push case IS, the entire remaining file. Gating logic inside `BandpassFilteredSampleAt`'s existing
+fill loop cannot fix this: the *placement* of the evaluation (before Commit can possibly have fired) is
+what's broken, not the predicate itself (`_mode is not null && _mode.NarrowModeCode is null` correctly
+encodes legacy's `(m_Sync||m_SyncMode>=3) && !m_fNarrow`, collapsed to this port's lock model — that part
+survives review unmodified).
+
+Auditor's three options, verdict pending user/next-round decision, **none implemented yet**:
+- **(a) Don't do item 4.** Keep H2 continuous everywhere (today's actual behavior), document the
+  divergence precisely (now including the corrected ~270ms extended-VIS window, not 30ms). Zero
+  implementation risk; Band-1 item 4 stays a known, formally-accepted gap rather than fixed.
+- **(b) Make the demod feed lazy.** Restructure so `_demodulatedFrequencies` (and by extension whichever
+  cursor ultimately drives `BandpassFilteredSampleAt`) only computes forward as far as an ACTUAL consumer
+  needs, mirroring `AgcSampleAt`'s own established lazy-forward-fill pattern, instead of PushSamples
+  eagerly draining the whole chunk up front. Caveat found while reasoning through this after the
+  auditor's report (not yet auditor-reviewed): `AgcSampleAt` itself is legitimately eager for
+  header-detection's own sake (sync-bypass/tone-race detectors must scan continuously to ever find a
+  header), and `AgcSampleAt`'s own forward-fill loop is what ultimately drives
+  `_bandpassFilteredProcessedUpTo` forward — so making ONLY `_demodulatedFrequencies` lazy may not be
+  sufficient on its own; needs re-verification before treating (b) as viable as stated.
+- **(c) Retroactive re-filter.** Keep the current eager architecture, but at `Commit()` time, retroactively
+  recompute (using already-cached `FilteredRawSampleAt` inputs — a pure function given the coefficient
+  table, no demodulator-state replay needed for the bandpass stage itself) and overwrite
+  `_bandpassFilteredSamples` for whatever suffix `[lineStartSample, _bandpassFilteredProcessedUpTo)` was
+  already filled with H2 by the time lock happened, THEN also re-run `_demodulator.ProcessSample` over
+  that same range to regenerate `_demodulatedFrequencies` (since that's a stateful streaming transform,
+  not a pure function of index). Bounded to "whatever's been buffered since lock," which for a bulk push
+  could mean re-processing most of the file — not free, but scoped/local rather than a full streaming-
+  contract redesign.
+
+**Status: round-1 plan-review found a real blocker (not a nitpick) — paused for a decision on (a)/(b)/(c)
+before continuing. Do not implement against the original plan text above; it would produce H1-never-
+engages (bulk push) or chunk-dependent decode (chunked push).**
+
+**Real measurement (spike, per the `/adhd` skill's top-scored idea) + round-2 auditor verdict:**
+
+Added a temporary diagnostic (`AnalogFmSstvDecoder.DiagCommitFired`, fires the provisional lock anchor
+immediately from `Commit()`) and a throwaway test
+(`tests/Yoniq.Core.Sstv.Tests/Diag_BandpassFilterSwitchSpike.cs`) measuring, for a real Martin M1
+transmission pushed at several chunk sizes, the gap between the true lock anchor and how far
+`BandpassFilteredSampleAt`'s eager cache had already raced ahead by the time that push returned:
+
+| chunk size (samples) | lock anchor (sample @44100Hz) | gap (samples) | gap (ms) |
+|---|---|---|---|
+| 1 | 40131 | 0 | 0.0 |
+| 500 | 40131 | 369 | 8.4 |
+| 4096 | 40131 | 829 | 18.8 |
+| bulk (whole file, one push) | 40131 | 5,077,525 | ~115,137 (entire rest of the transmission) |
+
+Confirms the lock anchor itself is chunk-invariant (root cause is isolated to filter-selection caching,
+not upstream) and that the gap scales linearly with chunk size — small/bounded for realistic streaming
+chunk sizes, catastrophic (full no-op) for bulk push.
+
+Fed these numbers plus a `/adhd` divergent-ideation pass (5 frames, scored/clustered, top 3 deepened —
+full session not reproduced here) back to the same auditor thread for a second opinion. Verdict:
+
+- **Q1 (does the measured magnitude change the call): no.** Bulk push is a first-class supported caller
+  in this codebase, not a test artifact — `TryProcessBuffer`/`ApplyAfcCorrections`/`ApplySlantTracking`
+  all have existing shipped fixes specifically for bulk-push correctness. A feature that's a total no-op
+  under bulk push is untested-by-construction, worse than not shipping it. But the chunk-invariant anchor
+  DOES de-risk a proper fix as a bounded change, not a pipeline redesign.
+- **Q2 (is "decouple only the demod feed," found by the `/adhd` deepening pass, sufficient): partially,
+  and one premise in it was wrong.** Confirmed a real pre-lock reader of `_demodulatedFrequencies`
+  (`AnalogFmSstvDecoder.cs:790-801`, the narrow-vs-normal-VIS discriminator) — not fatal, since that
+  window sits inside the VIS header where H2 is legacy-correct anyway. But `AgcSampleAt` is NOT safe to
+  "leave untouched" as assumed — it's itself a driver of the same shared bandpass cache, and
+  `TryInterleavedHeaderScan` can race it all the way to `TotalSamplesReceived` once
+  `_fixedWindowExhausted` fires. The residual gap this leaves is bounded by detection latency, not chunk
+  size (chunk-invariant) — unmeasured, flagged as needing verification before trusting the fix, but this
+  is the property that actually matters, so the design is directionally sound with a corrected
+  justification.
+- **Q3 (buildable now within item 4's scope): no — split it.** The lazy-demod change is its own
+  behavior-preserving refactor with a clean acceptance criterion (entire existing suite stays
+  bit-identical) — `Rel()`'s shared-growth assumption between `_rawSamples`/`_demodulatedFrequencies`
+  (`:81`), `TrimBuffers`' `_demodulatedFrequencies.RemoveRange` needing its own watermark (`:536`), and
+  `ApplyAfcCorrections`' in-place mutation ordering (`:1996`) all need to survive it. Recommended split:
+  **4a** = lazy demod feed (no behavior change, ship when suite is unchanged bit-for-bit; keep the spike
+  test but turn it into a permanent regression asserting the anchor-to-cache-head gap is chunk-invariant,
+  not just report the raw numbers). **4b** = the actual H1/H2 switch, which becomes the originally-small
+  change once 4a lands and is genuinely chunk-invariant. If 4a isn't worth its cost right now, fall back
+  to **option (a)**: document the gap (~30ms normal VIS / ~270ms extended VIS) and defer both, rather than
+  ship the originally-planned `_mode`-gated version, which the auditor called explicitly indefensible —
+  "it would read as done while being inert for the caller shape your own test suite uses."
+
+Off-scope note from this round (not chased): `AverageFrequencyInWindow`'s doc comment (`:2092-2094`)
+still says "PLL loop's transient response," stale since the Hilbert-demodulator switch (Piece 14).
+
+**User's call: follow the auditor, split it. 4a DONE.**
+
+`_demodulatedFrequencies` is now its own lazy forward-fill cache (`DemodulatedFrequencyAt`, mirroring
+`AgcSampleAt`/`BandpassFilteredSampleAt`'s own established pattern), no longer filled eagerly inside
+`PushSamples`' per-sample loop. All three real readers updated (`PixelSampleReader`'s lambda,
+`ApplyAfcCorrections`, `AverageFrequencyInWindow`'s pre-lock discriminator).
+
+**Real bug found during implementation (not caught by plan-review), same failure class as the original
+S2 bug, different cursor.** First attempt included `_demodulatedFrequenciesProcessedUpTo` as a watermark
+term in `TrimBuffers`, matching `_bandpassFilteredProcessedUpTo`'s own existing pattern (matching the
+auditor's stated recommendation literally). Two things went wrong depending on how: included
+unconditionally → permanently pinned near 0 for a long-idle never-locking stream (its only pre-lock
+reader is gated behind `!_fixedWindowExhausted`, so it stops advancing the moment that flips) —
+`BufferedSampleCount_StaysBounded_ForLongNeverLockingStream` caught this immediately. Included
+conditionally (matching `_consumedSamples`' own `if (!_fixedWindowExhausted)` pattern) → let the
+watermark advance PAST this cursor's actual fill position, which **crashed**:
+`System.ArgumentException` from `List<T>.RemoveRange` — unlike `_consumedSamples` (a logical cursor,
+safe to go stale), this cursor IS the list's own physical length, and `RemoveRange` can never remove
+more elements than a list actually holds. Root-caused and fixed properly (not patched around): removed
+`_demodulatedFrequenciesProcessedUpTo` from the pre-lock watermark computation entirely (kept it
+unconditionally in the locked branch, where real per-line decode consumption already keeps it in step —
+safe, matches `_bandpassFilteredProcessedUpTo`'s pattern there); added an explicit catch-up step right
+before the `RemoveRange` block (`if (watermark > _demodulatedFrequenciesProcessedUpTo) {
+DemodulatedFrequencyAt(watermark - 1); }`) that force-fills the small remaining gap before trimming —
+mirrors the existing `AdvanceAgcThroughDeadZone` pattern for the same class of problem, a no-op in the
+locked branch, and correct in the pre-lock branch since it only ever fills the SAME bounded range the
+watermark computation already proved safe to trim for every other buffer.
+
+**Verified**: full suite 393/393 (392 pre-existing baseline, unchanged bit-for-bit, plus one new
+permanent test), golden-vector tests 12/12 unaffected. The throwaway spike (`Diag_BandpassFilterSwitchSpike.cs`)
+was converted into a permanent regression test per the auditor's own recommendation
+(`BandpassCacheChunkInvarianceTests.cs`) — its first version measured the WRONG quantity (raw pushed-
+sample count, which is trivially the whole push size regardless of the fix) rather than the actual
+bandpass-cache cursor position; fixed before converting to a permanent assertion. Real numbers, now
+chunk-invariant by construction: lock anchor sample 40131 and bandpass-cache cursor 37264 (gap **-2867
+samples**, i.e. the cache trails slightly BEHIND the lock point, not ahead) — identical across chunk
+sizes {1, 500, 4096, bulk-whole-file}, replacing the pre-fix bulk-push gap of ~5.08 million samples.
+The two permanent diagnostics (`AnalogFmSstvDecoder.LockAnchorCommitted`, `.BandpassFilteredProcessedUpTo`)
+were kept (not reverted) as the test's own infrastructure, per the auditor's recommendation.
+
+**Final code-level auditor review: EQUIVALENT-WITH-RISKS, no bug found, cleared to start 4b.** Verified
+the catch-up-before-trim design directly against source: correct, and load-bearing on an invariant not
+originally stated — `watermark <= _bandpassFilteredProcessedUpTo` in BOTH branches (each already
+includes it in their own `Min()` chain), which is what stops `DemodulatedFrequencyAt(watermark - 1)`
+inside the catch-up from ever re-advancing the bandpass cache itself (its inner
+`BandpassFilteredSampleAt` calls become pure cache reads, not new fills) — i.e. what stops the catch-up
+from silently reintroducing 4a's own bug from inside `TrimBuffers`. Documented that invariant explicitly
+at the catch-up site per the auditor's flag, with an explicit warning not to drop
+`_bandpassFilteredProcessedUpTo` from either watermark chain in 4b. Also confirmed: `EndOfImage` does
+NOT reset `_demodulatedFrequenciesProcessedUpTo` (correctly — resetting it would desync it from the
+list's own physical length); `Rel()` bounds and the length invariant both hold at the degenerate
+all-removed edge; existing tests (`EndOfImageResetTests`, `BufferTrimTests`' silence-then-real-transmission
+case) already exercise the exact multi-image/repeated-trim scenarios that would have caught a real bug
+here, so "bit-identical baseline + the new chunk-invariance test" was judged genuine coverage, not luck.
+
+**One design correction for 4b, the single most valuable thing this measurement bought**: the real
+measured gap is NEGATIVE (cache cursor 37264 trails lock anchor 40131 by 2867 samples, ~65ms@44100Hz) —
+meaning under the ORIGINAL point-6 design (gate H1/H2 selection on live `_mode` at first-computation
+time), those 2867 PRE-anchor samples would get computed AFTER `Commit()` already fired and would be
+wrongly assigned H1, when legacy actually used H2 for nearly all of that span (only the final ~30ms
+stop-bit window is `m_SyncMode>=3`, already decided out of scope). Fix, same cost: gate 4b on a captured
+`index >= lockAnchorSample` field (set in `Commit()`, cleared in `EndOfImage()`), not on live `_mode` —
+exactly correct and still chunk-invariant.
+
+Minor nits, both addressed or noted: laziness-vs-ordering distinction now documented at the catch-up
+site (4a's real win for a never-locking stream is ordering relative to `Commit()`, not CPU savings — the
+demodulator still eventually runs over ~all pre-lock audio either way); `FilteredRawSampleAt`'s
+`index > 0` (absolute) vs. `index > _bufferBase` guard is pre-existing (S2, not 4a), currently
+unreachable given today's margins, flagged only because 4b will touch these same accessors — watch for
+it, not a blocker. Off-scope, not chased: `AverageFrequencyInWindow`'s doc comment still says "PLL
+loop's transient response," stale since the Hilbert-demodulator switch (flagged twice now).
+
+**Status: 4a done and committed. Starting 4b (the actual H1/H2 filter switch) — corrected design: gate
+on a captured lock-anchor sample index, not live `_mode`.**
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
