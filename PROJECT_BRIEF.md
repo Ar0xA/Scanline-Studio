@@ -17,7 +17,7 @@ Root cause: `ilammy/msvc-dev-cmd@v1` set `Platform=x64` as a job-level env var; 
 three legs green each time. Full writeup: `spec/14-roadmap.md`, search "Windows CI fix".
 **All three CI legs (Windows/Linux/macOS) now green on `master` — nothing blocking.**
 
-## Current task: auditor verification DONE, waiting on user to pick Band-1 scope before fixes start
+## Current task: working Band 1 fixes one by one (task #6, in progress)
 
 **Pre-Phase-2 gate: shortcut/simplification audit.** User's call: before running the milestone-audit
 playbook's Phase 3 chain audit (see `docs/audit-playbook.md`) or moving to Phase 2, first inventory
@@ -25,30 +25,27 @@ every known DSP-in-pipeline simplification this port carries, triage/fix the imp
 capture more real golden-vector fixtures, THEN run Phase 3. Full writeup + 30-item table + priority
 bands + patterns: `spec/14-roadmap.md`, search "Pre-Phase-2 gate" (results are near the very end).
 
-**Status: task #9 (auditor verification, run as 3 split calls after a first too-broad attempt got
-stopped) is COMPLETE.** Reconciled, deduplicated list = **30 items** (not the ~20 first estimated),
-ranked into 5 priority bands. Key results, full detail in the roadmap:
-- **Band 1 (must-fix before Phase 2, 5 items)**: an exception-swallowing bare `catch` in the audio
-  capture path, unbounded memory growth in the decoder's sample buffers (~5.7GB/hr @44100Hz),
-  AFC/Slant's chunk-timing sensitivity (the **only item with a measured defect**, ~1.75 avg
-  per-channel delta), the lock-dependent bandpass filter that's never switched (this port has never
-  once run legacy's real locked-state filter), and the Kaiser/Bessel filter-design branch that must
-  ship in the same change as the filter fix or it looks correct while being wrong.
-- **Biggest single finding**: 7 of the 30 items (including 3 of 4 tier-C/highest-severity ones) are
-  really **one architectural gap wearing seven names** — this port processes audio in bulk
-  upfront-buffer passes where legacy runs one continuous per-sample loop over persistent detector
-  state. Auditor's recommendation: decide the streaming contract explicitly (persistent per-detector
-  cursors + bounded ring buffer + one incremental pump) before writing individual fixes, since most of
-  Bands 1-2 collapse into one design change otherwise.
-- **One cheap pre-check flagged before starting Band 1**: confirm H1/H3's real attenuation value in
-  `fir.cpp` (5 min) — if it's 20dB like H2, the Kaiser/Bessel item drops out of Band 1 entirely.
+**Task #9 (auditor verification, 3 split calls) COMPLETE.** Reconciled, deduplicated list = 30 items,
+ranked into 5 priority bands. **Pre-check done (2026-08-02): confirmed directly in `fir.cpp`/`sstv.cpp`
+that at the Wide preset (the only one this port reaches), H1's attenuation is 20dB, identical to
+H2 — no Kaiser/Bessel branch needed. Band 1 is now 4 items, not 5:**
+1. Exception-swallowing bare `catch` in `MiniAudioCaptureSession` (audio capture path)
+2. Unbounded memory growth in the decoder's sample buffers (~5.7GB/hr @44100Hz, 5 buffers)
+3. AFC/Slant's chunk-timing sensitivity (the only item with a MEASURED defect, ~1.75 avg per-channel
+   delta between whole-push and chunked-push decode of the same signal)
+4. The lock-dependent bandpass filter that's never switched (this port has never once run legacy's
+   real locked-state filter, only the weaker pre-lock one)
 
-**Deliberately NOT started autonomously**: the "decide the streaming contract" recommendation above is
-a real architecture decision, not a mechanical fix — needs the user's own scope call before any code
-gets written. This session was cron-resumed at ~01:35 2026-08-02 specifically to restart the auditor;
-that's done. Next real step (task #6) is the user picking how much of Band 1 to take on, then chopping
-it into sub-pieces per this project's established methodology (isolate-test each piece, auditor
-plan-review before code, CLAUDE.md §7). Then task #7 (capture ~5-6 new golden-vector fixtures for
+**Note (auditor's Pattern 1, still relevant even with the re-scope):** items 2 and 3 (and part of item
+4's underlying cause) are really one architectural gap — this port processes audio in bulk
+upfront-buffer passes where legacy runs one continuous per-sample loop over persistent detector state.
+Auditor recommended deciding the streaming contract explicitly before individual fixes. Working items
+one by one per user instruction, but watch for this pattern resurfacing once past item 1 — may be
+worth surfacing to the user again before items 2/3 rather than patching them as unrelated bugs.
+
+**Now working through the normal process (plan → auditor plan-review → implement → test) for each
+item in order.** Per-item plans/status logged in `spec/14-roadmap.md` as each one starts. Next: task
+#7 (capture ~5-6 new golden-vector fixtures for
 uncovered mode families: Scottie S1, Robot72/R24, a PD/MP mode, RM8/RM12, a narrow MN/MC mode, AVT —
 several Band-3 items are gated on these) → task #8 (Phase 3 chain audit).
 
