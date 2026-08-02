@@ -1546,7 +1546,13 @@ already-tracked MN/MC narrow-mode gap family, Band 3); AVT's *during-training* H
 for the entire AVT training sequence via the same `SyncMode>=3` condition staying true throughout,
 `sstv.cpp:2139-2144` — a materially bigger gap than the 30ms window above, tied to the already-tracked,
 separately-deferred AVT items). AVT's eventual real image-decode phase, once its own training-lock
-Commit() fires, correctly gets H1 for free via the same design (no special-casing needed there).
+Commit() fires, correctly gets H1 for free via the same design (no special-casing needed there). A third
+divergence found and documented once 4b actually implemented the switch (round-4 auditor code-level
+review nit): legacy's `Stop()` keeps `m_SyncMode` at 512 through the whole 0.5s post-image dead zone
+(`sstv.cpp:1786`, cases 512-513, `sstv.cpp:2243-2252`), so real legacy stays on H1 there too — this port
+drops to H2 the instant `EndOfImage` clears `_mode`, even though that dead zone's own samples still get
+demodulated (`AdvanceAgcThroughDeadZone`) and feed AGC state into the next transmission's search. Small,
+matches the shape of the other two, documented in `SearchBandpassFilter`'s own doc comment.
 
 **Chunk-invariance reasoning — WRONG, auditor found a real blocker (round 1 plan-review verdict: NOT
 READY).** The original claim was that `PushSamples`'s per-sample loop always bandpass-filters every new
@@ -1728,6 +1734,68 @@ loop's transient response," stale since the Hilbert-demodulator switch (flagged 
 
 **Status: 4a done and committed. Starting 4b (the actual H1/H2 filter switch) — corrected design: gate
 on a captured lock-anchor sample index, not live `_mode`.**
+
+### Band-1 item 4b — the actual H1/H2 filter switch, DONE
+
+`SearchBandpassFilter` now carries both coefficient tables (`_h1` 1100-2600Hz, `_h2` 400-2500Hz, both via
+the existing `MakeFilter` helper, same tap count) over ONE shared delay line — `ProcessSample(double
+input, bool useLocked)` shifts the line unconditionally, dot-products against whichever table
+`useLocked` selects, mirroring `CFIR2::Do(d, hp)`'s own single-delay-line-plus-coefficient-choice shape
+exactly. No separate H1 warm-up needed, verified by a new unit test
+(`ProcessSample_SwitchingToLocked_ReusesExistingDelayLineHistory_NoSeparateWarmUp`) that feeds several
+H2-selected samples then switches to H1 for one sample and checks the result against H1's coefficients
+convolved against that SAME accumulated history, computed independently by hand from the raw inputs.
+
+`AnalogFmSstvDecoder` gates `BandpassFilteredSampleAt`'s selection on a NEW field,
+`_bandpassLockedFromSample` (captured in `Commit()`, reset to `int.MaxValue` in `EndOfImage()`) — NOT
+live `_mode` state, per the corrected design from item 4a's own auditor review: `useLocked = _mode is
+not null && _mode.NarrowModeCode is null && index >= _bandpassLockedFromSample`, evaluated once, at each
+index's own first-computation time. Narrow mode's H3/HBPFN stays out of scope (already-tracked MN/MC
+gap family) via the `NarrowModeCode is null` check; the legacy ~30ms(normal)/~270ms(extended) early-
+switch window stays out of scope too (already documented in item 4's own entry above).
+
+**Tests**: `SearchBandpassFilterTests.cs` — added an independently-computed (Python, not derived from
+the C# implementation, same discipline as the existing H2 fixtures) H1 coefficient fixture (full array
+at tap=24@11025Hz, selected values at tap=96@44100Hz), an H1 frequency-response sweep (independently
+computed magnitudes at H1's own passband edges 1100/2600Hz plus the same real VIS-bit/sync/leader tones
+1200/1900Hz), parametrized the existing causal-impulse-response and zero-padding tests over both H1/H2,
+and the shared-delay-line/no-warm-up proof described above. 21 new tests, 42/42 in this file.
+
+**Verified**: full suite 414/414 (413 baseline + 21 new filter tests unchanged, no regressions anywhere),
+golden-vector tests unaffected, noise-robustness tests unaffected (both within existing established
+tolerance), and — the property this whole item existed to fix — the existing
+`DecodedImage_IsPixelIdentical_WhetherSamplesArriveInOneChunkOrMany` round-trip test (chunk sizes
+{1, 500, 4096}) still passes at EXACT pixel identity with H1/H2 switching now live, confirming item 4b
+did not reopen the Band-1 item 3 chunk-timing race.
+
+**Final code-level auditor review (round 4): EQUIVALENT, ready to commit.** Verified the gating
+condition against `sstv.cpp:1826-1832` directly (correctly collapses `(m_Sync||m_SyncMode>=3) &&
+!m_fNarrow`), confirmed no sub-`_bufferBase` evaluation risk, confirmed `Commit()`-within-the-same-push
+ordering is handled (the round-3 correction's whole point), confirmed mid-reception restart
+(`TryVisLockStateMachine`) and AVT post-training lock both correctly get H1, confirmed `EndOfImage`'s
+`_bandpassLockedFromSample` reset is genuinely redundant-but-correct (the `_mode is not null` conjunct
+already closes that gate) rather than overclaimed, and confirmed nothing from item 4a's own review
+reopened (`_bandpassFilteredProcessedUpTo` still in both `TrimBuffers` watermark chains, the catch-up
+still can't advance the bandpass cursor). One recommended (non-blocking) gap: the round-3 correction's
+own most subtle property — samples strictly before the anchor computed after `Commit()` fires must stay
+H2 — was protected only by a doc comment, not a test. Closed before committing: added
+`AnalogFmSstvDecoder.FirstLockedBandpassIndex` (diagnostic-only, mirrors `LockAnchorCommitted`'s own
+pattern) and `BandpassCacheChunkInvarianceTests.FirstLockedFilterSample_EqualsTheLockAnchor`, which pins
+the two equal directly — would fail with a clear, specific mismatch if this ever regressed back to
+gating on live `_mode` alone. Two nits also addressed: the third legacy divergence (0.5s post-image dead
+zone, `sstv.cpp:1786`/`2243-2252` — legacy stays on H1 there, this port drops to H2 at `EndOfImage`) now
+explicitly documented in `SearchBandpassFilter`'s own doc comment and here (see "Also explicitly out of
+scope" above); the `BandpassFilteredSampleAt` comment/code phrasing mismatch (loop's "this index" vs the
+method's own `index` parameter) fixed with a named local.
+
+**Verified (final)**: full suite 415/415 (414 baseline + 1 new gate-pinning test, no regressions
+anywhere), golden-vector and noise-robustness tests unaffected, chunk-invariance confirmed both
+end-to-end (`DecodedImage_IsPixelIdentical_WhetherSamplesArriveInOneChunkOrMany`) and directly at the
+gate itself (the new pinning test).
+
+**Status: Band-1 item 4 (S1) DONE, committed. With it, all 4 Band-1 (must-fix-before-Phase-2) items are
+complete: S4 (`288d5d0`), S2 (`86e3af6`), S3 (`365d57b`/`765ba3c`), S1 4a+4b (this entry). Next:
+task #7 (capture new golden-vector fixtures) → task #8 (Phase 3 chain/integration audit).**
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
