@@ -49,6 +49,24 @@ public class VisHeaderTests
         Assert.Equal(9.0, VisHeader.ScottiePostVisPulseDurationMs);
     }
 
+    [Fact]
+    public void SearchCeilings_MatchIndependentlyHandDerivedValues()
+    {
+        // Band-1 S3 fix (pre-Phase-2 audit): pins these against values hand-derived directly from
+        // AnalogFmSstvDecoder.TryDecodeVisDataBits'/TryDecodeNarrowModeHeader's own existing (and
+        // untouched by this piece) inline formulas, so a future edit to either method's ceiling
+        // can't silently desync from these shared constants without a test failing.
+        //
+        // Normal (7-bit): leader*2(600) + break(10) + retryMargin(200) + confirmHold(15) + 7*bit(210) = 1035
+        Assert.Equal(1035.0, VisHeader.NormalSearchCeilingMs, precision: 6);
+        // Extended (16-bit): 600 + 10 + 200 + 15 + 16*30(480) = 1305
+        Assert.Equal(1305.0, VisHeader.ExtendedSearchCeilingMs, precision: 6);
+        // Narrow: guard*2(200) + bit*(1+24)(550) + retryMargin(200) = 950
+        Assert.Equal(950.0, VisHeader.NarrowSearchCeilingMs, precision: 6);
+        // Max across all three -- the extended ceiling is the largest.
+        Assert.Equal(1305.0, VisHeader.MaxSearchCeilingMs, precision: 6);
+    }
+
     /// <summary>Segment layout from <see cref="VisHeader.GenerateSegments"/>: 0=leader, 1=break,
     /// 2=leader, 3=start bit, 4-10=7 data bits (LSB first), 11=parity, 12=stop bit.</summary>
     private static int ExtractVisByte(IReadOnlyList<(double FrequencyHz, double DurationMs)> segments)

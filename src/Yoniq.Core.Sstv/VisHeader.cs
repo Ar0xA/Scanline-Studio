@@ -44,6 +44,66 @@ internal static class VisHeader
 
     public const double TotalDurationMs = PrefixDurationMs + NormalTailDurationMs;
 
+    /// <summary>Bit count of <see cref="GenerateExtendedSegments"/>'s combined escape+code word (one
+    /// raw byte's worth more than <see cref="DataBitCount"/>'s normal-VIS 7) — named here so
+    /// <see cref="ExtendedSearchCeilingMs"/> can share it rather than repeating the literal
+    /// <c>DataBitCount + 9</c> already used at <c>AnalogFmSstvDecoder.TryDecodeVisHeader</c>'s own
+    /// call site.</summary>
+    public const int ExtendedDataBitCount = DataBitCount + 9;
+
+    /// <summary>Shared retry margin every local, bounded header-detection scan in this file's
+    /// consumers (<c>AnalogFmSstvDecoder.TryDecodeVisDataBits</c>/<c>TryDecodeNarrowModeHeader</c>)
+    /// budgets for one or two short spurious candidates (e.g. the break tone) before the real start
+    /// bit, rather than aborting outright — see those methods' own doc comments for the full
+    /// reasoning; this constant exists so the three search-ceiling constants below share one
+    /// literal instead of three independently-copied 200s.</summary>
+    public const double RetryMarginMs = 200;
+
+    /// <summary>15ms, `sstv.cpp:1948` — how long the case-0 trigger must hold before
+    /// <c>TryDecodeVisDataBits</c> starts racing the data-bit tones. Shared here so
+    /// <see cref="NormalSearchCeilingMs"/>/<see cref="ExtendedSearchCeilingMs"/> don't repeat the
+    /// derivation independently of that method's own identical constant.</summary>
+    public const double ConfirmHoldMs = BitDurationMs / 2;
+
+    /// <summary><c>AnalogFmSstvDecoder.TryDecodeVisDataBits</c>'s own local search-ceiling formula
+    /// (see that method's doc comment for the full reasoning), for a normal <see cref="DataBitCount"/>-bit
+    /// VIS code — the ONLY other consumer of this exact arithmetic (Band-1 S3 fix, pre-Phase-2 audit)
+    /// is <see cref="MaxSearchCeilingMs"/>, computed from this and its two siblings below rather than
+    /// hand-transcribed, so the two can never silently desync.</summary>
+    public const double NormalSearchCeilingMs =
+        LeaderDurationMs * 2 + BreakDurationMs + RetryMarginMs
+        + ConfirmHoldMs
+        + DataBitCount * BitDurationMs;
+
+    /// <summary>Same formula as <see cref="NormalSearchCeilingMs"/>, for the extended
+    /// (<see cref="ExtendedDataBitCount"/>-bit) VIS code.</summary>
+    public const double ExtendedSearchCeilingMs =
+        LeaderDurationMs * 2 + BreakDurationMs + RetryMarginMs
+        + ConfirmHoldMs
+        + ExtendedDataBitCount * BitDurationMs;
+
+    /// <summary><c>AnalogFmSstvDecoder.TryDecodeNarrowModeHeader</c>'s own local search-ceiling
+    /// formula (see that method's doc comment) — guard-tone hold + mode-2's own timeout window,
+    /// start-bit training pulse, 24 data bits, plus the same <see cref="RetryMarginMs"/> every other
+    /// local scan in this file budgets.</summary>
+    public const double NarrowSearchCeilingMs =
+        NarrowGuardDurationMs * 2
+        + NarrowBitDurationMs * (1 + 24)
+        + RetryMarginMs;
+
+    /// <summary>The maximum of the three search ceilings above — the latest possible sample, relative
+    /// to a header's own start, at which ANY of this port's fixed-window header-detection paths could
+    /// still succeed. Band-1 S3 fix (pre-Phase-2 audit): <c>AnalogFmSstvDecoder</c>'s interleaved
+    /// fallback scan (<c>TryInterleavedHeaderScan</c>, which races a fixed-window path that refuses to
+    /// commit until its own full header duration is buffered) must not be allowed to commit before
+    /// this many ms have elapsed since the current epoch's `_consumedSamples`, or it can win a race
+    /// the fixed-window path was never given a real chance to lose fairly — see the roadmap's
+    /// "Band-1 items 2+3" entry for the full empirical confirmation and the auditor plan-review that
+    /// caught the original draft using the wrong (too small) quantity here. <c>static readonly</c>,
+    /// not <c>const</c>, specifically so this is computed by the compiler from the three ceilings
+    /// above rather than risking a fourth, independently-drifting hand-transcribed literal.</summary>
+    public static readonly double MaxSearchCeilingMs = Math.Max(Math.Max(NormalSearchCeilingMs, ExtendedSearchCeilingMs), NarrowSearchCeilingMs);
+
     /// <summary>Legacy's real RM12 VIS byte is <c>0x86</c> (`sstv.cpp:1997`) — its parity bit (1)
     /// does not match even parity computed from its 7 data bits (6 = 0b0000110, two set bits,
     /// already even → computed parity would be 0, producing 0x06 instead). Every other normal VIS
