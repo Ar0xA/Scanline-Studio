@@ -12,11 +12,18 @@ tests for every DSP change, small reviewable commits, ask before pushing to orig
 ## DO NOT PUSH until the user has checked GitHub Actions minutes
 
 As of 2026-08-02 the user is at 1,806/2,000 monthly Actions minutes (90%) — every `git push` triggers a
-full 3-leg CI run (~10-13 min). A cron job resuming this session tonight (fires 23:45 CEST) is instructed
-to commit locally but NOT push, for exactly this reason. If you're resuming this work and see local
-commits ahead of `origin/master`, do not push them without checking with the user first — they intend to
-review Actions usage and push everything in one batch themselves. Check `git log origin/master..HEAD` to
-see what's local-only.
+full 3-leg CI run (~10-13 min). Two safety nets are in place, both need the user to reverse them
+deliberately once they're ready:
+1. **The `CI` workflow is manually disabled** (`gh workflow disable CI` — confirmed via
+   `gh workflow list --all` showing `disabled_manually`). Even a push tonight would NOT consume Actions
+   minutes. Re-enable with `gh workflow enable CI` once the user says so, not before.
+2. A cron job resuming this session tonight (fires 23:45 CEST) is instructed to commit locally but NOT
+   push, as a second layer on top of (1).
+
+If you're resuming this work and see local commits ahead of `origin/master`, do not push them without
+checking with the user first, and do not re-enable the CI workflow without checking either — they intend
+to review Actions usage and decide when to resume both. Check `git log origin/master..HEAD` to see
+what's local-only, and `gh workflow list --all` to check the CI workflow's current enabled/disabled state.
 
 ## Resume here (2026-08-02, session paused at 92% budget) — S14, plan verified, NOT implemented yet
 
