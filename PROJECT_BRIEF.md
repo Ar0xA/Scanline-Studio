@@ -73,9 +73,13 @@ the 30-item audit are gated on these) → task #8 (Phase 3 chain audit).
 - **Windows/macOS real-hardware audio verification** (`spec/14-roadmap.md` Phase 1, Audio 1b): the
   native-shim build compiles in CI on both, but neither has been run against real/virtual hardware —
   needs a human on each OS, not agent-doable from this Linux sandbox.
-- **Small license-audit items**: cty.dat (Clublog callsign-prefix dataset) audit before Phase 4 bundles
-  it; confirm whether Chilkat/FastReport back a real legacy feature (needs the legacy binary, not just
-  source). Both quick, low-risk, no dependencies.
+- **cty.dat license pre-audit: DONE** (2026-08-02) — Clublog's `cty.dat` has no fee, but redistribution
+  needs a human to email Clublog's helpdesk with the proposed use and get an API key before it can
+  actually be downloaded/bundled; not a simple open-license drop-in. Full finding in `LICENSES.md`
+  ("Candidate future asset" note) and `spec/14-roadmap.md` (search "Pre-audited"). Remaining before
+  Phase 4: someone (not an agent) actually emails Clublog and gets the key.
+- **Remaining small license-audit item**: confirm whether Chilkat/FastReport back a real legacy feature
+  — needs the legacy binary running, not just source, so not doable from this sandbox.
 
 ## Completed work (full narratives in `spec/14-roadmap.md`, search "Piece N")
 

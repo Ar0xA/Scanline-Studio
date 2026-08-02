@@ -28,6 +28,16 @@ The legacy tree also contains `Terms.txt`/`License.TXT`, which state MMSSTV is n
 
 If either Chilkat or FastReport turns out to back a real feature once someone can build and run the legacy binary directly (not verifiable from source alone), re-evaluate before assuming they're safe to drop — see the corresponding open item in [[spec/14-roadmap]].
 
+## Candidate future asset — pre-audit note (not yet bundled)
+
+Clublog's `cty.dat`/`cty.xml` (the callsign-prefix dataset named as the planned replacement for `ARRL.DX` above, [[spec/08-logging]]'s `ICallsignLookup`) is **not yet bundled** — Phase 4 work, not started. Checked its terms early (2026-08-02) so this isn't discovered as a blocker mid-Phase-4:
+
+- No fee, and Clublog states "no licensing" is required to use the prefix/exception data in third-party software.
+- However, downloading it for redistribution requires an **individual API key obtained by emailing Clublog's helpdesk** with details of the proposed use — it is not a blanket, download-and-go open license like MIT/CC0. (Source: [Club Log support — "Downloading The Prefixes And Exceptions As XML"](https://clublog.freshdesk.com/support/solutions/articles/54902-downloading-the-prefixes-and-exceptions-as-xml).)
+- Attribution/promotion is requested but not contractually mandated.
+
+**Action item before Phase 4 bundles this data**: a human needs to email Clublog's helpdesk describing Yoniq v2's proposed use and obtain an API key before the table can be fetched and bundled — not something an agent can do from source alone. Once that's done, add the actual row to the "Third-party libraries bundled" table below (asset, exact version/snapshot date, license/permission terms as granted) per the process-going-forward rule.
+
 ## Third-party libraries bundled in Yoniq v2 (not legacy YONIQ/MMSSTV assets)
 
 Distinct from the legacy-asset audit above: these are new third-party dependencies introduced by
