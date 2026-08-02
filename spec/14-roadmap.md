@@ -1292,6 +1292,47 @@ get an auditor plan-review of the actual fix (both S3's priority-scoping fix and
 design) before writing production code. Test comment at `SstvRoundTripTests.cs:198-205` needs
 correcting once the real fix lands (currently misattributes this to AFC/Slant).**
 
+**Empirically confirmed (2026-08-02), done directly in this session (the investigative pass had no
+Bash access) -- clean, unambiguous result, exactly the non-monotonic pattern predicted, not a smooth
+AFC-drift pattern.** Added temporary `[CallerLineNumber]`-based instrumentation to `Commit()`
+(reverted immediately after, working tree confirmed clean via `git status`/`git diff`), swept chunk
+sizes for a real Martin M1 encode:
+
+| Push shape | Commit call site | Anchor sample |
+|---|---|---|
+| Whole (one-shot) | line 1512 (fixed-window path) | 40131 |
+| chunk=499/500/512/1000/1024/20000 | line 896 (interleaved VisLock fallback) | **40571** |
+| chunk=4096/40131/45000 | line 1512 (fixed-window path) | 40131 |
+
+Confirms the race exactly as hypothesized: small/misaligned chunk sizes let the fallback commit
+first at a DIFFERENT anchor (440 samples off, ~10ms @44100Hz); larger/aligned chunk sizes let the
+fixed-window path get satisfied first, matching the one-shot result. Not a diffuse drift — a discrete
+either/or race outcome depending purely on push chunking, confirming the root-cause diagnosis, not
+just corroborating it.
+
+**Fix plan (drafted, not yet auditor-reviewed):**
+- **S3**: give the fixed-window path a guaranteed first-refusal window in ABSOLUTE sample terms, not
+  call-scoped terms. Concretely: `TryInterleavedHeaderScan`'s own scan bound becomes
+  `Math.Min(_rawSamples.Count, _rawSamples.Count - maxFixedWindowHeaderLatency)` -- i.e. the fallback
+  never examines/commits on samples the fixed-window path could still claim first. `maxFixedWindowHeaderLatency`
+  needs deriving as the maximum `totalHeaderSampleCount`-equivalent across every mode this port
+  detects via the fixed-window path (the fallback can't know in advance which mode is arriving, so it
+  must wait out the worst case, not a specific mode's own value) -- needs a new
+  `SstvModeRegistry`/`VisHeader` helper, not a hardcoded guess. Open question for the auditor: does
+  this introduce unacceptable header-detection latency for genuinely headerless/degraded signals that
+  currently rely on the fallback firing early (the whole POINT of `TryInterleavedHeaderScan`/`m_sint2`-
+  equivalent detection)? Needs explicit discussion, not just implemented and hoped.
+- **S2**: bound/trim the 5 growing buffers using watermark = `min(_afcProcessedUpTo, _slantProcessedUpTo,
+  _visLockProcessedUpTo, _syncBypassProcessedUpTo, _avtTrainingProcessedUpTo, _consumedSamples) - lookback`
+  (`lookback = max(2000, SearchBandpassFilter tap+1, Hilbert tap+1, ksbSamples, 1)`), with a hard rule:
+  never trim while `_mode is null` or `_pendingAnchorCorrectionMode is not null`. ~25 call sites need
+  offset-translation (every buffer indexed by absolute sample index today). If S3's fix adds a new
+  cursor, it joins the `min(...)` -- confirmed compatible, not blocking.
+
+**Status: both items' fixes now going to the auditor for a combined plan-review (per user instruction
+to follow the auditor's own Pattern-1 recommendation -- one coherent piece, not two unrelated
+patches) before any production code is written.**
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
