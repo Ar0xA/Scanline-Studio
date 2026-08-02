@@ -73,6 +73,69 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly HilbertFmDemodulator _demodulator;
     private readonly SearchBandpassFilter _searchBandpassFilter;
 
+    // Band-1 S2 fix (pre-Phase-2 audit): the absolute sample index _rawSamples[0]/_demodulatedFrequencies[0]/
+    // _agcSamples[0]/_agcCurMaxSamples[0]/_bandpassFilteredSamples[0] currently correspond to -- 0
+    // until TrimBuffers (sub-piece D) starts advancing it. Every one of the 5 growing buffers is
+    // conceptually indexed by the SAME absolute sample-index space (the index PushSamples' incoming
+    // stream defines), even though each buffer's own List<T> only physically holds
+    // [_bufferBase, TotalSamplesReceived) for _rawSamples/_demodulatedFrequencies (which always grow
+    // 1:1, see PushSamples) or a shorter, independently-lazily-filled range for the other three (each
+    // has its own forward-fill cursor -- AgcSampleAt/BandpassFilteredSampleAt -- that may lag well
+    // behind TotalSamplesReceived). Rel() translates an absolute index to the current physical List<T>
+    // index for whichever buffer is being read; every accessor in this class must go through it rather
+    // than indexing a buffer directly, so a future trim can never silently read stale/wrong data --
+    // this is a `checked`-style guard, not just a convenience: Rel() throws if asked to translate an
+    // index that has already been trimmed away, matching this piece's auditor plan-review's own
+    // explicit warning that a silently-wrong (not throwing) site is the dangerous failure class here,
+    // not a loud one.
+    private int _bufferBase;
+
+    // Band-1 S2 fix (pre-Phase-2 audit): EndOfImage's 0.5s dead-time skip means nothing ever asks
+    // AgcSampleAt for that range's samples (header detection correctly resumes at resumeFrom, past
+    // it) -- but this class's own documented legacy-fidelity property (see _levelAgc's own doc
+    // comment: CLVL "advances monotonically over the whole _rawSamples stream regardless of
+    // EndOfImage's dead-time skip") means _levelAgcProcessedUpTo is supposed to catch up through it
+    // anyway, just not synchronously in EndOfImage itself (the dead-zone's own samples may not have
+    // arrived yet at that exact moment, for a streaming/chunked caller). Set to the new resumeFrom in
+    // EndOfImage; drained incrementally, as data allows, by AdvanceAgcThroughDeadZone.
+    private int _agcDeadZoneCatchUpTarget;
+
+    // TryResolveSyncAnchorCorrection's/TryResolveAvtTraining's own shared warm-up depth (both sites'
+    // doc comments already explain WHY 2000 -- an order of magnitude past a resonator's ~3.2ms
+    // settling time) -- named here, and shared with those two existing sites (previously each had its
+    // own independent literal 2000), so TrimBuffers' own lookback requirement can never silently
+    // desync from what those warm-ups actually need to read.
+    private const int AnchorWarmupSamples = 2000;
+
+    /// <summary>Diagnostic-only: the number of samples currently physically held in
+    /// <c>_rawSamples</c> (i.e. after trimming, NOT <see cref="TotalSamplesReceived"/>). Mirrors
+    /// <c>MiniAudioCaptureSession.OverrunCount</c>'s own shape -- a raw number for a caller/test to
+    /// interpret, not a verdict. Exists so <see cref="TrimBuffers"/>'s bound can actually be verified
+    /// (a long, never-locking stream should NOT grow this linearly with total samples pushed).</summary>
+    internal int BufferedSampleCount => _rawSamples.Count;
+
+    // Code-review finding (Band-1 S2 fix, pre-Phase-2 audit): TrimBuffers bounds MEMORY but not this
+    // absolute sample-index space, which is `int` -- _bufferBase + _rawSamples.Count overflows after
+    // ~13.5h of continuous streaming @44100Hz (~54h @11025Hz). Explicitly out of scope for this fix
+    // (a session that long is well beyond anything this port's test suite or any near-term real usage
+    // exercises) rather than silently fixed -- widening every one of this class's absolute-index
+    // fields to `long` would be a much larger, separately-scoped change. Flagged here, not hidden,
+    // for whenever a genuinely long-running production caller (e.g. an always-on Phase-2 receiver)
+    // makes this a real constraint instead of a theoretical one.
+    private int TotalSamplesReceived => _bufferBase + _rawSamples.Count;
+
+    private int Rel(int absoluteIndex)
+    {
+        if (absoluteIndex < _bufferBase)
+        {
+            throw new InvalidOperationException(
+                $"Absolute sample index {absoluteIndex} was requested but the buffer has already been trimmed up to {_bufferBase} -- " +
+                "some cursor read behind the trim watermark, which TrimBuffers' own retention rule is supposed to prevent.");
+        }
+
+        return absoluteIndex - _bufferBase;
+    }
+
     private int _consumedSamples;
     private SstvModeDefinition? _mode;
     private IScanlineDecoder? _lineDecoder;
@@ -270,7 +333,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             _agcCurMaxSamples.Add(_levelAgc.CurMax);
         }
 
-        return _agcSamples[index];
+        return _agcSamples[Rel(index)];
     }
 
     // sstv.cpp:1824-1825 -- always-on, never gated by m_bpf. m_ad zeroed once at construction
@@ -282,7 +345,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // double before adding promotes the whole expression, avoiding an avoidable float-precision
     // rounding step legacy's real computation never has).
     private double FilteredRawSampleAt(int index) =>
-        index > 0 ? ((double)_rawSamples[index] + _rawSamples[index - 1]) * 0.5 : _rawSamples[index] * 0.5;
+        index > 0 ? ((double)_rawSamples[Rel(index)] + _rawSamples[Rel(index - 1)]) * 0.5 : _rawSamples[Rel(index)] * 0.5;
 
     // Piece: pre-AGC bandpass filter (search/H2 variant, run continuously -- see
     // SearchBandpassFilter's own doc comment for the full scope decision and the causal-window/
@@ -303,7 +366,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             _bandpassFilteredSamples.Add(_searchBandpassFilter.ProcessSample(FilteredRawSampleAt(_bandpassFilteredProcessedUpTo)));
         }
 
-        return _bandpassFilteredSamples[index];
+        return _bandpassFilteredSamples[Rel(index)];
     }
 
     // sstv.cpp:2258/2263/2267's `m_lvl.m_CurMax > 16` AFC silence gate reads m_CurMax as of the exact
@@ -315,7 +378,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private double AgcCurMaxAt(int index)
     {
         AgcSampleAt(index);
-        return _agcCurMaxSamples[index];
+        return _agcCurMaxSamples[Rel(index)];
     }
 
     public event Action<DecodedImageUpdate>? LineDecoded;
@@ -336,13 +399,146 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             //
             // Piece A/B: BandpassFilteredSampleAt (not span[i] directly) -- legacy's real demodulator
             // input is m_Cur = d (sstv.cpp:1834/sstv.h:256-257), the POST-2-tap-LPF-POST-bandpass-
-            // filter value, not the raw sample. Indexing by _rawSamples.Count-1 (not span[i]) correctly
-            // reaches into the previous chunk's last sample at a chunk boundary -- _rawSamples already
-            // has it, added on the line above this same iteration.
-            _demodulatedFrequencies.Add(_demodulator.ProcessSample(BandpassFilteredSampleAt(_rawSamples.Count - 1) * 32768.0));
+            // filter value, not the raw sample. Indexing by TotalSamplesReceived-1 (not span[i])
+            // correctly reaches into the previous chunk's last sample at a chunk boundary --
+            // _rawSamples already has it, added on the line above this same iteration.
+            _demodulatedFrequencies.Add(_demodulator.ProcessSample(BandpassFilteredSampleAt(TotalSamplesReceived - 1) * 32768.0));
         }
 
         TryProcessBuffer();
+        AdvanceAgcThroughDeadZone();
+        TrimBuffers();
+    }
+
+    // See _agcDeadZoneCatchUpTarget's own doc comment for why this is deferred instead of running
+    // synchronously inside EndOfImage. A no-op once caught up (or before the first image ever
+    // completes, when the target is still its default 0).
+    private void AdvanceAgcThroughDeadZone()
+    {
+        if (_agcDeadZoneCatchUpTarget <= _levelAgcProcessedUpTo)
+        {
+            return;
+        }
+
+        var catchUpToExclusive = Math.Min(_agcDeadZoneCatchUpTarget, TotalSamplesReceived);
+        if (catchUpToExclusive > _levelAgcProcessedUpTo)
+        {
+            AgcSampleAt(catchUpToExclusive - 1); // forward-fills _levelAgcProcessedUpTo through catchUpToExclusive-1
+        }
+    }
+
+    // Band-1 S2 fix (pre-Phase-2 audit): bounds the 5 growing sample buffers (_rawSamples,
+    // _demodulatedFrequencies, _agcSamples, _agcCurMaxSamples, _bandpassFilteredSamples), which
+    // would otherwise grow without limit for the lifetime of this decoder instance (~5.7GB/hr
+    // @44100Hz measured before this fix) -- a real problem the moment a production caller wires this
+    // decoder to continuous live capture, not just a test-only decoder's usual short-lived scope.
+    //
+    // Auditor plan-review correction, the single most important one: an earlier draft of this method
+    // never trimmed while `_mode is null`, on the reasoning that pre-lock state is somehow more
+    // fragile -- backwards. The actual unbounded-growth scenario this fix exists for IS the
+    // never-locks case (a receiver left on an open squelch, or listening to a band with no SSTV
+    // activity) -- excluding it from trimming would leave the exact motivating case unfixed. The
+    // locked case is already naturally bounded by one image's own duration regardless. So pre-lock
+    // gets its OWN trimming rule (a fixed trailing retention window, not a cursor-derived watermark --
+    // there's no committed anchor yet to be conservative around), and only the
+    // `_pendingAnchorCorrectionMode is not null` window (between Commit() and the anchor correction
+    // resolving, where the sync-anchor-correction and AVT-PLL warm-ups read up to AnchorWarmupSamples
+    // behind a PRE-correction anchor that may already be behind any cursor-derived watermark) is ever
+    // fully excluded from trimming.
+    private void TrimBuffers()
+    {
+        if (_pendingAnchorCorrectionMode is not null)
+        {
+            return;
+        }
+
+        int watermark;
+        if (_mode is null)
+        {
+            // Pre-lock: retain enough trailing samples for TryInterleavedHeaderScan's own worst-case
+            // lookback needs -- the fixed-window header paths' own full search window
+            // (VisHeader.MaxSearchCeilingMs) OR (whichever is larger) CommitSyncBypassMatch's own
+            // ability to anchor up to one full sync interval behind _syncBypassProcessedUpTo
+            // (SyncIntervalTracker.MaxIntervalSamples, shared from that class rather than
+            // re-derived), plus the same AnchorWarmupSamples margin the eventual lock's own anchor
+            // correction will need once a match commits.
+            var preLockRetentionSamples =
+                Math.Max(MsToSamples(VisHeader.MaxSearchCeilingMs), (int)Math.Ceiling(_syncBypassTracker.MaxIntervalSamples))
+                + AnchorWarmupSamples;
+            watermark = TotalSamplesReceived - preLockRetentionSamples;
+
+            // Never trim ahead of any cursor's own current position either -- all of these are valid
+            // pre-lock (AFC/Slant don't exist yet, _afcTracker/_slantTracker are null pre-lock, so
+            // they're excluded here, not because they're unsafe to include but because there's
+            // nothing to include).
+            //
+            // _consumedSamples is included ONLY while the fixed-window paths might still run (see
+            // TryDecodeHeader's own matching guard, and its doc comment for why skipping is simpler
+            // and just as correct as an earlier, reverted attempt at periodically re-anchoring it
+            // instead). It is NEVER otherwise advanced pre-lock, so for a long-idle, never-locking
+            // stream it would stay 0 forever and permanently block all trimming -- the exact bug
+            // BufferedSampleCount_StaysBounded_ForLongNeverLockingStream caught. Once
+            // _fixedWindowExhausted, TryDecodeHeader provably never reads starting from the stale
+            // _consumedSamples again, so it's safe to trim past it.
+            if (!_fixedWindowExhausted)
+            {
+                watermark = Math.Min(watermark, _consumedSamples);
+            }
+
+            // Code-review finding: TryResolveAvtTraining's own warm-up (Math.Min(_avtTrainingOriginSample,
+            // AnchorWarmupSamples) below _avtTrainingOriginSample) is NOT separately included in this
+            // min() -- it's covered only transitively, because _fixedWindowExhausted is provably false
+            // for the entire _avtTrainingPending window (TryDecodeHeader returns before ever reaching
+            // TryInterleavedHeaderScan while pending), so the `if` above already pins the watermark at
+            // _consumedSamples, which sits before _avtTrainingOriginSample by a full header's worth of
+            // samples. Correct today; stated explicitly so a future change to when _fixedWindowExhausted
+            // is set doesn't silently reopen this (it would fail LOUDLY via Rel()'s own throw if it did,
+            // not silently -- but better to not need that safety net's help).
+
+            watermark = Math.Min(watermark, _syncBypassProcessedUpTo);
+            watermark = Math.Min(watermark, _visLockProcessedUpTo);
+            watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
+            watermark = Math.Min(watermark, _bandpassFilteredProcessedUpTo);
+        }
+        else
+        {
+            // Locked: bounded by the image's own duration in practice, but still computed
+            // correctly rather than skipped -- an idle-forever *previous* lock (e.g. AFC/Slant
+            // stalled) shouldn't be able to grow unboundedly either. _syncBypassProcessedUpTo is
+            // DELIBERATELY excluded here (auditor plan-review finding): it's frozen at whatever
+            // value it held when this transmission locked (TrySyncIntervalDetectionStep is
+            // hard-gated behind !m_Sync, matching legacy) until EndOfImage overwrites it fresh --
+            // including it in this min() would pin the watermark for the whole image instead of
+            // letting it advance as decoding progresses.
+            watermark = Math.Min(_afcProcessedUpTo, _slantProcessedUpTo);
+            watermark = Math.Min(watermark, _visLockProcessedUpTo);
+            watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
+            watermark = Math.Min(watermark, _bandpassFilteredProcessedUpTo);
+            watermark = Math.Min(watermark, _consumedSamples);
+            watermark -= AnchorWarmupSamples; // margin for the NEXT lock's own anchor-correction warm-up
+        }
+
+        watermark = Math.Max(watermark, _bufferBase); // never move backward
+        watermark = Math.Min(watermark, TotalSamplesReceived); // never move ahead of what's been received
+
+        // Amortize: List<T>.RemoveRange is O(remaining), so trimming on every single PushSamples call
+        // (a streaming caller's normal traffic pattern) would make buffer maintenance O(n^2) over a
+        // session's lifetime. Only actually trim once enough slack has accumulated to make the O(n)
+        // cost worthwhile.
+        const int MinTrimSamples = 44100; // ~1s @44100Hz, ~4s @11025Hz -- either way, a small fraction of a typical image
+        var trimAmount = watermark - _bufferBase;
+        if (trimAmount < MinTrimSamples)
+        {
+            return;
+        }
+
+        _rawSamples.RemoveRange(0, trimAmount);
+        _demodulatedFrequencies.RemoveRange(0, trimAmount);
+        _agcSamples.RemoveRange(0, trimAmount);
+        _agcCurMaxSamples.RemoveRange(0, trimAmount);
+        _bandpassFilteredSamples.RemoveRange(0, trimAmount);
+
+        _bufferBase = watermark;
     }
 
     // Outer loop added for piece 6a (end-of-image reset, sstv.cpp's Stop()/cases 512-513): once an
@@ -394,7 +590,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // non-image content before the very first line was ever decoded. Caught by an end-to-end
                 // mistuned-rate test, not by any of the isolated or single-shot unit tests above.
                 var lineSampleCount = (int)Math.Round(_effectiveSamplesPerLine);
-                if (_demodulatedFrequencies.Count - _consumedSamples < lineSampleCount)
+                if (TotalSamplesReceived - _consumedSamples < lineSampleCount)
                 {
                     return; // waiting for more samples to finish this image -- not done, don't reset
                 }
@@ -417,7 +613,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // Main.cpp:4015/:5900-5903). lineEndSampleExclusive is this line's own extent, used
                 // only by the (currently unreachable at every real mode) line-end guard.
                 var reader = new PixelSampleReader(
-                    index => _demodulatedFrequencies[Math.Clamp(index, 0, _demodulatedFrequencies.Count - 1)],
+                    index => _demodulatedFrequencies[Rel(Math.Clamp(index, _bufferBase, TotalSamplesReceived - 1))],
                     SstvModeRegistry.GetKsbSamples(mode, effectiveSampleRate),
                     _consumedSamples + lineSampleCount,
                     mode.LuminanceMinHz,
@@ -540,6 +736,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _visLockOriginSample = resumeFrom;
 
         _consumedSamples = resumeFrom;
+
+        _agcDeadZoneCatchUpTarget = resumeFrom;
     }
 
     // Discriminates between a normal/extended-VIS header and an MN/MC narrow-mode-announce packet
@@ -565,26 +763,53 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             return TryResolveAvtTraining();
         }
 
-        var discriminatorEndSampleCount = (int)Math.Round(NarrowDiscriminatorWindowEndMs / 1000.0 * _sampleRate);
-        if (_demodulatedFrequencies.Count - _consumedSamples >= discriminatorEndSampleCount)
+        // Band-1 S2 fix (pre-Phase-2 audit): once _fixedWindowExhausted is true, the fixed-window
+        // paths below are provably dead for this epoch (they are pure functions of (headerStart,
+        // buffered data), tried again unchanged on every call -- see TryInterleavedHeaderScan's own
+        // doc comment). Skipping them once exhausted is both an efficiency win (no more
+        // fresh-detector reconstruction for a call that can only ever fail) and what makes it safe
+        // for TrimBuffers to stop retaining data all the way back at the stale _consumedSamples,
+        // which is otherwise NEVER advanced pre-lock (a real bug an early draft of this fix hit:
+        // BufferedSampleCount_StaysBounded_ForLongNeverLockingStream, a long-idle stream that never
+        // locks would retain everything forever).
+        //
+        // A more ambitious earlier draft tried periodically RE-ANCHORING _consumedSamples forward
+        // (advancing it to track each trim, re-arming this flag so the fixed-window path got a
+        // "fresh" shot at the new point) instead of just skipping. Reverted: the re-anchor point is
+        // arbitrary relative to any real header's actual start (tied to when trimming happens to
+        // trigger, not to signal content), so the odds of it ever landing exactly where a real
+        // header begins are negligible in practice -- the added complexity (re-arming, re-closing
+        // TryInterleavedHeaderScan's gate) bought no real precision back, confirmed empirically via
+        // this same test still hitting the fallback's own looser anchor either way. Simply skipping
+        // is simpler, carries no risk of reopening the S3 race via re-arming, and produces the
+        // identical practical outcome: any header arriving well after this epoch's one legitimate
+        // fixed-window opportunity was exhausted is found via TryInterleavedHeaderScan's fallback,
+        // at that path's own already-documented, already-accepted anchor precision (see
+        // SyncBypassDetectionTests/VisLockStateMachineDecoderTests' own looser tolerances) -- a
+        // pre-existing architectural property this fix doesn't change, not a regression it causes.
+        if (!_fixedWindowExhausted)
         {
-            var windowStart = _consumedSamples + (int)Math.Round(NarrowDiscriminatorWindowStartMs / 1000.0 * _sampleRate);
-            var windowEnd = _consumedSamples + discriminatorEndSampleCount;
-            var avgFreq = AverageFrequencyInWindow(windowStart, windowEnd);
-
-            var decoded = avgFreq > NarrowDiscriminatorThresholdHz
-                ? TryDecodeNarrowModeHeader()
-                : TryDecodeVisHeader();
-            if (decoded)
+            var discriminatorEndSampleCount = (int)Math.Round(NarrowDiscriminatorWindowEndMs / 1000.0 * _sampleRate);
+            if (TotalSamplesReceived - _consumedSamples >= discriminatorEndSampleCount)
             {
-                return true;
-            }
+                var windowStart = _consumedSamples + (int)Math.Round(NarrowDiscriminatorWindowStartMs / 1000.0 * _sampleRate);
+                var windowEnd = _consumedSamples + discriminatorEndSampleCount;
+                var avgFreq = AverageFrequencyInWindow(windowStart, windowEnd);
 
-            if (_avtTrainingPending)
-            {
-                // AVT identified from its VIS byte this same call, but not yet resolved -- wait for
-                // more samples via the pending check above, don't fall through to the other fallbacks.
-                return false;
+                var decoded = avgFreq > NarrowDiscriminatorThresholdHz
+                    ? TryDecodeNarrowModeHeader()
+                    : TryDecodeVisHeader();
+                if (decoded)
+                {
+                    return true;
+                }
+
+                if (_avtTrainingPending)
+                {
+                    // AVT identified from its VIS byte this same call, but not yet resolved -- wait for
+                    // more samples via the pending check above, don't fall through to the other fallbacks.
+                    return false;
+                }
             }
         }
 
@@ -649,7 +874,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // way TryInterleavedHeaderScan merges it pre-lock.
     private bool TryVisLockStateMachine(int upperBoundSample)
     {
-        var bound = Math.Min(_rawSamples.Count, upperBoundSample);
+        var bound = Math.Min(TotalSamplesReceived, upperBoundSample);
         for (; _visLockProcessedUpTo < bound; _visLockProcessedUpTo++)
         {
             var result = _visLockStateMachine.ProcessSample(AgcSampleAt(_visLockProcessedUpTo));
@@ -906,16 +1131,24 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // sample index >= _consumedSamples -- meaning it can only ever COMMIT no earlier than
         // _consumedSamples + MaxSearchCeilingMs once gated, which is exactly the point at which the
         // fixed-window paths are already known to have exhausted their own single chance.
+        //
+        // Code-review finding: this single MsToSamples(MaxSearchCeilingMs) rounding can land 1-3
+        // samples earlier than TryDecodeVisDataBits' own ceiling (built from 3 separately-rounded
+        // MsToSamples terms, the same "independently-rounded bounds" pattern already documented
+        // elsewhere in this file) -- meaning the extended-VIS path could in principle be truncated by
+        // that same 1-3 samples once Band-1 S2's exhaustion-skip makes this a one-way gate instead of
+        // a per-call retry. Practically unreachable (the last extended-VIS bit resolves ~185ms before
+        // this ceiling), not fixed here -- flagged, not silently accepted.
         if (!_fixedWindowExhausted)
         {
             var fixedWindowCeiling = _consumedSamples + MsToSamples(VisHeader.MaxSearchCeilingMs);
-            if (_rawSamples.Count >= fixedWindowCeiling)
+            if (TotalSamplesReceived >= fixedWindowCeiling)
             {
                 _fixedWindowExhausted = true;
             }
         }
 
-        var scanBound = _fixedWindowExhausted ? _rawSamples.Count : _consumedSamples;
+        var scanBound = _fixedWindowExhausted ? TotalSamplesReceived : _consumedSamples;
         for (; _syncBypassProcessedUpTo < scanBound; _syncBypassProcessedUpTo++, _visLockProcessedUpTo++)
         {
             if (TrySyncIntervalDetectionStep())
@@ -1109,7 +1342,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var lineCount = mode.LineDurationMs >= 1000.0 ? 3 : 4;
         var neededSamples = lineCount * pageWidthSamples;
 
-        if (_demodulatedFrequencies.Count - _consumedSamples < neededSamples)
+        if (TotalSamplesReceived - _consumedSamples < neededSamples)
         {
             return false;
         }
@@ -1154,7 +1387,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // whatever preceded this lock) without accumulating that output into any fold bin -- 2000
         // samples (~180ms at 11025Hz) is comfortably more than an order of magnitude past the
         // resonator's own ~3.2ms time constant, clamped to what's actually available before `origin`.
-        var warmupSamples = Math.Min(origin, 2000);
+        //
+        // Code-review finding (Band-1 S2 fix): this clamp is against absolute 0, not _bufferBase --
+        // i.e. it still assumes `origin - AnchorWarmupSamples` is always safe to read. Correct only
+        // because TrimBuffers' own watermark formulas both subtract at least AnchorWarmupSamples
+        // (pre-lock: folded into preLockRetentionSamples; locked: the explicit `- AnchorWarmupSamples`
+        // at the end of that branch) before ever advancing _bufferBase -- this margin is what makes
+        // that safe, not this clamp itself.
+        var warmupSamples = Math.Min(origin, AnchorWarmupSamples);
         for (var w = origin - warmupSamples; w < origin; w++)
         {
             detector.ProcessSample(AgcSampleAt(w));
@@ -1230,7 +1470,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private bool TryDecodeNarrowModeHeader()
     {
         var totalHeaderSampleCount = (int)Math.Round(VisHeader.NarrowHeaderTotalDurationMs / 1000.0 * _sampleRate);
-        if (_demodulatedFrequencies.Count - _consumedSamples < totalHeaderSampleCount)
+        if (TotalSamplesReceived - _consumedSamples < totalHeaderSampleCount)
         {
             return false;
         }
@@ -1240,7 +1480,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             VisHeader.NarrowGuardDurationMs * 2 // guard hold + mode-2's own timeout window
             + VisHeader.NarrowBitDurationMs * (1 + 24) // start-bit training pulse + 24 data bits
             + 200); // retry margin, matching TryDecodeVisDataBits' own shape
-        var availableUpTo = Math.Min(_demodulatedFrequencies.Count, searchCeiling);
+        var availableUpTo = Math.Min(TotalSamplesReceived, searchCeiling);
 
         var markDetector = new SyncEnvelopeDetector(_sampleRate, 1900.0);
         var spaceDetector = new SyncEnvelopeDetector(_sampleRate, VisHeader.NarrowSpaceFrequencyHz);
@@ -1368,7 +1608,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var confirmHoldSamples = MsToSamples(VisHeader.BitDurationMs / 2); // 15ms, sstv.cpp:1948
         var searchCeiling = headerStart + MsToSamples(VisHeader.LeaderDurationMs * 2 + VisHeader.BreakDurationMs + 200)
             + confirmHoldSamples + bitCount * MsToSamples(VisHeader.BitDurationMs);
-        var availableUpTo = Math.Min(_demodulatedFrequencies.Count, searchCeiling);
+        var availableUpTo = Math.Min(TotalSamplesReceived, searchCeiling);
 
         var d11Detector = new SyncEnvelopeDetector(_sampleRate, 1080.0, bandwidthHz: 80.0);
         var d12Detector = new SyncEnvelopeDetector(_sampleRate, 1200.0);
@@ -1470,7 +1710,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // this is a normal single-byte VIS code or an "extended" MR/MP/ML one (see VisHeader) — we
         // don't know which until those 7 bits are decoded, so read the prefix first, then decide.
         var prefixSampleCount = (int)Math.Round(VisHeader.PrefixDurationMs / 1000.0 * _sampleRate);
-        if (_demodulatedFrequencies.Count - _consumedSamples < prefixSampleCount)
+        if (TotalSamplesReceived - _consumedSamples < prefixSampleCount)
         {
             return false;
         }
@@ -1488,7 +1728,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var tailDurationMs = isExtended ? VisHeader.ExtendedTailDurationMs : VisHeader.NormalTailDurationMs;
         var totalHeaderSampleCount = (int)Math.Round((VisHeader.PrefixDurationMs + tailDurationMs) / 1000.0 * _sampleRate);
 
-        if (_demodulatedFrequencies.Count - headerStart < totalHeaderSampleCount)
+        if (TotalSamplesReceived - headerStart < totalHeaderSampleCount)
         {
             return false; // wait for the rest of the header before consuming/deciding
         }
@@ -1545,7 +1785,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // committed, then hit "not enough samples yet" for the extra part and return false with
         // _mode still null -- so the next call would restart header detection from the middle of
         // Scottie's post-VIS pulse instead of skipping past it.
-        if (_demodulatedFrequencies.Count - headerStart < totalHeaderSampleCount + extraSampleCount)
+        if (TotalSamplesReceived - headerStart < totalHeaderSampleCount + extraSampleCount)
         {
             return false; // wait for the rest of the header (including any Scottie extra) before committing
         }
@@ -1595,9 +1835,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // PushSamples caller can invoke TryStartAvtTraining before _rawSamples has grown as far as
         // _avtTrainingOriginSample yet, so warming up eagerly there indexed past the end of the
         // buffer. Runs exactly once per training attempt, whenever enough data first exists.
-        if (!_avtPllWarmedUp && _rawSamples.Count >= _avtTrainingOriginSample)
+        if (!_avtPllWarmedUp && TotalSamplesReceived >= _avtTrainingOriginSample)
         {
-            var warmupSamples = Math.Min(_avtTrainingOriginSample, 2000);
+            // Code-review finding (Band-1 S2 fix): same as TryResolveSyncAnchorCorrection's own
+            // identical clamp -- assumes absolute 0, safe only via TrimBuffers' pre-lock retention
+            // margin (this runs while _mode is still null, during AVT's own pending-training window).
+            var warmupSamples = Math.Min(_avtTrainingOriginSample, AnchorWarmupSamples);
             for (var w = _avtTrainingOriginSample - warmupSamples; w < _avtTrainingOriginSample; w++)
             {
                 _avtPllDemodulator!.ProcessSample(BandpassFilteredSampleAt(w) * 32768.0);
@@ -1611,7 +1854,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // at all (only "raw" and "AGC+x32+clip" exist here). Adding both filters closes two of the
         // three missing stages and is unambiguously closer to legacy; the AGC-domain gap stays exactly
         // as already flagged and deferred from the Hilbert demodulator piece, not expanded into here.
-        while (_avtTrainingProcessedUpTo < _rawSamples.Count)
+        while (_avtTrainingProcessedUpTo < TotalSamplesReceived)
         {
             var avtDemodulatedHz = _avtPllDemodulator!.ProcessSample(BandpassFilteredSampleAt(_avtTrainingProcessedUpTo) * 32768.0);
             var completedAt = _avtTrainingLock!.ProcessSample(avtDemodulatedHz);
@@ -1717,7 +1960,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             return;
         }
 
-        var bound = Math.Min(Math.Min(_demodulatedFrequencies.Count, _afcBoundSample), upperBoundSample);
+        var bound = Math.Min(Math.Min(TotalSamplesReceived, _afcBoundSample), upperBoundSample);
         for (; _afcProcessedUpTo < bound; _afcProcessedUpTo++)
         {
             // Piece: Hilbert demodulator port -- re-sourced from sstv.cpp:2265-2270 (case 2/Hilbert),
@@ -1739,9 +1982,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // pre-correction `d`, and `d += m_AFCDiff` happens afterward (sstv.cpp:2270).
             if (AgcCurMaxAt(_afcProcessedUpTo) > 16.0)
             {
-                var measuredFrequencyHz = _demodulatedFrequencies[_afcProcessedUpTo];
+                var measuredFrequencyHz = _demodulatedFrequencies[Rel(_afcProcessedUpTo)];
                 var correctionHz = _afcTracker.ProcessSample(measuredFrequencyHz);
-                _demodulatedFrequencies[_afcProcessedUpTo] += correctionHz;
+                _demodulatedFrequencies[Rel(_afcProcessedUpTo)] += correctionHz;
             }
         }
     }
@@ -1845,12 +2088,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var sampleCount = Math.Max(1, endSample - startSample);
         var settleSamples = sampleCount / 4;
 
-        var from = Math.Clamp(startSample + settleSamples, 0, _demodulatedFrequencies.Count);
-        var to = Math.Clamp(endSample, 0, _demodulatedFrequencies.Count);
+        var from = Math.Clamp(startSample + settleSamples, _bufferBase, TotalSamplesReceived);
+        var to = Math.Clamp(endSample, _bufferBase, TotalSamplesReceived);
         if (to <= from)
         {
-            from = Math.Clamp(startSample, 0, _demodulatedFrequencies.Count);
-            to = Math.Clamp(endSample, 0, _demodulatedFrequencies.Count);
+            from = Math.Clamp(startSample, _bufferBase, TotalSamplesReceived);
+            to = Math.Clamp(endSample, _bufferBase, TotalSamplesReceived);
         }
 
         if (to <= from)
@@ -1861,7 +2104,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         double sum = 0;
         for (var i = from; i < to; i++)
         {
-            sum += _demodulatedFrequencies[i];
+            sum += _demodulatedFrequencies[Rel(i)];
         }
 
         return sum / (to - from);
