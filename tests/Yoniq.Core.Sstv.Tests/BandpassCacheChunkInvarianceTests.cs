@@ -15,6 +15,12 @@ namespace Yoniq.Core.Sstv.Tests;
 /// chunk-size-INVARIANT -- this is item 4a's own acceptance criterion (an auditor plan-review
 /// recommendation), not just a nice-to-have measurement. This is the permanent regression form of the
 /// spike that first measured it.
+///
+/// Also covers Band-1 item 4b (the actual H1/H2 filter switch): an auditor code-level review (round 4)
+/// found the round-3 correction -- gating H1 selection on the CAPTURED lock-anchor index rather than
+/// live `_mode` state, so the handful of samples strictly before the anchor that item 4a's own fix
+/// means get computed after `Commit()` fires correctly stay H2 -- was protected only by a doc comment,
+/// not a test. <see cref="FirstLockedFilterSample_EqualsTheLockAnchor"/> closes that gap.
 /// </summary>
 public class BandpassCacheChunkInvarianceTests
 {
@@ -79,6 +85,36 @@ public class BandpassCacheChunkInvarianceTests
         Assert.True(
             Math.Abs(referenceGap) < 20_000,
             $"Bandpass-cache-to-lock-anchor gap ({referenceGap} samples) is far larger than expected -- item 4a may have regressed.");
+    }
+
+    [Fact]
+    public async Task FirstLockedFilterSample_EqualsTheLockAnchor()
+    {
+        // Band-1 item 4b: pins the round-3 correction directly, rather than relying on
+        // BandpassFilteredSampleAt's own doc comment alone (auditor code-level review, round 4). If
+        // this ever regressed back to gating on live `_mode` state instead of the captured anchor
+        // index, FirstLockedBandpassIndex would fall BEHIND LockAnchorCommitted's value (the naive gate
+        // flips true for the first pre-anchor sample computed after Commit() fires, not at the anchor
+        // itself) -- this test would then fail with a clear, specific mismatch.
+        var mode = SstvModeRegistry.MartinM1;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(44100);
+        var transmissionSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            transmissionSamples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        int? lockAnchorSample = null;
+        decoder.LockAnchorCommitted += anchor => lockAnchorSample ??= anchor;
+
+        decoder.PushSamples(transmissionSamples.ToArray());
+
+        Assert.NotNull(lockAnchorSample);
+        Assert.NotNull(decoder.FirstLockedBandpassIndex);
+        Assert.Equal(lockAnchorSample!.Value, decoder.FirstLockedBandpassIndex!.Value);
     }
 
     private static ArrayImageSource CreateGradientTestImage(int width, int height)

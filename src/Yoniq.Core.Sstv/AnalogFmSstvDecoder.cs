@@ -154,6 +154,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private Rgb24[]? _pixels;
     private int _nextLine;
 
+    // Band-1 item 4b (pre-Phase-2 audit): the absolute sample index BandpassFilteredSampleAt's H1/H2
+    // selection switches at -- captured once, in Commit(), NOT read live off _mode. Auditor code-level
+    // review of item 4a found this is load-bearing, not a style choice: the measured bandpass-cache
+    // cursor sits BEHIND the lock anchor at the moment Commit() fires (item 4a's whole point), so a few
+    // thousand samples strictly BEFORE the anchor get computed AFTER _mode is already non-null --
+    // gating on live "_mode is not null" alone would wrongly assign those pre-anchor samples H1, when
+    // legacy used H2 for nearly all of that span (only the final ~30ms/~270ms stop-bit window is
+    // m_SyncMode>=3, already decided out of scope, see SearchBandpassFilter's own doc comment). Reset
+    // to int.MaxValue in EndOfImage -- defensive, not strictly required for correctness on its own
+    // (BandpassFilteredSampleAt's gate also requires _mode is not null, which EndOfImage already resets
+    // to null), but avoids a stale value lingering between images.
+    private int _bandpassLockedFromSample = int.MaxValue;
+
     // Piece 8c: legacy re-anchors the per-pixel phase from a measured sync-envelope peak
     // (TMmsstv::SyncSSTV, Main.cpp:3751-3799) before ever drawing a pixel for a newly-locked image --
     // gated behind CSSTVDEM::Start's m_wBgn (sstv.cpp:1732), which DrawSSTV (Main.cpp:4917-4986)
@@ -359,9 +372,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private double FilteredRawSampleAt(int index) =>
         index > 0 ? ((double)_rawSamples[Rel(index)] + _rawSamples[Rel(index - 1)]) * 0.5 : _rawSamples[Rel(index)] * 0.5;
 
-    // Piece: pre-AGC bandpass filter (search/H2 variant, run continuously -- see
+    // Piece: pre-AGC bandpass filter, H1 (locked) once locked / H2 (search) otherwise -- see
     // SearchBandpassFilter's own doc comment for the full scope decision and the causal-window/
-    // group-delay reasoning). Chains onto FilteredRawSampleAt exactly as legacy chains m_BPF.Do onto
+    // group-delay reasoning. Chains onto FilteredRawSampleAt exactly as legacy chains m_BPF.Do onto
     // its own 2-tap LPF output (sstv.cpp:1824-1833), applied at the same 4 sites piece 15 already
     // touches. Forward-fill CACHED, feeding SearchBandpassFilter's own streaming, one-sample-at-a-time
     // API in strict index order (unlike FilteredRawSampleAt, which stays a cheap stateless
@@ -371,15 +384,46 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // AgcSampleAt, the main demodulator feed, both AVT sites -- that frequently request the SAME index).
     // Mirrors _agcSamples' own established forward-fill pattern: computed at most once per index
     // regardless of call order.
+    //
+    // Band-1 item 4b: useLocked is `_mode is not null && _mode.NarrowModeCode is null &&
+    // thisIndex >= _bandpassLockedFromSample`, evaluated once, at THIS SAME index's own first-
+    // computation time (never re-evaluated -- the cache never recomputes an index once set; code-review
+    // note, round 4: "thisIndex" here is _bandpassFilteredProcessedUpTo, the index actually being
+    // computed by this loop iteration -- deliberately NOT this method's own `index` parameter, which is
+    // only the caller's requested upper bound and may already have been satisfied by earlier iterations
+    // computing lower indices first). `_mode is not null` excludes both "never locked yet" (field still
+    // int.MaxValue) and the between-images gap (EndOfImage resets both _mode and
+    // _bandpassLockedFromSample) -- narrow mode's H3/HBPFN stays out of scope (see class doc comment),
+    // so `_mode.NarrowModeCode is null` keeps narrow modes on H2 always. `thisIndex >=
+    // _bandpassLockedFromSample`, NOT live state alone, is what makes this chunk-invariant AND correct
+    // for the handful of samples strictly before the lock anchor that item 4a's fix means get computed
+    // AFTER Commit() already fired (auditor code-level review of item 4a, round 3) -- those must stay H2
+    // like legacy, not flip to H1 just because _mode happens to be set by the time they're computed.
     private double BandpassFilteredSampleAt(int index)
     {
         for (; _bandpassFilteredProcessedUpTo <= index; _bandpassFilteredProcessedUpTo++)
         {
-            _bandpassFilteredSamples.Add(_searchBandpassFilter.ProcessSample(FilteredRawSampleAt(_bandpassFilteredProcessedUpTo)));
+            var thisIndex = _bandpassFilteredProcessedUpTo;
+            var useLocked = _mode is not null && _mode.NarrowModeCode is null && thisIndex >= _bandpassLockedFromSample;
+            if (useLocked)
+            {
+                FirstLockedBandpassIndex ??= thisIndex; // diagnostic-only, see its own doc comment
+            }
+
+            _bandpassFilteredSamples.Add(_searchBandpassFilter.ProcessSample(FilteredRawSampleAt(thisIndex), useLocked));
         }
 
         return _bandpassFilteredSamples[Rel(index)];
     }
+
+    /// <summary>Diagnostic-only: the first absolute sample index <see cref="BandpassFilteredSampleAt"/>
+    /// ever selected H1 (locked) for. Band-1 item 4b, added per an auditor code-level review finding
+    /// (round 4): the round-3 correction -- gating on the captured <c>_bandpassLockedFromSample</c>
+    /// index rather than live <c>_mode</c> state, so samples strictly before the lock anchor that item
+    /// 4a's fix means get computed AFTER <c>Commit()</c> fires still correctly stay H2 -- was previously
+    /// protected only by a doc comment, not a test. <c>BandpassCacheChunkInvarianceTests</c> pins this
+    /// equal to <see cref="LockAnchorCommitted"/>'s own value, closing that gap.</summary>
+    internal int? FirstLockedBandpassIndex { get; private set; }
 
     // Band-1 item 4a (pre-Phase-2 audit, S1 follow-up): _demodulatedFrequencies used to be filled
     // EAGERLY, one sample at a time, directly inside PushSamples' per-sample loop -- for every raw
@@ -797,6 +841,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _lineDecoder = null;
         _pixels = null;
         _nextLine = 0;
+        _bandpassLockedFromSample = int.MaxValue; // Band-1 item 4b -- see field's own doc comment
 
         _afcTracker = null;
         _syncEnvelopeDetector = null;
@@ -1287,6 +1332,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     {
         _consumedSamples = Math.Max(0, lineStartSample);
         LockAnchorCommitted?.Invoke(_consumedSamples);
+        _bandpassLockedFromSample = _consumedSamples; // Band-1 item 4b -- see field's own doc comment
         _mode = matched;
         _lineDecoder = ScanlineCodecFactory.CreateDecoder(matched.ColorEncoding);
         _pixels = new Rgb24[matched.ImageWidth * matched.ImageHeight];
