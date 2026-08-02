@@ -117,14 +117,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// (a long, never-locking stream should NOT grow this linearly with total samples pushed).</summary>
     internal int BufferedSampleCount => _rawSamples.Count;
 
-    /// <summary>Diagnostic-only: combined physical length of the 3 new persistent VIS-bit-detector
-    /// caches added for Band-2 item S5 (<see cref="D11At"/>/<see cref="D12At"/>/<see cref="D19At"/>).
-    /// Exists because an auditor code-level review of this item's plan flagged a real test gap:
-    /// <see cref="BufferedSampleCount"/> only tracks <c>_rawSamples</c>, so these 3 new
-    /// <c>List&lt;double&gt;</c>s silently failing to trim (the exact bug class Band-1 item 2/4a each
+    /// <summary>Diagnostic-only: combined physical length of the persistent VIS-bit/narrow-mode-header
+    /// detector caches added for Band-2 item S5 (<see cref="D11At"/>/<see cref="D12At"/>/<see cref="D19At"/>)
+    /// and item S14 (<see cref="FskSpaceAt"/>). Exists because an auditor code-level review of S5's plan
+    /// flagged a real test gap: <see cref="BufferedSampleCount"/> only tracks <c>_rawSamples</c>, so these
+    /// new <c>List&lt;double&gt;</c>s silently failing to trim (the exact bug class Band-1 item 2/4a each
     /// hit once already, for different cursors) would have passed
-    /// <c>BufferedSampleCount_StaysBounded_ForLongNeverLockingStream</c> without this.</summary>
-    internal int VisDataDetectorBufferedSampleCount => _visDataD11Samples.Count + _visDataD12Samples.Count + _visDataD19Samples.Count;
+    /// <c>BufferedSampleCount_StaysBounded_ForLongNeverLockingStream</c> without this. S14 extends the
+    /// same property to its own new cache rather than adding a parallel diagnostic.</summary>
+    internal int VisDataDetectorBufferedSampleCount => _visDataD11Samples.Count + _visDataD12Samples.Count + _visDataD19Samples.Count + _fskSpaceSamples.Count;
 
     /// <summary>Diagnostic-only: how far the persistent D11 tone-detector cache's forward-fill cursor
     /// has advanced. Band-2 item S5 -- an auditor code-level review (round 4) noted that, unlike
@@ -133,6 +134,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// continuously from early in the stream, not cold-started at each decode attempt's own
     /// <c>headerStart</c>. <c>LegacyDerivedSpansTests</c> uses this to close that gap.</summary>
     internal int VisDataD11ProcessedUpTo => _visDataD11ProcessedUpTo;
+
+    /// <summary>Diagnostic-only: how far the persistent D19 tone-detector cache's forward-fill cursor
+    /// has advanced. Band-2 item S14 -- an auditor code-level review noted that, while
+    /// <see cref="VisDataDetectorBufferedSampleCount"/> pins memory boundedness, nothing pinned the
+    /// actual reuse decision this item made: that <see cref="TryDecodeNarrowModeHeader"/> reads the
+    /// SAME <see cref="D19At"/> cache <see cref="TryDecodeVisDataBits"/> already used, rather than a
+    /// fourth cold-started 1900Hz detector. A narrow-mode-only decode (no VIS data-bit path ever runs)
+    /// advancing this cursor is exactly the property a revert to a separate detector would break.</summary>
+    internal int VisDataD19ProcessedUpTo => _visDataD19ProcessedUpTo;
+
+    /// <summary>Diagnostic-only: how far the persistent FSK-space tone-detector cache's forward-fill
+    /// cursor has advanced. Band-2 item S14 -- same fidelity gap <see cref="VisDataD11ProcessedUpTo"/>
+    /// closes for S5, applied to the new detector this item adds.</summary>
+    internal int FskSpaceProcessedUpTo => _fskSpaceProcessedUpTo;
 
     /// <summary>Diagnostic-only: the absolute sample index AVT's dedicated PLL warm-up starts from
     /// (Band-2 item S16) and the training origin it warms up TO. Exposed together so a test can pin
@@ -364,6 +379,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _visDataD11Detector = new SyncEnvelopeDetector(sampleRate, 1080.0, bandwidthHz: 80.0);
         _visDataD12Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _visDataD19Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
+        // Band-2 item S14 -- params match TryDecodeNarrowModeHeader's own previous cold-start
+        // construction of spaceDetector. The mark detector (1900Hz) needed no new field here: it's
+        // the exact same tone/bandwidth as _visDataD19Detector above, so TryDecodeNarrowModeHeader
+        // reuses D19At directly instead of a fourth 1900Hz instance.
+        _fskSpaceDetector = new SyncEnvelopeDetector(sampleRate, VisHeader.NarrowSpaceFrequencyHz);
     }
 
     // sstv.cpp:1834-1839: m_lvl.Do(d); ad = m_lvl.AGC(d); d = clamp(ad*32, +-16384). Scale bridge --
@@ -551,6 +571,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly SyncEnvelopeDetector _visDataD19Detector;
     private readonly List<double> _visDataD19Samples = [];
     private int _visDataD19ProcessedUpTo;
+
+    // Band-2 item S14: TryDecodeNarrowModeHeader's own markDetector/spaceDetector (1900Hz/2100Hz)
+    // used to be cold-started fresh on every call, same shape S5 already fixed for d11/d12/d19 above
+    // -- same fix, same lazy forward-fill pattern. The 1900Hz mark tone doesn't get a new field/cache
+    // at all: it's the SAME tone D19At already tracks (legacy's narrow-mode mark IS d19, sstv.cpp's
+    // shared m_iir19 -- narrow-mode detection is a variant SyncMode path off the same resonator, not
+    // a separate one), so TryDecodeNarrowModeHeader reads D19At directly. Only the 2100Hz space tone
+    // is genuinely new.
+    private readonly SyncEnvelopeDetector _fskSpaceDetector;
+    private readonly List<double> _fskSpaceSamples = [];
+    private int _fskSpaceProcessedUpTo;
+
+    private double FskSpaceAt(int index)
+    {
+        for (; _fskSpaceProcessedUpTo <= index; _fskSpaceProcessedUpTo++)
+        {
+            _fskSpaceSamples.Add(_fskSpaceDetector.ProcessSample(AgcSampleAt(_fskSpaceProcessedUpTo)));
+        }
+
+        return _fskSpaceSamples[Rel(index)];
+    }
 
     private double D11At(int index)
     {
@@ -776,11 +817,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             DemodulatedFrequencyAt(watermark - 1);
         }
 
-        // Band-2 item S5: D11At/D12At/D19At's own cursors are deliberately excluded from BOTH branches'
-        // watermark computation above, not just the pre-lock one -- unlike _bandpassFilteredProcessedUpTo/
-        // _demodulatedFrequenciesProcessedUpTo (which get real, ongoing post-lock consumers), these three
-        // are read ONLY by TryDecodeVisDataBits, itself only ever called pre-lock (via TryDecodeVisHeader/
-        // TryDecodeHeader). Once locked, they simply freeze wherever they were at the moment of lock --
+        // Band-2 item S5 (extended by S14): D11At/D12At/D19At/FskSpaceAt's own cursors are deliberately
+        // excluded from BOTH branches' watermark computation above, not just the pre-lock one -- unlike
+        // _bandpassFilteredProcessedUpTo/_demodulatedFrequenciesProcessedUpTo (which get real, ongoing
+        // post-lock consumers), all four of these are read only by pre-lock-only callers: D11At/D12At by
+        // TryDecodeVisDataBits alone; D19At by BOTH TryDecodeVisDataBits and TryDecodeNarrowModeHeader
+        // (S14 -- legacy's shared m_iir19, sstv.cpp:1851/1858, read by both the VIS tone race and the
+        // narrow-mode FSK packet decode); FskSpaceAt by TryDecodeNarrowModeHeader alone. All of these
+        // callers are themselves only ever invoked pre-lock (via TryDecodeVisHeader/TryDecodeNarrowModeHeader/
+        // TryDecodeHeader). Once locked, all four simply freeze wherever they were at the moment of lock --
         // the exact same "frozen once locked" shape _syncBypassProcessedUpTo's own doc comment above
         // already describes for a different cursor, not a new pattern. Including them in the locked
         // branch's Min() chain would pin the watermark at that frozen value for the whole image,
@@ -806,6 +851,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             D19At(watermark - 1);
         }
 
+        if (watermark > _fskSpaceProcessedUpTo)
+        {
+            FskSpaceAt(watermark - 1);
+        }
+
         _rawSamples.RemoveRange(0, trimAmount);
         _demodulatedFrequencies.RemoveRange(0, trimAmount);
         _agcSamples.RemoveRange(0, trimAmount);
@@ -814,6 +864,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _visDataD11Samples.RemoveRange(0, trimAmount);
         _visDataD12Samples.RemoveRange(0, trimAmount);
         _visDataD19Samples.RemoveRange(0, trimAmount);
+        _fskSpaceSamples.RemoveRange(0, trimAmount);
 
         _bufferBase = watermark;
     }
@@ -1771,15 +1822,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             + 200); // retry margin, matching TryDecodeVisDataBits' own shape
         var availableUpTo = Math.Min(TotalSamplesReceived, searchCeiling);
 
-        var markDetector = new SyncEnvelopeDetector(_sampleRate, 1900.0);
-        var spaceDetector = new SyncEnvelopeDetector(_sampleRate, VisHeader.NarrowSpaceFrequencyHz);
+        // Band-2 item S14: mark/space no longer cold-started fresh per call (see D19At/FskSpaceAt's
+        // own doc comments) -- confirmed directly against legacy (sstv.cpp:1851/1855/1858): d19 and
+        // dsp (m_iirfsk) are both continuously-running, unconditionally-fed-every-sample resonators,
+        // and DecodeFSK(int(d19), int(dsp)) is likewise called every sample, not just while searching
+        // for a narrow-mode packet -- exactly the shape these two caches now reproduce. fskDecoder
+        // itself (the case-based bit/byte state machine) stays fresh per call, matching legacy's own
+        // per-attempt CSSTVDEM member state for that piece; only the two resonators feeding it are
+        // shared/persistent.
         var fskDecoder = new NarrowFskHeaderDecoder(_sampleRate);
 
         for (var sample = headerStart; sample < availableUpTo; sample++)
         {
-            var agcSample = AgcSampleAt(sample);
-            var m = (int)markDetector.ProcessSample(agcSample);
-            var s = (int)spaceDetector.ProcessSample(agcSample);
+            var m = (int)D19At(sample);
+            var s = (int)FskSpaceAt(sample);
 
             var modeCode = fskDecoder.ProcessSample(m, s);
             if (modeCode is null)

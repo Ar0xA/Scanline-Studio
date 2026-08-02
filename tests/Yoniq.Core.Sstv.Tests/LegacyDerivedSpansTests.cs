@@ -93,6 +93,78 @@ public class LegacyDerivedSpansTests
             $"but it was {cursorAtEachLock[0]} at the first lock and {cursorAtEachLock[1]} at the second.");
     }
 
+    [Fact]
+    public async Task FskSpaceCursor_NeverResets_AcrossBackToBackNarrowTransmissions()
+    {
+        // Band-2 item S14: FskSpaceAt's cursor (_fskSpaceProcessedUpTo) is a persistent, decoder-lifetime
+        // field, deliberately NOT reset in EndOfImage -- matching legacy's own never-reset m_iirfsk
+        // lifecycle (sstv.cpp:1450, fed unconditionally every sample at 1855, same shape as m_iir19).
+        // Same structural guarantee VisDataD11Cursor_NeverResets_AcrossBackToBackTransmissions pins for
+        // S5, applied to S14's own new cache and exercised via the MN/MC family's narrow FSK header path
+        // (TryDecodeNarrowModeHeader) rather than the standard VIS header path.
+        var mode = SstvModeRegistry.Mn73;
+        var sourceImage1 = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight, offset: 0);
+        var sourceImage2 = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight, offset: 64);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage1))
+        {
+            samples.Add(sample);
+        }
+
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage2))
+        {
+            samples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        var cursorAtEachLock = new List<int>();
+        decoder.ModeDetected += _ => cursorAtEachLock.Add(decoder.FskSpaceProcessedUpTo);
+
+        decoder.PushSamples(samples.ToArray());
+
+        Assert.Equal(2, cursorAtEachLock.Count);
+        Assert.True(
+            cursorAtEachLock[1] > cursorAtEachLock[0],
+            $"Expected the FSK-space cursor to keep advancing across the image boundary (never reset), " +
+            $"but it was {cursorAtEachLock[0]} at the first lock and {cursorAtEachLock[1]} at the second.");
+    }
+
+    [Fact]
+    public async Task NarrowHeaderDecode_AdvancesTheSharedD19Cursor()
+    {
+        // Band-2 item S14 -- auditor code-level review: the reuse decision itself (TryDecodeNarrowModeHeader
+        // reads the SAME D19At cache TryDecodeVisDataBits already used, rather than a fourth cold-started
+        // 1900Hz detector) was structurally invisible to FskSpaceCursor_NeverResets_AcrossBackToBackNarrowTransmissions
+        // above -- reverting mark to its own fresh detector would still pass that test. A narrow-mode (MN/MC)
+        // transmission never runs TryDecodeVisDataBits at all (no VIS code, see SstvModeRegistry's MN/MC family
+        // comments), so D19At's cursor advancing here can ONLY be explained by TryDecodeNarrowModeHeader reading
+        // it -- exactly the property a revert to a separate detector would break.
+        var mode = SstvModeRegistry.Mn73;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight, offset: 0);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        SstvModeDefinition? detectedMode = null;
+        decoder.ModeDetected += m => detectedMode = m;
+
+        decoder.PushSamples(samples.ToArray());
+
+        Assert.NotNull(detectedMode);
+        Assert.Equal(mode.Id, detectedMode!.Id);
+        Assert.True(
+            decoder.VisDataD19ProcessedUpTo > 0,
+            $"Expected the shared D19 cursor to have advanced from a narrow-mode-only decode " +
+            $"(no VIS data-bit path ever runs for MN/MC), but it was {decoder.VisDataD19ProcessedUpTo}.");
+    }
+
     private static ArrayImageSource CreateGradientTestImage(int width, int height, int offset)
     {
         var pixels = new Rgb24[width * height];
