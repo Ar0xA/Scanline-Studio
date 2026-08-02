@@ -1388,7 +1388,36 @@ independently-tested parts, per this project's established methodology): (A) Vis
 helper, zero behavior change; (B) one-shot gate + the actual race fix, tested via anchor-equality
 across chunk sizes; (C) `_bufferBase` abstraction, zero behavior change; (D) pre-lock trim watermark +
 EndOfImage AGC force-feed, tested via a long-non-locking-stream memory-bound test; (E) full-suite
-regression + update the stale AFC/Slant test comment. Not yet started as of this entry.**
+regression + update the stale AFC/Slant test comment.**
+
+**Sub-piece A DONE (commit `365d57b`)**: `VisHeader.NormalSearchCeilingMs`/`ExtendedSearchCeilingMs`/
+`NarrowSearchCeilingMs`/`MaxSearchCeilingMs` (1035/1305/950/1305ms), pinned by a dedicated test against
+independently hand-derived values rather than wired directly into the two existing decoder methods'
+own inline arithmetic (deliberately -- combining several separately-`MsToSamples()`-rounded terms into
+one would risk a ±1-sample rounding-order behavior change, which the "zero behavior change" scope for
+this sub-piece explicitly ruled out). 388/388.
+
+**Sub-piece B DONE, the actual S3 race fix.** Added `_fixedWindowExhausted` (reset in `EndOfImage`
+alongside every other pre-lock cursor/flag) and gated `TryInterleavedHeaderScan`'s scan bound: stays
+pinned at `_consumedSamples` (0 new samples scanned) until `_rawSamples.Count >= _consumedSamples +
+MsToSamples(VisHeader.MaxSearchCeilingMs)`, at which point it flips permanently open for the rest of
+the epoch -- a one-shot gate, not the rejected rolling cap. Correctness relies on the method's own
+already-established entry invariant (`_syncBypassProcessedUpTo == _visLockProcessedUpTo ==
+_consumedSamples`), so any fallback match is provably >= the point the fixed-window paths are already
+known to be exhausted (pure functions of accumulated `Count`, not call count -- so if either could
+have succeeded, it already would have, on an earlier call, deterministically).
+
+**Verified, not just implemented**: tightened
+`DecodedImage_MatchesWithinTolerance_WhetherSamplesArriveInOneChunkOrMany` (renamed
+`DecodedImage_IsPixelIdentical_WhetherSamplesArriveInOneChunkOrMany`, now a `[Theory]` over chunk
+sizes {1, 500, 4096}) from a loose 5.0-tolerance match to EXACT pixel identity -- passes at all three
+sizes including the pathological `chunkSize=1`, confirming decode is now provably deterministic
+regardless of chunking, not just "close enough." Corrected the stale comment that misattributed the
+old failure to AFC/Slant. Full suite: 390/390. Golden-vector tests re-run specifically (real captured
+legacy audio, the highest-value check): 8/8 unaffected.
+
+**Status: S3 (Band-1 item 3) fully done. Moving to S2 (Band-1 item 2, buffer trimming) -- sub-pieces
+C/D/E next.**
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 

@@ -149,6 +149,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private int _syncBypassProcessedUpTo;
     private int _syncBypassOriginSample; // see EndOfImage -- 0 until the first image completes and this tracker is Reset() past a dead zone
 
+    // Band-1 S3 fix (pre-Phase-2 audit): TryInterleavedHeaderScan's own one-shot gate -- true once
+    // TryDecodeHeader's fixed-window paths (TryDecodeVisHeader/TryDecodeNarrowModeHeader) have had
+    // their full local search window (VisHeader.MaxSearchCeilingMs, relative to the current epoch's
+    // _consumedSamples) to succeed and didn't, so the fallback is now free to scan/commit without
+    // risking a race the fixed-window path was never given a fair chance to win. See
+    // TryInterleavedHeaderScan's own doc comment for the full empirical/plan-review history. Reset
+    // to false in EndOfImage, alongside every other pre-lock detection cursor/flag.
+    private bool _fixedWindowExhausted;
+
     // m_sint3 (sstv.cpp:1924-1946, sstv.h:702, m_fNarrow=TRUE set at sstv.cpp:1483) -- the narrow
     // (MN73/110/140, MC110/140/180) counterpart to m_sint2 above, sharing the same d19 (1900Hz)
     // envelope this port already computes for m_sint2's own condition, plus a dedicated dsp
@@ -516,6 +525,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _avtTrainingLock = null;
         _avtPllDemodulator = null;
 
+        _fixedWindowExhausted = false;
+
         _syncBypass1Tracker.Reset();
         _syncBypass1PrimaryHeld = false;
         _syncBypassTracker.Reset();
@@ -868,7 +879,44 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 "must be equal on entry to this method -- see its own doc comment for why.");
         }
 
-        for (; _syncBypassProcessedUpTo < _rawSamples.Count; _syncBypassProcessedUpTo++, _visLockProcessedUpTo++)
+        // Band-1 S3 fix (pre-Phase-2 audit): a one-shot first-refusal gate for the fixed-window
+        // header paths (TryDecodeVisHeader/TryDecodeNarrowModeHeader), empirically confirmed
+        // necessary -- without it, this method's own scan bound ("whatever has arrived so far") lets
+        // it commit at a DIFFERENT, less precise anchor purely because of how PushSamples calls
+        // happen to be chunked, racing a fixed-window path that refuses to commit until its own full
+        // header duration is buffered. Measured directly on a real Martin M1 encode: one-shot and
+        // large/aligned chunk sizes let the fixed-window path win (anchor 40131); small/misaligned
+        // chunk sizes let this method win first instead, 440 samples (~10ms) off. Full derivation:
+        // spec/14-roadmap.md's "Band-1 items 2+3" entry.
+        //
+        // Deliberately a ONE-SHOT gate, not a rolling "stay N samples behind the tail" cap (an
+        // earlier draft of this fix used a rolling cap and an auditor plan-review caught two real
+        // defects in it before any code was written: a rolling cap permanently drops the tail of a
+        // finite/bulk-decoded stream, since the last MaxSearchCeilingMs of a file would never be
+        // scanned once the tail stops being "behind" the live edge; and it imposes a needless
+        // PERMANENT per-sample latency penalty, when the fixed-window path's own search window is
+        // one-shot, not rolling -- once _rawSamples.Count reaches _consumedSamples plus the ceiling
+        // with no commit, TryDecodeVisHeader/TryDecodeNarrowModeHeader are provably dead for this
+        // epoch (fresh detectors each call, pure function of (headerStart, buffered data)), so there
+        // is nothing left to protect against by continuing to hold this method back).
+        //
+        // Correctness proof this gate relies on: this method's own doc comment above already
+        // establishes _syncBypassProcessedUpTo == _visLockProcessedUpTo == _consumedSamples on
+        // entry (enforced by the throw just above), so any match this method could find sits at
+        // sample index >= _consumedSamples -- meaning it can only ever COMMIT no earlier than
+        // _consumedSamples + MaxSearchCeilingMs once gated, which is exactly the point at which the
+        // fixed-window paths are already known to have exhausted their own single chance.
+        if (!_fixedWindowExhausted)
+        {
+            var fixedWindowCeiling = _consumedSamples + MsToSamples(VisHeader.MaxSearchCeilingMs);
+            if (_rawSamples.Count >= fixedWindowCeiling)
+            {
+                _fixedWindowExhausted = true;
+            }
+        }
+
+        var scanBound = _fixedWindowExhausted ? _rawSamples.Count : _consumedSamples;
+        for (; _syncBypassProcessedUpTo < scanBound; _syncBypassProcessedUpTo++, _visLockProcessedUpTo++)
         {
             if (TrySyncIntervalDetectionStep())
             {
