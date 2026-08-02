@@ -26,13 +26,24 @@ capture more real golden-vector fixtures, THEN run Phase 3. Full writeup + 30-it
 bands + patterns: `spec/14-roadmap.md`, search "Pre-Phase-2 gate" (results are near the very end).
 
 **Band 1 = 4 items** (5th, Kaiser/Bessel filter design, dropped after confirming H1's attenuation is
-20dB at the only reachable preset — no Kaiser/Bessel work needed):
+20dB at the only reachable preset — no Kaiser/Bessel work needed). **3 of 4 DONE:**
 1. **DONE** (commit `288d5d0`) — exception-swallowing bare `catch` in `MiniAudioCaptureSession`.
    `LastSubscriberException`/`SubscriberExceptionCount` added, plus a real second bug the auditor
    caught on its own initiative: one throwing subscriber used to starve every OTHER subscriber (and
    every later chunk) of delivery — fixed in the same change (per-handler `try/catch` via
    `GetInvocationList()`, not one catch around the whole multicast call).
-2. **NOT STARTED** — unbounded memory growth in the decoder's 5 sample buffers (~5.7GB/hr @44100Hz).
+2. **DONE** (commit `86e3af6`) — unbounded memory growth in the decoder's 5 sample buffers
+   (~5.7GB/hr @44100Hz). Single `_bufferBase`+`Rel()` index-translation choke point (not ~25
+   individually-rewritten sites), watermark computed from live cursors (different formula
+   locked vs. pre-lock), amortized trimming. Real bug found DURING implementation (not caught by the
+   plan-review): first working version's pre-lock watermark included `_consumedSamples`
+   unconditionally, which never advances pre-lock except via `Commit()`/`EndOfImage()` — for a
+   stream that never locks (the exact scenario this fix exists for), it stayed 0 forever and
+   permanently blocked all trimming. A more ambitious re-anchoring fix was tried and reverted (didn't
+   actually restore precision, added real race-reopening risk) in favor of a simpler skip-based fix
+   with an identical practical outcome. Final code-level auditor review: "ready to commit," no
+   blockers, 6 minor findings all addressed via documentation. Full suite 392/392, golden vectors 8/8
+   unaffected.
 3. **DONE** (commits `365d57b`, `765ba3c`) — chunk-timing sensitivity. Root cause was NOT AFC/Slant
    (both proven fully chunk-invariant) — a real race between two header-detection paths
    (`TryDecodeVisHeader`'s fixed-window path vs. `TryInterleavedHeaderScan`'s fallback), whose
@@ -43,18 +54,10 @@ bands + patterns: `spec/14-roadmap.md`, search "Pre-Phase-2 gate" (results are n
    now provably deterministic regardless of chunking — exact pixel identity across chunk sizes
    {1, 500, 4096}, not just tolerance. Full suite 390/390, golden vectors 8/8 unaffected.
 4. **NOT STARTED** — lock-dependent bandpass filter never switches (this port has never once run
-   legacy's real locked-state filter, only the weaker pre-lock one).
+   legacy's real locked-state filter, only the weaker pre-lock one). Last remaining Band-1 item.
 
-**Items 2 and 3 were combined per user instruction, following the auditor's own Pattern-1
-recommendation** (both trace to the same "upfront buffer vs. real-time stream" architectural
-question) — one coherent piece, not two unrelated patches. Item 3's fix is done; **item 2 (buffer
-trimming) is next, and is the bigger, riskier remaining piece** — the auditor-reviewed plan needs a
-`_bufferBase` abstraction touching ~25 call sites, a pre-lock trim watermark (my first draft had this
-backwards — excluded exactly the never-locks/open-squelch case the fix exists for), and an
-`EndOfImage` AGC force-feed change. Full plan-review detail: `spec/14-roadmap.md`, search "Band-1
-items 2+3". Genuine refactor — treat with full effort/rigor, not a quick patch.
-
-**Item 4 not started yet** — after item 2.
+Full per-item plan-review + implementation + code-review detail: `spec/14-roadmap.md`, search
+"Band-1 item".
 
 **Next after Band 1**: task #7 (capture ~5-6 new golden-vector fixtures for uncovered mode families:
 Scottie S1, Robot72/R24, a PD/MP mode, RM8/RM12, a narrow MN/MC mode, AVT — several Band-3 items from
