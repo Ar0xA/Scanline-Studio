@@ -55,14 +55,48 @@ namespace Yoniq.Core.Sstv;
 /// tiers have real coverage from this port's actual supported rates; the middle (16-40kHz) tier is
 /// implemented for completeness (cheap, just parameterized data) but untested until/unless a rate in
 /// that range is used.</item>
-/// <item><b>Fixed at legacy's non-narrow config always</b> (center 1900Hz, bandwidth 800Hz) -- no
-/// per-mode narrow retune, matching <see cref="PllFmDemodulator"/>'s own existing, already-accepted
-/// simplification (`CPLL::SetWidth`'s non-narrow branch matches `PllFmDemodulator`'s fixed
-/// 1500-2300Hz config exactly, and legacy's `CSSTVDEM::SetWidth` retunes all three demodulators
-/// together per mode -- a gap already logged elsewhere as pre-existing, not introduced here). Actually
-/// a safer simplification for this class than for the PLL: normal-vs-narrow only changes the affine
-/// `m_OFF`/`m_OUT` constants here, not the tap count or `m_df`, unlike the PLL where the VCO
-/// center/gain genuinely alter closed-loop dynamics.</item>
+/// <item><b>Narrow-mode retune (Band-2 item S6)</b>: <c>ProcessSample</c> takes an <c>isNarrow</c>
+/// parameter selecting between two precomputed <c>(off, out)</c> pairs -- normal (center 1900Hz,
+/// bandwidth 800Hz) and narrow (<c>NARROW_CENTER</c>=2172Hz, <c>NARROW_BW</c>=256Hz, `sstv.h:441-444`),
+/// mirroring <see cref="SearchBandpassFilter"/>'s own per-call <c>useLocked</c> selection (Band-1 item
+/// 4b) rather than a stateful mutator -- deliberately sidesteps the whole "did the switch happen
+/// before or after the lazy cache raced ahead" class of bug several other Band-1/2 items had to reason
+/// about, since selecting a precomputed pair per call needs no mutation-ordering reasoning at all.
+/// Verified directly against <c>CHILL::SetWidth</c> (`sstv.cpp:3022-3051`): tap count and `m_df`
+/// (phase-diff lag) tier on sample rate ONLY, never on `fNarrow` -- a prior roadmap note claiming
+/// `SetWidth` changes tap count cited `CSSTVDEM::SetBPF`'s `m_Skip` compensation (`sstv.cpp:1602-1613`)
+/// which is a DIFFERENT, unrelated feature (the user-configurable Wide/Narrow/VeryNarrow bandpass
+/// QUALITY setting, on <see cref="SearchBandpassFilter"/>'s own legacy counterpart `m_BPF`, not
+/// `m_hill`) -- corrected via a fresh re-read, independently confirmed by an auditor plan-review round.
+/// Legacy performs NO compensation of any kind on a width switch -- no `Clear()`/reset of the FIR
+/// delay line, phase-history register, or smoothing IIR anywhere in `SetWidth` or its callers -- so
+/// this class doesn't either, reproducing legacy's real behavior faithfully rather than "fixing" it:
+/// the phase-history register (`m_A`/<c>_a</c>) is structurally immune (raw `atan2` phases, `off` is
+/// added strictly after the phase difference), but the smoothing IIR's stored state IS in the OLD
+/// scale, so legacy carries a brief (few-sample, 3rd-order/1800Hz-cutoff) output transient across a
+/// width switch and does nothing about it -- this port reproduces that transient rather than
+/// resetting the filter to suppress it. `CSSTVDEM::SetWidth` also retunes `m_pll` (`sstv.cpp:1707-
+/// 1715`) -- out of scope here: this port's <see cref="PllFmDemodulator"/> is AVT-only, and AVT is
+/// never a narrow mode (`IsNarrowMode` covers only the MN/MC family, `sstv.cpp:550-563`), so that
+/// third retune is provably a no-op on the only path that still uses the PLL.
+///
+/// <b>Representationally inert at steady state -- a real finding, not a hedge.</b> Algebraically (and
+/// confirmed by two independent derivations, this class's own author and an auditor code-level
+/// review), the `off`/`out` encode above and <c>ProcessSample</c>'s final <c>centerHz - scaled *
+/// bandwidthHz / 32768</c> descale are exact algebraic inverses for ANY consistent
+/// <c>(centerHz, bandwidthHz)</c> pair -- both cancel completely, at steady state AND dynamically
+/// (the smoothing filter is linear, so a constant scale factor passes straight through it). So
+/// <c>isNarrow</c> has NO effect on the settled Hz readout in THIS PORT'S representation, unlike
+/// legacy where `m_OFF`/`m_OUT` genuinely matter (`CHILL::Do` returns the raw SCALED value directly,
+/// `sstv.cpp:3086` -- legacy never converts to Hz at all; this class's Hz conversion is its own
+/// representational choice, and that choice is exactly what makes the selection cancel here). The
+/// ONLY observable effect of this parameter is a brief, bounded output-IIR transient right at a
+/// mid-stream flip (the smoothing filter's stored state is in the OLD scale for one switch -- see
+/// <c>ProcessSample</c>'s own doc comment) -- faithfully reproducing a transient legacy has too and
+/// does nothing to compensate, not a decode-accuracy fix. See
+/// <c>ProcessSample_IsNarrowSelection_IsRepresentationallyInert_AtSteadyState</c> and
+/// <c>ProcessSample_IsNarrowFlipMidStream_CausesBoundedTransient_ThenResettlesToSameValue</c>
+/// (`HilbertFmDemodulatorTests.cs`) for the executable version of both halves of this finding.</item>
 /// <item><b><c>a == 0.0</c> is a real, reachable, meaningful state, not a stale-value edge case</b>:
 /// if the delayed real sample is exactly zero (digital silence, an exact zero-crossing), legacy skips
 /// `atan2` entirely and uses phase = 0.0 radians directly -- materially different from what
@@ -79,12 +113,16 @@ internal sealed class HilbertFmDemodulator
 {
     private const double NormalCenterHz = 1900.0;
     private const double NormalBandwidthHz = 800.0;
+    private const double NarrowCenterHz = 2172.0; // NARROW_CENTER = (NARROW_HIGH+NARROW_LOW)/2, sstv.h:441-443
+    private const double NarrowBandwidthHz = 256.0; // NARROW_BW = NARROW_HIGH-NARROW_LOW, sstv.h:441/442/444
 
     private readonly int _tap;
     private readonly int _htap;
     private readonly int _df;
-    private readonly double _off;
-    private readonly double _out;
+    private readonly double _offWide;
+    private readonly double _outWide;
+    private readonly double _offNarrow;
+    private readonly double _outNarrow;
     private readonly double[] _h;
     private readonly double[] _z;
     private readonly double[] _a = new double[4];
@@ -120,9 +158,14 @@ internal sealed class HilbertFmDemodulator
         _df = df;
         _htap = tap / 2;
 
+        // Band-2 item S6: the tier multiplier applies to BOTH configurations -- sstv.cpp:3032-3047's
+        // m_OFF/m_OUT *= tier lines run unconditionally AFTER the fNarrow branch, not just for the
+        // branch that happened to run (auditor plan-review flagged this as the easy-to-fumble part).
         var tierMultiplier = df switch { 2 => 4.0, 1 => 2.0, _ => 1.0 };
-        _off = 2 * Math.PI * NormalCenterHz / sampleRate * tierMultiplier;
-        _out = 32768.0 * sampleRate / (2 * Math.PI * NormalBandwidthHz) / tierMultiplier;
+        _offWide = 2 * Math.PI * NormalCenterHz / sampleRate * tierMultiplier;
+        _outWide = 32768.0 * sampleRate / (2 * Math.PI * NormalBandwidthHz) / tierMultiplier;
+        _offNarrow = 2 * Math.PI * NarrowCenterHz / sampleRate * tierMultiplier;
+        _outNarrow = 32768.0 * sampleRate / (2 * Math.PI * NarrowBandwidthHz) / tierMultiplier;
 
         _h = MakeHilbert(tap, sampleRate, 100.0, sampleRate / 2.0 - 100.0);
         _z = new double[tap + 1];
@@ -130,8 +173,12 @@ internal sealed class HilbertFmDemodulator
         _smoothingFilter.Design(1800.0, sampleRate, 3);
     }
 
-    /// <summary>Feeds one input sample; returns the demodulated instantaneous frequency in Hz.</summary>
-    public double ProcessSample(double input)
+    /// <summary>Feeds one input sample; returns the demodulated instantaneous frequency in Hz.
+    /// <paramref name="isNarrow"/> selects the MN/MC narrow-family tuning (Band-2 item S6) -- a
+    /// per-call selection between two precomputed pairs, not a stateful switch; see this class's own
+    /// doc comment for why, and for why the shared FIR/phase-history/smoothing-filter state is
+    /// deliberately left untouched across a selection change.</summary>
+    public double ProcessSample(double input, bool isNarrow)
     {
         var quadrature = DoFir(input);
         var real = _z[_htap];
@@ -148,10 +195,12 @@ internal sealed class HilbertFmDemodulator
             diff += 2 * Math.PI;
         }
 
-        diff += _off;
+        var centerHz = isNarrow ? NarrowCenterHz : NormalCenterHz;
+        var bandwidthHz = isNarrow ? NarrowBandwidthHz : NormalBandwidthHz;
+        diff += isNarrow ? _offNarrow : _offWide;
 
-        var scaled = _smoothingFilter.Process(diff * _out);
-        return NormalCenterHz - scaled * NormalBandwidthHz / 32768.0;
+        var scaled = _smoothingFilter.Process(diff * (isNarrow ? _outNarrow : _outWide));
+        return centerHz - scaled * bandwidthHz / 32768.0;
     }
 
     // sstv.cpp:3062-3078 -- `d = a - m_A[0]` reads the OLD m_A[0] (left over from the PREVIOUS call's

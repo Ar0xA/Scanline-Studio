@@ -164,11 +164,90 @@ public class HilbertFmDemodulatorTests
             double last = 0;
             foreach (var s in samples)
             {
-                last = demod.ProcessSample(s);
+                last = demod.ProcessSample(s, isNarrow: false);
             }
 
             Assert.True(Math.Abs(last - freq) < 2.0, $"sampleRate={sampleRate} freq={freq}: settled output {last}");
         }
+    }
+
+    [Theory]
+    [InlineData(11025)]
+    [InlineData(44100)]
+    public void ProcessSample_IsNarrowSelection_IsRepresentationallyInert_AtSteadyState(int sampleRate)
+    {
+        // Band-2 item S6 -- auditor-confirmed algebraic finding: the off/out encode and the return
+        // statement's descale are exact algebraic inverses for ANY (centerHz, bandwidthHz) pair, so
+        // isNarrow has NO effect on the settled Hz readout in THIS PORT'S representation (legacy
+        // itself never converts to Hz -- CHILL::Do returns the scaled domain value directly, so ITS
+        // m_OFF/m_OUT genuinely matter there; this port's Hz conversion is its own representational
+        // choice, and that conversion is exactly what makes the selection cancel here). An earlier
+        // version of this test asserted a specific narrow-range frequency reads back correctly, which
+        // turned out to be tautological -- it would have passed with isNarrow silently ignored too,
+        // since the SAME pre-existing (pre-S6) test at 2300Hz already proved this cancellation held.
+        // This pins the real, executable fact instead: if a future representation change (e.g. a
+        // scaled/integer domain) makes isNarrow start mattering at steady state, THIS is the test that
+        // should start failing, prompting a fresh look at S6.
+        foreach (var freq in new[] { 1900.0, 2172.0 })
+        {
+            var wideDemod = new HilbertFmDemodulator(sampleRate);
+            var narrowDemod = new HilbertFmDemodulator(sampleRate);
+            var samples = GenerateTone(freq, sampleRate, count: sampleRate);
+
+            double lastWide = 0;
+            double lastNarrow = 0;
+            foreach (var s in samples)
+            {
+                lastWide = wideDemod.ProcessSample(s, isNarrow: false);
+                lastNarrow = narrowDemod.ProcessSample(s, isNarrow: true);
+            }
+
+            Assert.True(
+                Math.Abs(lastWide - lastNarrow) < 1e-6,
+                $"sampleRate={sampleRate} freq={freq}: wide={lastWide} narrow={lastNarrow} -- expected representationally identical settled output");
+        }
+    }
+
+    [Theory]
+    [InlineData(11025, 30)] // measured resettle at 22 samples; generous margin above SettlingTime_AfterFrequencyStep's own ~16-sample prediction
+    [InlineData(44100, 90)] // margin above its own ~62-sample prediction, same proportion as the 11025Hz tier
+    public void ProcessSample_IsNarrowFlipMidStream_CausesBoundedTransient_ThenResettlesToSameValue(int sampleRate, int maxSamplesToResettle)
+    {
+        // The one genuinely new, real behavior Band-2 item S6 introduces: the smoothing IIR's stored
+        // state is in the OLD scale at the moment isNarrow flips (the phase-history register `_a` is
+        // structurally immune -- raw atan2 phases, off is added strictly after the phase difference --
+        // but the smoothing filter is not). Legacy has this identical transient (CHILL::SetWidth does
+        // no Clear()/reset of m_iir) and does nothing to compensate it, so this port doesn't either.
+        // Pins both halves: a real deviation happens right at the flip, and it's bounded/fast (not
+        // open-ended), resettling to the SAME value the invariance test above proves isNarrow doesn't
+        // otherwise affect.
+        const double freq = 1900.0;
+        var demod = new HilbertFmDemodulator(sampleRate);
+        var warmup = GenerateTone(freq, sampleRate, count: sampleRate);
+        double settledBeforeFlip = 0;
+        foreach (var s in warmup)
+        {
+            settledBeforeFlip = demod.ProcessSample(s, isNarrow: false);
+        }
+
+        var afterFlip = GenerateTone(freq, sampleRate, count: sampleRate / 10);
+        var immediateOutput = demod.ProcessSample(afterFlip[0], isNarrow: true);
+        Assert.True(
+            Math.Abs(immediateOutput - settledBeforeFlip) > 1.0,
+            $"sampleRate={sampleRate}: expected a real transient immediately after the isNarrow flip, but output barely moved ({immediateOutput} vs {settledBeforeFlip})");
+
+        var resettledIndex = -1;
+        for (var i = 1; i < afterFlip.Length; i++)
+        {
+            var output = demod.ProcessSample(afterFlip[i], isNarrow: true);
+            if (Math.Abs(output - settledBeforeFlip) < 1.0)
+            {
+                resettledIndex = i;
+                break;
+            }
+        }
+
+        Assert.True(resettledIndex >= 0 && resettledIndex <= maxSamplesToResettle, $"sampleRate={sampleRate}: resettled at sample {resettledIndex}");
     }
 
     [Fact]
@@ -187,7 +266,7 @@ public class HilbertFmDemodulatorTests
         double last = 0;
         for (var i = 0; i < 11025; i++)
         {
-            last = demod.ProcessSample(0.0);
+            last = demod.ProcessSample(0.0, isNarrow: false);
         }
 
         Assert.False(double.IsNaN(last));
@@ -209,14 +288,14 @@ public class HilbertFmDemodulatorTests
         var warmupSamples = GenerateTone(1500.0, sampleRate, count: sampleRate / 2);
         foreach (var s in warmupSamples)
         {
-            demod.ProcessSample(s);
+            demod.ProcessSample(s, isNarrow: false);
         }
 
         var stepSamples = GenerateTone(1520.0, sampleRate, count: sampleRate / 10); // step to a nearby tone
         var settledIndex = -1;
         for (var i = 0; i < stepSamples.Length; i++)
         {
-            var output = demod.ProcessSample(stepSamples[i]);
+            var output = demod.ProcessSample(stepSamples[i], isNarrow: false);
             if (settledIndex < 0 && Math.Abs(output - 1520.0) < 1.0)
             {
                 settledIndex = i;
