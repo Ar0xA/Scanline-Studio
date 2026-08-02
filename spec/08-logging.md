@@ -64,6 +64,8 @@ public sealed record CallsignInfo(string Country, string Continent, TimeSpan Utc
 
 backed by a bundled, versioned prefix table (JSON, sourced from a maintained public callsign-prefix dataset such as Clublog's `cty.dat` — table itself, not code, so it can be refreshed independently of app releases). `ARRL.DX` (present in the legacy tree) is **not** used as the seed data source: ARRL data carries its own usage restrictions independent of MMSSTV's LGPL code license and was never itself covered by that license header — see [LICENSES.md](../LICENSES.md) for the full reasoning. Any prefix table actually bundled must get its own entry in `LICENSES.md` before it ships, per CLAUDE.md's license-audit rule.
 
+Pre-checked Clublog's actual terms (see [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note): no fee, but redistribution requires a human to first email Clublog's helpdesk with the proposed use and obtain an individual API key — this is a real Phase-4 blocker step, not just a license-text formality, so budget time for it before implementing `ICallsignLookup`.
+
 ## QRZ.com lookup (optional, online)
 
 Legacy `qrzcom.cpp` integrated with QRZ.com's XML lookup API for enriching QSO records (name, address, etc.) from a callsign. This is kept as an **optional**, explicitly opt-in `IOnlineCallsignLookup` decorator over `ICallsignLookup`, disabled by default (respecting the project's "no cloud dependencies" non-goal from [[00-project-overview]] as a default posture) — when the user supplies their own QRZ credentials and opts in, it augments rather than replaces the offline prefix-table lookup.
