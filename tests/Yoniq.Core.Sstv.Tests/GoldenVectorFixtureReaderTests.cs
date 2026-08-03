@@ -90,4 +90,57 @@ public class GoldenVectorFixtureReaderTests
         Assert.All(samples, s => Assert.InRange(s, -1.0f, 1.0f));
         Assert.Contains(samples, s => Math.Abs(s) > 0.1f);
     }
+
+    // Task #7 (spec/14-roadmap.md): six new fixtures added in one batch (scottie-s1, robot72, pd90,
+    // rm8, mn110, avt) -- one shared sample-count/rate sanity check per file rather than repeating
+    // the full per-mode derivation the two original fixtures' own tests above carry (already
+    // covered there); real per-mode DSP-correctness checks live in GoldenVectorTests.cs instead.
+    [Theory]
+    [InlineData("scottie-s1.mmv", 1258395)]
+    [InlineData("robot72.mmv", 843090)]
+    [InlineData("pd90.mmv", 1040815)]
+    [InlineData("rm8.mmv", 139365)]
+    [InlineData("mn110.mmv", 1248220)]
+    [InlineData("avt.mmv", 1120290)]
+    public void MmvFile_ReadsNewTask7Fixture_With11025HzAndPlausibleSampleCount(string fileName, int expectedSampleCount)
+    {
+        var (samples, sampleRate) = MmvFile.Read(Path.Combine(FixtureDir, fileName));
+
+        Assert.Equal(11025, sampleRate);
+        Assert.Equal(expectedSampleCount, samples.Length);
+        Assert.All(samples, s => Assert.InRange(s, -1.0f, 1.0f));
+        Assert.Contains(samples, s => Math.Abs(s) > 0.1f);
+    }
+
+    // Confirmed during Task #7 scoping (independent PIL inspection, cross-checked against
+    // CSSTVSET::GetPictureSize, sstv.cpp:638-653): AVT/Robot72/RM8 all have hp=240 (same as
+    // Robot36), so their RX save is also the full 320x256 shared canvas. Robot72/RM8's margin is
+    // pure white, matching Robot36's own convention -- but AVT's is NOT: its rows 240-255 hold
+    // near-black content (not blank fill), a genuine, unexplained difference from the other three
+    // hp=240 modes' own captures. Documented here rather than asserted as an invariant, since it
+    // contradicts the pattern the sibling BmpFile_ReadsRobot36Rx test already established.
+    [Fact]
+    public void BmpFile_ReadsAvtRx_With256TallCanvas_ButMarginIsNotPureWhite()
+    {
+        var image = BmpFile.Read(Path.Combine(FixtureDir, "avt_RX.bmp"));
+
+        Assert.Equal(320, image.Width);
+        Assert.Equal(256, image.Height);
+
+        var sawNonWhiteMargin = false;
+        for (var y = 240; y < 256 && !sawNonWhiteMargin; y++)
+        {
+            var row = image.GetScanline(y);
+            for (var x = 0; x < image.Width; x++)
+            {
+                if (row[x] != new Yoniq.Abstractions.Imaging.Rgb24(255, 255, 255))
+                {
+                    sawNonWhiteMargin = true;
+                    break;
+                }
+            }
+        }
+
+        Assert.True(sawNonWhiteMargin, "Expected avt_RX.bmp's margin to differ from Robot36's pure-white convention (see this test's own comment) -- if this now fails, the margin fill behavior may have changed and this test/comment need re-checking, not just re-asserting.");
+    }
 }

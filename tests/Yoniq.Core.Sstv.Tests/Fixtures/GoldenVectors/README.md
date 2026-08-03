@@ -11,6 +11,10 @@ Real reference data captured from a real, running legacy YONIQ/MMSSTV install, p
 | `robot36.bmp` / `martin-m1.bmp` | Synthetic 24bpp gradient test images (R ramps 0→255 left-to-right, G ramps 0→255 top-to-bottom, B fixed at 128), generated to match the exact fixture formula this test suite's other tests already use. Not a legacy asset. |
 | `robot36.mmv` / `martin-m1.mmv` | Real audio captured via legacy's own `File → Rec`, transmitting the corresponding `.bmp` above. Sample rate set to 11025 Hz in legacy's Setup dialog before capture. |
 | `robot36_RX.bmp` / `martin-m1_RX.bmp` | Legacy's own decode of the corresponding `.mmv`, played back via `File → Play` and auto-saved by legacy's History feature (confirmed: no timestamp overlay burned in). |
+| `scottie-s1.bmp` / `robot72.bmp` / `pd90.bmp` / `mn110.bmp` / `avt.bmp` | Same synthetic gradient formula as above, one per mode, sized to that mode's exact `SstvModeRegistry` canvas. |
+| `rm8.bmp` | Grayscale gradient (R=G=B=(x+y) ramp) instead of the color formula above — RM8 is genuinely monochrome (no chroma channels at all), so the color gradient isn't a fair fixture for it; matches `SstvRoundTripTests`' own `CreateGrayscaleGradientTestImage` convention. |
+| `scottie-s1.mmv` / `robot72.mmv` / `pd90.mmv` / `rm8.mmv` / `mn110.mmv` / `avt.mmv` | Task #7 (spec/14-roadmap.md) additions — same real-capture methodology as `robot36.mmv`/`martin-m1.mmv` above. |
+| `scottie-s1_RX.bmp` / `robot72_RX.bmp` / `pd90_RX.bmp` / `rm8_RX.bmp` / `mn110_RX.bmp` / `avt_RX.bmp` | Legacy's own decode of the corresponding `.mmv` above, same capture method as `robot36_RX.bmp`. |
 
 ## `.mmv` format (confirmed directly against `yoniq-old/YONIQ-main/Sound.cpp`, not RIFF/WAV)
 
@@ -100,3 +104,98 @@ for the exact current numbers; re-measure again (don't assume) after any future 
 re-capture. The *contents* of the removed non-TX audio were never reviewed or transcribed at any
 point, before or after trimming — only its amplitude envelope was measured, to find the region to
 remove.
+
+## Task #7: six new fixtures (scottie-s1, robot72, pd90, rm8, mn110, avt)
+
+Same capture methodology as `robot36`/`martin-m1` above (`File → Rec` at 11025 Hz, transmit the
+source `.bmp`, `File → Play` + History save for the `_RX.bmp`), captured in one session. One file
+was captured under the wrong name (`atv.mmv`/`atv_RX.bmp`) and renamed to `avt.mmv`/`avt_RX.bmp` —
+legacy has no "ATV" mode (only `"AVT 90"`, confirmed directly against `sstv.h`'s enum/`sstv.cpp:494`'s
+`SSTVModeList`), so this was a letter-swap typo, not a different capture.
+
+**Legacy's mode-picker label ≠ this port's own `DisplayName`/`Id` for three of these** — confirmed
+directly against `sstv.h`'s mode enum (whose declaration order matches `sstv.cpp:494`'s
+`SSTVModeList` string array index-for-index, i.e. `SSTVModeList[smXxx]` gives the exact label):
+
+| This port's mode | Legacy's dropdown label |
+|---|---|
+| Scottie S1 (`scottie-s1`) | `Scottie 1` |
+| Robot 72 (`robot-72`) | `Robot 72` |
+| PD90 (`pd90`) | `PD90` |
+| RM8 (`rm8`) | **`B/W 8`** |
+| MN110 (`mn110`) | **`MP110-N`** — legacy groups the narrow MN family under an "MP...-N" label |
+| AVT (`avt`) | `AVT 90` |
+
+### Trim table
+
+Same method as the original two fixtures (amplitude envelope, ~15000/32768 threshold, 5ms windows,
+1.0s margin each side):
+
+| file | original | trimmed | removed |
+|---|---|---|---|
+| `scottie-s1.mmv` | 1435648 samples (130.22s) | 1258395 samples (114.14s) | 16.08s |
+| `robot72.mmv` | 903168 samples (81.92s) | 843090 samples (76.47s) | 5.45s |
+| `pd90.mmv` | 1118208 samples (101.42s) | 1040815 samples (94.40s) | 7.02s |
+| `rm8.mmv` | 176128 samples (15.98s) | 139365 samples (12.64s) | 3.33s |
+| `mn110.mmv` | 1284096 samples (116.47s) | 1248220 samples (113.22s) | 3.25s |
+| `avt.mmv` | 1245184 samples (112.94s) | 1120290 samples (101.61s) | 11.33s |
+
+### Measured deltas
+
+| mode | legacy-own-decode baseline | this port's decoder vs. real audio | encoder self-consistency |
+|---|---|---|---|
+| scottie-s1 | 1.24 | 2.74 (restarts=0, correct mode) | 0.58 |
+| robot-72 | 7.03 | 13.46 (restarts=0, correct mode) | 4.53 |
+| pd90 | 4.08 | 1.99 (restarts=0, correct mode) | 1.65 |
+| rm8 | 5.45 | 13.76 (restarts=0, correct mode) | 3.37 |
+| mn110 | 3.45 | 12.79 (restarts=0, correct mode) | 12.03 |
+| avt | 4.23 | **never decodes — see below** | (blocked, same cause) |
+
+All five working modes land in the same healthy range as `martin-m1`/`robot-36`'s own numbers above
+— see `GoldenVectorTests.cs`'s own per-test comments for tolerance reasoning. `mn110`'s
+self-consistency delta (12.03) sitting close to its decode-vs-source delta (12.79), rather than well
+below it like the other four, is flagged but not investigated further here — possibly related to the
+same class of narrow-family gap already tracked as Band-3 S8/S9 (`spec/14-roadmap.md`).
+
+### Real finding: AVT's real capture never decodes
+
+This port's decoder produces **zero `ModeDetected` events across the entire ~100s `avt.mmv`
+capture** — not a tolerance/quality gap like robot-36's, a total detection failure. Investigated
+before concluding this is a decoder bug, not a bad capture: hand-traced `avt.mmv`'s raw frequency
+content (short-window FFT spot checks) and confirmed the first ~2.7s matches legacy's exact expected
+sequence — `OutHEAD`'s 800ms 8×100ms leader pattern (1900/1500/1900/1500/2300/1500/2300/1500Hz),
+then a proper 300ms 1900Hz VIS leader, break, and 1100/1300Hz data bits — and later content is
+consistent with real image-body transmission, not silence or corruption. So the capture is
+legitimate; the gap is in this port's AVT header detection when fed real (non-synthetic) audio.
+
+Working hypothesis, **not yet confirmed**: AVT's header is by far the longest of any mode (3 VIS
+repeats + a ~5.3s training sequence, ~8 seconds total vs. ~910ms for a normal header) — this port's
+fixed-window header detection may not tolerate real-world timing jitter accumulated over that much
+longer a span, something a from-scratch synthetic encode (used by every existing round-trip test)
+never has to survive. Tracked as a new item in `spec/14-roadmap.md`'s DSP-simplification inventory,
+not investigated further as part of this fixture-wiring pass — re-capturing would not help, since the
+capture itself already checks out.
+
+### Real finding: mn110's footer has no measurable trailing carrier
+
+Legacy's real footer (`Main.cpp:6994-7013`, confirmed directly against source this session) is
+`if(!sys.m_VOX && !SSTVSET.m_fTxNarrow) WriteC(1500,...)+4×100ms; else WriteC(1900,...)` — narrow
+modes (MN/MC) get only the trailing carrier, no alternating tail, matching what this port's own
+encoder already does. For the five other new captures, the measured post-body residual (~0.71–0.91s)
+is consistent with the same ~428ms-RX-default hypothesis the original two fixtures already
+established (`receiveSideModeLineDurationMsForTheseFixtures`). `mn110`'s residual is only ~0.076s —
+and a direct look at the raw envelope (50ms windows over the file's last 3 seconds) shows a sharp
+cutoff from full amplitude straight to noise floor, with no extended trailing tone at all. Genuinely
+unexplained (the RX-side `SSTVSET.m_TW` state during this specific capture session is unknown and
+unrecoverable after the fact) — modeled in `GoldenVectorTests.cs` as a real, documented zero-footer
+case for this one fixture rather than forced to fit the other five's shared formula.
+
+### AVT's RX-save margin isn't pure white
+
+Robot36/Robot72/RM8's RX bitmaps all share the same convention: legacy's RX save is the full 320×256
+shared canvas, and rows 240-255 (below `GetPictureSize`'s real 240-row content) are pure white
+(255,255,255) fill. AVT also has `hp=240` per `CSSTVSET::GetPictureSize` (confirmed directly against
+`sstv.cpp:638-653`), so the same convention should apply — but `avt_RX.bmp`'s margin rows are near-
+black, not white. Pinned as a fact via `BmpFile_ReadsAvtRx_With256TallCanvas_ButMarginIsNotPureWhite`
+(`GoldenVectorFixtureReaderTests.cs`) rather than asserted as an invariant; not investigated further,
+since every comparison in this suite already crops to the real 240-row picture height regardless.
