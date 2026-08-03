@@ -20,32 +20,39 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-03, later) — Task #7 fixtures wired in; AVT (S31) needs investigation next
+## Resume here (2026-08-03, later) — S31 (AVT never decodes on real capture) root-caused and FIXED
+
+**S31 is done.** The working hypothesis logged in an earlier version of this section ("header timing
+jitter over the long training sequence") was **wrong** — investigated properly per the user's explicit
+request ("do 1 first" — confirm the mechanism empirically before designing a fix). Real root cause:
+`VisLockStateMachine` (the only noise-tolerant detector in this port) deliberately discarded every AVT
+match it found, by design; the only path allowed to act on one (the fixed-window `TryDecodeVisHeader`)
+never reaches real header content on a real capture (same `OutHEAD`-leader/pre-TX-room-audio mechanism
+already root-caused for other modes' anchor-precision gaps). Confirmed via temporary instrumentation
+(added, run against the real `avt.mmv` fixture, then fully reverted before any fix code was written) —
+`VisLockStateMachine` correctly decoded AVT's real VIS byte three separate times and discarded every
+one. Full mechanism + fix detail: `spec/14-roadmap.md`, search "S31 — AVT's real capture never decoded".
+
+**Fix went through the full normal loop**: design → auditor plan-review (caught a real, previously
+undiscovered `TrimBuffers` watermark blocker before any code shipped) → implementation → auditor
+code-level review (verdict: EQUIVALENT-WITH-RISKS, no blockers, ready to commit; a few stale-comment
+nits found and fixed directly). `avt.mmv` now decodes cleanly (delta 5.80, restarts=0, correct mode
+first-try) — comfortably in the same healthy range as the other five Task #7 fixtures.
+
+**Uncommitted as of this writing** — nothing from this session has been committed yet (`git status`:
+`spec/14-roadmap.md`, `src/Yoniq.Core.Sstv/AnalogFmSstvDecoder.cs`, `src/Yoniq.Core.Sstv/VisLockStateMachine.cs`,
+fixtures `README.md`, `GoldenVectorTests.cs` modified; new `AvtNoiseTolerantDetectionTests.cs`). Full
+suite confirmed green (458/458, solution-wide) before this brief was written. Ask the user before
+committing, per standing rule.
+
+## Resume here (2026-08-03, earlier) — Task #7 fixtures wired in (superseded by the S31 entry above)
 
 **Six new golden-vector fixtures captured and wired in** (scottie-s1, robot72, pd90, rm8, mn110, avt —
 Task #7 from the roadmap). 5 of 6 decode cleanly with healthy deltas, now in `GoldenVectorTests.cs`/
 `GoldenVectorFixtureReaderTests.cs` alongside the original `martin-m1`/`robot-36`. Full detail: fixtures'
 own `README.md` (capture/trim/measurement record) and `spec/14-roadmap.md`'s "Task #7" section (search
-"Task #7 — six new golden-vector fixtures").
-
-**Next up, explicitly agreed with the user**: investigate why **AVT's real capture never decodes at
-all** (zero `ModeDetected` events across ~100s of real audio — tracked as new item **S31**, Band 3, most
-urgent of that band). The capture itself is confirmed legitimate (hand-traced frequency content matches
-legacy's exact expected header sequence; measured TX-region duration matches the fully-derived expected
-value to within 0.02s) — **do not ask for a re-capture**, the bug is on this port's decode side. Working
-hypothesis, NOT yet confirmed: AVT's header is uniquely long (~8s: 3 VIS repeats + a ~5.3s training
-sequence vs. ~910ms for a normal header) and this port's fixed-window header detection may not tolerate
-real-world timing jitter accumulated over that much longer a span — something no synthetic round-trip
-test exercises. Planned approach (not yet started): isolated repro first — feed just the real header
-portion of `avt.mmv`, or progressively longer prefixes of it, directly to `AnalogFmSstvDecoder` outside
-the full-file test harness — before forming a fix hypothesis, per this project's established DSP-
-investigation methodology (`CLAUDE.md`'s "confirm the mechanism empirically before designing a fix").
-
-**Uncommitted as of this writing** — nothing from this session has been committed yet (`git status`:
-4 modified files — `spec/14-roadmap.md`, fixtures `README.md`, `GoldenVectorTests.cs`,
-`GoldenVectorFixtureReaderTests.cs` — plus 18 new untracked fixture files, 3 per new mode). Full suite
-confirmed green (452/452, solution-wide) before this brief was written. Ask the user before committing,
-per standing rule.
+"Task #7 — six new golden-vector fixtures"). This session's own work (Task #7 fixture-wiring commit) was
+already committed before the S31 investigation above started.
 
 ## Resume here (2026-08-03) — Band 2 is FULLY DONE. Autonomous session stopped here deliberately.
 
