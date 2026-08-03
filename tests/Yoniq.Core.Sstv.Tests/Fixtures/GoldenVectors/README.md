@@ -149,32 +149,44 @@ Same method as the original two fixtures (amplitude envelope, ~15000/32768 thres
 | pd90 | 4.08 | 1.99 (restarts=0, correct mode) | 1.65 |
 | rm8 | 5.45 | 13.76 (restarts=0, correct mode) | 3.37 |
 | mn110 | 3.45 | 12.79 (restarts=0, correct mode) | 12.03 |
-| avt | 4.23 | **never decodes — see below** | (blocked, same cause) |
+| avt | 4.23 | 5.80 (restarts=0, correct mode) | 9.92 |
 
-All five working modes land in the same healthy range as `martin-m1`/`robot-36`'s own numbers above
-— see `GoldenVectorTests.cs`'s own per-test comments for tolerance reasoning. `mn110`'s
-self-consistency delta (12.03) sitting close to its decode-vs-source delta (12.79), rather than well
-below it like the other four, is flagged but not investigated further here — possibly related to the
-same class of narrow-family gap already tracked as Band-3 S8/S9 (`spec/14-roadmap.md`).
+All six modes land in the same healthy range as `martin-m1`/`robot-36`'s own numbers above — see
+`GoldenVectorTests.cs`'s own per-test comments for tolerance reasoning. `mn110`'s self-consistency
+delta (12.03) sitting close to its decode-vs-source delta (12.79), rather than well below it like the
+other four, is flagged but not investigated further here — possibly related to the same class of
+narrow-family gap already tracked as Band-3 S8/S9 (`spec/14-roadmap.md`).
 
-### Real finding: AVT's real capture never decodes
+### Real finding: AVT's real capture never decoded -- fixed (S31)
 
-This port's decoder produces **zero `ModeDetected` events across the entire ~100s `avt.mmv`
-capture** — not a tolerance/quality gap like robot-36's, a total detection failure. Investigated
-before concluding this is a decoder bug, not a bad capture: hand-traced `avt.mmv`'s raw frequency
-content (short-window FFT spot checks) and confirmed the first ~2.7s matches legacy's exact expected
-sequence — `OutHEAD`'s 800ms 8×100ms leader pattern (1900/1500/1900/1500/2300/1500/2300/1500Hz),
-then a proper 300ms 1900Hz VIS leader, break, and 1100/1300Hz data bits — and later content is
-consistent with real image-body transmission, not silence or corruption. So the capture is
-legitimate; the gap is in this port's AVT header detection when fed real (non-synthetic) audio.
+At the time this fixture was first wired in, this port's decoder produced **zero `ModeDetected`
+events across the entire ~100s `avt.mmv` capture** — not a tolerance/quality gap like robot-36's, a
+total detection failure. Investigated before concluding this was a decoder bug, not a bad capture:
+hand-traced `avt.mmv`'s raw frequency content (short-window FFT spot checks) and confirmed the first
+~2.7s matched legacy's exact expected sequence — `OutHEAD`'s 800ms 8×100ms leader pattern
+(1900/1500/1900/1500/2300/1500/2300/1500Hz), then a proper 300ms 1900Hz VIS leader, break, and
+1100/1300Hz data bits — and later content was consistent with real image-body transmission, not
+silence or corruption. So the capture was legitimate; the gap was in this port's AVT header detection
+when fed real (non-synthetic) audio.
 
-Working hypothesis, **not yet confirmed**: AVT's header is by far the longest of any mode (3 VIS
-repeats + a ~5.3s training sequence, ~8 seconds total vs. ~910ms for a normal header) — this port's
-fixed-window header detection may not tolerate real-world timing jitter accumulated over that much
-longer a span, something a from-scratch synthetic encode (used by every existing round-trip test)
-never has to survive. Tracked as a new item in `spec/14-roadmap.md`'s DSP-simplification inventory,
-not investigated further as part of this fixture-wiring pass — re-capturing would not help, since the
-capture itself already checks out.
+**Root cause, confirmed empirically (not the timing-jitter hypothesis originally guessed here):**
+`VisLockStateMachine` — the only mechanism in this port with real-world noise tolerance (finds a VIS
+header anywhere in a stream, not just at a fixed offset) — deliberately discarded every AVT match it
+found, by design. Temporary instrumentation run against this exact fixture proved it correctly
+decoded AVT's real VIS byte (`0x44`) from the real capture three separate times (once per real VIS
+repeat) and threw every one away. The only path allowed to act on an AVT match was the fixed-window
+`TryDecodeVisHeader` path — a single one-shot attempt anchored at the very start of the buffer, which
+on a real capture lands in `OutHEAD`'s leader tones / pre-TX room audio, never the real header, and
+(being one-shot per epoch) never gets another chance. Net effect: the only mechanism that could find
+AVT discarded it; the only mechanism allowed to act on it never saw real content.
+
+**Fix**: `VisLockStateMachine` now lets AVT flow through the same `Verify` state every other mode
+already uses (legacy's own case 3, `sstv.cpp:2127-2153`, verifies every mode identically; the
+AVT-specific diversion only happens after that shared verification succeeds), and
+`AnalogFmSstvDecoder.TryInterleavedHeaderScan` hands an AVT match off to the same
+`TryStartAvtTraining` entry point the fixed-window path already used. See `spec/14-roadmap.md`'s S31
+entry for the full root-cause trace, auditor plan-review (which caught a real `TrimBuffers` watermark
+invariant violation before any code shipped), and fix detail.
 
 ### Real finding: mn110's footer has no measurable trailing carrier
 

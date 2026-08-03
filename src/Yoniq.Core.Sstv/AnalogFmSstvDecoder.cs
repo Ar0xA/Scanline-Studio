@@ -731,17 +731,34 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 watermark = Math.Min(watermark, _consumedSamples);
             }
 
-            // Code-review finding: TryResolveAvtTraining's own warm-up (from _avtPllWarmupStartSample,
-            // Band-2 item S16 -- widened from a clamped constant to legacy's own real ~1850ms
-            // contiguous pre-origin m_pll feed span, see TryStartAvtTraining's own doc comment) is NOT
-            // separately included in this min() -- it's covered only transitively, because
-            // _fixedWindowExhausted is provably false for the entire _avtTrainingPending window
-            // (TryDecodeHeader returns before ever reaching TryInterleavedHeaderScan while pending), so
-            // the `if` above already pins the watermark at _consumedSamples (= headerStart), which sits
-            // before _avtPllWarmupStartSample too (headerStart + totalHeaderSampleCount - one bit
-            // period). Correct today; stated explicitly so a future change to when _fixedWindowExhausted
-            // is set doesn't silently reopen this (it would fail LOUDLY via Rel()'s own throw if it did,
-            // not silently -- but better to not need that safety net's help).
+            // S31 fix (auditor plan-review caught this before it shipped): TryResolveAvtTraining's own
+            // warm-up (from _avtPllWarmupStartSample, Band-2 item S16 -- widened from a clamped
+            // constant to legacy's own real ~1850ms contiguous pre-origin m_pll feed span, see
+            // TryStartAvtTraining's own doc comment) now needs an EXPLICIT term here. Previously this
+            // was covered only transitively: _avtTrainingPending could only ever become true via
+            // TryDecodeVisHeader (the fixed-window path), which runs strictly BEFORE
+            // TryInterleavedHeaderScan ever gets a chance to set _fixedWindowExhausted -- so at the
+            // moment _avtTrainingPending first became true, _fixedWindowExhausted was still
+            // guaranteed false, and the `if` above already pinned the watermark at _consumedSamples
+            // (= headerStart), which sits before _avtPllWarmupStartSample too (headerStart +
+            // totalHeaderSampleCount - one bit period). That's no longer true: TryInterleavedHeaderScan
+            // can now ALSO start AVT training (a VisLockStateMachine match found via its own
+            // noise-tolerant scan), and it sets _fixedWindowExhausted = true in the SAME call, before
+            // its own scan loop even runs -- so by the time it finds an AVT match and calls
+            // TryStartAvtTraining, the `if` above has already stopped protecting _consumedSamples,
+            // and _avtPllWarmupStartSample sits only a NARROW margin behind wherever
+            // _syncBypassProcessedUpTo/_visLockProcessedUpTo happen to be frozen at (the match
+            // sample) -- code-level auditor review measured this directly: ~166 samples (~15ms at
+            // 11025Hz, VisLockStateMachine's own Verify-state 15ms reconciliation term), not the
+            // wide margin _consumedSamples used to provide. Without this explicit term, a
+            // long-running chunked/streaming push could trim past _avtPllWarmupStartSample during
+            // the up-to-~7.1s _avtTrainingPending window and crash Rel()'s own bounds check inside
+            // TryResolveAvtTraining's warm-up loop -- exactly the failure mode the ORIGINAL version
+            // of this comment (wrongly) claimed couldn't happen.
+            if (_avtTrainingPending)
+            {
+                watermark = Math.Min(watermark, _avtPllWarmupStartSample);
+            }
 
             watermark = Math.Min(watermark, _syncBypassProcessedUpTo);
             watermark = Math.Min(watermark, _visLockProcessedUpTo);
@@ -1220,6 +1237,25 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 continue;
             }
 
+            // S31 fix: deliberately still discard an AVT match found here (unlike
+            // TryInterleavedHeaderScan's own pre-lock call site, which now hands one off to
+            // TryStartAvtTraining). This call site runs while _mode is NOT null (an image is already
+            // mid-decode -- see this method's own doc comment above) and result.Value.LineStartSample
+            // for AVT means "end of its own first VIS block," not a line-0 anchor -- Commit()-ing it
+            // directly here would start decoding image pixels for the WRONG mode's line geometry at
+            // the wrong sample. Safely restarting into pending AVT training mid-decode would need the
+            // same in-progress-image teardown Commit() already does for every other mode (_mode/
+            // _lineDecoder/_pixels/_nextLine/_bandpassLockedFromSample, several cursors --
+            // TryStartAvtTraining does none of that today, it's only ever been called while _mode is
+            // null). A deliberate, narrow, deferred non-goal, not a silent gap: S31's own reported
+            // failure is a first-transmission (never-locked) scenario this port had zero coverage
+            // for; a genuine second/interrupting AVT transmission arriving mid-reception is a
+            // separate, rarer case with no existing test or reported bug against it.
+            if (result.Value.Mode == SstvModeRegistry.Avt)
+            {
+                continue;
+            }
+
             // No manual _visLockProcessedUpTo++ here (an earlier version had one): Commit() itself
             // already sets both _visLockProcessedUpTo and _visLockOriginSample to the same
             // Math.Max()-derived value, so incrementing afterward would desync them by exactly 1
@@ -1511,6 +1547,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // re-entered without an intervening EndOfImage reset overwriting both cursors fresh
                 // (see this method's own doc comment above), so a value that's off by at most one
                 // sample is never actually read again.
+                //
+                // S31 fix: AVT (see VisLockStateMachine.ProcessSample's own doc comment) returns the
+                // end of its own first VIS block here, not a line-0 anchor -- hand off to the same
+                // training-lock entry point the fixed-window path (TryDecodeVisHeader) already uses,
+                // instead of Commit()-ing this as a real lock. This call site only ever runs while
+                // _mode is null (guaranteed by TryDecodeHeader's own caller, TryProcessBuffer's
+                // `if (_mode is null && !TryDecodeHeader())`), the same precondition the fixed-window
+                // AVT call already relies on -- no extra bookkeeping needed here.
+                if (result.Value.Mode == SstvModeRegistry.Avt)
+                {
+                    return TryStartAvtTraining(_visLockOriginSample + result.Value.LineStartSample);
+                }
+
                 Commit(result.Value.Mode, _visLockOriginSample + result.Value.LineStartSample);
                 return true;
             }
@@ -1940,10 +1989,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // case 0 which re-triggers on the very next qualifying sample). A first version of this method
     // aborted outright on any reject, which -- unlike legacy -- could permanently kill detection at
     // this headerStart if e.g. the 10ms/1200Hz break tone (VisHeader.BreakFrequencyHz, 300-310ms)
-    // spuriously satisfied the trigger+hold before the real 30ms start-bit tone was ever reached. For
-    // every mode except AVT, VisLockStateMachine's own independent scan is a fallback that recovers
-    // from this anyway -- but VisLockStateMachine deliberately never reports AVT (see its own class
-    // doc comment), making this method AVT's ONLY detector, with no second chance.
+    // spuriously satisfied the trigger+hold before the real 30ms start-bit tone was ever reached.
+    // VisLockStateMachine's own independent scan is a fallback that recovers from this anyway for
+    // every mode, AVT included as of the S31 fix (see VisLockStateMachine's own class doc comment) --
+    // but that fallback only gets a real chance against a genuinely real (noisy, non-zero-offset)
+    // capture; a synthetic self-round-trip test starting at sample 0 still depends on THIS method's
+    // own resume-on-failure behavior, since the fixed-window path wins that race every time (see
+    // TryDecodeHeader's own doc comment).
     //
     // Bounded to a generous but LOCAL ceiling relative to headerStart, not the whole buffered
     // stream -- an unbounded version (tried first, reverted) is a real regression, not a hypothetical
@@ -2128,7 +2180,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // the same way.
         if (mode == SstvModeRegistry.Avt)
         {
-            return TryStartAvtTraining(headerStart, totalHeaderSampleCount);
+            return TryStartAvtTraining(headerStart + totalHeaderSampleCount);
         }
 
         var extraHeaderDurationMs = SstvModeRegistry.IsScottieFamily(mode) ? VisHeader.ScottiePostVisPulseDurationMs : 0.0;
@@ -2155,21 +2207,29 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // AVT and Scottie both carry extra header material beyond one normal VIS transmission (see
     // VisHeader.GenerateAvtSegments/ScottiePostVisPulseFrequencyHz), but AVT's is data-dependent
     // (see AvtTrainingLockStateMachine's doc comment for why a fixed skip alone leaves accuracy on
-    // the table for real captured audio with clock drift): once headerStart + totalHeaderSampleCount
-    // + 2 more VIS repeats' worth of samples are available, start feeding already-demodulated
-    // frequencies into a training-lock instance -- NOT the same point legacy's own case 3 hands off
-    // to case 4 (that's right after the *first* VIS repeat, ~1835ms earlier; legacy's cases 4-8 then
-    // spend the 2nd/3rd repeats' own audio as failed marker-search noise before reaching real
-    // training content). This port instead skips straight past all 3 repeats before constructing
-    // AvtTrainingLockStateMachine at all, which is why that class's own internal timeout budget is
-    // scoped to just the training sequence's own duration, not legacy's full case-3 figure -- see
-    // that class's doc comment. VisHeader.AvtExtraHeaderDurationMs's already-tested fixed duration
-    // is kept as a hard ceiling here (matching legacy's own real fallback shape: if the training
-    // lock never confirms a lock, completion converges on very close to this same fixed duration).
-    private bool TryStartAvtTraining(int headerStart, int totalHeaderSampleCount)
+    // the table for real captured audio with clock drift): once visHeaderEndSample + 2 more VIS
+    // repeats' worth of samples are available, start feeding already-demodulated frequencies into a
+    // training-lock instance -- NOT the same point legacy's own case 3 hands off to case 4 (that's
+    // right after the *first* VIS repeat, ~1835ms earlier; legacy's cases 4-8 then spend the 2nd/3rd
+    // repeats' own audio as failed marker-search noise before reaching real training content). This
+    // port instead skips straight past all 3 repeats before constructing AvtTrainingLockStateMachine
+    // at all, which is why that class's own internal timeout budget is scoped to just the training
+    // sequence's own duration, not legacy's full case-3 figure -- see that class's doc comment.
+    // VisHeader.AvtExtraHeaderDurationMs's already-tested fixed duration is kept as a hard ceiling
+    // here (matching legacy's own real fallback shape: if the training lock never confirms a lock,
+    // completion converges on very close to this same fixed duration).
+    //
+    // S31 fix: takes a single already-summed sample index -- the end of AVT's own first VIS block
+    // ("headerStart + totalHeaderSampleCount" in the fixed-window path's own terms) -- rather than
+    // the two components separately, since every use below is already purely a function of their
+    // sum (confirmed by reading every line in this method plus _avtPllWarmupStartSample below: none
+    // reads headerStart or totalHeaderSampleCount on their own). This lets a second caller
+    // (VisLockStateMachine's own noise-tolerant match, via AnalogFmSstvDecoder.TryInterleavedHeaderScan)
+    // supply the same boundary without needing to reconstruct headerStart artificially.
+    private bool TryStartAvtTraining(int visHeaderEndSample)
     {
-        _avtTrainingOriginSample = headerStart + totalHeaderSampleCount + (int)Math.Round(2 * VisHeader.AvtVisBlockDurationMs / 1000.0 * _sampleRate);
-        _avtTrainingFallbackDeadlineSample = headerStart + totalHeaderSampleCount
+        _avtTrainingOriginSample = visHeaderEndSample + (int)Math.Round(2 * VisHeader.AvtVisBlockDurationMs / 1000.0 * _sampleRate);
+        _avtTrainingFallbackDeadlineSample = visHeaderEndSample
             + (int)Math.Round(VisHeader.AvtExtraHeaderDurationMs / 1000.0 * _sampleRate);
         _avtTrainingLock = new AvtTrainingLockStateMachine(_sampleRate);
         _avtTrainingProcessedUpTo = _avtTrainingOriginSample;
@@ -2200,7 +2260,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // `if(!m_Sync) m_pll.Do(ad);`, unconditional during that case) through _avtTrainingOriginSample
         // itself -- verified directly against source, not assumed, per the plan-review's own explicit
         // flag that this needed checking rather than guessing.
-        _avtPllWarmupStartSample = headerStart + totalHeaderSampleCount - MsToSamples(VisHeader.BitDurationMs);
+        _avtPllWarmupStartSample = visHeaderEndSample - MsToSamples(VisHeader.BitDurationMs);
 
         return TryResolveAvtTraining();
     }

@@ -16,14 +16,33 @@ namespace Yoniq.Core.Sstv;
 /// Deliberately excludes case 0's <c>m_sint1</c>/<c>m_sint2</c>/<c>m_sint3</c> branches (those
 /// already live in <c>AnalogFmSstvDecoder.TrySyncIntervalDetectionStep</c>) and cases 4-8 (AVT's
 /// separate, PLL-based training-sequence lock, now ported as <see cref="AvtTrainingLockStateMachine"/>).
-/// When the decoded byte identifies AVT, this class deliberately does *not* report a lock (see
-/// <see cref="ProcessSample"/>) — legacy's own case 3 (`sstv.cpp:2139-2144`) doesn't call
-/// <c>Start()</c> for AVT either; it diverts into the training-lock state machine (case 4) instead.
-/// This is a real, if narrow, scope choice rather than a missing dependency: AVT still can't be
-/// located via this class's own noise-tolerant sample-by-sample scanning (only via the fixed-window
-/// <c>TryDecodeVisHeader</c> path, which then hands off to <c>AvtTrainingLockStateMachine</c> for
-/// the header's own remainder) — extending this class to dispatch into the training lock on an AVT
-/// match is a possible future refinement, not attempted here.
+///
+/// S31 fix: AVT's own VIS byte (`0x44`) DOES flow all the way through <see cref="LockState.Verify"/>
+/// like every other mode — legacy's real case 3 (`sstv.cpp:2127-2153`) runs the identical 1200Hz-hold
+/// verification for every mode uniformly; the AVT-specific diversion into cases 4-8
+/// (`sstv.cpp:2139-2144`, setting the long training countdown and <c>m_SyncAVT</c>) only happens
+/// *after* that shared verification succeeds, not instead of it. An earlier version of this class
+/// bailed out on an AVT match before ever reaching <c>Verify</c>, reasoning that AVT "still can't be
+/// located via this class's own noise-tolerant scanning" — true only because nothing downstream knew
+/// what to do with the match once found: this class's own <c>Verify</c> anchor arithmetic already
+/// computes exactly <c>headerStart + totalHeaderSampleCount</c> for AVT (non-extended, non-Scottie,
+/// same formula every other plain VIS code uses), so no new math was needed here — only a caller
+/// (<see cref="AnalogFmSstvDecoder.TryInterleavedHeaderScan"/>) that knows to hand an AVT match off to
+/// <c>TryStartAvtTraining</c> instead of committing it as a normal line-0 anchor. This was the real,
+/// previously-missing piece — see `spec/14-roadmap.md`'s S31 entry for the empirical root-cause trace
+/// that found it (a temporary diagnostic hook proved this class already decodes AVT's real VIS byte
+/// correctly from real captured audio, three times per capture, and had simply been discarding every
+/// one). <see cref="AnalogFmSstvDecoder.TryVisLockStateMachine"/> (the mid-reception re-verification
+/// caller) deliberately still discards an AVT match found there — see that method's own doc comment.
+///
+/// **S31 fix widens this class's own already-documented false-positive risk (see the piece-6c
+/// paragraph below) in one new way**: pre-lock, a false-positive AVT byte is no longer silently
+/// discarded — it's now ACTED ON, entering an up-to-~7.1s <c>AnalogFmSstvDecoder._avtTrainingPending</c>
+/// window during which no other header can be detected at all. This is legacy-faithful (real
+/// <c>sstv.cpp</c> case 3 → cases 4-8 behaves identically: a spurious `smAVT` match commits to the
+/// same long, uninterruptible training-search window, timing out via its own <c>m_SyncTime</c> back to
+/// case 256), not a new defect this port introduces — but it is a genuine widening of an already-known
+/// risk, worth stating explicitly rather than leaving implicit (code-level auditor review finding).
 ///
 /// Piece 7c closed the simplification previously documented here (same pattern as AFC/Slant/
 /// <c>m_sint2</c>/<c>m_sint3</c>, all closed the same piece): every legacy condition below now also
@@ -114,7 +133,13 @@ internal sealed class VisLockStateMachine
     /// see <c>LevelAgc</c>'s doc comment), not a raw sample directly. Returns the locked mode and the
     /// sample index (relative to the very first sample ever passed to this instance, i.e. usable
     /// directly as an index into the same raw-sample buffer this port's other per-sample detectors
-    /// already use that convention for) where transmission line 0 begins, or null if not yet locked.
+    /// already use that convention for), or null if not yet locked. For every mode except AVT, that
+    /// index is where transmission line 0 begins. For AVT (S31 fix, see class doc comment) it's
+    /// instead the same <c>headerStart + totalHeaderSampleCount</c> boundary
+    /// <c>AnalogFmSstvDecoder.TryDecodeVisHeader</c> computes before calling <c>TryStartAvtTraining</c>
+    /// -- the end of AVT's own first VIS block, not a line-0 anchor -- since AVT has 2 more VIS block
+    /// repeats and a data-dependent training sequence still ahead of it at that point. Callers MUST
+    /// branch on <c>Mode == SstvModeRegistry.Avt</c> before treating this as a line-0 anchor.
     ///
     /// The anchor is derived analytically, not detected: legacy's own case 3 completes 15ms +
     /// (8 or 16, depending on whether the extended-VIS escape byte was seen) x30ms + 30ms after the
@@ -217,7 +242,7 @@ internal sealed class VisLockStateMachine
                         }
 
                         var mode = SstvModeRegistry.FindByFullVisByte(_visData); // sstv.cpp:1993-2074
-                        if (mode is null || mode == SstvModeRegistry.Avt) // AVT: see class doc comment
+                        if (mode is null)
                         {
                             _state = LockState.Search;
                             break;
