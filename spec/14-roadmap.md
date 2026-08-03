@@ -1133,12 +1133,14 @@ legacy's live default is Hilbert, PLL is AVT-only now).
   detector rebuild-per-push, S16 AVT PLL clamped warmup window, S15 bounded search ceiling, S14
   narrow-FSK fixed-offset commit, S6 locked-detector no-retune). Rationale: batch-vs-streaming
   correctness, only "correct" today because the only caller is a test harness pushing whole buffers.
-- **Band 3 — worth doing eventually, bundle with the matching new golden-vector fixture** (S9 MN/MC
-  narrow retune, S8 mid-image narrow re-lock, S7 mid-image AVT re-lock, S17 AVT training-entry
-  restructure, S11 AVT PLL domain, S10 extended-VIS 7-bit, S12 sint2/sint3 freeze gating [sint1
-  already fixed], S13 m_Type demodulator toggle [code blocked on Phase-3 settings UI, but its missing
-  removed-features.md entry is Band-4 work now]). 6 of 8 land on mode families step 4 already plans to
-  capture fixtures for — fix when measured, not reasoned.
+- **Band 3 — worth doing eventually, bundle with the matching new golden-vector fixture** (S31 AVT
+  real-capture header-detection failure — NEW, most urgent of this band: a total decode failure on
+  real audio, not just a quality gap, found via task #7's new avt fixture, see that task's own log
+  entry — S9 MN/MC narrow retune, S8 mid-image narrow re-lock, S7 mid-image AVT re-lock, S17 AVT
+  training-entry restructure, S11 AVT PLL domain, S10 extended-VIS 7-bit, S12 sint2/sint3 freeze
+  gating [sint1 already fixed], S13 m_Type demodulator toggle [code blocked on Phase-3 settings UI,
+  but its missing removed-features.md entry is Band-4 work now]). 6 of 8 original items land on mode
+  families task #7 already captured fixtures for — fix when measured, not reasoned.
 - **Band 4 — documentation/test-only, near-zero cost, no DSP change** (S27 CQ100 removed-features.md
   entry + a stale code comment, S13's doc half, S29 odd-tap assert/guard, S30 add a decimation-tier
   unit test, S21 record the already-measured tolerance rationale).
@@ -2174,6 +2176,49 @@ is the single most useful sentence to leave here.
 (no code needed — its one real remaining gap turned out to be the already-tracked Band-3 item S8, whose
 own load-bearing assumption got independently re-verified along the way). 423/423 tests unchanged (no
 code this item).
+
+## Task #7 — six new golden-vector fixtures captured (scottie-s1, robot72, pd90, rm8, mn110, avt)
+
+Source images generated (gradient formula matching the existing `martin-m1`/`robot36` fixtures, sized
+to each mode's exact `SstvModeRegistry` canvas), captured by the user against the real legacy Windows
+binary, then wired into `GoldenVectorTests.cs`/`GoldenVectorFixtureReaderTests.cs` the same way as the
+original two. Full capture/trim/measurement detail lives in
+`tests/Yoniq.Core.Sstv.Tests/Fixtures/GoldenVectors/README.md`'s own new "Task #7" section — this entry
+covers only the two real findings worth tracking here.
+
+**Five of six modes decoded cleanly** (scottie-s1, robot-72, pd90, rm8, mn110 — restarts=0, correct mode
+detected first-try, deltas in the same healthy range as `martin-m1`/`robot-36`'s own numbers).
+
+**New tracked item, S31 — AVT's real capture never decodes at all (add to Band 3, most urgent of that
+band).** Zero `ModeDetected` events across the entire ~100s real `avt.mmv` capture — not a quality gap
+like robot-36's, a total detection failure. Investigated before concluding this is a decoder bug, not a
+bad capture: hand-traced the raw audio's frequency content (short-window FFT spot checks) and confirmed
+it matches legacy's exact expected header sequence for the first ~2.7s (`OutHEAD`'s 800ms leader
+pattern, then a proper VIS leader/break/data-bit sequence), with later content consistent with real
+image-body transmission — so the capture is legitimate, the gap is on this port's decode side.
+**Working hypothesis, not yet confirmed**: AVT's header is by far the longest of any mode (~8s: 3 VIS
+repeats + a ~5.3s training sequence, vs. ~910ms for a normal header) — this port's fixed-window header
+detection may not tolerate real-world timing jitter accumulated over that much longer a span, something
+no synthetic (self-generated) round-trip test ever exercises. Needs an isolated repro (e.g. feed just
+the real header audio, or progressively longer prefixes of it, to the decoder in isolation) before a fix
+hypothesis is worth forming — not attempted in this pass, per the user's explicit choice to wire in the
+five working modes now and track this separately rather than block on it.
+
+**Smaller finding, folded into S9 (MN/MC narrow retune) rather than a new item**: `mn110`'s real capture
+shows no measurable footer trailing-carrier at all (sharp cutoff to noise floor, confirmed via raw
+envelope inspection) where the other five new fixtures' footers are all consistent with the existing
+428ms-RX-default hypothesis — genuinely unexplained (the real capture session's RX-side state is
+unrecoverable after the fact), modeled as an honest zero-footer special case in
+`GoldenVectorTests.cs`'s duration check rather than forced to fit the shared formula. Not itself a DSP
+bug (this test only checks envelope timing, not decode correctness) — noted here in case it turns out
+relevant when S9 is eventually worked.
+
+Test count: 452/452 `Yoniq.Core.Sstv.Tests`, confirmed via a full solution-wide run (not just the
+filtered subset used while iterating), 0 failed, 7m9s (423 prior + 29 new: 6 new `LegacyOwnDecode`/
+`Fixtures` rows, 5 new `Decoder_DecodesRealLegacyAudio` rows, 5 new `EncoderOutput_DecodesSimilarlyTo`
+rows, 6 new `MmvFixture_TxRegionDuration` rows, 6 new `MmvFile_ReadsNewTask7Fixture` rows, 1 new
+`BmpFile_ReadsAvtRx...` row — AVT deliberately excluded from the two decoder-dependent theory lists, see
+above), solution-wide build clean.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 

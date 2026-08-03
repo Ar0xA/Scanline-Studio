@@ -47,6 +47,12 @@ public class GoldenVectorTests
         // directly against the fixture: rows 0-239 are real content, 240-255 are white margin).
         { "robot-36", "robot36.bmp", "robot36_RX.bmp", 240 },
         { "martin-m1", "martin-m1.bmp", "martin-m1_RX.bmp", 256 },
+        { "scottie-s1", "scottie-s1.bmp", "scottie-s1_RX.bmp", 256 },
+        { "robot-72", "robot72.bmp", "robot72_RX.bmp", 240 },
+        { "pd90", "pd90.bmp", "pd90_RX.bmp", 256 },
+        { "rm8", "rm8.bmp", "rm8_RX.bmp", 240 },
+        { "mn110", "mn110.bmp", "mn110_RX.bmp", 256 },
+        { "avt", "avt.bmp", "avt_RX.bmp", 240 },
     };
 
     [Theory]
@@ -78,6 +84,19 @@ public class GoldenVectorTests
     {
         { "robot-36", "robot36.mmv", "robot36.bmp", 240 },
         { "martin-m1", "martin-m1.mmv", "martin-m1.bmp", 256 },
+        { "scottie-s1", "scottie-s1.mmv", "scottie-s1.bmp", 256 },
+        { "robot-72", "robot72.mmv", "robot72.bmp", 240 },
+        { "pd90", "pd90.mmv", "pd90.bmp", 256 },
+        { "rm8", "rm8.mmv", "rm8.bmp", 240 },
+        { "mn110", "mn110.mmv", "mn110.bmp", 256 },
+        // AVT deliberately excluded here -- see Fixtures/GoldenVectors/README.md's "AVT: real
+        // capture never decodes" section. This port's decoder never locks onto avt.mmv at all (0
+        // ModeDetected events across the whole ~100s file), even though the raw audio traces
+        // correctly against legacy's own expected AVT header sequence by hand (OutHEAD's 800ms
+        // leader, then a normal-looking VIS leader/break/data-bit sequence). Tracked as a new,
+        // separately-scoped investigation (spec/14-roadmap.md) rather than guessed at here --
+        // AVT's own LegacyOwnDecode_MatchesSourceImage_EstablishesBaselineDelta row above still
+        // runs fine, since that test never touches this port's decoder.
     };
 
     [Theory]
@@ -135,10 +154,24 @@ public class GoldenVectorTests
         // smoothing filter has little noise to remove here -- its real motivation is noise robustness
         // for the noisier real-world reception these fixtures don't exercise (see spec/14-roadmap.md's
         // bandpass-filter-chain scoping discussion). Neither tolerance needed to change.
+        //
+        // Task #7 (spec/14-roadmap.md): five new real-legacy-capture fixtures added, all decode with
+        // restarts=0 and the correct mode detected first-try. Measured directly (not assumed):
+        // scottie-s1 2.74, robot-72 13.46, pd90 1.99, rm8 13.76, mn110 12.79. Tolerances below give
+        // each mode real headroom (proportionally similar margin to martin-m1/robot-36's own bounds
+        // above) while staying well under the ~42.67 corruption floor this exact gradient-formula
+        // source measures at (see robot-36/martin-m1's own corruption-floor note further down in this
+        // file -- not independently re-measured per new mode, since all six fixtures share the same
+        // gradient construction and comparable dimensions).
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 15.0,
             ["robot-36"] = 25.0,
+            ["scottie-s1"] = 10.0,
+            ["robot-72"] = 20.0,
+            ["pd90"] = 8.0,
+            ["rm8"] = 20.0,
+            ["mn110"] = 20.0,
         };
         var tolerance = toleranceByModeId[modeId];
 
@@ -160,6 +193,14 @@ public class GoldenVectorTests
     {
         { "robot-36", "robot36.mmv" },
         { "martin-m1", "martin-m1.mmv" },
+        { "scottie-s1", "scottie-s1.mmv" },
+        { "robot-72", "robot72.mmv" },
+        { "pd90", "pd90.mmv" },
+        { "rm8", "rm8.mmv" },
+        { "mn110", "mn110.mmv" },
+        // AVT included here despite the decoder never locking onto it (see DecoderFixtures'
+        // exclusion note) -- this test never touches the decoder, only the raw envelope.
+        { "avt", "avt.mmv" },
     };
 
     [Theory]
@@ -173,9 +214,35 @@ public class GoldenVectorTests
         var measuredDurationSeconds = txEndSeconds - txStartSeconds;
 
         // VisHeader.PrefixDurationMs + NormalTailDurationMs = 910ms for a normal (non-narrow,
-        // non-AVT) VIS header -- both fixture modes use a normal header.
-        var expectedHeaderSeconds = (VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs) / 1000.0;
-        var expectedBodySeconds = mode.LineDurationMs * mode.ImageHeight / 1000.0;
+        // non-AVT) VIS header -- robot-36/martin-m1/robot-72/pd90/rm8 all use this. Scottie also
+        // emits an extra 9ms/1200Hz pulse right after the VIS stop bit (Main.cpp:7576-7578,
+        // VisHeader.ScottiePostVisPulseDurationMs). AVT repeats the whole VIS block 3x then appends
+        // its own long training sequence (Main.cpp:7429/7563-7575, VisHeader.AvtVisRepeatCount/
+        // AvtVisBlockDurationMs/AvtTrainingSequenceDurationMs). MN110 (narrow) replaces the VIS
+        // header entirely with the FSK mode-announce packet (VisHeader.NarrowHeaderTotalDurationMs).
+        // Task #7 (spec/14-roadmap.md): generalized from the original two-fixture version, which
+        // only ever needed the plain 910ms case.
+        var expectedHeaderSeconds = modeId switch
+        {
+            "scottie-s1" => (VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs + VisHeader.ScottiePostVisPulseDurationMs) / 1000.0,
+            "mn110" => VisHeader.NarrowHeaderTotalDurationMs / 1000.0,
+            "avt" => ((VisHeader.AvtVisRepeatCount * VisHeader.AvtVisBlockDurationMs) + VisHeader.AvtTrainingSequenceDurationMs) / 1000.0,
+            _ => (VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs) / 1000.0,
+        };
+
+        // TMmsstv::OutHEAD (Main.cpp:7270-7292) writes 8x100ms leader tones (800ms) for every mode
+        // except narrow, which writes only 4x100ms (400ms) -- confirmed directly against source
+        // (both branches read at Main.cpp:7277-7282/7284-7292), not assumed from the original
+        // two-fixture derivation (which never needed the narrow branch).
+        var headSeconds = mode.NarrowModeCode is not null ? 0.4 : 0.8;
+
+        // PD90/MN110 use YCbCrLinePaired's Y1-RY-BY-Y2 shape: one LineDurationMs "transmission
+        // unit" covers 2 image rows (RowsPerTransmissionLine = 2), so the naive
+        // LineDurationMs * ImageHeight (the original two-fixture formula, both RowsPerTransmissionLine
+        // = 1 families) double-counts for these -- confirmed against AnalogFmSstvEncoder's own TX
+        // loop (`y += lineEncoder.RowsPerTransmissionLine`), not re-derived independently here.
+        var rowsPerTransmissionLine = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding).RowsPerTransmissionLine;
+        var expectedBodySeconds = mode.LineDurationMs * (mode.ImageHeight / rowsPerTransmissionLine) / 1000.0;
 
         // Round-1-review finding: an earlier version of this test omitted two real, fixed-duration
         // legacy TX segments and misattributed the resulting ~1.7s gap to "envelope-detection
@@ -213,8 +280,31 @@ public class GoldenVectorTests
         // the .mmv format or of legacy in general -- modeled as a named constant rather than derived
         // from the transmitted mode, since it demonstrably isn't derived from that mode either way.
         const double receiveSideModeLineDurationMsForTheseFixtures = 428.22; // GetTiming's default: case (smSCT1)
-        var headSeconds = 0.8;
-        var footerSeconds = (Math.Min(receiveSideModeLineDurationMsForTheseFixtures, 500.0) / 1000.0) + 0.4;
+
+        // Main.cpp:6994-7013 (SendSSTV's footer, confirmed directly against source this session):
+        // `if(!sys.m_VOX && !SSTVSET.m_fTxNarrow) WriteC(1500,...)+4x100ms; else WriteC(1900,...)` --
+        // the narrow branch has NO alternating-tone tail, only the trailing carrier. Both branches'
+        // trailing-carrier length is min(SSTVSET.m_TW, SampFreq/2) -- SSTVSET.m_TW is the RECEIVE
+        // side's currently-selected mode, not the transmitted one (see the round-2/3-review history
+        // above), so it isn't derivable from the mode under test; only measurable per capture.
+        //
+        // Task #7 (spec/14-roadmap.md): measured directly for all five new normal/AVT fixtures --
+        // scottie-s1 0.766s, robot-72 0.806s, pd90 0.709s, avt 0.813s, rm8 0.908s. All cluster
+        // around the same ~428ms-RX-default hypothesis (0.828s) within envelope-window slop, same
+        // as the original two fixtures, so kept on that shared formula rather than a fifth
+        // independent constant per mode.
+        //
+        // mn110 is the one real exception, not folded into the formula: its measured residual is
+        // only ~0.076s, and a direct look at the raw envelope (50ms windows over the file's last 3s)
+        // shows a SHARP cutoff from full amplitude straight to noise floor with no extended trailing
+        // tone at all -- i.e. this specific real capture appears to carry no measurable footer
+        // carrier, not a slow/quiet one this test's window size just missed. Genuinely unexplained
+        // (RX-side m_TW state during this one capture is unknown and unrecoverable after the fact) --
+        // flagged here rather than silently forced to fit the same formula; see this row's own
+        // tolerance below.
+        var footerSeconds = modeId == "mn110"
+            ? 0.0
+            : (Math.Min(receiveSideModeLineDurationMsForTheseFixtures, 500.0) / 1000.0) + 0.4;
         var expectedTotalSeconds = headSeconds + expectedHeaderSeconds + expectedBodySeconds + footerSeconds;
 
         // Measured directly (not assumed), after also fixing MeasureTxRegion's own window-duration
@@ -344,10 +434,23 @@ public class GoldenVectorTests
         // structural corruption would score. Kept only as a regression tripwire for robot-36, same
         // as its sibling test's own tolerance -- not a discriminating check until the underlying
         // Robot-36-at-11025Hz DSP gap (documented on the sibling test) is fixed.
+        //
+        // Task #7 (spec/14-roadmap.md): measured directly for the five new fixtures: scottie-s1
+        // 0.58, robot-72 4.53, pd90 1.65, rm8 3.37, mn110 12.03. All five are close to or below their
+        // own sibling decode-vs-source delta above (genuine encoder/decoder agreement, not a loose
+        // tolerance happening to pass) except mn110, whose self-consistency delta (12.03) sits close
+        // to its decode-vs-source delta (12.79) rather than well below it -- flagged, not chased
+        // further here: possibly the same class of narrow-family gap already tracked for other modes
+        // (spec/14-roadmap.md Band-3 S8/S9), not investigated as part of this fixture-wiring pass.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 18.0,
             ["robot-36"] = 75.0,
+            ["scottie-s1"] = 5.0,
+            ["robot-72"] = 15.0,
+            ["pd90"] = 8.0,
+            ["rm8"] = 12.0,
+            ["mn110"] = 20.0,
         };
         var tolerance = toleranceByModeId[modeId];
 

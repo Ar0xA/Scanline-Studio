@@ -20,6 +20,33 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
+## Resume here (2026-08-03, later) — Task #7 fixtures wired in; AVT (S31) needs investigation next
+
+**Six new golden-vector fixtures captured and wired in** (scottie-s1, robot72, pd90, rm8, mn110, avt —
+Task #7 from the roadmap). 5 of 6 decode cleanly with healthy deltas, now in `GoldenVectorTests.cs`/
+`GoldenVectorFixtureReaderTests.cs` alongside the original `martin-m1`/`robot-36`. Full detail: fixtures'
+own `README.md` (capture/trim/measurement record) and `spec/14-roadmap.md`'s "Task #7" section (search
+"Task #7 — six new golden-vector fixtures").
+
+**Next up, explicitly agreed with the user**: investigate why **AVT's real capture never decodes at
+all** (zero `ModeDetected` events across ~100s of real audio — tracked as new item **S31**, Band 3, most
+urgent of that band). The capture itself is confirmed legitimate (hand-traced frequency content matches
+legacy's exact expected header sequence; measured TX-region duration matches the fully-derived expected
+value to within 0.02s) — **do not ask for a re-capture**, the bug is on this port's decode side. Working
+hypothesis, NOT yet confirmed: AVT's header is uniquely long (~8s: 3 VIS repeats + a ~5.3s training
+sequence vs. ~910ms for a normal header) and this port's fixed-window header detection may not tolerate
+real-world timing jitter accumulated over that much longer a span — something no synthetic round-trip
+test exercises. Planned approach (not yet started): isolated repro first — feed just the real header
+portion of `avt.mmv`, or progressively longer prefixes of it, directly to `AnalogFmSstvDecoder` outside
+the full-file test harness — before forming a fix hypothesis, per this project's established DSP-
+investigation methodology (`CLAUDE.md`'s "confirm the mechanism empirically before designing a fix").
+
+**Uncommitted as of this writing** — nothing from this session has been committed yet (`git status`:
+4 modified files — `spec/14-roadmap.md`, fixtures `README.md`, `GoldenVectorTests.cs`,
+`GoldenVectorFixtureReaderTests.cs` — plus 18 new untracked fixture files, 3 per new mode). Full suite
+confirmed green (452/452, solution-wide) before this brief was written. Ask the user before committing,
+per standing rule.
+
 ## Resume here (2026-08-03) — Band 2 is FULLY DONE. Autonomous session stopped here deliberately.
 
 **S14, S6, and S15 are all resolved** (S14/S6 shipped as code — commits `7a153a0`, `6da0a65` — S15
