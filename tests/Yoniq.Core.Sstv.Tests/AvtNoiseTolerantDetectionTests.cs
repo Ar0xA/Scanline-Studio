@@ -1,0 +1,266 @@
+using Yoniq.Abstractions.Imaging;
+using Yoniq.Abstractions.Sstv;
+using Yoniq.Core.Imaging;
+
+namespace Yoniq.Core.Sstv.Tests;
+
+/// <summary>
+/// S31 fix (spec/14-roadmap.md): before this fix, AVT could ONLY ever be detected via the
+/// fixed-window <c>AnalogFmSstvDecoder.TryDecodeVisHeader</c> path (a single one-shot attempt
+/// anchored at the very start of the buffer) -- <see cref="VisLockStateMachine"/>, the only
+/// mechanism in this port with real-world noise tolerance, deliberately discarded every AVT match it
+/// found. On a real capture (always preceded by <c>OutHEAD</c>'s 800ms leader tones plus room audio,
+/// same root cause already documented for other modes' anchor-precision gaps) that one-shot window
+/// never reaches real header content, so AVT could never be found at all -- confirmed empirically
+/// against the real `avt.mmv` fixture (0 <c>ModeDetected</c> events across ~100s; see
+/// `spec/14-roadmap.md`'s S31 entry).
+///
+/// These tests prove the fix's three separate claims: (1) AVT is now actually reachable via
+/// <see cref="VisLockStateMachine"/>'s noise-tolerant scanning, end-to-end through a full decode;
+/// (2) the sample handed to <c>TryStartAvtTraining</c> from that path is the SAME boundary the
+/// fixed-window path would have computed, not a coincidentally-close approximation; (3) the
+/// deliberate scope decision to still discard an AVT match found via
+/// <c>AnalogFmSstvDecoder.TryVisLockStateMachine</c> (mid-reception re-verification, while some other
+/// mode is already locked) actually holds -- no bad restart, no crash.
+///
+/// A fourth test, <see cref="ChunkedStreamingPush_DuringLongAvtTrainingWindow_DoesNotCrashTrimBuffers"/>,
+/// covers a real, previously undiscovered defect an auditor plan-review round caught before any code
+/// shipped -- item (3) above sets <c>_fixedWindowExhausted</c> before its own AVT match can run, which
+/// (before <c>AnalogFmSstvDecoder.TrimBuffers</c>'s matching fix) could in principle let the buffer
+/// trim past <c>_avtPllWarmupStartSample</c> before <c>TryResolveAvtTraining</c>'s own warm-up loop
+/// reads it, on a long-running chunked/streaming push (never exercised by this suite's usual bulk
+/// single-`PushSamples` shape). That test's own doc comment records an honest empirical limit: a
+/// deliberate sweep across leading-silence lengths and chunk sizes, with the `TrimBuffers` fix
+/// temporarily disabled, never actually reproduced a crash (the OTHER watermark terms, particularly
+/// the lazily-driven AGC/bandpass cursors, stayed conservative enough in every tried configuration)
+/// -- so this test is real regression coverage for the code path (a long chunked AVT decode still
+/// completes correctly), not a proven repro of the exact crash. The fix itself is kept regardless: it
+/// restores an invariant `TrimBuffers`'s own comment explicitly claims and the auditor found a real,
+/// structural way for item (3) to have broken -- narrow reachability in practice doesn't make the
+/// underlying invariant violation any less real.
+/// </summary>
+public class AvtNoiseTolerantDetectionTests
+{
+    [Fact]
+    public async Task HeaderAfterLeadingSilence_IsRecognizedAndDecodedViaVisLockStateMachine()
+    {
+        var mode = SstvModeRegistry.Avt;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(180, 90, 40));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var headerAndImageSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            headerAndImageSamples.Add(sample);
+        }
+
+        // Long enough that the fixed-window path's own one-shot search ceiling (VisHeader.
+        // MaxSearchCeilingMs, ~1.3s) is exhausted well before the real header arrives -- the same
+        // shape the real avt.mmv capture's OutHEAD leader + pre-TX room audio produces, forcing
+        // detection through VisLockStateMachine or not at all.
+        var leadingSilence = new float[3 * encoder.SampleRate];
+        var fullStream = leadingSilence.Concat(headerAndImageSamples).ToArray();
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        SstvModeDefinition? detectedMode = null;
+        IImageSource? decodedImage = null;
+        decoder.ModeDetected += m => detectedMode = m;
+        decoder.LineDecoded += update => decodedImage = update.Image;
+
+        decoder.PushSamples(fullStream);
+
+        Assert.NotNull(detectedMode);
+        Assert.Equal(mode.Id, detectedMode!.Id);
+        Assert.NotNull(decodedImage);
+
+        var delta = ComputeAveragePerChannelDelta(sourceImage, decodedImage!);
+
+        // A flat-color source image (not the gradient GoldenVectorTests/VisLockStateMachineDecoderTests
+        // use) -- deliberately, so this test isolates "did detection + training-lock handoff work at
+        // all" from AVT's own known decode-accuracy characteristics (already covered by
+        // GoldenVectorTests/AvtTrainingLockDecoderTests). 10.0 matches this port's other synthetic
+        // self-round-trip tolerances (SstvRoundTripTests). Code-level auditor review note: a flat
+        // image makes this delta nearly insensitive to anchor error (even a several-pixel line-start
+        // shift would still pass) -- this is deliberately NOT an anchor-precision check, only a
+        // detection/handoff-worked-at-all one; HandoffOrigin_MatchesFixedWindowPath below and
+        // GoldenVectorTests' real avt.mmv fixture are what actually check accuracy.
+        Assert.True(delta <= 10.0, $"Average per-channel delta {delta:F2} -- expected a clean decode once VisLockStateMachine hands off to AVT training correctly.");
+    }
+
+    [Fact]
+    public async Task HandoffOrigin_MatchesFixedWindowPath_RegardlessOfLeadingSilence()
+    {
+        var mode = SstvModeRegistry.Avt;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(180, 90, 40));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        // No silence: header sits at sample 0, so TryDecodeVisHeader's fixed-window path wins the
+        // race and calls TryStartAvtTraining directly -- this is the ALREADY-PROVEN-CORRECT origin
+        // (AvtTrainingLockDecoderTests/GoldenVectorTests exercise this path today).
+        var fixedWindowDecoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        fixedWindowDecoder.PushSamples(samples.ToArray());
+        var fixedWindowOrigin = fixedWindowDecoder.AvtTrainingOriginSample;
+
+        // With leading silence: the fixed-window path's one-shot ceiling is exhausted before the
+        // real header arrives, so VisLockStateMachine's own noise-tolerant match (via
+        // TryInterleavedHeaderScan's new AVT branch, S31 fix) is what calls TryStartAvtTraining
+        // instead. The two paths must agree on the SAME boundary (headerStart + totalHeaderSampleCount),
+        // not just land close by coincidence.
+        var silenceSampleCount = 3 * encoder.SampleRate;
+        var leadingSilence = new float[silenceSampleCount];
+        var withSilence = leadingSilence.Concat(samples).ToArray();
+
+        var silenceDecoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        silenceDecoder.PushSamples(withSilence);
+        var silenceOrigin = silenceDecoder.AvtTrainingOriginSample;
+
+        // VisLockStateMachine's own documented envelope-group-delay lag (~80 samples/~7.3ms at
+        // 11025Hz, see its ProcessSample doc comment) is the only expected difference -- the
+        // fixed-window path's fully analytic placement vs. this path's detected-trigger-derived one.
+        var observedShift = (silenceOrigin - silenceSampleCount) - fixedWindowOrigin;
+        Assert.InRange(observedShift, 0, 150);
+    }
+
+    [Fact]
+    public async Task MidReception_RealAvtTransmissionAfterAnotherMode_DoesNotCauseBadRestart()
+    {
+        var firstMode = SstvModeRegistry.MartinM1;
+        var firstImage = CreateGradientTestImage(firstMode.ImageWidth, firstMode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var firstSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(firstMode, firstImage))
+        {
+            firstSamples.Add(sample);
+        }
+
+        // Truncate well past the header but well before the image completes -- matches
+        // MidReceptionRestartTests' own established shape for making the mid-reception
+        // re-verification path (TryVisLockStateMachine) deterministically sweep across real header
+        // content sitting past the truncation point, once per-line decoding of the (now-misinterpreted)
+        // remaining audio marches _consumedSamples far enough forward.
+        var truncatedFirstSamples = firstSamples.Take(firstSamples.Count * 3 / 10).ToArray();
+
+        var avtMode = SstvModeRegistry.Avt;
+        var avtPixels = new Rgb24[avtMode.ImageWidth * avtMode.ImageHeight];
+        Array.Fill(avtPixels, new Rgb24(10, 20, 30));
+        var avtImage = new ArrayImageSource(avtMode.ImageWidth, avtMode.ImageHeight, avtPixels);
+        var avtSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(avtMode, avtImage))
+        {
+            avtSamples.Add(sample);
+        }
+
+        var combined = truncatedFirstSamples.Concat(avtSamples).ToArray();
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        var detectedModes = new List<SstvModeDefinition>();
+        var restartCount = 0;
+        decoder.ModeDetected += m => detectedModes.Add(m);
+        decoder.DecodeRestarted += _ => restartCount++;
+
+        // Must not throw -- a bad AVT restart here would Commit() with result.Value.LineStartSample
+        // meaning "end of AVT's own first VIS block," not a line-0 anchor, and decode image pixels
+        // for the wrong mode's line geometry starting mid-header.
+        decoder.PushSamples(combined);
+
+        // The deliberate scope decision (see AnalogFmSstvDecoder.TryVisLockStateMachine's own doc
+        // comment): an AVT match found via mid-reception re-verification is discarded, not acted on.
+        // Only the first (Martin M1) lock ever fires; the trailing real AVT transmission is never
+        // picked up by this call site, and does not corrupt or restart the in-progress decode.
+        Assert.Single(detectedModes);
+        Assert.Equal(firstMode.Id, detectedModes[0].Id);
+        Assert.Equal(0, restartCount);
+    }
+
+    [Fact]
+    public async Task ChunkedStreamingPush_DuringLongAvtTrainingWindow_DoesNotCrashTrimBuffers()
+    {
+        var mode = SstvModeRegistry.Avt;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(180, 90, 40));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var headerAndImageSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            headerAndImageSamples.Add(sample);
+        }
+
+        // Long enough that the fixed-window path is exhausted before the real header arrives --
+        // detection MUST go through VisLockStateMachine/TryInterleavedHeaderScan, the new AVT
+        // hand-off path this test targets.
+        var leadingSilence = new float[30 * encoder.SampleRate];
+        var fullStream = leadingSilence.Concat(headerAndImageSamples).ToArray();
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        SstvModeDefinition? detectedMode = null;
+        IImageSource? decodedImage = null;
+        decoder.ModeDetected += m => detectedMode = m;
+        decoder.LineDecoded += update => decodedImage = update.Image;
+
+        // Small chunks force AnalogFmSstvDecoder.TrimBuffers to run many times across the whole
+        // silence + header + 2 extra VIS repeats + training-sequence span (~1.8s-7.1s of real time
+        // once _avtTrainingPending is set) -- exactly the shape a real streaming caller (not this
+        // suite's usual bulk single-PushSamples pattern) would produce, and the shape the auditor's
+        // plan-review round identified as the one that could reach the pre-fix crash.
+        const int chunkSize = 500;
+        for (var offset = 0; offset < fullStream.Length; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, fullStream.Length - offset);
+            decoder.PushSamples(fullStream.AsMemory(offset, length));
+        }
+
+        Assert.NotNull(detectedMode);
+        Assert.Equal(mode.Id, detectedMode!.Id);
+        Assert.NotNull(decodedImage);
+    }
+
+    private static ArrayImageSource CreateGradientTestImage(int width, int height)
+    {
+        var pixels = new Rgb24[width * height];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                pixels[y * width + x] = new Rgb24(
+                    R: (byte)(x * 255 / Math.Max(1, width - 1)),
+                    G: (byte)(y * 255 / Math.Max(1, height - 1)),
+                    B: 128);
+            }
+        }
+
+        return new ArrayImageSource(width, height, pixels);
+    }
+
+    private static double ComputeAveragePerChannelDelta(IImageSource expected, IImageSource actual)
+    {
+        double totalDelta = 0;
+        var sampleCount = 0;
+        for (var y = 0; y < expected.Height; y++)
+        {
+            var expectedLine = expected.GetScanline(y);
+            var actualLine = actual.GetScanline(y);
+            for (var x = 0; x < expected.Width; x++)
+            {
+                totalDelta += Math.Abs(expectedLine[x].R - actualLine[x].R);
+                totalDelta += Math.Abs(expectedLine[x].G - actualLine[x].G);
+                totalDelta += Math.Abs(expectedLine[x].B - actualLine[x].B);
+                sampleCount += 3;
+            }
+        }
+
+        return totalDelta / sampleCount;
+    }
+}

@@ -89,14 +89,12 @@ public class GoldenVectorTests
         { "pd90", "pd90.mmv", "pd90.bmp", 256 },
         { "rm8", "rm8.mmv", "rm8.bmp", 240 },
         { "mn110", "mn110.mmv", "mn110.bmp", 256 },
-        // AVT deliberately excluded here -- see Fixtures/GoldenVectors/README.md's "AVT: real
-        // capture never decodes" section. This port's decoder never locks onto avt.mmv at all (0
-        // ModeDetected events across the whole ~100s file), even though the raw audio traces
-        // correctly against legacy's own expected AVT header sequence by hand (OutHEAD's 800ms
-        // leader, then a normal-looking VIS leader/break/data-bit sequence). Tracked as a new,
-        // separately-scoped investigation (spec/14-roadmap.md) rather than guessed at here --
-        // AVT's own LegacyOwnDecode_MatchesSourceImage_EstablishesBaselineDelta row above still
-        // runs fine, since that test never touches this port's decoder.
+        // S31 fix (spec/14-roadmap.md): AVT now included here -- see this file's own
+        // Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource tolerance comment for the root
+        // cause and fix. Previously excluded because this port's decoder never locked onto avt.mmv
+        // at all (0 ModeDetected events across the whole ~100s file), even though the raw audio
+        // traced correctly against legacy's own expected AVT header sequence by hand.
+        { "avt", "avt.mmv", "avt.bmp", 240 },
     };
 
     [Theory]
@@ -172,6 +170,12 @@ public class GoldenVectorTests
             ["pd90"] = 8.0,
             ["rm8"] = 20.0,
             ["mn110"] = 20.0,
+            // S31 fix (spec/14-roadmap.md): AVT measured directly, 5.80 -- restarts=0, correct mode
+            // detected first-try, same as the five Task #7 fixtures above. Comfortably in the same
+            // healthy range as those (comparable to scottie-s1/pd90) and well under the ~42.67
+            // corruption floor. 15.0 gives proportionally similar headroom to scottie-s1's/pd90's own
+            // margins above.
+            ["avt"] = 15.0,
         };
         var tolerance = toleranceByModeId[modeId];
 
@@ -198,8 +202,6 @@ public class GoldenVectorTests
         { "pd90", "pd90.mmv" },
         { "rm8", "rm8.mmv" },
         { "mn110", "mn110.mmv" },
-        // AVT included here despite the decoder never locking onto it (see DecoderFixtures'
-        // exclusion note) -- this test never touches the decoder, only the raw envelope.
         { "avt", "avt.mmv" },
     };
 
@@ -451,6 +453,10 @@ public class GoldenVectorTests
             ["pd90"] = 8.0,
             ["rm8"] = 12.0,
             ["mn110"] = 20.0,
+            // S31 fix (spec/14-roadmap.md): AVT measured directly, 9.92 -- close to its own sibling
+            // decode-vs-source delta above (5.80), genuine encoder/decoder agreement rather than a
+            // loose tolerance happening to pass, and comfortably under the ~42.67 corruption floor.
+            ["avt"] = 18.0,
         };
         var tolerance = toleranceByModeId[modeId];
 

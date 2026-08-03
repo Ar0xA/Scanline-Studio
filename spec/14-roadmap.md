@@ -1134,9 +1134,8 @@ legacy's live default is Hilbert, PLL is AVT-only now).
   narrow-FSK fixed-offset commit, S6 locked-detector no-retune). Rationale: batch-vs-streaming
   correctness, only "correct" today because the only caller is a test harness pushing whole buffers.
 - **Band 3 — worth doing eventually, bundle with the matching new golden-vector fixture** (S31 AVT
-  real-capture header-detection failure — NEW, most urgent of this band: a total decode failure on
-  real audio, not just a quality gap, found via task #7's new avt fixture, see that task's own log
-  entry — S9 MN/MC narrow retune, S8 mid-image narrow re-lock, S7 mid-image AVT re-lock, S17 AVT
+  real-capture header-detection failure — **DONE**, see this file's own "S31" entry further down —
+  S9 MN/MC narrow retune, S8 mid-image narrow re-lock, S7 mid-image AVT re-lock, S17 AVT
   training-entry restructure, S11 AVT PLL domain, S10 extended-VIS 7-bit, S12 sint2/sint3 freeze
   gating [sint1 already fixed], S13 m_Type demodulator toggle [code blocked on Phase-3 settings UI,
   but its missing removed-features.md entry is Band-4 work now]). 6 of 8 original items land on mode
@@ -2190,7 +2189,9 @@ covers only the two real findings worth tracking here.
 detected first-try, deltas in the same healthy range as `martin-m1`/`robot-36`'s own numbers).
 
 **New tracked item, S31 — AVT's real capture never decodes at all (add to Band 3, most urgent of that
-band).** Zero `ModeDetected` events across the entire ~100s real `avt.mmv` capture — not a quality gap
+band). Root-caused and fixed — see the dedicated "S31" entry further down this file for the real
+mechanism (not the working hypothesis below, which turned out to be wrong) and the fix.** Zero
+`ModeDetected` events across the entire ~100s real `avt.mmv` capture — not a quality gap
 like robot-36's, a total detection failure. Investigated before concluding this is a decoder bug, not a
 bad capture: hand-traced the raw audio's frequency content (short-window FFT spot checks) and confirmed
 it matches legacy's exact expected header sequence for the first ~2.7s (`OutHEAD`'s 800ms leader
@@ -2219,6 +2220,112 @@ filtered subset used while iterating), 0 failed, 7m9s (423 prior + 29 new: 6 new
 rows, 6 new `MmvFixture_TxRegionDuration` rows, 6 new `MmvFile_ReadsNewTask7Fixture` rows, 1 new
 `BmpFile_ReadsAvtRx...` row — AVT deliberately excluded from the two decoder-dependent theory lists, see
 above), solution-wide build clean.
+
+## S31 — AVT's real capture never decoded: root-caused and fixed
+
+The working hypothesis logged above when this item was first tracked ("AVT's header is by far the
+longest of any mode... may not tolerate real-world timing jitter") was **wrong** — investigated
+properly in a follow-up session, per the user's request to confirm the actual mechanism empirically
+before designing a fix, rather than build against the guessed hypothesis.
+
+**Root cause, confirmed empirically** (temporary instrumentation added to both
+`AnalogFmSstvDecoder`/`VisLockStateMachine`, run against the real `avt.mmv` fixture, then fully
+reverted before any fix code was written — `git status`/`git diff` confirmed clean before proceeding):
+
+- `VisLockStateMachine` — the only mechanism in this port with real-world noise tolerance (finds a VIS
+  header anywhere in a stream, not just at a fixed offset relative to `_consumedSamples`) — deliberately
+  discarded every AVT match it found, by design (an early scope decision documented on the class itself:
+  AVT needed a hand-off to `AvtTrainingLockStateMachine` that only the fixed-window path provided, so
+  extending this class to support it was flagged as "a possible future refinement, not attempted").
+  The diagnostic hook proved this class already decodes AVT's real VIS byte (`0x44`) correctly from the
+  real capture — **three separate times**, once per real VIS repeat, at samples 29495/39526/49559
+  (≈2.675s/3.585s/4.495s, spaced exactly `VisHeader.AvtVisBlockDurationMs` apart) — and discarded every
+  one.
+- The only path allowed to act on an AVT match, `AnalogFmSstvDecoder.TryDecodeVisHeader` (the
+  fixed-window path), is a single one-shot attempt anchored at the very start of the current epoch's
+  buffer. On a real capture that window lands in `OutHEAD`'s 800ms pre-header leader tones plus ~1s of
+  pre-TX room audio (the SAME mechanism already root-caused for martin-m1/robot-36's own anchor-precision
+  gap, `VisHeader.MaxSearchCeilingMs` ≈1.3s is exhausted before the real header even starts at ≈1.8s) —
+  so it always fails, and (being a one-shot gate per epoch, only reset by `EndOfImage()`, which requires
+  a successful decode to ever run) never gets a second chance for the rest of the file.
+
+Net effect: the only mechanism that could find AVT threw the match away; the only mechanism allowed to
+act on it never saw real content. Zero `ModeDetected` events, fully explained — not a subtle
+timing/jitter issue in the training sequence itself, which the decoder never even got far enough to
+reach on real audio.
+
+**Fix** (plan-reviewed by the auditor before implementation, which caught a real blocker before any code
+shipped — see below):
+
+1. `VisLockStateMachine.ProcessSample`: removed the premature `mode == SstvModeRegistry.Avt` bail-out in
+   `DecodeVis`, letting AVT flow through the same `Verify` state every other mode already uses. Legacy
+   justification, confirmed directly against `sstv.cpp:2127-2153`: case 3 runs the identical 1200Hz-hold
+   verification for every mode uniformly — the AVT-specific diversion into cases 4-8 (setting the long
+   training countdown and `m_SyncAVT`) only happens *after* that shared verification succeeds, never
+   instead of it. AVT's own VIS byte (`0x44`) is a normal, non-extended code and AVT is not in the
+   Scottie family, so `Verify`'s existing anchor arithmetic already computed exactly
+   `headerStart + totalHeaderSampleCount` for it — proven algebraically (and independently re-verified by
+   the auditor) via the same identity this class's own doc comment already used to justify its
+   non-AVT anchor precision. No new math needed.
+2. `AnalogFmSstvDecoder.TryStartAvtTraining`: refactored from `(int headerStart, int totalHeaderSampleCount)`
+   to a single `(int visHeaderEndSample)` — every internal use (`_avtTrainingOriginSample`,
+   `_avtTrainingFallbackDeadlineSample`, `_avtPllWarmupStartSample`) was already purely a function of
+   their sum. Pure refactor, zero behavior change for the existing (fixed-window) caller.
+3. `AnalogFmSstvDecoder.TryInterleavedHeaderScan` (the pre-lock noise-tolerant fallback): on an AVT match
+   from `VisLockStateMachine`, hands off to `TryStartAvtTraining` instead of `Commit`-ing it as a normal
+   line-0 anchor.
+4. `AnalogFmSstvDecoder.TryVisLockStateMachine` (piece 6c's mid-reception re-verification, running while
+   some OTHER mode is already locked and mid-decode): deliberately still discards an AVT match found
+   there, via an explicit guard. Safely restarting into pending AVT training mid-decode would need the
+   same in-progress-image teardown `Commit()` does for every other restart, which `TryStartAvtTraining`
+   doesn't provide (it's only ever been called while `_mode is null`) — named as a deliberate, narrow,
+   deferred non-goal (S31's own reported failure is a first-transmission scenario, not this rarer one),
+   not a silent gap.
+5. **Auditor plan-review blocker, caught before any code shipped**: item 3 sets
+   `_fixedWindowExhausted = true` inside `TryInterleavedHeaderScan`, *before* its own scan loop can find
+   an AVT match — invalidating an existing `TrimBuffers` comment's claim that `_avtPllWarmupStartSample`
+   was transitively protected by the `_consumedSamples`-based watermark term (that protection only ever
+   applied to the fixed-window entry path). Without a fix, a long-running chunked/streaming push could in
+   principle trim the buffer past `_avtPllWarmupStartSample` during the `_avtTrainingPending` window and
+   crash `Rel()`'s own bounds check — a real, previously undiscovered defect this project's usual bulk
+   single-`PushSamples` test shape would never have caught. Fixed with one explicit watermark term
+   (`if (_avtTrainingPending) watermark = Math.Min(watermark, _avtPllWarmupStartSample);`), the stale
+   comment rewritten to state the new, narrower (~166-sample/~15ms) margin a code-level auditor review
+   measured directly, rather than the wide one `_consumedSamples` used to provide.
+
+**Known, accepted residual risks** (both flagged by review rounds, neither chased further): (a) which of
+AVT's 3 VIS repeats gets matched is now genuinely signal-dependent (`TryStartAvtTraining` assumes repeat
+1) — a match on repeat 2/3 still resolves correctly via `AvtTrainingLockStateMachine`'s own
+signal-derived completion point, only the (already-approximate) fallback-deadline path would commit
+910ms/1820ms late; (b) `VisLockStateMachine`'s own already-documented false-positive risk (a
+sync-heavy image assembling a byte that happens to match a real mode's VIS code) is now, for AVT
+specifically, *acted on* rather than silently discarded pre-lock — entering an up-to-~7.1s
+`_avtTrainingPending` window during which no other header can be found. Legacy-faithful (`sstv.cpp`'s
+own case 3→4-8 behaves identically on a spurious match, timing out via `m_SyncTime`), not a new defect,
+but a genuine widening of an already-known risk — noted directly on `VisLockStateMachine`'s own class
+doc comment.
+
+**Real fixture, now decoding**: `avt.mmv` — `Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource`
+delta 5.80 (restarts=0, correct mode detected first-try, tolerance 15.0), `EncoderOutput_DecodesSimilarlyTo_RealLegacyAudioDecode`
+delta 9.92 (tolerance 18.0) — both measured directly, comfortably in the same healthy range as the other
+five Task #7 fixtures and well under the ~42.67 corruption floor. `avt` is now included in
+`GoldenVectorTests.DecoderFixtures` (previously excluded).
+
+**New tests**: `AvtNoiseTolerantDetectionTests.cs` (4 tests) — end-to-end decode via
+`VisLockStateMachine` after leading silence a fixed-window scan would miss; a handoff-equivalence check
+proving the sample passed to `TryStartAvtTraining` from the new path matches what the fixed-window path
+would have computed (not just coincidentally close); a mid-reception guard regression test (item 4);
+a chunked/streaming-push regression test for item 5's `TrimBuffers` fix (documented honestly: a
+deliberate sweep across leading-silence lengths and chunk sizes, with that fix temporarily disabled,
+never actually reproduced a crash in practice — real coverage for the code path, not a proven repro of
+the exact crash; the fix is kept regardless, since the invariant violation itself is real and
+structural, independent of how hard it is to trigger).
+
+Test count: 458/458 `Yoniq.Core.Sstv.Tests` (452 prior + 6: 2 new `avt` rows in the existing
+`DecoderFixtures`-driven theories, 4 new `AvtNoiseTolerantDetectionTests`), solution-wide build clean.
+Two plan-review rounds (auditor) plus one code-level review after implementation — code-level verdict:
+EQUIVALENT-WITH-RISKS, no blockers, ready to commit as-is; a handful of stale-comment nits it found were
+fixed directly rather than deferred.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
