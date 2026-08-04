@@ -33,7 +33,11 @@ public class PiecesSixCReachabilityTests
 
         // Same header-stripping technique as SyncScanInterleaveTests, so this transmission locks via
         // TrySyncIntervalDetectionStep's m_sint1 alone, never via a real VIS header/VisLockStateMachine.
-        var headerDurationMs = VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs;
+        //
+        // Round-1-review finding (auditor, SHOULD item 5's own review): missing
+        // VisHeader.OutHeadNormalDurationMs -- see SyncBypassDetectionTests' own identical fix
+        // comment for the full explanation.
+        var headerDurationMs = VisHeader.OutHeadNormalDurationMs + VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs;
         var headerSampleCount = (int)Math.Round(headerDurationMs / 1000.0 * SampleRate);
         var robot36Body = robot36Samples.Skip(headerSampleCount).ToArray();
 
