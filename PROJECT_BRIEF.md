@@ -2,6 +2,37 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
+## Resume here (2026-08-04) — TX-side SHOULD cluster DONE (items 4, 5). This is a fork worktree, NOT pushed/merged.
+
+This is an isolated git worktree the main session spun off to work SHOULD items 4 (TX frequency-
+mapping integer truncation) and 5 (OutHEAD pre-VIS leader-tone port) in parallel with the main
+session's own RX-orchestrator cluster (items 6, 7, 8, 9, 10). Both items DONE, both code-reviewed
+(2 rounds each -- round 1 on both caught real issues, both fixed properly, round 2 confirmed).
+
+**Item 4**: `YCbCr.FromRgb`/new `YCbCr.ColorToFreq` now model legacy's real two-truncation TX chain
+(GetRY's int-truncation + ColorToFreq's integer division) plus a third, RM8/RM12-specific truncation
+found by reading `TMmsstv::LineRM` directly. Round-1 review caught a real floating-point-association
+bug in my first `FromRgb` reparenthesization attempt (fixed) and a false claim in a golden-vector
+comment (corrected -- that test never actually invokes the encoder, so its "unchanged" was a tautology
+not evidence).
+
+**Item 5**: New `VisHeader.GenerateOutHeadSegments`, wired as the very first TX segment for every mode
+including AVT (confirmed against source: AVT's own header-generation branch is nested INSIDE the same
+non-narrow path OutHEAD precedes, not a special case). Round-1 review caught something real: 5 test
+files that strip a fixed header offset to reach a "headerless" body for sync-bypass testing were all
+under-skipping post-fix, silently locking via the real VIS path instead of the bypass path they exist
+to test -- passing for the wrong reason the whole time. Fixed all 5, and re-measuring afterward found
+the OLD documented deltas for those files were themselves contaminated (measuring VIS-lock accuracy,
+not bypass accuracy) -- genuine bypass locks turn out to be MORE precise than the old numbers ever
+showed. Round 2 review also caught 2 of the 5 fixed files still citing stale pre-fix numbers in their
+own comments -- fixed by re-measuring, not just editing prose.
+
+527/527 tests pass (520 prior + 7 new). Full detail in spec/14-roadmap.md's "TX-side SHOULD cluster"
+section.
+
+**Not committed to the main branch yet -- this worktree's own commit(s) need review and merge by the
+user/orchestrating session.** Do not delete this worktree until that happens.
+
 ## What this repo is
 Yoniq v2: cross-platform (.NET 8 + Avalonia) rewrite of YONIQ (MMSSTV fork). Specs in `spec/00`-`spec/15`.
 Legacy source lives locally (gitignored) at `yoniq-old/YONIQ-main/` — read it directly, don't infer from memory.
