@@ -53,8 +53,14 @@ in 3/5 RX decoders, Robot 36 tone-selector timing, 3 golden-vector coverage gaps
 plus ~13 COULD/NICE-TO-HAVE items. **Full findings list, all prioritized, all reasoning: `spec/14-roadmap.md`,
 search "Milestone audit, Phase 1+2"** — read that before doing any fix work, don't re-derive from scratch.
 
-**Next**: user is deciding how to sequence the 3 MUST items. Phase 3 (chain audit) still pending after
-that. No code changes from the audit itself — this round was pure investigation + documentation.
+**Next**: user is deciding how to sequence the 3 MUST items. No code changes from the audit itself —
+this round was pure investigation + documentation.
+
+**Explicit user directive: before running Phase 3 (chain/integration audit), build TX-side verification
+tests and confirm them first** — do not skip straight to Phase 3 with TX's zero-legacy-decode-coverage
+gap (batch A's finding) still open. Likely means TX-side golden vectors (this port's encoder output run
+through a real legacy decode) — bottlenecked on the user's own time with the real legacy binary, same
+as Task #7. Full reasoning: `spec/14-roadmap.md`, "Milestone audit, Phase 1+2" → "Next steps".
 
 ## Resume here (2026-08-04, later) — Band 3 AND Band 4 both fully DONE and COMMITTED
 
