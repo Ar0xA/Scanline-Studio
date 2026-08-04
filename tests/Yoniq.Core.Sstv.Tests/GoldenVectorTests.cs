@@ -174,7 +174,10 @@ public class GoldenVectorTests
             // detected first-try, same as the five Task #7 fixtures above. Comfortably in the same
             // healthy range as those (comparable to scottie-s1/pd90) and well under the ~42.67
             // corruption floor. 15.0 gives proportionally similar headroom to scottie-s1's/pd90's own
-            // margins above.
+            // margins above. Re-measured after S11 (AVT training PLL signal-domain fix): 5.79 --
+            // unchanged within measurement noise, exactly as predicted (a fidelity fix, not an
+            // accuracy one -- PllFmDemodulator's own internal AGC is scale-invariant to the domain
+            // difference S11 corrected).
             ["avt"] = 15.0,
         };
         var tolerance = toleranceByModeId[modeId];
@@ -456,6 +459,8 @@ public class GoldenVectorTests
             // S31 fix (spec/14-roadmap.md): AVT measured directly, 9.92 -- close to its own sibling
             // decode-vs-source delta above (5.80), genuine encoder/decoder agreement rather than a
             // loose tolerance happening to pass, and comfortably under the ~42.67 corruption floor.
+            // Re-measured after S11 (AVT training PLL signal-domain fix): 9.88 -- unchanged within
+            // measurement noise, matching the sibling test's own re-measurement note.
             ["avt"] = 18.0,
         };
         var tolerance = toleranceByModeId[modeId];

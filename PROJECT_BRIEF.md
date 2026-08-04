@@ -46,11 +46,38 @@ its doc entry was doable.
   code-level review round) — a "bulk vs. streaming ordering" bug and a missing `Commit()`-side
   cursor fast-forward, both fixed. Full detail: `spec/14-roadmap.md`, search "S8 — mid-image
   narrow-mode".
-- **S7, S11, S17 (AVT package), S12 — not started yet.**
+- **S7, S11 — DONE, implemented, tested, full suite green (466/466). S17 — CLOSED via documentation,
+  no code change** (measured, not assumed: the port's analytic AVT training entry lands one block late
+  vs. legacy's real search-based entry, but `AvtTrainingLockStateMachine`'s completion timing
+  recalculates absolutely per-block, not cumulatively, so the imprecision has zero effect on final
+  accuracy — temporary diagnostic instrumentation used to measure this was fully reverted, confirmed
+  clean via `git diff --stat`). S7: extracted `AbandonInProgressImage()` from `Commit()`'s own former
+  inline teardown, now also called from `TryVisLockStateMachine`'s AVT branch (previously discarded
+  every mid-image AVT match — this was the S31-adjacent gap that made the AVT package a "package" in
+  the first place). S11: `AgcSampleAt` now caches the UNCLIPPED AGC value (clamp moved to the return
+  statement only); new `AvtPllSampleAt` reads the same cache and divides out only the `*32` scale term,
+  never the clip — feeds the AVT PLL the same signal domain legacy's real `m_pll.Do(ad)` uses. Auditor
+  plan-review caught a real flaw in the first S11 draft (dividing the ALREADY-clipped value back down —
+  wrong, since `|ad|` saturates ~98% of every cycle at normal amplitude) before any code shipped.
+  Golden-vector deltas re-measured, confirmed unchanged as predicted (fidelity fix, not accuracy fix):
+  5.80→5.79, 9.92→9.88. **Code-level auditor review: EQUIVALENT-WITH-RISKS, no blockers.** Verified S11's
+  signal domain bit-exact against `sstv.cpp`, S7's extraction field-for-field behavior-preserving, S17's
+  instrumentation fully reverted. 3 doc-only findings fixed directly (no behavior change): clarified
+  S11's fix is AGC-stage-only (upstream bandpass still runs H2 not legacy's H1 during AVT training — a
+  real but pre-existing, already-tracked separate gap); documented a newly-reachable mid-reception PLL
+  warm-up divergence (immaterial, confirmed by test); fixed 2 stale comments. 2 nits accepted as
+  cosmetic (not fixed). 1 off-scope finding logged in one line, not chased: legacy preserves a
+  substantially-complete partial image on restart (`m_ReqSave`), this port always drops it — pre-existing
+  across every restart path, not new here, no `docs/removed-features.md` entry yet. Full suite re-run
+  after the doc fixes, confirming still green. Full detail: `spec/14-roadmap.md`, search "AVT package: S7".
+- **S12 — not started yet.** Only remaining untouched Band-3 item once this batch commits.
 
 **Uncommitted as of this writing**: S8's full diff (`NarrowFskHeaderDecoder.cs`, `AnalogFmSstvDecoder.cs`,
-`VisHeader.cs`, `NarrowFskHeaderDecoderTests.cs`, new `NarrowFskNoiseTolerantDetectionTests.cs`,
-`spec/14-roadmap.md`). Ask before committing, per standing rule.
+`VisHeader.cs`, `NarrowFskHeaderDecoderTests.cs`, new `NarrowFskNoiseTolerantDetectionTests.cs`) PLUS the
+S7/S11 diff on top of it (`AnalogFmSstvDecoder.cs` further modified, `VisLockStateMachine.cs`,
+`AvtNoiseTolerantDetectionTests.cs`), PLUS `spec/14-roadmap.md` (S8 and S7/S11/S17 entries, Band-3
+summary line). Code-level review is back and clean — ready to commit once the final full-suite re-run
+confirms green. Ask before pushing, per standing rule.
 
 ## Resume here (2026-08-03, later) — S31 (AVT never decodes on real capture) root-caused and FIXED
 
