@@ -20,64 +20,60 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-04) — Working through remaining Band-3 items, IN PROGRESS
+## Resume here (2026-08-04) — Band 3 is now FULLY DONE, all 8 original items closed
 
-S31 is done and committed (`b5a5cb4`, see the entry below). User then asked to fix the rest of Band 3.
-Roadmap's own pattern-3 finding groups the 8 remaining items into 2 work packages + 2 standalone items:
-**AVT package** (S7 mid-image re-lock + S11 PLL domain + S17 training-entry restructure — S16 already
-done), **MN/MC package** (S9 retune + S8 mid-image re-lock — S14/S15 already done), plus standalone S10
+S31 is done and committed (`b5a5cb4`). User then asked to fix the rest of Band 3. Roadmap's own
+pattern-3 finding grouped the 8 remaining items into 2 work packages + 2 standalone items: **AVT
+package** (S7 mid-image re-lock + S11 PLL domain + S17 training-entry restructure — S16 already done),
+**MN/MC package** (S9 retune + S8 mid-image re-lock — S14/S15 already done), plus standalone S10
 (extended-VIS 7-vs-8-bit) and S12 (sint2/sint3 freeze gating). S13's code is blocked on Phase-3 UI, only
-its doc entry was doable.
+its doc entry was doable. **All 8 are now done and committed.**
 
-**Status as of this update:**
-- **S9, S10, S13 — DONE and COMMITTED** (commit `739f4e5`, pushed). S9: discovered already closed by
-  Band-2 item S6, doc-only fix. S13: `docs/removed-features.md` entry added, code stays blocked on
-  Phase-3 UI. S10: widened from "escape byte only" to the real gap (every VIS-byte match in the
-  fixed-window path ignored the parity bit); both auditor rounds clean. Full detail: `spec/14-roadmap.md`.
-- **S8 — DONE, implemented, tested, both auditor rounds clean (plan-review found 2 real blockers, both
-  resolved per the auditor's own concrete guidance; code-level review after implementation: no
-  behavioral bug found, only doc/test-wording nits, all fixed). Full suite green (465/465). Not yet
-  committed** (bundling with S9/S10/S13 already committed separately — S8 is its own next commit).
-  Scope was much smaller than the roadmap implied: `NarrowFskHeaderDecoder` (the per-sample FSK state
-  machine) already existed as a faithful, tested port of legacy's `DecodeFSK` — only ever used in a
-  one-shot fixed-window way. S8 wires it up as a persistent, continuously-fed scanner (new
-  `AnalogFmSstvDecoder.TryNarrowFskScan`), reachable both pre-lock and mid-reception. Two real
-  regressions were found empirically (full-suite run, not anticipated by either plan-review or
-  code-level review round) — a "bulk vs. streaming ordering" bug and a missing `Commit()`-side
-  cursor fast-forward, both fixed. Full detail: `spec/14-roadmap.md`, search "S8 — mid-image
-  narrow-mode".
-- **S7, S11 — DONE, implemented, tested, full suite green (466/466). S17 — CLOSED via documentation,
-  no code change** (measured, not assumed: the port's analytic AVT training entry lands one block late
-  vs. legacy's real search-based entry, but `AvtTrainingLockStateMachine`'s completion timing
-  recalculates absolutely per-block, not cumulatively, so the imprecision has zero effect on final
-  accuracy — temporary diagnostic instrumentation used to measure this was fully reverted, confirmed
-  clean via `git diff --stat`). S7: extracted `AbandonInProgressImage()` from `Commit()`'s own former
-  inline teardown, now also called from `TryVisLockStateMachine`'s AVT branch (previously discarded
-  every mid-image AVT match — this was the S31-adjacent gap that made the AVT package a "package" in
-  the first place). S11: `AgcSampleAt` now caches the UNCLIPPED AGC value (clamp moved to the return
-  statement only); new `AvtPllSampleAt` reads the same cache and divides out only the `*32` scale term,
-  never the clip — feeds the AVT PLL the same signal domain legacy's real `m_pll.Do(ad)` uses. Auditor
-  plan-review caught a real flaw in the first S11 draft (dividing the ALREADY-clipped value back down —
-  wrong, since `|ad|` saturates ~98% of every cycle at normal amplitude) before any code shipped.
-  Golden-vector deltas re-measured, confirmed unchanged as predicted (fidelity fix, not accuracy fix):
-  5.80→5.79, 9.92→9.88. **Code-level auditor review: EQUIVALENT-WITH-RISKS, no blockers.** Verified S11's
-  signal domain bit-exact against `sstv.cpp`, S7's extraction field-for-field behavior-preserving, S17's
-  instrumentation fully reverted. 3 doc-only findings fixed directly (no behavior change): clarified
-  S11's fix is AGC-stage-only (upstream bandpass still runs H2 not legacy's H1 during AVT training — a
-  real but pre-existing, already-tracked separate gap); documented a newly-reachable mid-reception PLL
-  warm-up divergence (immaterial, confirmed by test); fixed 2 stale comments. 2 nits accepted as
-  cosmetic (not fixed). 1 off-scope finding logged in one line, not chased: legacy preserves a
-  substantially-complete partial image on restart (`m_ReqSave`), this port always drops it — pre-existing
-  across every restart path, not new here, no `docs/removed-features.md` entry yet. Full suite re-run
-  after the doc fixes, confirming still green. Full detail: `spec/14-roadmap.md`, search "AVT package: S7".
-- **S12 — not started yet.** Only remaining untouched Band-3 item once this batch commits.
+**Final status:**
+- **S9, S10, S13 — DONE and COMMITTED** (`739f4e5`). S9: discovered already closed by Band-2 item S6,
+  doc-only fix. S13: `docs/removed-features.md` entry added, code stays blocked on Phase-3 UI. S10:
+  widened from "escape byte only" to the real gap (every VIS-byte match in the fixed-window path
+  ignored the parity bit); both auditor rounds clean.
+- **S8 — DONE and COMMITTED** (`34bad37`). Scope was much smaller than the roadmap implied:
+  `NarrowFskHeaderDecoder` (the per-sample FSK state machine) already existed as a faithful, tested
+  port of legacy's `DecodeFSK` — only ever used in a one-shot fixed-window way. S8 wires it up as a
+  persistent, continuously-fed scanner (new `AnalogFmSstvDecoder.TryNarrowFskScan`), reachable both
+  pre-lock and mid-reception. Two real regressions were found empirically (a "bulk vs. streaming
+  ordering" bug and a missing `Commit()`-side cursor fast-forward), both fixed.
+- **S7, S11, S17 (AVT package) — DONE and COMMITTED** (`0bb7c60`). S7: extracted
+  `AbandonInProgressImage()` from `Commit()`'s own former inline teardown, now also called from
+  `TryVisLockStateMachine`'s AVT branch (previously discarded every mid-image AVT match). S11:
+  `AgcSampleAt` now caches the UNCLIPPED AGC value; new `AvtPllSampleAt` reads the same cache and
+  divides out only the `*32` scale term, never the clip — feeds the AVT PLL legacy's real `m_pll.Do(ad)`
+  signal domain (auditor plan-review caught a real flaw in the first draft before any code shipped:
+  dividing the already-clipped value back down was wrong). Golden-vector deltas confirmed unchanged as
+  predicted (fidelity fix, not accuracy fix). S17: measured (temporary instrumentation, fully reverted)
+  that the port's analytic AVT training entry lands one block late vs. legacy's real entry, but
+  `AvtTrainingLockStateMachine`'s completion timing recalculates absolutely per-block, so the
+  imprecision has zero effect on final accuracy — closed via documentation, no code. Code-level review:
+  EQUIVALENT-WITH-RISKS, no blockers, 3 doc-only findings fixed. Full detail: `spec/14-roadmap.md`,
+  search "AVT package: S7".
+- **S12 — DONE and READY TO COMMIT** (not yet committed as of this writing). `TrySyncIntervalDetectionStep`'s
+  m_sint2/m_sint3 blocks ran unconditionally every sample; legacy gates them to case 0 only (`m_sint3`)
+  or cases 0-1 (`m_sint2`'s SyncMax continuation), with zero code in cases 2/9/3 (real VIS-bit
+  decode/verify). **First plan-review round caught a real design gap before any code shipped**: the
+  original proposal reused the pre-existing `_syncBypass1PrimaryHeld` field (already gating `m_sint1`),
+  which only tracks legacy's case-0↔1 boundary, not the case-2/9/3 freeze the item is named for — it
+  can go false mid-VIS-decode when d12 dips (exactly what VIS data-bit tones cause). Fix actually
+  shipped: exposed `VisLockStateMachine`'s own state (already modeling case 0/1/2/9/3 exactly) via two
+  new properties, `IsSearching` and `IsAtOrBeforeConfirmLock`, read at the top of
+  `TrySyncIntervalDetectionStep` (which already runs before `VisLockStateMachine.ProcessSample` for the
+  same sample, giving the correct pre-transition value for free). Code-level review: EQUIVALENT, ready
+  to commit, 3 doc-only findings fixed (a stale "m_sint2 already gated for free" claim corrected; two
+  low-severity divergences newly documented rather than silently absorbed). Two new isolated unit tests
+  in `VisLockStateMachineTests.cs`. Full suite green (468/468), no tolerance changes needed. Full
+  detail: `spec/14-roadmap.md`, search "S12 — m_sint2/m_sint3".
 
-**Uncommitted as of this writing**: S8's full diff (`NarrowFskHeaderDecoder.cs`, `AnalogFmSstvDecoder.cs`,
-`VisHeader.cs`, `NarrowFskHeaderDecoderTests.cs`, new `NarrowFskNoiseTolerantDetectionTests.cs`) PLUS the
-S7/S11 diff on top of it (`AnalogFmSstvDecoder.cs` further modified, `VisLockStateMachine.cs`,
-`AvtNoiseTolerantDetectionTests.cs`), PLUS `spec/14-roadmap.md` (S8 and S7/S11/S17 entries, Band-3
-summary line). Code-level review is back and clean — ready to commit once the final full-suite re-run
-confirms green. Ask before pushing, per standing rule.
+**Uncommitted as of this writing**: S12's diff (`AnalogFmSstvDecoder.cs`, `VisLockStateMachine.cs`,
+`VisLockStateMachineTests.cs`, `spec/14-roadmap.md` S12 entry + Band-3 summary line). Ask before
+committing/pushing, per standing rule. Once committed, **Band 3 is fully closed** — nothing further
+queued from the original 30-item DSP-simplification inventory except Band 4/5 items (documentation-only
+or correctly-blocked, see the Band-3/4/5 summary further down this file).
 
 ## Resume here (2026-08-03, later) — S31 (AVT never decodes on real capture) root-caused and FIXED
 

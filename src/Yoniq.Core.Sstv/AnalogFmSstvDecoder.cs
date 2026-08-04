@@ -263,6 +263,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // of every transmission after the first. Small (bounded by the envelope detectors' own settling
     // time, the same order of magnitude as other already-accepted small imprecisions in this
     // system), not eliminated, documented honestly rather than assumed away.
+    //
+    // S12 code-level review addition: since m_sint2/m_sint3 now gate on VisLockStateMachine's own
+    // state (see the S12 comments on those blocks below), a transient false Search->ConfirmLock->
+    // DecodeVis in THAT copy during this same resettle window doesn't just disagree with m_sint1's
+    // latch -- it also freezes m_sint2/m_sint3 for up to ~270ms (~540ms extended) where legacy would
+    // not. Bounded and low-probability (same settling-time order of magnitude as the disagreement
+    // above), and VisLockStateMachine's own state is the more legacy-faithful of the two available
+    // proxies -- not fixed, flagged so a future reader has the fuller picture.
     private readonly SyncIntervalTracker _syncBypass1Tracker;
     private bool _syncBypass1PrimaryHeld;
 
@@ -1556,11 +1564,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // assumes, and (worse) letting VIS data-bit tones (1100/1300Hz, only ±100Hz from d12's
         // 1200Hz/100Hz-bandwidth center) spuriously re-trigger it throughout every VIS-bit-decode
         // attempt, polluting the interval history legacy's own case-2/9 freeze would have
-        // prevented. Gating on !_syncBypass1PrimaryHeld reproduces that freeze for m_sint1
-        // specifically (m_sint2 already has an equivalent effect for free, see its own condition
-        // below -- its held-branch check subsumes its TryStart branch's threshold, so a held
-        // m_sint2 never calls TryStart either; m_sint1's bare top-of-loop poll had no such
-        // built-in protection).
+        // prevented. Gating on !_syncBypass1PrimaryHeld reproduces the case-0<->1 boundary for
+        // m_sint1. S12 code-level review correction: an earlier version of this comment claimed
+        // "m_sint2 already has an equivalent effect for free" -- false; m_sint2 needed (and, as of
+        // S12, has) its own explicit gate below, since _syncBypass1PrimaryHeld only tracks the
+        // case-0<->1 boundary, not case 2/9/3's real freeze (see m_sint2's own comment for the S12
+        // fix). m_sint1's own gate here has the SAME residual gap for case 2/9/3 that m_sint2/
+        // m_sint3 had before S12 -- _syncBypass1PrimaryHeld can go false mid-VIS-bit-decode if d12
+        // momentarily dips below SLvl, letting !_syncBypass1PrimaryHeld admit a stray TryStart()
+        // during real decode -- out of S12's own scope (m_sint1 specifically), not fixed here,
+        // left as a known follow-up rather than silently absorbed.
         if (!_syncBypass1PrimaryHeld)
         {
             var sint1Matched = _syncBypass1Tracker.TryStart();
@@ -1574,17 +1587,42 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // m_sint2 (sstv.cpp:1899-1911). Piece 7c: full 3-term condition (sstv.cpp:1905), not just
         // the relative d12>d19 -- d12>SLvl2 and the difference gate (d12-d19)>=SLvl2 are what
         // actually suppress false candidate peaks now that d12/d19 live on the AGC'd scale.
-        if (d12 > d19 && d12 > SLvl2 && d12 - d19 >= SLvl2)
+        //
+        // S12 fix (spec/14-roadmap.md): legacy's own case 1 (sstv.cpp:1953-1957) keeps calling
+        // m_sint2.SyncMax while held, but NEVER calls SyncStart there -- that's case-0-only
+        // (sstv.cpp:1906-1911). Cases 2/9/3 (real VIS-bit decode/verify) have no m_sint2 code
+        // at all. _visLockStateMachine's own state already tracks exactly this (Search=case0,
+        // ConfirmLock=case1, DecodeVis/DecodeExtendedVis/Verify=case2/9/3), read here as of the
+        // END of the PREVIOUS sample (this method runs before _visLockStateMachine.ProcessSample
+        // for the same index, see TryInterleavedHeaderScan) -- matching legacy's own
+        // switch(m_SyncMode) using m_SyncMode's pre-this-sample value. An earlier version gated
+        // this on _syncBypass1PrimaryHeld alone, which only tracks the case-0<->1 boundary and
+        // goes false again the instant d12 dips below SLvl during real VIS-bit decoding (exactly
+        // the kind of momentary dip 1100/1300Hz data-bit tones cause) -- not the same as legacy's
+        // real, code-absent case-2/9/3 freeze.
+        //
+        // One accepted, unreachable-in-practice divergence: legacy sets m_SyncMode=256 on a
+        // SUCCESSFUL case-3 lock (sstv.cpp:2146), keeping m_sint2/m_sint3 frozen until Stop() --
+        // VisLockStateMachine's own ProcessSample instead resets _state back to Search in that same
+        // instant (see its own doc comment). Not a live gap here: every non-null ProcessSample
+        // return exits TryInterleavedHeaderScan's scan loop immediately (either Commit()s, which
+        // itself Reset()s this same state machine, or starts AVT training, which short-circuits
+        // TryDecodeHeader entirely via _avtTrainingPending) -- so this method is never re-entered
+        // with the stale post-lock Search value in between.
+        if (_visLockStateMachine.IsAtOrBeforeConfirmLock)
         {
-            _syncBypassTracker.UpdateMax(d12);
-        }
-        else
-        {
-            var matched = _syncBypassTracker.TryStart();
-            if (matched is not null && SyncBypassTrustedModes.Contains(matched))
+            if (d12 > d19 && d12 > SLvl2 && d12 - d19 >= SLvl2)
             {
-                CommitSyncBypassMatch(matched, _syncBypassTracker.LastPeakPositionSamples);
-                return true;
+                _syncBypassTracker.UpdateMax(d12);
+            }
+            else if (_visLockStateMachine.IsSearching)
+            {
+                var matched = _syncBypassTracker.TryStart();
+                if (matched is not null && SyncBypassTrustedModes.Contains(matched))
+                {
+                    CommitSyncBypassMatch(matched, _syncBypassTracker.LastPeakPositionSamples);
+                    return true;
+                }
             }
         }
 
@@ -1592,26 +1630,36 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // called once on the falling edge only, matching legacy's own m_SyncPhase gating. Piece
         // 7c: full 5-term condition (sstv.cpp:1926) -- note the last difference term is gated by
         // SLvl (not SLvl3), an asymmetry confirmed by reading the literal source, not assumed.
-        if (d19 > d12 && d19 > dsp && d19 > SLvl3 && d19 - d12 >= SLvl3 && d19 - dsp >= SLvl)
+        //
+        // S12 fix: legacy's entire m_sint3 block (sstv.cpp:1925-1944) lives inside case 0's own
+        // `if(!m_Sync && m_MSync)` gate -- case 1 has ZERO m_sint3 references (not even a
+        // SyncMax continuation, unlike m_sint2 above), and cases 2/9/3 have none either. Gating
+        // the whole block on _visLockStateMachine.IsSearching freezes _syncBypassNarrowPhaseActive
+        // and the tracker's own internal state exactly as legacy's untouched m_sint3 object stays
+        // frozen outside case 0, resuming from the same phase once back in Search.
+        if (_visLockStateMachine.IsSearching)
         {
-            if (_syncBypassNarrowPhaseActive)
+            if (d19 > d12 && d19 > dsp && d19 > SLvl3 && d19 - d12 >= SLvl3 && d19 - dsp >= SLvl)
             {
-                _syncBypassNarrowTracker.UpdateMax(d19);
+                if (_syncBypassNarrowPhaseActive)
+                {
+                    _syncBypassNarrowTracker.UpdateMax(d19);
+                }
+                else
+                {
+                    _syncBypassNarrowTracker.Trigger(d19);
+                    _syncBypassNarrowPhaseActive = true;
+                }
             }
-            else
+            else if (_syncBypassNarrowPhaseActive)
             {
-                _syncBypassNarrowTracker.Trigger(d19);
-                _syncBypassNarrowPhaseActive = true;
-            }
-        }
-        else if (_syncBypassNarrowPhaseActive)
-        {
-            _syncBypassNarrowPhaseActive = false;
-            var matchedNarrow = _syncBypassNarrowTracker.TryStart();
-            if (matchedNarrow is not null)
-            {
-                CommitSyncBypassMatch(matchedNarrow, _syncBypassNarrowTracker.LastPeakPositionSamples);
-                return true;
+                _syncBypassNarrowPhaseActive = false;
+                var matchedNarrow = _syncBypassNarrowTracker.TryStart();
+                if (matchedNarrow is not null)
+                {
+                    CommitSyncBypassMatch(matchedNarrow, _syncBypassNarrowTracker.LastPeakPositionSamples);
+                    return true;
+                }
             }
         }
 
@@ -1760,6 +1808,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
         for (; _syncBypassProcessedUpTo < scanBound; _syncBypassProcessedUpTo++, _visLockProcessedUpTo++)
         {
+            // LOAD-BEARING ORDER, do not swap: TrySyncIntervalDetectionStep must run BEFORE
+            // _visLockStateMachine.ProcessSample below for this same sample index. S12's own gating
+            // (TrySyncIntervalDetectionStep's m_sint2/m_sint3 comments) reads _visLockStateMachine's
+            // state to reproduce legacy's switch(m_SyncMode) using m_SyncMode's value from BEFORE
+            // this sample's own transition -- swapping this order would silently invert that gate
+            // (m_sint2/m_sint3 would see the state AFTER this sample's own transition instead),
+            // and no existing test would catch it (S12's own tests exercise the properties directly,
+            // not this ordering).
             if (TrySyncIntervalDetectionStep())
             {
                 return true;

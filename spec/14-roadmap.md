@@ -1150,11 +1150,13 @@ legacy's live default is Hilbert, PLL is AVT-only now).
   7-bit — **DONE**, see this file's own "S10" entry below, widened in scope from the original narrow
   "escape byte only" framing to the real underlying gap (every normal VIS-code match in the
   fixed-window path, not just the escape byte) — S12 sint2/sint3 freeze gating [sint1 already fixed] —
-  only remaining untouched item —
-  S13 m_Type demodulator toggle [code blocked on Phase-3 settings UI, but its missing
-  removed-features.md entry is Band-4 work now, **DONE**]. 7 of 8 original items land on mode families
-  task #7 already captured fixtures for — fix when
-  measured, not reasoned.
+  **DONE**, see this file's own "S12" entry below — first plan-review round caught a real design gap
+  before any code shipped (the originally-proposed gate only covered legacy's case-0↔1 boundary, not
+  the case-2/9/3 freeze the item is named for) — S13 m_Type demodulator toggle [code blocked on
+  Phase-3 settings UI, but its missing removed-features.md entry is Band-4 work now, **DONE**].
+  **Band 3 is now fully done, all 8 original items closed** (7 landed on mode families task #7 already
+  captured fixtures for, fix when measured not reasoned; S12 needed direct source-derived design work
+  instead, no fixture dependency).
 - **Band 4 — documentation/test-only, near-zero cost, no DSP change** (S27 CQ100 removed-features.md
   entry + a stale code comment, S13's doc half, S29 odd-tap assert/guard, S30 add a decimation-tier
   unit test, S21 record the already-measured tolerance rationale).
@@ -2639,6 +2641,69 @@ ChunkedPush_StaysBounded` in `AvtNoiseTolerantDetectionTests.cs`; the existing
 pin the new restart behavior rather than added as a new test; no new tests for S11 (verified via the
 existing golden-vector re-measurement) or S17 (closed via documentation, temporary instrumentation
 fully reverted)), solution-wide build clean.
+
+## S12 — m_sint2/m_sint3 freeze-while-decoding-VIS gating, DONE
+
+`TrySyncIntervalDetectionStep`'s m_sint2/m_sint3 blocks (`AnalogFmSstvDecoder.cs`) evaluated
+unconditionally every sample, with no equivalent of legacy's real `switch(m_SyncMode)` gating —
+`m_sint1` had already been fixed (an earlier holistic-review pass), but `m_sint2`/`m_sint3` had not.
+
+**Legacy source read directly** (`sstv.cpp:1889-1973`), not inferred: case 0 (`if(!m_Sync && m_MSync)`)
+runs `m_sint1.SyncStart()`, then (if that didn't match) `m_sint2`'s full SyncMax-or-SyncStart if/else,
+then the entire `m_sint3` phase-latch block. Case 1 keeps calling `m_sint2.SyncMax` (condition-true only,
+no else-branch, no SyncStart) but has **zero** `m_sint3` references at all. Cases 2/9/3 (real VIS-bit
+decode/verify) have **zero** references to any of the three trackers, confirmed by grepping every
+`m_sint1`/`m_sint2`/`m_sint3` occurrence in the file.
+
+**First plan-review round caught a real design gap before any code was written**: my original proposed
+fix reused the pre-existing `_syncBypass1PrimaryHeld` field (already gating `m_sint1`) to gate
+`m_sint2`/`m_sint3` too — auditor traced the actual case boundaries and found `_syncBypass1PrimaryHeld`
+only tracks legacy's case-0↔1 boundary (m_SyncMode 0 vs 1), not the case-2/9/3 freeze the item is
+literally named for: it goes false again the instant d12 dips below SLvl, which VIS data-bit tones
+(1100/1300Hz, close to d12's 1200Hz passband) can readily cause mid-decode — exactly the failure mode
+`m_sint1`'s own fix comment already named as the reason it needed gating in the first place. The narrow
+fix would have left the real freeze unimplemented while closing the checkbox on a false claim.
+
+**Fix actually shipped**: exposed `VisLockStateMachine`'s own internal state (already modeling
+Search/ConfirmLock/DecodeVis/DecodeExtendedVis/Verify = legacy's case 0/1/2/9/3 exactly) via two new
+properties, `IsSearching` (case 0 only — gates `m_sint3`'s whole block and `m_sint2`'s SyncStart) and
+`IsAtOrBeforeConfirmLock` (cases 0-1 — gates `m_sint2`'s SyncMax continuation). Read at the top of
+`TrySyncIntervalDetectionStep`, which already runs BEFORE `_visLockStateMachine.ProcessSample` for the
+same sample index (`TryInterleavedHeaderScan`'s own loop order) — giving the state as of the END of the
+previous sample, exactly matching legacy's `switch(m_SyncMode)` using its pre-transition value. No new
+cursor/list/`TrimBuffers` entry needed; reuses the state machine this file already runs every sample.
+A stale comment claiming "`m_sint2` already has an equivalent effect for free" (never true — leftover
+justification from when this gap was first identified and deliberately not fixed) was corrected in the
+same commit.
+
+**Code-level review, verdict EQUIVALENT, no blockers.** Verified all three legacy case boundaries
+against source directly (case 0's SyncMax-or-SyncStart split, case 1's SyncMax-only/no-else, cases
+2/9/3's total absence), the ordering claim (checked all 3 real transition edges: trigger sample,
+ConfirmLock-fail sample, per-bit-reject sample — no off-by-one), the `EndOfImage`/`Reset()` interaction
+(clean — matches legacy's own `Stop()` clearing `m_SyncPhase` in the same place), and the pairing with
+`m_sint1`'s unchanged gate (no new double-fire risk). Two doc-only findings closed directly: the existing
+`_syncBypass1PrimaryHeld`/`VisLockStateMachine` "two copies can disagree during resettle" comment (already
+documenting a pre-existing divergence) now also notes S12's own new consequence — a transient false
+Search→ConfirmLock→DecodeVis in the state-machine copy during that same resettle window can freeze
+m_sint2/m_sint3 for up to ~270-540ms where legacy would not (bounded, low-probability, not fixed); a
+second comment records that legacy freezes `m_sint2`/`m_sint3` permanently after a successful lock
+(`m_SyncMode=256` until `Stop()`) while `VisLockStateMachine` resets straight back to `Search`, argued
+(and confirmed unreachable) since every lock-returning call exits the scan loop immediately either way.
+One test-coverage nit closed: a load-bearing comment was added at the `TryInterleavedHeaderScan` call
+site itself, flagging that swapping `TrySyncIntervalDetectionStep`/`ProcessSample`'s call order would
+silently invert this gate with no existing test catching it.
+
+Two new isolated unit tests in `VisLockStateMachineTests.cs` (matching this project's own "verify each
+sub-piece before wiring" methodology, no `AnalogFmSstvDecoder` involved): `IsSearching_
+FalseOnceTooShortBlipEntersConfirmLock_TrueAgainAfterItResets` (reuses the existing
+`TooShortBlip_NeverAdvancesPastConfirmLock` blip shape to pin the case-0↔1 round trip) and
+`IsAtOrBeforeConfirmLock_FalseWhileRealVisHeaderIsDecodingVisBits` (a full real header, asserting both
+phases are observed and in the right order). Full suite green, no existing tolerance needed widening —
+consistent with the auditor's own prediction that a real, clean fixture's own tone content rarely
+produces the momentary dip this gate specifically guards against.
+
+Test count: 468/468 (466 prior + 2 new, both in `VisLockStateMachineTests.cs`), solution-wide build
+clean.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
