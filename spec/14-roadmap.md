@@ -3870,17 +3870,67 @@ deliberately deferred, real reasoning recorded above); remaining COULD (14-16) a
 items are open but low-urgency/cosmetic by their own original triage, same tier as the already-accepted
 Band 5 precedent — none block moving on. Two independent, code-level comprehensive audits (RX diff, TX
 diff, fresh Opus context each) ran on the full accumulated SHOULD-fix work immediately before this
-close-out and found no functional issues. Before starting Phase 2 proper, one open architecture
-question is being worked first: whether `IRadioController`'s scope should stay rigctld-client-only (this
-phase's original plan) or also build in Hamlib directly, the way WSJT-X does — see the next entry once
-resolved.
+close-out and found no functional issues.
 
-## Phase 2 — Radio layer (no CAT rigs yet)
+**Architecture question resolved before Phase 2 code started**: whether `IRadioController`'s scope
+should stay rigctld-client-only or also build in Hamlib directly (WSJT-X style). Resolved further than
+originally framed — not just "add Hamlib alongside hand-written protocols," but **no hand-written
+per-rig CAT protocols at all**. Yoniq is a pure client of external CAT backends (Hamlib linked
+in-process, `rigctld`, flrig, OmniRig-as-client), full reasoning and backend list in
+[[03-cat-layer]] (renamed from "CAT Layer" to "External CAT Backends"), removal accounting in
+[docs/removed-features.md](../docs/removed-features.md)'s "Native per-rig CAT protocol implementations"
+entry. `spec/02-radio-layer.md` and `spec/04-rigctld.md` updated to match (no `IRigRegistry`/
+`RigDefinition`, `RadioConnectionSpec` subtypes now per-backend).
 
-- [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
-- [[04-rigctld]]: client mode (this is prioritized over hand-written CAT protocols because it unlocks the widest rig coverage fastest, and its ASCII line protocol is the simplest to get right first).
+## Phase 2 — Radio layer (no CAT rigs yet) — DONE
 
-**Demo:** `IRadioController` connects to a real `rigctld` instance and reports live frequency/mode changes in a log/console.
+Both roadmap items landed together: `Yoniq.Abstractions.Radio` interfaces, `RadioController` (reference
+`IRadioController`), and `RigctldClientProtocol`/`RigctldProtocolFactory` (client mode). 639/639 tests
+pass solution-wide (528 pre-existing DSP + 111 new/other, none regressed — confirmed `git status` shows
+nothing SSTV-related touched). Full detail below; this entry is the summary.
+
+**Design settled via an auditor plan-review pass before any code was written** (not a mechanical build —
+this is new architecture, not a port): `IRadioProtocol` dropped its `IRadioTransport` parameter (each
+protocol owns its own transport internally, the only shape that also fits future call-based backends
+like linked Hamlib/OmniRig — a real `spec/02-radio-layer.md` amendment, not just a code detail);
+backend resolution via `IRadioProtocolFactory` with exactly-one-match required (never silent
+first-match-wins); poll-loop error taxonomy splitting rigctld protocol errors (`RPRT -n`, no backoff,
+keep polling) from transport failures (backoff + dispose/recreate the protocol via the factory, with an
+overflow-safe clamp on the exponential formula); `\dump_caps` parsing rejected in favor of probing
+`f`/`m`/`t` directly at connect (a `spec/04-rigctld.md` amendment) since `\dump_caps`'s grammar drifts
+across Hamlib versions and couldn't be verified without a real instance at plan-review time.
+
+**Hamlib cloned locally for reference** (`hamlib/`, gitignored, same convention as
+`yoniq-old/YONIQ-main/`/`QSSTV-main/`) — resolved the plan-review's flagged highest-risk unknown
+(whether rigctld's `f`/`m`/`t` get-commands emit a trailing `RPRT` line in backward-compatible mode) by
+reading `tests/rigctl_parse.c` directly rather than guessing: they don't (only `set` commands and
+errors get an `RPRT` line; `get` commands succeed with just their raw value line(s)). Also confirmed
+Hamlib ships a hardware-free "Dummy" rig backend (`RIG_MODEL_DUMMY`, `port_type = RIG_PORT_NONE`) and
+the exact real-Hamlib mode-token vocabulary (`src/misc.c`'s `mode_str[]`) used for `RadioMode` mapping.
+
+**Real interop, not just fixtures** — the user's own suggestion mid-session: since a real `rigctld` +
+Hamlib's Dummy rig backend exists, spin one up as a subprocess and drive this port's own
+`TcpTransport`/`RigctldClientProtocol` against it over a real loopback socket, rather than trusting
+fixture-replay tests alone (which only prove the parser matches bytes someone wrote down). Landed as
+`RigctldDummyRigIntegrationTests` (4 tests) — best-effort, skips cleanly if `rigctld` isn't on PATH,
+confirmed manually first (`rigctld -m 1` by hand) before writing the C# test. Real output matched the
+source-derived prediction exactly on the first try, including the Dummy backend's genuinely-unsupported
+`get_ptt` (`RPRT -11`), exercising the same capability-absence path the fixture tests cover separately.
+
+**Two real implementation bugs caught by the test suite itself, not review**: (1) `ConnectAsync`'s
+`Task.Run` lambda read the `_pollLoopCts` field at execution time instead of capturing its token before
+scheduling — a fast concurrent `DisconnectAsync` (exactly what
+`ConnectAsync_PublishesConnectingThenConnected...` does) could null the field before the lambda ran,
+`NullReferenceException`. Fixed by capturing the token into a local before `Task.Run`. (2) A test
+asserted `LastKnownState` *after* `DisconnectAsync`, which deliberately clears it back to null — a test
+bug, not an implementation bug, fixed by asserting before disconnecting.
+
+**Deferred, not forgotten**: `\chk_vfo`/VFO support (not needed by `RadioState`'s current domain model).
+Server mode, linked Hamlib, flrig/OmniRig-as-client, `TemplateCatProtocol`, and all
+`Yoniq.Application`/UI/settings-persistence wiring are Phase 3/4 per the plan below, unaffected.
+
+**Demo** (not yet built — Phase 3's job, wiring this into `Yoniq.Application`/UI): `IRadioController`
+connects to a real `rigctld` instance and reports live frequency/mode changes in a log/console.
 
 ## Phase 3 — Minimal UI, first end-to-end path
 
@@ -3892,7 +3942,8 @@ resolved.
 
 ## Phase 4 — CAT protocols, image tooling, logbook
 
-- [[03-cat-layer]]: Icom CI-V and Kenwood ASCII first, then remaining Yaesu variants and JST-245, plus the template/fallback protocol.
+- [[03-cat-layer]]: linked Hamlib backend (native packaging story resolved first), then `TemplateCatProtocol` fallback.
+- **Maybe later** (not committed, no code/design yet): flrig client backend — flrig has a real, still-actively-used user base distinct from plain Hamlib/rigctld users, worth adding if that demand shows up post-launch. OmniRig-as-client similarly deferred. Revisit once Hamlib/rigctld coverage is in and actual user requests make the priority call for real, rather than guessing now.
 - [[07-image-pipeline]]: full crop/resize/filter/overlay, stock library, RX history.
 - [[08-logging]]: logbook, ADIF import/export, offline callsign lookup; QRZ.com opt-in lookup can trail slightly if needed.
 - [[04-rigctld]]: server mode.

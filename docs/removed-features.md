@@ -2,12 +2,21 @@
 
 Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry here naming the legacy files, the replacement (if any), and the user-visible impact. "Superseded" claims must state which users are actually covered — this document exists so that claim is checked, not assumed.
 
+## Native per-rig CAT protocol implementations
+
+- **Legacy**: `cradio.cpp`'s `Freq*` methods (`FreqYaesuHF`, `FreqYaesuVU`, `FreqYaesu9K2K`, `FreqICOM`, `FreqKenwood`, `FreqJST245`, plus the generic poll table backing Ten-Tec Omni VI) and `cradio.h`'s `RADIO_POLL*` enum/`CmdInit`/`CmdRx`/`CmdTx` templates, `RadioSet.cpp`, `ExtCmd.cpp`.
+- **Replacement**: none in-house. Yoniq is a pure client of external CAT backends instead — Hamlib linked in-process, `rigctld`, flrig, or OmniRig-as-client (all [[spec/03-cat-layer]]), plus a user-editable `TemplateCatProtocol` escape hatch for anything none of them cover.
+- **Why**: maintaining a hand-written parser per rig family duplicates work multiple existing, actively-maintained external projects already do; leaning on them (the same relationship WSJT-X has to Hamlib) trades a large ongoing in-house maintenance burden for a dependency on those projects' own coverage and correctness.
+- **Not fully replaced**: rig coverage now depends entirely on whichever external backend(s) actually ship, not on a list this project controls — a rig with no Hamlib/flrig/OmniRig support and no user-authored `TemplateCatProtocol` template has no path to CAT control at all. Unlike legacy, there is no standalone/offline CAT mode: every backend except the template fallback requires an external process, library, or driver to be present (a running `rigctld`/flrig instance, a linked Hamlib build for the user's OS/arch, or OmniRig installed on Windows).
+- **Impact**: users of rigs well-covered by Hamlib (the large majority) see no functional loss and gain the widest rig-support list of any option considered. Users on rigs Hamlib/flrig/OmniRig don't support, previously served by one of legacy's ~14 hand-written families, need a `TemplateCatProtocol` template (if the rig's command set is simple enough to hand-author) or lose CAT control until upstream Hamlib adds support.
+
 ## OmniRig ActiveX/COM integration
 
 - **Legacy**: `OmniRig_OCX.cpp`, `OmniRig_OCX.h`, `OmniRig_TLB.cpp`, `OmniRig_TLB.h`. User-facing toggle in `Config.cfg` (`omnirig=0`).
-- **Replacement**: native CAT protocols ([[spec/03-cat-layer]]) plus [[spec/04-rigctld]].
-- **Not fully replaced**: OmniRig's core value was **rig-sharing arbitration** — letting multiple applications (e.g. YONIQ and a separate logger) share one serial-connected rig through a single OmniRig broker process. Native CAT cannot replicate this at all (two processes cannot open the same serial port). rigctld replicates it only if every application on the machine is reconfigured to talk through the same `rigctld` instance instead of opening the port directly — a real migration step for affected users, not a transparent swap. Users who relied on OmniRig specifically to share a rig between YONIQ and another OmniRig-aware application should be told, explicitly, to install and point everything at `rigctld` before upgrading.
-- **Impact**: users with a single application controlling the rig are unaffected. Users sharing a rig across multiple OmniRig-aware applications need to migrate to rigctld-mediated sharing.
+- **Replacement**: `rigctld` client mode or linked Hamlib ([[spec/04-rigctld]], [[spec/03-cat-layer]]), or an OmniRig-as-*client* backend ([[spec/03-cat-layer]]) — Yoniq talking to an already-running OmniRig instance rather than bundling OmniRig's own OCX/TLB into itself.
+- **Not fully replaced by rigctld/Hamlib alone**: OmniRig's core value was **rig-sharing arbitration** — letting multiple applications (e.g. YONIQ and a separate logger) share one serial-connected rig through a single OmniRig broker process. Linked Hamlib cannot replicate this at all (two processes cannot open the same serial port). `rigctld` replicates it only if every application on the machine is reconfigured to talk through the same `rigctld` instance instead of opening the port directly — a real migration step, not a transparent swap.
+- **Fully replaced if the OmniRig-as-client backend ships**: unlike the above two, this restores the original arbitration case directly — Yoniq becomes just another OmniRig-aware client alongside the user's existing logger, no migration to `rigctld` needed. This backend is speculative/not yet designed (see [[spec/03-cat-layer]]'s Definition of done), so treat this line as the target, not a shipped guarantee.
+- **Impact**: users with a single application controlling the rig are unaffected regardless of backend. Users sharing a rig across multiple OmniRig-aware applications should stay on OmniRig (with Yoniq as an OmniRig client, once built) or migrate everything to `rigctld`-mediated sharing.
 
 ## CItems custom-item plugin ABI
 

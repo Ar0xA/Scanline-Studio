@@ -12,7 +12,7 @@ The architecture in [[01-architecture]] exists largely *in service of* testabili
 
 | Layer | Tool | What it covers | Runs where |
 |---|---|---|---|
-| Unit | xUnit + FluentAssertions + NSubstitute | Pure logic: CAT frame parsing ([[03-cat-layer]]), DSP encode/decode ([[06-sstv-dsp]]), settings migration ([[12-settings]]), ADIF import/export ([[08-logging]]) | Every PR, every OS in CI matrix |
+| Unit | xUnit + FluentAssertions + NSubstitute | Pure logic: CAT backend client response parsing ([[03-cat-layer]]), DSP encode/decode ([[06-sstv-dsp]]), settings migration ([[12-settings]]), ADIF import/export ([[08-logging]]) | Every PR, every OS in CI matrix |
 | Integration (in-process fakes) | xUnit | `IRadioController` orchestration against `FakeRadioTransport`/fake protocol; `RigctldServer` against raw sockets ([[04-rigctld]]); plugin load/unload ([[11-plugin-system]]) | Every PR |
 | View-model / headless UI | xUnit + Avalonia.Headless | View-model behavior against faked `Yoniq.Application` services ([[09-ui]]) | Every PR |
 | Architecture tests | NetArchTest (or equivalent) | Layering rules: UI never references radio/audio/DSP concretes ([[01-architecture]], [[09-ui]]); plugins only see `Yoniq.Abstractions` ([[11-plugin-system]]) | Every PR |
@@ -26,13 +26,12 @@ Real hardware (actual radios, actual sound cards) is deliberately **not** part o
 
 ## Golden-vector testing (legacy parity)
 
-Added after review, because it's the one gap a purely self-consistent test suite cannot close: a round-trip test (encode then decode, or serialize then deserialize) can pass while a new implementation is systematically wrong, as long as both halves are wrong the same way. That's a real risk here specifically because several ports move from `double` (legacy C++) to `float` (spec/06's DSP core) and from bespoke binary framing to a redesigned byte layout (spec/03's CAT protocols) — silent numeric or framing drift is exactly the failure mode a round-trip test is blind to.
+Added after review, because it's the one gap a purely self-consistent test suite cannot close: a round-trip test (encode then decode, or serialize then deserialize) can pass while a new implementation is systematically wrong, as long as both halves are wrong the same way. That's a real risk here specifically because the DSP port moves from `double` (legacy C++) to `float` (spec/06's DSP core) — silent numeric drift is exactly the failure mode a round-trip test is blind to. This does **not** apply to [[03-cat-layer]] — no CAT protocol is ported/reimplemented in this codebase, so there is no legacy CAT byte-framing to hold parity against (see that spec's Testing section for what CAT backend clients are tested against instead).
 
 **Golden vectors** close this gap: reference input/output pairs captured from the actual legacy implementation (not re-derived by re-reading the C++ a second time), checked into the relevant fixtures directory, and asserted against with a documented tolerance.
 
 | Where | What to capture | Tolerance |
 |---|---|---|
-| [[03-cat-layer]] | Raw CAT frame bytes → the legacy `UpdateFreq`-formatted frequency string (`cradio.cpp:918-928`, `%.3f` MHz) | Exact string match, or exact match after the documented Hz-rounding rule |
 | [[06-sstv-dsp]] | FIR filter output, FFT magnitude frames, and final decoded pixel values for known inputs, captured from a real run of the legacy binary | Documented per-stage tolerance (e.g. max pixel ΔE for the final image; relative error bound for intermediate filter/FFT stages) |
 | [[08-logging]] | ADIF round-trip against real-world third-party exports | Exact field match after documented lossy-field list |
 
@@ -40,7 +39,7 @@ Capturing legacy output requires being able to run the legacy binary (Windows, C
 
 ## Test data / fixtures
 
-- CAT protocol byte fixtures: captured once from real hardware or Hamlib test vectors, checked into `tests/Yoniq.Core.Radio.Tests/Fixtures/` ([[03-cat-layer]]).
+- CAT backend client fixtures: scripted `rigctld`/flrig wire responses and a fake native-call/COM shim for linked Hamlib/OmniRig, checked into `tests/Yoniq.Core.Radio.Tests/Fixtures/` ([[03-cat-layer]]).
 - SSTV audio/image fixtures: a small fixed set of test images (color bars, a photo, a synthetic edge-case image) and their known-good encoded waveforms, checked into `tests/Yoniq.Core.Sstv.Tests/Fixtures/` ([[06-sstv-dsp]]).
 - ADIF fixtures: real-world exports from at least one third-party logger, checked into `tests/Yoniq.Core.Logbook.Tests/Fixtures/` ([[08-logging]]).
 - Legacy settings fixtures: a sample `Mmsstv.ini` for import-path testing ([[12-settings]]).
