@@ -40,6 +40,11 @@ design question — the kind CLAUDE.md's global collaboration note suggests the 
 (parallel divergent ideation) as an alternative to reasoning through it solo, rather than defaulting
 straight to a single proposed design.
 
+**Plan for resuming**: user agreed to run `/adhd` on this question (not yet run as of this writing) —
+start there rather than reasoning through it solo or jumping straight to a design. Suggested framing for
+the `/adhd` prompt: whether/how to add Hamlib support to `IRadioController`'s scope alongside (not
+necessarily instead of) the existing rigctld-client plan, given the tradeoffs listed above.
+
 ## Resume here (2026-08-04, latest) — SHOULD backlog fully closed, merged to master, pushed. DSP core stable.
 
 Both halves of the SHOULD backlog (RX cluster done directly in the main tree, TX cluster done in a
