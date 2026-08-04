@@ -2,7 +2,57 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-04, latest, ACTIVE) — Linked Hamlib backend implemented, all tests green, NOT YET COMMITTED
+## Resume here (2026-08-04, latest, ACTIVE) — Starting Phase 3 (minimal UI), nothing built yet
+
+**Decision**: after linked Hamlib landed (previous entry below — committed/pushed, `2392045`), asked
+whether to jump to the rest of Phase 4 (image tooling, logbook, `TemplateCatProtocol`) or follow the
+roadmap's own sequence. User chose **Phase 3 first** — this is the roadmap's actual next step; Hamlib
+only jumped the queue because its packaging question was blocking and it was headlessly testable, same
+as rigctld. Nothing from Phase 3 has been started yet — this entry exists so a cold session can begin
+straight into it.
+
+**What Phase 3 is** (`spec/14-roadmap.md`, "Phase 3 — Minimal UI, first end-to-end path"):
+- [[09-ui]]: `MainWindow` walking skeleton — waterfall, RX image panel, basic TX button — wired to
+  Phase 1/2 services through `Yoniq.Application`.
+- [[10-localization]]: `ILocalizationService` + `Translate` extension in place from the start
+  (retrofitting localization onto an already-built UI is far more expensive than building it in from
+  the first window — CLAUDE.md's own no-hardcoded-UI-strings rule).
+- [[07-image-pipeline]]: minimal `IReceivedImageBuffer`/basic TX image selection only (full
+  crop/resize/filter/overlay stays Phase 4).
+
+**Demo target**: a real over-the-air (or audio-cable-looped) SSTV RX/TX session, end-to-end, through the
+UI, with a rig's frequency shown live via rigctld (or now, linked Hamlib).
+
+**Starting-point state, checked directly (not assumed) so the next session doesn't have to rediscover
+it**:
+- `Yoniq.UI` already has real Avalonia MVVM scaffolding: `ViewLocator.cs`, `App.axaml.cs`,
+  `ViewModels/MainViewModel.cs`, `ViewModels/ViewModelBase.cs`, `Views/MainWindow.axaml.cs` — likely
+  from the original `dotnet new avalonia.mvvm` template. **Not yet inspected for how much is real vs.
+  default template boilerplate** — read these fresh before assuming any of it is load-bearing.
+- `Yoniq.Application` is **completely empty** — no `.cs` files at all, just a `.csproj` referencing
+  `Yoniq.Abstractions`/`Yoniq.Settings`/`Yoniq.Core.Radio`/`Yoniq.Core.Radio.Cat`/
+  `Yoniq.Core.Radio.Rigctld`/`Yoniq.Core.Audio`/`Yoniq.Core.Sstv`/`Yoniq.Core.Imaging`/
+  `Yoniq.Core.Logbook`/`Yoniq.Core.Localization`. **Does not yet reference `Yoniq.Core.Radio.Hamlib`** —
+  will need adding when the UI actually wires up a radio backend. This project is where
+  `IRadioController`/`IAudioEngine`/etc. orchestration for the UI is supposed to live per
+  `spec/01-architecture.md`'s layering — currently 100% unbuilt, this is most of Phase 3's real work.
+- `Yoniq.Host` has a real `Program.cs`, references `Yoniq.UI`/`Yoniq.Application`/`Yoniq.Settings`/
+  `Yoniq.Core.Audio.MiniAudio`, and already has per-OS `CopyNativeShim*` MSBuild targets (Linux verified,
+  Windows/macOS unverified from this sandbox) that copy MiniAudio's native shim into the output dir —
+  **Hamlib needs no equivalent target**, since it's discovered/loaded dynamically at runtime rather than
+  built/copied at compile time (the whole point of "bring-your-own-libhamlib").
+- No DI container wiring exists anywhere yet — `RigctldProtocolFactory`/`HamlibProtocolFactory` are
+  still only ever constructed directly in tests, never registered in `Yoniq.Host`. Phase 3 is likely
+  where this actually needs to happen for the first time.
+
+**Before writing code**: this is new architecture (UI/Avalonia, first real `Yoniq.Application` content),
+not a port — same discipline as Phase 2's radio layer and the Hamlib backend both got: design first,
+`auditor` plan-review pass before implementation, restate the ADHD/scope rule in every subagent prompt
+(CLAUDE.md §1/§7). Read `spec/09-ui.md`, `spec/01-architecture.md`, `spec/10-localization.md`, and
+`spec/07-image-pipeline.md`'s minimal-scope section fresh before planning — none of the four have been
+re-read this session, only referenced from the roadmap summary above.
+
+## Resume here (2026-08-04, superseded by the entry above) — Linked Hamlib backend DONE, committed and pushed (`2392045`)
 
 **"Compile Hamlib in like WSJT-X?" question answered, then built.** User asked how to bundle Hamlib
 in-process. Investigated for real rather than assuming: researched WSJT-X's actual approach (they
@@ -64,11 +114,11 @@ confirmed by running 100% green twice with `xunit.parallelizeTestCollections=fal
 infrastructure fragility exposed by adding more concurrent real-process/real-native tests, not a defect
 in the new Hamlib code.
 
-**Not committed yet** — everything above is uncommitted working-tree changes (new
-`src/Yoniq.Core.Radio.Hamlib/` project, new test files, `spec/03-cat-layer.md`, `LICENSES.md`,
-`Yoniq.Abstractions/Radio/RadioConnectionSpec.cs`, `Yoniq.sln`,
-`tests/Yoniq.Core.Radio.Tests/Yoniq.Core.Radio.Tests.csproj`). Ask the user before committing/pushing,
-per standing rule.
+**Committed and pushed** (`2392045`, "Add linked Hamlib CAT backend (bring-your-own-libhamlib)") — 31
+files. Docs also updated in the same commit beyond what's listed above:
+`spec/02-radio-layer.md`/`spec/04-rigctld.md`/`spec/14-roadmap.md` (connection-spec/factory counts, the
+`WSJT-X style` mislabel corrected, a new detailed roadmap narrative section, two stale Phase-4/"deferred"
+references fixed).
 
 **Next**: `TemplateCatProtocol` fallback backend, or the Application-layer wiring (DI registration,
 Settings UI for the library-path override, actual cross-backend demotion policy) — nothing decided yet,
