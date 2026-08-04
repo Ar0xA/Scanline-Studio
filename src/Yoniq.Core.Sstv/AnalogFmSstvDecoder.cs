@@ -920,7 +920,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             watermark = Math.Min(watermark, _narrowFskProcessedUpTo);
 
             watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
-            watermark = Math.Min(watermark, _bandpassFilteredProcessedUpTo);
+            // SHOULD item 8 (spec/14-roadmap.md): strict `<`, not `<=` -- FilteredRawSampleAt reads
+            // `_rawSamples[Rel(index-1)]` for any index > 0, so if this watermark term ever let
+            // `_bufferBase == _bandpassFilteredProcessedUpTo` exactly, the NEXT fill
+            // (FilteredRawSampleAt(_bandpassFilteredProcessedUpTo)) would read index-1 == _bufferBase-1,
+            // which Rel() throws on. `Math.Max(0, ...)`, not a bare `-1`: at
+            // _bandpassFilteredProcessedUpTo == 0 this reduces to exactly today's own value (0, not -1)
+            // -- safe, because FilteredRawSampleAt(0) doesn't read index-1 at all (its own ternary
+            // special-cases index == 0), so there's nothing to protect against there. Round-1-review
+            // note: a bare `-1` there wouldn't actually reach the `Xxx(watermark-1)` catch-up calls
+            // below either (the `Math.Max(watermark, _bufferBase)` clamp a few lines down, plus the
+            // trimAmount<MinTrimSamples early return, would already absorb it before those run) -- kept
+            // `Math.Max(0, ...)` anyway because it's locally self-evidently correct without depending on
+            // a clamp ~90 lines away, not because the alternative was provably broken. Currently
+            // unreachable either way (documented margin: preLockRetentionSamples/AnchorWarmupSamples
+            // already exceed what would ever let this term be the chain's own minimum) -- tightened
+            // anyway since the margin was previously undocumented/unenforced by this line itself.
+            watermark = Math.Min(watermark, Math.Max(0, _bandpassFilteredProcessedUpTo - 1));
 
             // Band-1 item 4a: deliberately NOT including _demodulatedFrequenciesProcessedUpTo here,
             // unlike _bandpassFilteredProcessedUpTo above. First attempt did include it (matching that
@@ -992,7 +1008,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             watermark = Math.Min(watermark, _narrowFskProcessedUpTo);
 
             watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
-            watermark = Math.Min(watermark, _bandpassFilteredProcessedUpTo);
+            // SHOULD item 8 (spec/14-roadmap.md): strict `<`, not `<=` -- FilteredRawSampleAt reads
+            // `_rawSamples[Rel(index-1)]` for any index > 0, so if this watermark term ever let
+            // `_bufferBase == _bandpassFilteredProcessedUpTo` exactly, the NEXT fill
+            // (FilteredRawSampleAt(_bandpassFilteredProcessedUpTo)) would read index-1 == _bufferBase-1,
+            // which Rel() throws on. `Math.Max(0, ...)`, not a bare `-1`: at
+            // _bandpassFilteredProcessedUpTo == 0 this reduces to exactly today's own value (0, not -1)
+            // -- safe, because FilteredRawSampleAt(0) doesn't read index-1 at all (its own ternary
+            // special-cases index == 0), so there's nothing to protect against there. Round-1-review
+            // note: a bare `-1` there wouldn't actually reach the `Xxx(watermark-1)` catch-up calls
+            // below either (the `Math.Max(watermark, _bufferBase)` clamp a few lines down, plus the
+            // trimAmount<MinTrimSamples early return, would already absorb it before those run) -- kept
+            // `Math.Max(0, ...)` anyway because it's locally self-evidently correct without depending on
+            // a clamp ~90 lines away, not because the alternative was provably broken. Currently
+            // unreachable either way (documented margin: preLockRetentionSamples/AnchorWarmupSamples
+            // already exceed what would ever let this term be the chain's own minimum) -- tightened
+            // anyway since the margin was previously undocumented/unenforced by this line itself.
+            watermark = Math.Min(watermark, Math.Max(0, _bandpassFilteredProcessedUpTo - 1));
             watermark = Math.Min(watermark, _demodulatedFrequenciesProcessedUpTo); // Band-1 item 4a, see above
             watermark = Math.Min(watermark, _consumedSamples);
             watermark -= AnchorWarmupSamples; // margin for the NEXT lock's own anchor-correction warm-up
@@ -1023,7 +1055,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         //
         // Load-bearing invariant this relies on (auditor code-level review, round 3): watermark is
         // ALWAYS <= _bandpassFilteredProcessedUpTo in both branches above (both include it directly in
-        // their own Min() chain) -- so DemodulatedFrequencyAt(watermark - 1) here can never advance
+        // their own Min() chain -- SHOULD item 8's own fix tightened this further, to strictly <
+        // whenever _bandpassFilteredProcessedUpTo >= 1, which only strengthens this invariant, doesn't
+        // weaken it) -- so DemodulatedFrequencyAt(watermark - 1) here can never advance
         // _bandpassFilteredProcessedUpTo itself; its inner BandpassFilteredSampleAt calls are pure
         // cache reads, not new fills. That is what stops this catch-up from reintroducing item 4a's own
         // bug (the bandpass cache racing ahead of the lock anchor) from inside TrimBuffers. If a future
