@@ -20,6 +20,40 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
+## Resume here (2026-08-04, latest) — Phase 3 (chain/integration audit) DONE: 1 confirmed MUST bug found, not yet fixed
+
+Ran Phase 3 of the milestone audit (docs/audit-playbook.md) via 2 parallel `auditor` calls (RX chain
+seams, TX chain seams — isolated context each, since TX/RX share no runtime state). Full detail in
+spec/14-roadmap.md's "Phase 3 — chain/integration audit" section.
+
+**RX verdict: NOT EQUIVALENT.** Confirmed (independently re-verified against both this port's code AND
+legacy source directly, not just trusted from the auditor) — **MUST 4**: `AnalogFmSstvDecoder.cs:1094/1125`
+rounds the per-line sample cursor (`(int)Math.Round(_effectiveSamplesPerLine)`) every line; legacy
+(`Main.cpp:4133-4148`) uses one continuous integer counter for the whole transmission and derives each
+line boundary via unrounded `double` division. Same bug SHAPE as MUST fix 3 (trimmed-vs-full mismatch),
+promoted one level up: MUST fix 3 was within-a-line/segment, this is between-lines. Cumulative horizontal
+shear, worst on Robot 72/RM8/Robot 36 (their line pitch lands far from an integer at 11025Hz) — up to
+~120 samples/~25-50px drift by the last line, predicted not yet measured. Structurally invisible to Auto
+Slant (it tracks its own separate exact fractional grid, never sees this cursor's rounding error). NOT
+fixed yet — reported for prioritization first, per the user's own standing preference.
+
+Also 2 risks (no stated scheduler contract for `LineDecoded`/`DecodeRestarted`/`ModeDetected`;
+`LineDecoded` hands out a live mutable pixel-buffer alias — both real landmines for the eventual UI
+wiring, neither reachable today) and 2 nits (≤1px AFC-boundary edge case; `_afcBoundSample` uses nominal
+not effective rate, already-tracked NICE-TO-HAVE 24 confirmed larger than originally estimated).
+
+**TX verdict: EQUIVALENT-WITH-RISKS.** No MUST-4-shaped bug — confirmed structurally impossible: legacy's
+TX accumulator (`sstv.cpp:2842-2846`) and this port's (`AnalogFmSstvEncoder.cs:36-46`) are both a single
+accumulator spanning the whole transmission, reset once, never re-derived from a trimmed walk. One NEW
+SHOULD finding: `EncodeAsync` never validates image dimensions against the mode before encoding — a
+too-small image throws `IndexOutOfRangeException` mid-stream, a too-large one silently crops. Not
+reachable today (every current caller passes correctly-sized images), but a real landmine once real image
+input lands. 3 already-tracked nits re-confirmed at the seam, nothing new there.
+
+**Nothing fixed this pass — findings documented, not yet actioned.** 512/512 tests still pass (none of
+these are caught by any existing test). Next: decide fix order with the user (MUST 4 is the only
+confirmed live bug; the 3 new SHOULD items are landmines for later phases, not urgent).
+
 ## Resume here (2026-08-04, latest) — TX-side golden-vector tests wired in, ALL 11 modes, prerequisite for Phase 3 satisfied
 
 All 11 `<mode-id>_TX_RX.bmp` files came back from the user's real legacy install running under Wine
