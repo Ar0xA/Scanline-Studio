@@ -100,15 +100,18 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         // SHOULD item 5 (spec/14-roadmap.md): OutHEAD's pre-VIS leader-tone burst is emitted
         // UNCONDITIONALLY first, for every mode including AVT -- confirmed directly against source
         // (Main.cpp:7392-7393, OutHEAD() called before the narrow-vs-normal branch that follows;
-        // AVT's own 3x-VIS-repeat lives INSIDE that later branch, at Main.cpp:7429, so it gets the
+        // AVT's own 3x-VIS-repeat lives INSIDE that later branch, at Main.cpp:7430 (comprehensive-
+        // review correction: an earlier version of this comment cited 7429, which is `int d;`, the
+        // declaration one line above the real `int e = (m_TxMode==smAVT)?3:1;`), so it gets the
         // same OutHEAD burst as every other non-narrow mode, not a special AVT-only header). See
-        // VisHeader.GenerateOutHeadSegments's own doc comment for the exact tone sequences.
+        // VisHeader.cs's own OutHeadToneDurationMs/GenerateOutHeadSegments for the exact tone
+        // sequences.
         foreach (var segment in VisHeader.GenerateOutHeadSegments(mode.NarrowModeCode is not null))
         {
             yield return segment;
         }
 
-        // Mirrors legacy's own branching (Main.cpp:7429-7578) exactly: AVT gets a wholly different
+        // Mirrors legacy's own branching (Main.cpp:7430-7578) exactly: AVT gets a wholly different
         // header (3x VIS + training sequence, no post-VIS pulse); Scottie gets a normal single VIS
         // plus an extra 9ms/1200Hz pulse; RM12's VIS byte needs a forced (non-computed) parity bit
         // because legacy's own assigned byte for it doesn't follow the even-parity convention every

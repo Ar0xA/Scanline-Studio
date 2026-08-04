@@ -4,7 +4,9 @@ namespace Yoniq.Core.Sstv;
 /// YCbCr<->RGB conversion for the Robot family. <see cref="ToRgb"/> is a direct port of legacy
 /// <c>YCtoRGB</c> (`ComLib.cpp:3475-3480`), used by the RX decode path. <see cref="FromRgb"/> uses
 /// the actual weight coefficients from legacy's TX-side forward conversion, <c>GetRY</c>
-/// (`ComLib.cpp:3653-3665`, the active `#else` branch, not the `#if 0`'d alternate set).
+/// (`ComLib.cpp:3653-3666`, the active `#else` branch, not the `#if 0`'d alternate set --
+/// comprehensive-review correction: an earlier version of this range stopped at :3665, one line short
+/// of the B-Y assignment at :3666).
 ///
 /// <b>Offset asymmetry — resolved, not a gap</b>: legacy's <c>GetRY</c> centers R-Y/B-Y at 128
 /// (`ComLib.cpp:3664-3665`: <c>RY = 128.0 + (...)</c>), but <c>YCtoRGB</c> uses <c>RY</c>/<c>BY</c>
@@ -48,7 +50,7 @@ internal static class YCbCr
     }
 
     /// <summary>
-    /// SHOULD item 4 (spec/14-roadmap.md): legacy's <c>GetRY</c> (`ComLib.cpp:3653-3668`) writes
+    /// SHOULD item 4 (spec/14-roadmap.md): legacy's <c>GetRY</c> (`ComLib.cpp:3653-3669`) writes
     /// into <c>int&amp;</c> out-parameters -- assigning the double RHS truncates toward zero (this
     /// is legacy's FIRST of two truncations in the TX color-to-frequency chain; the second is in
     /// <see cref="ColorToFreq"/>). <c>LimitRGB(Y, RY, BY)</c> (`ComLib.cpp:3468-3473`, calling
@@ -70,7 +72,15 @@ internal static class YCbCr
         // zero), i.e. exactly on the Math.Floor truncation boundary -- which of the two association
         // orders is used decides whether ~1e-14 rounding noise lands each gray level on 128 or 127.
         // Real (not hypothetical): reachable on every neutral-gray pixel, not just the R=G=B=128 case
-        // FromRgb_NeutralGray_ProducesChromaCenteredAt128 already pins.
+        // FromRgb_NeutralGray_ProducesChromaCenteredAt128 already pins. Comprehensive-review caveat:
+        // that test's own R=G=B=128 case is the one gray level provably bit-exact regardless of FPU
+        // behavior (every product is an exact power-of-2 scaling of 128, every subtraction is
+        // Sterbenz-exact), which is why it's the one pinned -- for OTHER gray levels, bit-exactness
+        // against the real legacy BINARY additionally depends on C++Builder's own FPU precision-control
+        // word (classic BCB defaults to 80-bit x87 extended, not .NET's 53-bit double), which can't be
+        // confirmed from source alone. Impact if they diverge is cosmetic and bounded to +-1 chroma
+        // level on non-128 gray pixels specifically -- not chased further here, no legacy binary
+        // available to test against.
         var y = 16 + (0.256773 * r + 0.504097 * g + 0.097900 * b);
         var rMinusY = 128 + (0.439187 * r - 0.367766 * g - 0.071421 * b); // GetRY's real weights + offset
         var bMinusY = 128 + (-0.148213 * r - 0.290974 * g + 0.439187 * b);
