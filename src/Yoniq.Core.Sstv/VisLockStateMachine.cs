@@ -33,7 +33,8 @@ namespace Yoniq.Core.Sstv;
 /// that found it (a temporary diagnostic hook proved this class already decodes AVT's real VIS byte
 /// correctly from real captured audio, three times per capture, and had simply been discarding every
 /// one). <see cref="AnalogFmSstvDecoder.TryVisLockStateMachine"/> (the mid-reception re-verification
-/// caller) deliberately still discards an AVT match found there — see that method's own doc comment.
+/// caller) initially still discarded an AVT match found there (S31); S7 (spec/14-roadmap.md) closed
+/// that gap too — see that method's own doc comment for the hand-off mechanism.
 ///
 /// **S31 fix widens this class's own already-documented false-positive risk (see the piece-6c
 /// paragraph below) in one new way**: pre-lock, a false-positive AVT byte is no longer silently

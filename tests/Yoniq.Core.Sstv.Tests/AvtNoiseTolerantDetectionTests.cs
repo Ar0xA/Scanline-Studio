@@ -18,10 +18,13 @@ namespace Yoniq.Core.Sstv.Tests;
 /// These tests prove the fix's three separate claims: (1) AVT is now actually reachable via
 /// <see cref="VisLockStateMachine"/>'s noise-tolerant scanning, end-to-end through a full decode;
 /// (2) the sample handed to <c>TryStartAvtTraining</c> from that path is the SAME boundary the
-/// fixed-window path would have computed, not a coincidentally-close approximation; (3) the
-/// deliberate scope decision to still discard an AVT match found via
+/// fixed-window path would have computed, not a coincidentally-close approximation; (3) [S7,
+/// spec/14-roadmap.md, supersedes the original S31-era claim here] an AVT match found via
 /// <c>AnalogFmSstvDecoder.TryVisLockStateMachine</c> (mid-reception re-verification, while some other
-/// mode is already locked) actually holds -- no bad restart, no crash.
+/// mode is already locked) now correctly abandons the in-progress image and restarts into AVT
+/// training -- S31 originally left this discarding such a match (no in-progress-image teardown
+/// mechanism existed yet); S7 closed that gap by extracting <c>Commit()</c>'s own teardown into a
+/// shared <c>AbandonInProgressImage()</c> helper.
 ///
 /// A fourth test, <see cref="ChunkedStreamingPush_DuringLongAvtTrainingWindow_DoesNotCrashTrimBuffers"/>,
 /// covers a real, previously undiscovered defect an auditor plan-review round caught before any code
@@ -132,8 +135,13 @@ public class AvtNoiseTolerantDetectionTests
     }
 
     [Fact]
-    public async Task MidReception_RealAvtTransmissionAfterAnotherMode_DoesNotCauseBadRestart()
+    public async Task MidReception_RealAvtTransmissionAfterAnotherMode_RestartsAndDecodesCorrectly()
     {
+        // S7 fix (spec/14-roadmap.md): this test used to pin the OLD (S31-era) deliberate discard
+        // behavior -- an AVT match found via mid-reception re-verification (TryVisLockStateMachine)
+        // was thrown away. S7 closed that gap (AbandonInProgressImage() + TryStartAvtTraining(),
+        // mirroring how a normal VIS-lock mid-reception match already restarts via Commit()), so this
+        // test now asserts the OPPOSITE: the trailing real AVT transmission DOES restart and decode.
         var firstMode = SstvModeRegistry.MartinM1;
         var firstImage = CreateGradientTestImage(firstMode.ImageWidth, firstMode.ImageHeight);
 
@@ -165,22 +173,100 @@ public class AvtNoiseTolerantDetectionTests
 
         var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
         var detectedModes = new List<SstvModeDefinition>();
-        var restartCount = 0;
-        decoder.ModeDetected += m => detectedModes.Add(m);
-        decoder.DecodeRestarted += _ => restartCount++;
+        var decodedImages = new List<IImageSource>();
+        var restartedModes = new List<SstvModeDefinition>();
+        decoder.ModeDetected += m =>
+        {
+            detectedModes.Add(m);
+            decodedImages.Add(null!);
+        };
+        decoder.DecodeRestarted += m => restartedModes.Add(m);
+        decoder.LineDecoded += update => decodedImages[^1] = update.Image;
 
-        // Must not throw -- a bad AVT restart here would Commit() with result.Value.LineStartSample
-        // meaning "end of AVT's own first VIS block," not a line-0 anchor, and decode image pixels
-        // for the wrong mode's line geometry starting mid-header.
         decoder.PushSamples(combined);
 
-        // The deliberate scope decision (see AnalogFmSstvDecoder.TryVisLockStateMachine's own doc
-        // comment): an AVT match found via mid-reception re-verification is discarded, not acted on.
-        // Only the first (Martin M1) lock ever fires; the trailing real AVT transmission is never
-        // picked up by this call site, and does not corrupt or restart the in-progress decode.
-        Assert.Single(detectedModes);
+        // Auditor code-level review's own requested pin: DecodeRestarted must fire with the OLD
+        // (abandoned) mode -- TryProcessBuffer's own pre-captured local, not a stale _mode read --
+        // and ModeDetected must fire with Avt, in that order.
+        Assert.Equal(2, detectedModes.Count);
         Assert.Equal(firstMode.Id, detectedModes[0].Id);
-        Assert.Equal(0, restartCount);
+        Assert.Equal(avtMode.Id, detectedModes[1].Id);
+        Assert.Single(restartedModes);
+        Assert.Equal(firstMode.Id, restartedModes[0].Id);
+
+        var delta = ComputeAveragePerChannelDelta(avtImage, decodedImages[1]);
+        Assert.True(delta <= 20.0, $"Second (real, mid-reception AVT) transmission average per-channel delta {delta:F2} exceeded tolerance.");
+    }
+
+    [Fact]
+    public async Task MidReception_RealAvtTransmissionAfterAnotherMode_ChunkedPush_StaysBounded()
+    {
+        // S7 fix: auditor code-level review's own requested coverage -- a chunked push (spanning
+        // multiple PushSamples calls across the up-to-~7.1s AVT training pending window) is the only
+        // shape that actually exercises TrimBuffers' _avtPllWarmupStartSample protection and the
+        // accepted pending-window retention tradeoff (see TryVisLockStateMachine's own new AVT branch
+        // doc comment) -- a single bulk push proves the restart mechanism works, but not that it
+        // survives real streaming.
+        var firstMode = SstvModeRegistry.MartinM1;
+        var firstImage = CreateGradientTestImage(firstMode.ImageWidth, firstMode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var firstSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(firstMode, firstImage))
+        {
+            firstSamples.Add(sample);
+        }
+
+        var truncatedFirstSamples = firstSamples.Take(firstSamples.Count * 3 / 10).ToArray();
+
+        var avtMode = SstvModeRegistry.Avt;
+        var avtPixels = new Rgb24[avtMode.ImageWidth * avtMode.ImageHeight];
+        Array.Fill(avtPixels, new Rgb24(10, 20, 30));
+        var avtImage = new ArrayImageSource(avtMode.ImageWidth, avtMode.ImageHeight, avtPixels);
+        var avtSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(avtMode, avtImage))
+        {
+            avtSamples.Add(sample);
+        }
+
+        var combined = truncatedFirstSamples.Concat(avtSamples).ToArray();
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        var detectedModes = new List<SstvModeDefinition>();
+        decoder.ModeDetected += m => detectedModes.Add(m);
+
+        var maxBufferedSamples = 0;
+        const int chunkSize = 500;
+        for (var offset = 0; offset < combined.Length; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, combined.Length - offset);
+            decoder.PushSamples(combined.AsMemory(offset, length));
+            maxBufferedSamples = Math.Max(maxBufferedSamples, decoder.BufferedSampleCount);
+        }
+
+        Assert.Equal(2, detectedModes.Count);
+        Assert.Equal(firstMode.Id, detectedModes[0].Id);
+        Assert.Equal(avtMode.Id, detectedModes[1].Id);
+
+        // Measured, not assumed: the accepted pending-window retention tradeoff (see
+        // TryVisLockStateMachine's own new AVT branch doc comment) is real and larger than a single
+        // image's own duration -- the abandoned first image's audio is retained for the WHOLE
+        // up-to-~7.1s pending window, on top of AVT's own long (~8s) header, so a generous peak bound
+        // alone doesn't distinguish "bounded but retention-heavy" from "unbounded." The meaningful
+        // check is that the buffer eventually SETTLES well below its own peak once AVT locks and
+        // normal locked-branch trimming resumes -- proving this is bounded retention, not permanent
+        // growth, without needing to predict the exact peak value.
+        var totalSeconds = combined.Length / (double)encoder.SampleRate;
+        var maxBufferedSeconds = maxBufferedSamples / (double)encoder.SampleRate;
+        var finalBufferedSeconds = decoder.BufferedSampleCount / (double)encoder.SampleRate;
+        Assert.True(
+            maxBufferedSeconds < totalSeconds,
+            $"Expected peak buffered sample count to stay below the full {totalSeconds:F1}s pushed (some trimming must occur), " +
+            $"but peaked at {maxBufferedSamples} samples ({maxBufferedSeconds:F1}s).");
+        Assert.True(
+            finalBufferedSeconds < maxBufferedSeconds * 0.5,
+            $"Expected buffered sample count to settle well below its own peak ({maxBufferedSeconds:F1}s) once AVT locks and normal " +
+            $"trimming resumes, but ended at {decoder.BufferedSampleCount} samples ({finalBufferedSeconds:F1}s) -- looks like unbounded retention, not a bounded pending-window cost.");
     }
 
     [Fact]
