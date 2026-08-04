@@ -2,6 +2,44 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
+## Resume here (2026-08-04, latest, ACTIVE) — Open question: should Yoniq bundle Hamlib directly, not just talk to rigctld?
+
+**This is the live task — work this before writing any Phase 2 code.** Phase 1 (DSP core) is closed
+out (see the entry below this one); Phase 2 (radio layer) hasn't started yet.
+
+**The question, in the user's own words**: "instead of ONLY supporting rigctld i also want to build
+hamlib into the application, kind of like wsjtx does." WSJT-X links Hamlib's own C library directly
+into its binary for broad rig support, rather than requiring a separately-running `rigctld` daemon.
+
+**Why this isn't a small tweak — it re-litigates an existing spec decision**: `spec/04-rigctld.md`'s
+own "Non-goals" section already explicitly considered and rejected this: "YONIQ does not vendor or
+bundle Hamlib itself... Bundling Hamlib's rig backends directly is out of scope; that duplication is
+exactly what client mode avoids." The current plan (`spec/02-radio-layer.md`) is: hand-written native
+`IRadioProtocol` implementations per rig (`Yoniq.Core.Radio`/[[03-cat-layer]]) PLUS an `rigctld` TCP
+client (`Yoniq.Core.Radio.Rigctld`, [[04-rigctld]]) as an alternate `IRadioProtocol` — no native Hamlib
+dependency anywhere.
+
+**Relevant standing constraint** (`CLAUDE.md` §4, concurrency/scheduler rule's sibling): "No Win32/COM
+outside an explicit optional module: no `System.Drawing`, P/Invoke, or COM interop in
+`Yoniq.Core.*`/`Yoniq.UI`. A Windows-only integration gets its own optional project, never a hard
+dependency of cross-platform code." Hamlib itself is cross-platform (Linux/macOS/Windows all supported
+upstream), so this exact rule doesn't forbid it outright, but its spirit (native/platform-specific
+interop stays isolated, never baked into core cross-platform assemblies) is directly relevant to how
+any Hamlib option would need to be scoped/packaged if pursued.
+
+**Real tradeoffs neither side of this conversation has weighed yet** (not a decision, just the shape of
+the question): native binary bundling/distribution complexity across 3 OSes and Hamlib's own frequent
+backend-library ABI churn, vs. code duplication/maintenance cost of hand-written `IRadioProtocol`s per
+rig; licensing compatibility (Hamlib is LGPL, same family as this project); whether "bundle Hamlib" and
+"keep rigctld client mode" are mutually exclusive or complementary (WSJT-X itself supports rigctld-style
+network control too, not just linked-in Hamlib); what `IRadioController`'s own interface shape would
+need to look like to support both without one leaking into the other.
+
+**Not started**: no code, no updated spec, no decision. This is a genuinely open architecture/interface-
+design question — the kind CLAUDE.md's global collaboration note suggests the `/adhd` skill for
+(parallel divergent ideation) as an alternative to reasoning through it solo, rather than defaulting
+straight to a single proposed design.
+
 ## Resume here (2026-08-04, latest) — SHOULD backlog fully closed, merged to master, pushed. DSP core stable.
 
 Both halves of the SHOULD backlog (RX cluster done directly in the main tree, TX cluster done in a
