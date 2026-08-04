@@ -19,11 +19,10 @@ hand-writing protocols anyway. It wasn't — the real alternative was never writ
 
 ## Backends, in priority order
 
-1. **Hamlib, linked in-process** (`Yoniq.Radio.Hamlib`, P/Invoke against `libhamlib`) — WSJT-X-style:
-   broadest rig coverage of any option, no separate daemon for the user to run. Isolated in its own
-   optional project per CLAUDE.md §4's Win32/COM/P-Invoke rule — never a dependency of
-   `Yoniq.Core.*`/`Yoniq.UI`. Packaging (per-OS native binary bundling, Hamlib's own backend-ABI churn
-   across versions) is an open implementation question, not yet designed.
+1. **Hamlib, linked in-process** (`Yoniq.Core.Radio.Hamlib`, P/Invoke against `libhamlib`) — broadest rig
+   coverage of any option, no separate daemon for the user to run. Isolated in its own optional project
+   per CLAUDE.md §4's Win32/COM/P-Invoke rule — never a dependency of `Yoniq.Core.*`/`Yoniq.UI`. Packaging
+   decision below ("Linked Hamlib: bring-your-own-libhamlib").
 2. **`rigctld` client** ([[04-rigctld]]) — talks to an already-running Hamlib daemon (local or
    networked) instead of linking Hamlib directly. Complementary to (1), not redundant: lets multiple
    applications share one rig through a single `rigctld` instance (the arbitration case native/linked
@@ -52,6 +51,113 @@ Each backend implements `IRadioProtocol` from [[02-radio-layer]] — from the re
 view a linked-Hamlib session, a `rigctld` connection, an flrig connection, and an OmniRig connection are
 four equally-valid, interchangeable `IRadioProtocol` instances, same pattern [[04-rigctld]] already
 established for `RigctldClientProtocol`.
+
+## Linked Hamlib: bring-your-own-libhamlib
+
+**Decision**: Yoniq never builds, forks, vendors, or ships any Hamlib source or binary. At runtime,
+`Yoniq.Core.Radio.Hamlib` P/Invokes against whatever Hamlib the user's own OS/package manager already
+has installed. This was chosen over WSJT-X's actual approach (a private Hamlib fork, statically linked
+via a "superbuild" CMake step — researched directly, not assumed) on cost/maintenance grounds specific to
+this project: WSJT-X pays that tax to carry patches upstream hasn't merged; Yoniq carries none, and a
+native compile step across a 3-OS CI matrix on a constrained Actions-minutes budget isn't worth it to
+replace a dependency `apt`/Homebrew/an existing Windows installer already satisfies. An
+Opus `auditor` review (2026-08-04) confirmed Hamlib's public API is reachable without declaring a single
+native struct in C# (`rig_get_caps_int`/`rig_get_caps_cptr`, string-token config via
+`rig_set_conf`/`rig_token_lookup`), so no C shim project is needed either — unlike
+[[05-audio-engine]]'s MiniAudio integration, which does need one because `ma_device`'s layout isn't
+struct-free.
+
+### Discovery order
+
+Three tiers, each falling through to the next; the whole probe (see "Version gate" below) runs once at
+startup and its result is cached for the process lifetime, not re-run per connect attempt:
+
+1. **User-provided override** — a path the user supplies in Settings ([[12-settings]]). When set, this is
+   tried *exclusively* — it bypasses tiers 2/3 entirely rather than being a last-resort fallback, since a
+   user who explicitly configured a path wants exactly that library used, not silently substituted with
+   whatever auto-detection happens to find first. This is the cheap hook that keeps a later "swap in your
+   own compiled libhamlib" story alive without any packaging work now.
+2. **Bare soname load** — only attempted when no override is configured. `NativeLibrary.TryLoad` against
+   the platform's default candidate name, letting the OS's own dynamic linker search its normal paths:
+   `libhamlib.so.4` (Linux, via the ldconfig cache), `libhamlib.4.dylib` (macOS), `hamlib-4.dll` then
+   `libhamlib-4.dll` (Windows, via PATH/next-to-exe). Covers anyone who installed Hamlib through their
+   platform's normal channel.
+3. **Known extra install directories** — a short, hand-maintained per-OS fallback list (e.g.
+   `/opt/homebrew/lib` on Apple Silicon, which Homebrew doesn't always put on the default linker path).
+   No CI cost, just a wider search before giving up.
+
+If no tier succeeds, or the version gate below rejects what was found: **auto-resolution demotes quietly**
+to the already-working `rigctld` client backend with a diagnostic log line (which candidate paths were
+tried, and why each failed/was rejected) surfaced in a Settings → Diagnostics view once one exists.
+**Explicit user selection of Hamlib fails loudly instead** — a user who specifically picked "linked
+Hamlib" in Settings should see why it didn't work, not silently end up on a different backend.
+
+### Version gate
+
+After a candidate library loads, probe it by calling `rig_version()` (**not** `hamlib_version2` — that
+name is a `const char *` *data export*, not a function; P/Invoking it as a function delegate jumps into
+`.data` and crashes, exactly the failure this probe exists to avoid — `rig_version()` is a real exported
+function returning the identical string) and parsing the major version out of its
+`"Hamlib <major>.<minor>.<patch> <date> <arch>"` format (split on whitespace, take token `[1]`). Only
+major version **4** is accepted; anything else (including a 5.x build, since the local reference clone at
+`hamlib/` is itself 5.0-dev with a confirmed deliberate ABI break — `rig_get_conf()` is removed there) is
+treated as "unavailable," not crash-and-see. A null/empty result or a missing `rig_version` symbol is
+caught the same way (unavailable, not fatal). This does **not** protect against a library built with Hamlib's
+optional `BUILTINFUNC` flag, which silently changes the arity of `rig_set_freq`/`rig_get_freq`/
+`rig_set_vfo` (an extra trailing `const char*`) at the *same* soname with no detectable version signal —
+documented as a known, accepted gap (an exotic non-default Hamlib build), not something the version gate
+can catch.
+
+### Frozen P/Invoke surface
+
+Pinned against **released Hamlib 4.x headers**, not the local 5.0-dev reference clone. Bound at the
+non-`BUILTINFUNC` (default-build) arity per the risk above.
+
+| Function | Signature (C) | Notes |
+|---|---|---|
+| `rig_init` | `RIG *rig_init(rig_model_t)` | `rig_model_t` = `uint32` |
+| `rig_open` / `rig_close` / `rig_cleanup` | `int f(RIG *)` | |
+| `rig_token_lookup` | `hamlib_token_t f(RIG *, const char *)` | resolves e.g. `"rig_pathname"` |
+| `rig_set_conf` | `int f(RIG *, hamlib_token_t, const char *)` | serial port path, baud, etc. |
+| `rig_set_freq` / `rig_get_freq` | `int f(RIG *, vfo_t, freq_t [, freq_t *])` | `freq_t` = `double`. These three (plus `rig_set_vfo`) are the only functions with a `BUILTINFUNC` arity variant — bind the default (non-`BUILTINFUNC`) arity above. |
+| `rig_set_mode` / `rig_get_mode` | `int f(RIG *, vfo_t, rmode_t, pbwidth_t)` / `int f(RIG *, vfo_t, rmode_t *, pbwidth_t *)` | `rmode_t` = `ulong` (bit-flag type, but `rig_get_mode` always returns exactly one flag — compare by exact value, never decompose bits). No `BUILTINFUNC` variant exists for these. |
+| `rig_set_ptt` / `rig_get_ptt` | `int f(RIG *, vfo_t, ptt_t)` / `int f(RIG *, vfo_t, ptt_t *)` | `ptt_t` = `int` (C enum); `vfo_t` = `uint`. No `BUILTINFUNC` variant. |
+| `rig_version` | `const char *f(void)` | version-gate probe — **not** `hamlib_version2`, which is a data export, not a function (see "Version gate" above). Return marshaled as `nint`, read via `Marshal.PtrToStringUTF8`, never declared as a `string` return (the marshaler would try to free Hamlib's static string). |
+
+Every declaration uses `CallingConvention.Cdecl`. **`pbwidth_t` and `hamlib_token_t` are marshaled as
+`System.Runtime.InteropServices.CLong`, never a C# `long`** — both are C `signed long`/`long`, which is
+64-bit on Linux/macOS (LP64) but 32-bit on Windows (LLP64); a bare `long` marshal is silently wrong on
+Windows only, exactly the "works everywhere except the one platform nobody tested" failure shape a
+hobby project with no Windows dev box is worst-positioned to catch.
+
+### `IHamlibNative` seam
+
+`Yoniq.Core.Radio.Hamlib` never calls `DllImport`-style static P/Invoke directly from
+`HamlibRadioProtocol`. An internal `IHamlibNative` interface wraps the frozen surface above;
+`HamlibNative` is the real implementation (resolves the library per "Discovery order," caches delegates
+via `NativeLibrary.GetExport`); a `FakeHamlibNative` — the "fake native-call shim" [[03-cat-layer]]'s
+Testing section already promises — backs unit tests without a real Hamlib install. This is the seam that
+makes `HamlibRadioProtocol` testable at all; a static `DllImport` surface is not injectable, so this
+decision has to precede writing `HamlibRadioProtocol` itself, not follow it.
+
+### Threading contract
+
+Hamlib's C API is not thread-safe per `RIG *` handle, and `rig_*` calls block on serial I/O for up to
+hundreds of milliseconds. `RadioController`'s poll loop (`PollAsync`, on its own background task) and a
+caller's `Set*Async` calls (on whatever thread invokes `IRadioController`) can both reach the same
+`HamlibRadioProtocol` instance concurrently — so `HamlibRadioProtocol` must serialize every native call
+against one `RIG *` handle itself (e.g. a private single-concurrency work queue or
+`SemaphoreSlim(1)` guarding each `IHamlibNative` call), matching CLAUDE.md §4's concurrency-contract rule.
+This is *not* inherited from `RadioController`/`RigctldClientProtocol` — it has no equivalent shared
+mutable native handle, so this contract is new to this backend and must be stated explicitly, not assumed
+transferable.
+
+### License provenance
+
+Hamlib's library is LGPL-2.1-or-later — compatible with, but distinct from, Yoniq's own
+LGPL-3.0-or-later. No Hamlib source, binary, or header-derived data table (e.g. `riglist.h` rig-model
+numbers — Yoniq has no `IRigRegistry`, so none is copied, per [[02-radio-layer]]'s "Rig identification")
+is bundled; `LICENSES.md` gets a runtime-dependency disclosure row, not a bundled-asset row.
 
 ## Transport implications
 
@@ -82,9 +188,17 @@ command set is the external backend's own responsibility, not this port's.
 ## Definition of done
 
 - [x] `rigctld` client ([[04-rigctld]]) — `RigctldClientProtocol` implemented, fixture-tested (24 tests)
-      plus real-interop-tested against Hamlib's own Dummy rig backend (4 tests). Linked Hamlib not
-      started — [ ] remains open for it.
+      plus real-interop-tested against Hamlib's own Dummy rig backend (4 tests).
+- [x] Hamlib packaging story designed — "bring-your-own-libhamlib" (above), decided 2026-08-04 after an
+      Opus `auditor` review of 4 candidate approaches plus researched WSJT-X precedent.
+- [x] Linked Hamlib implemented (`Yoniq.Core.Radio.Hamlib`) — `HamlibRadioProtocol`/`IHamlibNative`/
+      `HamlibNative`/`HamlibLibraryLocator`/`HamlibVersionGate`/`HamlibRuntime`/`HamlibProtocolFactory`,
+      2 rounds of `auditor` plan-review before any code (4 blockers found and resolved on paper each
+      round — see the implementation plan, `/home/artien/.claude/plans/temporal-launching-valiant.md`),
+      36 fixture/fake-driven unit tests plus 4 real-interop tests against a real system-installed
+      `libhamlib` (this dev machine has 4.5.5) driving Hamlib's own hardware-free Dummy rig backend —
+      the whole discovery→version-gate→P/Invoke pipeline verified against genuine native code, not just
+      fakes. `TemplateCatProtocol` fallback and Application-layer cross-backend demotion still open
+      (see "Explicitly out of scope" in the implementation plan).
 - [ ] `TemplateCatProtocol` implemented for the fallback case.
-- [ ] Hamlib native-binary packaging story (per-OS bundling, versioning) documented before the linked
-      backend ships.
 - [ ] flrig and OmniRig client backends: design deferred, tracked in [[14-roadmap]].

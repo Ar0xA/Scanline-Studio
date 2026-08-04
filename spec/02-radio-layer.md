@@ -82,7 +82,7 @@ public interface IRadioController
 }
 ```
 
-`RadioConnectionSpec` is a discriminated union via an open abstract record base — only `NoneConnectionSpec` and `RigctldConnectionSpec` exist today; future backends (linked Hamlib, flrig, OmniRig-as-client — [[03-cat-layer]]) each add their own sealed subtype without requiring existing code to change, since `IRadioController` never switches on the concrete subtype itself (only each registered `IRadioProtocolFactory`'s own `CanHandle` does — see its doc comment). `IRadioController` is the single facade the `Yoniq.Application` layer talks to regardless of which subtype is active. Selecting "no radio" is a first-class, fully supported spec — SSTV and logging must work with zero radios connected (see [[01-architecture]] error handling).
+`RadioConnectionSpec` is a discriminated union via an open abstract record base — `NoneConnectionSpec`, `RigctldConnectionSpec`, and `HamlibConnectionSpec` exist today; remaining future backends (flrig, OmniRig-as-client — [[03-cat-layer]]) each add their own sealed subtype without requiring existing code to change, since `IRadioController` never switches on the concrete subtype itself (only each registered `IRadioProtocolFactory`'s own `CanHandle` does — see its doc comment). `IRadioController` is the single facade the `Yoniq.Application` layer talks to regardless of which subtype is active. Selecting "no radio" is a first-class, fully supported spec — SSTV and logging must work with zero radios connected (see [[01-architecture]] error handling).
 
 ## PTT usage
 
@@ -108,4 +108,5 @@ OmniRig (`OmniRig_OCX.cpp`, Windows-only ActiveX) is **not** ported as-is — bu
 - [x] `IRadioController` reference implementation with connect/disconnect/backoff, unit-tested against a fake `IRadioProtocol` (protocols own their own transport, so the controller itself never touches `IRadioTransport` directly — see the "Core abstractions" code above). `RadioController` (`Yoniq.Core.Radio`), 12 orchestration tests in `RadioControllerTests`.
 - [x] `IRadioProtocolFactory`-based backend resolution (exactly-one-match, typed error on zero/ambiguous
       match — see "Rig identification" above) unit-tested; no static rig registry exists to load.
-      `NoneRadioProtocolFactory`/`RigctldProtocolFactory` are the two concrete implementations so far.
+      `NoneRadioProtocolFactory`/`RigctldProtocolFactory`/`HamlibProtocolFactory` are the three concrete
+      implementations so far.

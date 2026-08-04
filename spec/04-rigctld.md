@@ -110,7 +110,10 @@ but is never load-bearing for `RadioCapabilities` or connection success.
 
 This document previously rejected bundling Hamlib directly, on the assumption that the alternative was
 hand-writing per-rig protocols — reversed, see [[03-cat-layer]]. Yoniq now also supports Hamlib linked
-in-process (P/Invoke, WSJT-X style) as a separate backend. The two are complementary, not redundant:
+in-process (P/Invoke against a system-installed `libhamlib` — "bring-your-own-libhamlib," **not**
+WSJT-X's actual approach of statically linking a private Hamlib fork, see [[03-cat-layer]]'s "Linked
+Hamlib" section for why that shape was rejected for this project) as a separate backend, **done** (see
+[[14-roadmap]]). The two are complementary, not redundant:
 `rigctld` client mode lets multiple applications share one rig through a single daemon (an arbitration
 case linked-in-process CAT structurally cannot do — two processes can't open the same serial port), and
 works without a platform-specific linked-Hamlib build; linked Hamlib avoids requiring the user to run a

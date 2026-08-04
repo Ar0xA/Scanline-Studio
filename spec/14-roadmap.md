@@ -3926,11 +3926,87 @@ asserted `LastKnownState` *after* `DisconnectAsync`, which deliberately clears i
 bug, not an implementation bug, fixed by asserting before disconnecting.
 
 **Deferred, not forgotten**: `\chk_vfo`/VFO support (not needed by `RadioState`'s current domain model).
-Server mode, linked Hamlib, flrig/OmniRig-as-client, `TemplateCatProtocol`, and all
-`Yoniq.Application`/UI/settings-persistence wiring are Phase 3/4 per the plan below, unaffected.
+Server mode, flrig/OmniRig-as-client, `TemplateCatProtocol`, and all `Yoniq.Application`/UI/settings-
+persistence wiring are Phase 3/4 per the plan below, unaffected. (Linked Hamlib itself was originally
+slated for Phase 4 too — done early instead, see the section immediately below.)
 
 **Demo** (not yet built — Phase 3's job, wiring this into `Yoniq.Application`/UI): `IRadioController`
 connects to a real `rigctld` instance and reports live frequency/mode changes in a log/console.
+
+## Linked Hamlib backend ("bring-your-own-libhamlib") — DONE, ahead of its original Phase 4 slot
+
+Built directly after Phase 2 rather than waiting for Phase 4, since the packaging design question
+(below) was the actual blocker on starting it, not calendar ordering.
+
+**Packaging decision**: the user asked how to compile Hamlib into the app in-process, WSJT-X-style.
+Investigated for real rather than assuming — WSJT-X's actual approach turned out to be a private Hamlib
+fork, statically linked via a "superbuild" CMake step (one static binary, no runtime swap), which the
+user then explicitly asked NOT to be used as the framing for the exploration. Ran a full `/adhd`
+divergent-ideation pass (5 cognitive frames — regulator, logistics, remove-the-load-bearing-assumption,
+3am-on-call, ant-colony — 30 raw ideas, clustered, top 3 deepened) followed by an Opus `auditor` review
+of the 4 resulting candidates plus the researched WSJT-X precedent. Verdict: **"bring-your-own-
+libhamlib"** — Yoniq never builds, forks, or vendors Hamlib at all; `Yoniq.Core.Radio.Hamlib` P/Invokes
+whatever `libhamlib` the user's OS/package manager already has installed, discovered at runtime,
+version-gated to major-4, falling back to the already-working `rigctld` client on failure. Rejected
+WSJT-X's static-fork approach specifically on cost/maintenance grounds for a solo hobby project with a
+constrained CI-minutes budget and no unmerged Hamlib patches to justify carrying a fork — not on license
+grounds (both static and dynamic linking satisfy LGPL here, since Yoniq's own source is fully public).
+The auditor also found the C-struct-free surface meant no shim project was needed at all (unlike
+[[05-audio-engine]]'s MiniAudio integration, which does need one).
+
+**Two rounds of `auditor` plan-review before any code was written** (new architecture, not a port — same
+discipline as Phase 2's own plan-review pass), each explicitly re-verifying the prior round's fixes
+against real source rather than trusting them:
+- **Round 1** found 4 real blockers: `hamlib_version2` is a `const char *` **data export**, not a
+  function — P/Invoking it as a function delegate would have crashed the version probe itself (fixed:
+  use `rig_version()` instead, confirmed present in the released-4.x export list); Hamlib error codes
+  are negative and split into soft/hard via `RIG_IS_SOFT_ERRCODE` — a naive "nonzero = command-level"
+  classification would have made a dead/unplugged rig spin `CommandFailed` forever instead of ever
+  triggering `RadioController`'s reconnect (fixed: pinned to the macro's exact 11-member soft list);
+  no thread was specified for the blocking native calls, which would have frozen the UI thread on a PTT
+  keystroke (fixed: `SemaphoreSlim` for mutual exclusion + `Task.Run` for offload, documented as two
+  separate concerns); and discovery/the version gate was being re-run on every `RadioController` backoff
+  reconnect instead of cached once (fixed: `IHamlibRuntime` computes both eagerly in its constructor).
+- **Round 2** re-verified all 4 fixes against source (all confirmed genuinely correct, not hand-waved)
+  and found residue from the fixes themselves: a missing UTF-8 null terminator on the switched-off-
+  default-marshaling string params, the semaphore-release-vs-uncancellable-native-call contract needed
+  stating explicitly, the `RIG_MODE_*` table listed bit *positions* where "exact-value equality" needed
+  bit *values* (`1UL << n`), and the connect sequence (`rig_init` → `rig_set_conf`×N → `rig_open`)
+  needed pinning since two parts of the plan implied different orderings. Verdict: "Go," all four pinned
+  on paper, no third round needed.
+- **One more real design bug found later, writing tests** (not caught by either review round): the
+  discovery-order locator's override-path handling contradicted its own spec text — implemented as a
+  last-resort fallback (tried only after auto-detection failed), when the spec said an explicit user
+  override should *win* over auto-detection. Fixed in both the spec and the locator before any test was
+  written against the wrong behavior.
+
+**Built**: `Yoniq.Core.Radio.Hamlib` — `INativeLibraryLoader`/`NativeLibraryLoader`,
+`HamlibLibraryLocator` (3-tier discovery, override tried exclusively when set),
+`IHamlibNative`/`HamlibNative` (the frozen P/Invoke surface, `CLong` for `pbwidth_t`/`hamlib_token_t`,
+explicit-UTF-8-plus-null-terminator string marshaling, `Cdecl` throughout), `HamlibVersionGate`,
+`IHamlibRuntime`/`HamlibRuntime`/`IHamlibNativeFactory`, `HamlibRadioProtocol`, `HamlibProtocolFactory`.
+`HamlibConnectionSpec` added to `Yoniq.Abstractions`. Full design: `spec/03-cat-layer.md`'s "Linked
+Hamlib: bring-your-own-libhamlib" section. Full plan with both review rounds' findings:
+`/home/artien/.claude/plans/temporal-launching-valiant.md`.
+
+**Tested**: 40 new tests in `Yoniq.Core.Radio.Tests` — fixture/fake-driven unit tests covering
+connect-sequence ordering, soft-vs-hard error classification (both branches), capability probing,
+dispose safety, and a concurrency test proving the semaphore actually serializes overlapping native
+calls, plus **4 real-interop tests against this dev machine's actual installed `libhamlib.so.4` (4.5.5)**
+driving Hamlib's own hardware-free Dummy rig backend — confirmed genuinely executing (not skip-via-early-
+return) via real ~120-165ms durations, verifying the whole discovery→version-gate→P/Invoke→marshaling
+pipeline against genuine native code, not just fakes. Full solution: 678/678 passing (`Yoniq.Core.Sstv.Tests`
+528/528 unchanged, confirming no DSP regression). One pre-existing flake noted, not chased (ADHD-scope
+one-liner): `RigctldDummyRigIntegrationTests.Capabilities_PttUnsupportedOnTheDummyRig_IsProbedCorrectly`
+intermittently fails only under the full parallel test run — a subprocess-connection-wait timing race,
+confirmed by two clean 100%-green runs with `xunit.parallelizeTestCollections=false`; pre-existing test
+infrastructure fragility exposed by adding more concurrent real-process/real-native tests, not a defect
+in the new Hamlib code.
+
+**Explicitly deferred, not built this pass**: cross-backend auto-demotion to `rigctld` (no home for that
+policy yet — `IRadioController` has no "try the next backend" concept, needs the
+`Yoniq.Application`/settings layer, which doesn't exist) and the Settings UI for the manual
+library-override path (hard-coded as a constructor parameter for now).
 
 ## Phase 3 — Minimal UI, first end-to-end path
 
@@ -3942,7 +4018,8 @@ connects to a real `rigctld` instance and reports live frequency/mode changes in
 
 ## Phase 4 — CAT protocols, image tooling, logbook
 
-- [[03-cat-layer]]: linked Hamlib backend (native packaging story resolved first), then `TemplateCatProtocol` fallback.
+- [[03-cat-layer]]: linked Hamlib backend — **done early** (see "Linked Hamlib backend" section above,
+  landed right after Phase 2 instead of waiting for Phase 4). `TemplateCatProtocol` fallback still here.
 - **Maybe later** (not committed, no code/design yet): flrig client backend — flrig has a real, still-actively-used user base distinct from plain Hamlib/rigctld users, worth adding if that demand shows up post-launch. OmniRig-as-client similarly deferred. Revisit once Hamlib/rigctld coverage is in and actual user requests make the priority call for real, rather than guessing now.
 - [[07-image-pipeline]]: full crop/resize/filter/overlay, stock library, RX history.
 - [[08-logging]]: logbook, ADIF import/export, offline callsign lookup; QRZ.com opt-in lookup can trail slightly if needed.
