@@ -131,7 +131,11 @@ public class SyncScanInterleaveTests
         // Strip exactly the VIS header, same as SyncBypass1DetectionTests -- leaving only the raw,
         // periodic sync+image-line data a real headerless transmission would present. This is the
         // exact fixture already proven (by that test) to lock via m_sint1 alone.
-        var headerDurationMs = VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs;
+        //
+        // Round-1-review finding (auditor, SHOULD item 5's own review): missing
+        // VisHeader.OutHeadNormalDurationMs -- see SyncBypassDetectionTests' own identical fix
+        // comment for the full explanation.
+        var headerDurationMs = VisHeader.OutHeadNormalDurationMs + VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs;
         var headerSampleCount = (int)Math.Round(headerDurationMs / 1000.0 * SampleRate);
         var robot36Body = robot36Samples.Skip(headerSampleCount).ToArray();
 

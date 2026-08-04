@@ -37,7 +37,13 @@ public class SyncBypass1DetectionTests
 
         // Strip exactly the VIS header, same as SyncBypassDetectionTests -- leaving only the raw,
         // periodic sync+image-line data a real headerless transmission would present.
-        var headerDurationMs = VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs;
+        //
+        // Round-1-review finding (auditor, SHOULD item 5's own review): missing
+        // VisHeader.OutHeadNormalDurationMs -- see SyncBypassDetectionTests' own identical fix
+        // comment for the full explanation (this test was silently locking via the real VIS path
+        // instead of the sync-interval bypass path, undetected because a VIS lock still passes every
+        // assertion).
+        var headerDurationMs = VisHeader.OutHeadNormalDurationMs + VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs;
         var headerSampleCount = (int)Math.Round(headerDurationMs / 1000.0 * encoder.SampleRate);
         var bodySamples = samples.Skip(headerSampleCount).ToArray();
 
@@ -57,17 +63,21 @@ public class SyncBypass1DetectionTests
         // _syncBypass1Tracker's wiring: TryStart() was being polled unconditionally every sample
         // instead of only while !_syncBypass1PrimaryHeld (see that fix's own comment in
         // AnalogFmSstvDecoder.cs), which meant every match's peak position was anchored at the
-        // threshold-crossing edge, not the pulse's true argmax SyncMax is supposed to track. Fixing
-        // that changed this test's measured delta to 39.03 (previously somewhere under the old,
-        // borrowed 29.0 tolerance -- exact pre-fix value not separately recorded) -- worse, not
-        // better, for this specific mode: m_sint1's threshold (SLvl=3500) is stricter than m_sint2's
-        // (SLvl2=1750), and under CLVL's AGC hard-clipping, Robot36's own
-        // nearby-frequency luminance content plausibly keeps d12 above that stricter threshold for
-        // longer stretches than a single sync pulse, letting the "held" window (and therefore the
-        // argmax search) run past the sync pulse into image content -- a plausible mechanism, not
-        // independently confirmed by direct instrumentation, so stated as such rather than certain.
-        // 43.0 gives headroom above the new measured value without masking a further regression.
-        AssertImagesMatchWithinTolerance(sourceImage, decodedImage!, maxAveragePerChannelDelta: 43.0);
+        // threshold-crossing edge, not the pulse's true argmax SyncMax is supposed to track.
+        //
+        // Round-2-review correction (auditor, SHOULD item 5's own review): the 39.03 figure this
+        // comment used to cite, and its whole m_sint1-threshold/argmax explanation, were measured
+        // BEFORE the OutHEAD header-strip fix (see SyncBypassDetectionTests.cs's own identical fix
+        // comment) -- this test was reachable via the real VIS path pre-fix too (Robot36's VIS byte
+        // was fully present in the leftover under-skipped stream), so 39.03 was fit to the wrong
+        // path, same contamination class as that sibling file's own now-corrected numbers. Freshly
+        // re-measured post-fix, with the sync-bypass path genuinely engaged: 6.63 -- much smaller
+        // than the old (mis-measured) value, consistent with SyncBypassDetectionTests' own finding
+        // that a real bypass lock is more precise than what the old numbers were actually measuring.
+        // The m_sint1-threshold/argmax mechanism above may still be a real, separate phenomenon (not
+        // re-investigated here), but the number it was fit to never reflected it. 10.0 gives real
+        // headroom above the new measured value.
+        AssertImagesMatchWithinTolerance(sourceImage, decodedImage!, maxAveragePerChannelDelta: 10.0);
     }
 
     private static HashSet<SstvModeDefinition> SyncBypassTrustedModesForAssertion() =>
