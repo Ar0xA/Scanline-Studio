@@ -78,6 +78,25 @@ gap (batch A's finding) still open. Likely means TX-side golden vectors (this po
 through a real legacy decode) — bottlenecked on the user's own time with the real legacy binary, same
 as Task #7. Full reasoning: `spec/14-roadmap.md`, "Milestone audit, Phase 1+2" → "Next steps".
 
+**TX capture prep — DONE, ready to hand off.** User is setting up the legacy binary under Wine and
+asked this session to prepare the TX-side files. Investigated first: no CLI/headless RX mode exists,
+but legacy's `File → Play` can replay the same `.mmv` format the existing RX fixtures already use — no
+audio hardware routing needed. Built `MmvFile.Write`/`BmpFile.Write` (new, in the test project). Per the
+user's own explicit request, got an Opus code-level review of both BEFORE generating anything — caught
+a real blocker in `MmvFile.Write`'s first draft (a full-scale +1.0 sample silently wrapped to -1.0 via
+a float→double→short cast that doesn't saturate at the final narrowing step; would have corrupted every
+generated file with impulse noise ~every 75 samples). Fixed, covered by 14 new round-trip tests
+(confirmed to discriminate the original bug by reverting it). Generated all 11 TX `.mmv` files (8
+existing RX-fixture modes + Scottie DX/MR73/R24, the 3 modes the audit flagged as having zero coverage
+anywhere) into `tests/Yoniq.Core.Sstv.Tests/Fixtures/GoldenVectors/TxCapture/`. **Then the user asked a
+follow-up that caught a real gap**: file-format round-trip tests don't prove the actual files are valid
+decodable transmissions — added `TxCaptureFixturesTests.cs` (11 tests, kept permanently) that reads
+each real file back and self-decodes it with this port's own decoder; all 11 pass (correct mode, zero
+restarts, correct image). Full suite green (501/501). `TxCapture/README.md` has the exact steps for the
+user's side (set legacy's sample rate to 11025Hz FIRST, or `File → Play` silently resamples through a
+lowpass and the capture is worthless) — no rush, can wire fixtures in individually as results come back.
+Full detail: `spec/14-roadmap.md`, "Milestone audit, Phase 1+2" → "TX-side capture prep".
+
 ## Resume here (2026-08-04, later) — Band 3 AND Band 4 both fully DONE and COMMITTED
 
 S31 done (`b5a5cb4`). Band 3 (8 items: S31 already counted separately, then S7-S17 family) done and
