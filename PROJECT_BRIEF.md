@@ -20,6 +20,23 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
+## Resume here (2026-08-04, latest) — Item 8 self-corrected and fixed too. RX-side SHOULD cluster: 7 items done, 2 (6, 10) deliberately deferred.
+
+User asked "are 6/8/10 not fixes, or just need more research?" -- prompted re-examining item 8, and the
+first assessment (deferred, "needs a floor clamp threaded through consistently") turned out to be too
+conservative. `FilteredRawSampleAt`'s own ternary means the problematic `index-1` read only happens for
+`index >= 1`, so `Math.Max(0, _bandpassFilteredProcessedUpTo - 1)` (not a bare `-1`) is a safe, minimal,
+one-line-per-site fix after all -- no floor-clamp architecture needed. Fixed both `TrimBuffers` sites,
+code review PASS (independently re-derived the arithmetic identity and confirmed strict monotonicity --
+the fix can only ever retain equal-or-more data, never less). No new test (currently unreachable, no
+observable behavior to discriminate against) -- relied on the proof plus full suite staying green
+(521/521, unchanged). Worth remembering: my own first-pass assessment of a "needs more work" item isn't
+automatically right -- worth a second look when asked, especially for something this cheap to re-verify.
+
+Items 6 and 10 remain genuinely deferred (not a research gap for either -- item 6 needs a real
+filter-state-checkpoint architecture that doesn't exist; item 10 is a deliberate judgment call about
+changing a silent-substitute into a loud-throw, not something more research would resolve differently).
+
 ## Resume here (2026-08-04, latest) — RX-side SHOULD cluster DONE (6 items). TX-side cluster running in a parallel fork.
 
 User approved running two pipelines in parallel: a `fork` (isolated git worktree) handling the TX-side
