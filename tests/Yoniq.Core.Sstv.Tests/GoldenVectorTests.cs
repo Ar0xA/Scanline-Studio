@@ -142,6 +142,10 @@ public class GoldenVectorTests
         // below is ~2x its own measured value (same margin style as the RX baseline's 15.0), still
         // comfortably under the ~42.67 corruption floor this gradient-image metric measures
         // elsewhere in this file.
+        // Re-measured after MUST 4 (spec/14-roadmap.md's Phase 3 fix, the RX per-line cursor-rounding
+        // fix): every value here is UNCHANGED from before that fix, exactly as predicted -- this test
+        // exercises the TX-encode-then-REAL-legacy-decode path, and MUST 4 only touched this port's own
+        // RX decoder's per-line cursor, not its encoder.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["robot-36"] = 8.0,
@@ -262,24 +266,30 @@ public class GoldenVectorTests
         // independently isolated), avt 5.78 (was 5.79, unchanged within measurement noise). No
         // tolerance changes needed -- every measured value stays comfortably within its existing
         // bound.
+        // Re-measured after MUST 4 (spec/14-roadmap.md's Phase 3 fix: the RX per-line cursor no
+        // longer accumulates rounding error line-to-line -- see AnalogFmSstvDecoder's
+        // _idealLineStartSample doc comment). Biggest improvements land exactly on the modes
+        // predicted to have the largest per-line rounding error at 11025Hz (confirming the fix, not
+        // just passing): robot-36 16.19 -> 5.04, robot-72 14.57 -> 4.41, rm8 13.76 -> 4.17 (rm8 was
+        // UNAFFECTED by MUST fix 3, since MonoAveragedPaired has only one scan segment per line -- but
+        // MUST 4 lives in the shared per-line loop, not any per-family decoder, so it improves rm8
+        // just as much as the others, confirming these are two genuinely different bugs). Smaller/
+        // mixed changes on the modes with tiny predicted per-line error, an accepted tradeoff same
+        // category as prior fixes' own cross-mode effects: martin-m1 0.44 -> 0.77 (worsened
+        // slightly), scottie-s1 1.92 -> 0.45 (improved), pd90 0.96 -> 0.93 (improved), mn110 2.39 ->
+        // 1.97 (improved), avt 5.78 -> 6.74 (worsened slightly). Tolerances tightened to ~2x each new
+        // measured value (same margin style as before), still comfortably under the ~42.67 corruption
+        // floor.
         var toleranceByModeId = new Dictionary<string, double>
         {
-            ["martin-m1"] = 15.0,
-            ["robot-36"] = 25.0,
-            ["scottie-s1"] = 10.0,
-            ["robot-72"] = 20.0,
-            ["pd90"] = 8.0,
-            ["rm8"] = 20.0,
-            ["mn110"] = 20.0,
-            // S31 fix (spec/14-roadmap.md): AVT measured directly, 5.80 -- restarts=0, correct mode
-            // detected first-try, same as the five Task #7 fixtures above. Comfortably in the same
-            // healthy range as those (comparable to scottie-s1/pd90) and well under the ~42.67
-            // corruption floor. 15.0 gives proportionally similar headroom to scottie-s1's/pd90's own
-            // margins above. Re-measured after S11 (AVT training PLL signal-domain fix): 5.79 --
-            // unchanged within measurement noise, exactly as predicted (a fidelity fix, not an
-            // accuracy one -- PllFmDemodulator's own internal AGC is scale-invariant to the domain
-            // difference S11 corrected).
-            ["avt"] = 15.0,
+            ["martin-m1"] = 3.0,
+            ["robot-36"] = 10.0,
+            ["scottie-s1"] = 3.0,
+            ["robot-72"] = 9.0,
+            ["pd90"] = 3.0,
+            ["rm8"] = 9.0,
+            ["mn110"] = 5.0,
+            ["avt"] = 14.0,
         };
         var tolerance = toleranceByModeId[modeId];
 
@@ -522,47 +532,25 @@ public class GoldenVectorTests
         var croppedReal = CropToTop(realAudioDecoded, pictureHeight);
         var delta = MeasureAveragePerChannelDelta(croppedSelf, croppedReal, pictureHeight);
 
-        // Measured directly: martin-m1 = 13.66, robot-36 = 60.89.
-        //
-        // martin-m1's number is close to (not wildly divergent from)
-        // Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource's own decode-vs-source delta for
-        // the same mode (11.78), and comfortably below its own ~42.66 corruption floor (see below)
-        // -- genuinely consistent with the encoder and decoder broadly agreeing with each other and
-        // with the real legacy signal, not just with a loose tolerance happening to pass.
-        //
-        // robot-36's number is NOT meaningfully evidence of agreement -- round-1-review finding,
-        // confirmed by measurement: a flat gray image, a horizontally mirrored copy, a vertically
-        // flipped copy, and an R<->B channel swap of the source all score ~42.67 under this exact
-        // metric on this exact (very smooth) gradient image, and 60.89 is WORSE than all of them.
-        // The earlier version of this comment read 60.89 as "close to" 68.06 and took that as
-        // evidence of encoder/decoder agreement -- overclaimed: being close to another already-bad
-        // number is not evidence of correctness when both numbers are already worse than trivial
-        // structural corruption would score. Kept only as a regression tripwire for robot-36, same
-        // as its sibling test's own tolerance -- not a discriminating check until the underlying
-        // Robot-36-at-11025Hz DSP gap (documented on the sibling test) is fixed.
-        //
-        // Task #7 (spec/14-roadmap.md): measured directly for the five new fixtures: scottie-s1
-        // 0.58, robot-72 4.53, pd90 1.65, rm8 3.37, mn110 12.03. All five are close to or below their
-        // own sibling decode-vs-source delta above (genuine encoder/decoder agreement, not a loose
-        // tolerance happening to pass) except mn110, whose self-consistency delta (12.03) sits close
-        // to its decode-vs-source delta (12.79) rather than well below it -- flagged, not chased
-        // further here: possibly the same class of narrow-family gap already tracked for other modes
-        // (spec/14-roadmap.md Band-3 S8/S9), not investigated as part of this fixture-wiring pass.
+        // Re-measured after MUST 4 (spec/14-roadmap.md's Phase 3 fix) -- this comment's own prior
+        // numbers predate MUST fixes 1-3 (they were never re-measured through those, unlike the
+        // sibling test above) so no precise before/after comparison is claimed here; these are the
+        // current, fresh measured values: martin-m1 1.29, robot-36 4.79, scottie-s1 0.48, robot-72
+        // 4.64, pd90 1.58, rm8 3.43, mn110 1.10, avt 9.65. All close to or below their own sibling
+        // decode-vs-source delta above -- genuine encoder/decoder agreement, not a loose tolerance
+        // happening to pass -- and comfortably under the ~42.67 corruption floor documented on that
+        // sibling test. Tolerances set to ~2x each measured value, same margin style used throughout
+        // this file.
         var toleranceByModeId = new Dictionary<string, double>
         {
-            ["martin-m1"] = 18.0,
-            ["robot-36"] = 75.0,
-            ["scottie-s1"] = 5.0,
-            ["robot-72"] = 15.0,
-            ["pd90"] = 8.0,
-            ["rm8"] = 12.0,
-            ["mn110"] = 20.0,
-            // S31 fix (spec/14-roadmap.md): AVT measured directly, 9.92 -- close to its own sibling
-            // decode-vs-source delta above (5.80), genuine encoder/decoder agreement rather than a
-            // loose tolerance happening to pass, and comfortably under the ~42.67 corruption floor.
-            // Re-measured after S11 (AVT training PLL signal-domain fix): 9.88 -- unchanged within
-            // measurement noise, matching the sibling test's own re-measurement note.
-            ["avt"] = 18.0,
+            ["martin-m1"] = 4.0,
+            ["robot-36"] = 10.0,
+            ["scottie-s1"] = 3.0,
+            ["robot-72"] = 10.0,
+            ["pd90"] = 4.0,
+            ["rm8"] = 7.0,
+            ["mn110"] = 4.0,
+            ["avt"] = 20.0,
         };
         var tolerance = toleranceByModeId[modeId];
 

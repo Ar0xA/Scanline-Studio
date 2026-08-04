@@ -20,6 +20,29 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
+## Resume here (2026-08-04, latest) — MUST 4 (RX line-cursor rounding) FIXED. All 4 milestone-audit MUST bugs now closed.
+
+Fixed the one confirmed bug Phase 3 found (see the entry below this one for the audit itself). Same
+discipline as MUST fixes 1-3: dedicated test first (`LineCursorRoundingTests.cs`, Robot 72 step-edge,
+confirmed to fail pre-fix with the predicted ~25px drift by reverting and re-running), then the fix
+(`_idealLineStartSample`, a `double` accumulator in `AnalogFmSstvDecoder.cs` mirroring MUST fix 3's own
+`segmentStartSample`/`pixelWalk` split one level up — between lines instead of within one), then
+re-measurement, then code-level review (verdict EQUIVALENT, 4 nits, 2 fixed as cheap doc clarifications).
+
+Golden-vector re-measurement confirmed the fix, not just the dedicated test: RX decode-vs-source deltas
+improved most on exactly the modes predicted to have the largest per-line rounding error (robot-36
+16.19→5.04, robot-72 14.57→4.41, rm8 13.76→4.17 — rm8's improvement is itself proof these are two
+different bugs, since MUST fix 3 structurally couldn't touch RM8's single-scan-segment decoder). TX
+deltas unchanged, exactly as predicted (fix is RX-only). Full detail in spec/14-roadmap.md's "MUST 4"
+section.
+
+513/513 tests pass. Committed and pushed.
+
+**All 4 confirmed MUST bugs from the whole milestone audit (3 from Phase 1-2, 1 from Phase 3) are now
+fixed.** Remaining open, none urgent: 3 new SHOULD-level landmines from Phase 3 (TX dimension-contract
+guard, RX event-scheduler contract, RX `LineDecoded` live-alias) plus the pre-existing Phase 1-2
+SHOULD/COULD/NICE-TO-HAVE backlog — none reachable without a live caller/UI yet.
+
 ## Resume here (2026-08-04, latest) — Phase 3 (chain/integration audit) DONE: 1 confirmed MUST bug found, not yet fixed
 
 Ran Phase 3 of the milestone audit (docs/audit-playbook.md) via 2 parallel `auditor` calls (RX chain

@@ -3411,6 +3411,64 @@ Not yet fixed — reported for prioritization, per the user's own standing "docu
 is lost" preference. 512/512 tests still pass (nothing here is caught by any existing test, per each
 finding's own "why the tests don't catch it" note above).
 
+### MUST 4 — RX per-line cursor rounding, DONE
+
+Same discipline as MUST fixes 1-3: dedicated regression test written first, confirmed to FAIL on the
+pre-fix code with the predicted magnitude, then the fix implemented, re-confirmed, code-reviewed.
+
+**Test** (`LineCursorRoundingTests.cs`, new file): encodes a Robot 72 image (largest predicted per-line
+rounding error among the fixture modes, ~0.50 samples/line at 11025Hz) with a hard vertical step edge on
+the Y channel at the same column in every row, decodes it, and compares the detected step column at an
+early line (2) against the last line (239). Robot 72's Y channel was chosen specifically because it's
+the FIRST scan segment in its line shape, isolating this bug from MUST fix 3's already-fixed within-line
+effect. Pre-fix (confirmed by actually reverting the fix and re-running): early=161, last=136 — a 25px
+drift, matching the ~25px prediction (0.50 samples/line × 239 lines / 4.756 samples/px) almost exactly.
+Post-fix: early=161, last=161 — drift eliminated, both within the same ~1px settling noise as
+`PixelPitchSegmentBoundaryTests`' own established floor.
+
+**Fix**: new `_idealLineStartSample` double field in `AnalogFmSstvDecoder.cs`, advanced by the unrounded
+`_effectiveSamplesPerLine` every line (mirrors MUST fix 3's own `segmentStartSample`/`pixelWalk` split,
+one level up). Each line's `nextLineStartSample = round(_idealLineStartSample + _effectiveSamplesPerLine)`
+is computed fresh from the running double total — never by re-rounding and accumulating a fixed per-line
+step — and `_consumedSamples` (still an `int`, still load-bearing for every other cursor/watermark in the
+file) is set to that rounded value rather than incremented by a fixed `lineSampleCount`.
+`_idealLineStartSample` is resynced to `_consumedSamples` at every other site that assigns it directly
+(`Commit`, `TryResolveSyncAnchorCorrection`, `EndOfImage`'s dead-time skip) so it never drifts across an
+image boundary — only during the per-line loop's own fractional accumulation.
+
+**Golden-vector re-measurement** (`GoldenVectorTests.cs`, zero-tolerance technique): RX decode-vs-source
+deltas improved most on exactly the modes predicted to have the largest per-line rounding error — robot-36
+16.19→5.04, robot-72 14.57→4.41, rm8 13.76→4.17 (rm8's improvement is itself confirmatory: MUST fix 3
+couldn't touch it, since `MonoAveragedPairedScanlineDecoder` has only one scan segment per line, but MUST
+4 lives in the shared per-line loop, so it improves rm8 just as much — proving these are two genuinely
+different bugs, not one being re-measured). Smaller mixed changes on modes with tiny predicted error, same
+accepted-tradeoff category as prior fixes: martin-m1 0.44→0.77 (worsened slightly), scottie-s1 1.92→0.45,
+pd90 0.96→0.93, mn110 2.39→1.97 (all improved), avt 5.78→6.74 (worsened slightly, code-review confirmed
+AVT uses the identical legacy boundary rule so this is expected variance, not a missed case). TX-direction
+deltas (`LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage`) are UNCHANGED, exactly as predicted —
+this fix only touches the RX decoder's cursor, not the encoder.
+
+**Code-level review**: verdict EQUIVALENT. Confirmed against the real current file (not just the
+snippet): all 5 `_consumedSamples`-writing sites covered (the narrow-mode-header site resyncs
+transitively via its own immediately-following `Commit()` call); same-line `_effectiveSamplesPerLine`
+correctly used for both the boundary computation and the accumulator advance (Auto Slant's own mutation
+runs strictly after); `lineSampleCount`'s new varying-by-±1 definition has no consumer that assumed a
+fixed per-line constant; double-accumulation drift over a full image is ~1e-7 samples, six orders of
+magnitude below the bug being fixed. Two cheap nits fixed in this pass (both doc-only): the field's own
+comment now notes the ROUNDED cursor is `Math.Round` (round-half-to-even) vs legacy's effective ceiling
+— a small, uniform, non-compounding ~0.1px bias absorbed by `SyncAnchorCorrector`, unlike the compounding
+drift this fix removes — and now explicitly notes the narrow-mode-header site's transitive coverage via
+Commit(). Not fixed (both truly zero-impact, left as documented, not code changes): `Math.Round`'s
+banker's-rounding vs legacy's consistent ceiling (bounded to 1 sample, non-compounding either way,
+consistent with `Math.Round` usage elsewhere in the file).
+
+Test count: 513/513 (512 prior + 1 in `LineCursorRoundingTests.cs`), solution-wide build clean.
+
+**All 4 confirmed MUST bugs from the milestone audit (3 from Phase 1-2, 1 from Phase 3) are now fixed.**
+Remaining open: the 3 new SHOULD-level landmines from Phase 3 (TX dimension-contract guard, RX
+event-scheduler contract, RX `LineDecoded` live-alias) plus the pre-existing SHOULD/COULD/NICE-TO-HAVE
+backlog from Phase 1-2 — none reachable without a live caller/UI, none urgent.
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
