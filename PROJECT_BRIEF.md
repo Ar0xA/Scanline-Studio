@@ -30,10 +30,11 @@ Band 5's "not worth it / correctly blocked" precedent, not something dropped. CO
 NICE-TO-HAVE items 17-26 (`spec/14-roadmap.md`, "Findings, prioritized") remain open but are, by their
 own original triage, low-urgency/cosmetic/bounded — none block Phase 2.
 
-**Next**: no DSP work is queued. Natural next step is Phase 2 (radio layer, `IRadioController` +
-`rigctld` client) per `spec/14-roadmap.md`'s own plan — see that file's "Other candidates" section. The
-Hamlib-alongside-rigctld architecture question raised earlier this session is still an open, unstarted
-conversation, not a decision — revisit before Phase 2 design work starts, don't assume rigctld-only.
+**Next**: no DSP work is queued. DSP core (Phase 1) is formally closed out — moving to Phase 2 (radio
+layer). **Working the Hamlib-vs-rigctld-only architecture question first**, before any Phase 2
+implementation starts — see `spec/14-roadmap.md`'s Phase 1/Phase 2 boundary note for the current
+framing. Don't start `IRadioController`/rigctld code until this resolves, since it shapes that
+interface's own scope.
 
 ## Resume here (2026-08-04) — TX-side SHOULD cluster DONE (items 4, 5). This is a fork worktree, NOT pushed/merged.
 
