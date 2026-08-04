@@ -172,6 +172,79 @@ public class NarrowFskNoiseTolerantDetectionTests
     }
 
     [Fact]
+    public async Task BulkPush_EarlierNonNarrowTransmissionBeforeLaterNarrowOne_DetectsEarlierFirst()
+    {
+        // Milestone-audit MUST fix (spec/14-roadmap.md, "Milestone audit, Phase 1+2"):
+        // TryNarrowFskScan used to run as a complete whole-scanBound pre-pass BEFORE
+        // TryInterleavedHeaderScan's own sync-bypass/VIS-lock loop ever took a single step. On a bulk
+        // push containing an EARLIER non-narrow transmission followed by a LATER narrow one, this let
+        // the narrow scan discover and Commit() the later transmission first, since it swept the whole
+        // buffer in one shot -- the earlier transmission's own header was never examined at all,
+        // because narrow-FSK's Commit() call reset decoder state before the interleaved loop got a
+        // turn. Reproduces the bug's own real shape: leading silence long enough to exhaust the
+        // fixed-window header path (forcing detection through TryInterleavedHeaderScan's noise-
+        // tolerant scan, not the separate one-shot fixed-window path), followed by a FULL first
+        // transmission, followed immediately by a full narrow one, all pushed in ONE bulk call so
+        // _fixedWindowExhausted flips true immediately and scanBound spans the whole buffer from the
+        // very first call -- exactly the shape that exercised the old whole-buffer pre-pass.
+        var firstMode = SstvModeRegistry.MartinM1;
+        var firstImage = CreateGradientTestImage(firstMode.ImageWidth, firstMode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(SampleRate);
+        var firstSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(firstMode, firstImage))
+        {
+            firstSamples.Add(sample);
+        }
+
+        var narrowMode = SstvModeRegistry.Mn110;
+        var narrowImage = CreateGradientTestImage(narrowMode.ImageWidth, narrowMode.ImageHeight);
+        var narrowSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(narrowMode, narrowImage))
+        {
+            narrowSamples.Add(sample);
+        }
+
+        var leadingSilence = new float[3 * SampleRate];
+        var combined = leadingSilence.Concat(firstSamples).Concat(narrowSamples).ToArray();
+
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+        var detectedModes = new List<SstvModeDefinition>();
+        var decodedImages = new List<IImageSource>();
+        var restartCount = 0;
+        decoder.ModeDetected += m =>
+        {
+            detectedModes.Add(m);
+            decodedImages.Add(null!);
+        };
+        decoder.DecodeRestarted += _ => restartCount++;
+        decoder.LineDecoded += update => decodedImages[^1] = update.Image;
+
+        decoder.PushSamples(combined);
+
+        // Code-level review finding: this fix makes _narrowFskProcessedUpTo advance in lockstep with
+        // the interleaved loop instead of racing ahead to consume the whole buffer up front -- meaning
+        // TryVisLockStateMachine's own (separate, NOT touched by this fix) narrow-FSK pre-pass now has
+        // real Martin M1 picture content to scan through once locked, where before this fix it was an
+        // inert no-op (the old bug's own pre-lock pass had already exhausted the cursor). Asserting
+        // zero restarts here directly guards against that newly-reachable false-positive-restart risk
+        // (a real, if legacy-faithful, exposure -- see this file's own doc comment update and
+        // spec/14-roadmap.md's MUST fix 2 entry for the full reasoning on why it's deferred, not fixed
+        // in this same pass).
+        Assert.Equal(0, restartCount);
+
+        Assert.Equal(2, detectedModes.Count);
+        Assert.Equal(firstMode.Id, detectedModes[0].Id);
+        Assert.Equal(narrowMode.Id, detectedModes[1].Id);
+
+        var firstDelta = ComputeAveragePerChannelDelta(firstImage, decodedImages[0]);
+        Assert.True(firstDelta <= 20.0, $"First (earlier, non-narrow) transmission average per-channel delta {firstDelta:F2} exceeded tolerance.");
+
+        var narrowDelta = ComputeAveragePerChannelDelta(narrowImage, decodedImages[1]);
+        Assert.True(narrowDelta <= 20.0, $"Second (later, narrow) transmission average per-channel delta {narrowDelta:F2} exceeded tolerance.");
+    }
+
+    [Fact]
     public async Task BufferStaysBounded_AcrossMultipleImageCycles_WithPersistentNarrowFskCursor()
     {
         // S8 fix: _narrowFskProcessedUpTo is deliberately never reset/jumped (see its own field doc

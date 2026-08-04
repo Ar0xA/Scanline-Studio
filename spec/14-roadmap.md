@@ -3057,11 +3057,68 @@ in `AvtNoiseTolerantDetectionTests.cs`, strengthened with a pixel-correctness as
 buffer ceiling per code-level review, both folded into the same test rather than split out separately),
 solution-wide build clean.
 
+### MUST fix 2 — `TryNarrowFskScan` whole-buffer ordering bug, DONE
+
+`TryInterleavedHeaderScan` (pre-lock) used to call `TryNarrowFskScan(scanBound)` ONCE, letting it run
+to completion (match or exhaust `scanBound`) before the interleaved sync-bypass/VIS-lock loop below it
+ever took a single step. Legacy's real `DecodeFSK` call is unconditional and runs BEFORE the sync/VIS
+switch, but for the SAME sample every time (`sstv.cpp:1858` vs `:1889`, confirmed directly, not
+inferred) — never a whole-buffer sweep ahead of the other detectors. On a bulk push spanning an earlier
+non-narrow transmission followed by a later narrow one, once `_fixedWindowExhausted` (quick, ~1.1s)
+made `scanBound` span the whole buffer, the old code let the narrow scan find and `Commit()` the LATER
+transmission before the loop ever examined the EARLIER one's own header — silently skipping it. Same
+bug class the `m_sint1` decoder-ordering fix (piece 7d) eliminated, reopened here for narrow-FSK.
+
+**Fix**: `TryNarrowFskScan` itself is unchanged — only how it's called from `TryInterleavedHeaderScan`
+changed. One catch-up call before the loop, bounded by `Math.Min(scanBound, _syncBypassProcessedUpTo)`
+(never further than wherever sync-bypass already sits, since `_narrowFskProcessedUpTo` can legitimately
+lag behind across image boundaries — it's never reset/jumped by `EndOfImage`, unlike
+`_syncBypassProcessedUpTo`/`_visLockProcessedUpTo`), then one call per loop iteration bounded by
+`_syncBypassProcessedUpTo + 1` — in the steady state this processes exactly one narrow-FSK sample per
+interleaved-loop sample, reproducing legacy's real per-sample order for every sample in range, not just
+the first one.
+
+**New regression test** (`NarrowFskNoiseTolerantDetectionTests.BulkPush_EarlierNonNarrowTransmissionBeforeLaterNarrowOne_DetectsEarlierFirst`):
+3s leading silence (forces detection through the noise-tolerant scan, not the one-shot fixed-window
+path), a full Martin M1 transmission, then a full MN110 transmission, all pushed in ONE bulk call so
+`scanBound` spans everything from the first call — exactly the shape that exercised the bug. Asserts
+`ModeDetected` fires twice, Martin M1 first then MN110, both images decode within tolerance, and (per
+code-level review) zero `DecodeRestarted` events. **Confirmed to discriminate the bug**: reverting the
+fix made `ModeDetected` fire once (MN110 only — Martin M1 silently skipped entirely); restored, fires
+twice in the right order.
+
+**Code-level review**: EQUIVALENT-WITH-RISKS, ready to commit. Verified the ordering guarantee holds for
+every case, not just the tested scenario (reversed order, back-to-back narrows, multiple images in one
+push — all sound, since the per-sample interleave always evaluates narrow-FSK before sync-bypass/VIS-
+lock at the SAME index, and the catch-up call only ever covers `_narrowFskProcessedUpTo`'s own past
+relative to sync-bypass, never its future). Confirmed the `Math.Min` in the catch-up call is load-
+bearing (removing it reintroduces the exact original bug). Two stale-comment nits fixed (claims that the
+scan "runs once per call" and "is called with scanBound" — now literally called more often, with tighter
+bounds, though the underlying conclusions both still hold, now stated accurately).
+
+**Real risk found and deliberately deferred, not silently absorbed**: the fix increases exposure at a
+SECOND call site (`TryVisLockStateMachine`, mid-reception, NOT touched by this fix — its own bound is
+`_consumedSamples`, growing by one decoded line per call, so its own theoretical inversion window was
+already up to ~146-428ms, not one sample, even before this fix). Before this fix, on a bulk push, the
+pre-lock whole-buffer pass had already exhausted `_narrowFskProcessedUpTo` to `TotalSamplesReceived` by
+the time locked decode began, making the mid-reception call site's own scan an accidental no-op. After
+this fix, `_narrowFskProcessedUpTo` sits much further behind once locked, so that scan now genuinely
+runs over the locked image's own picture content — a legacy-faithful exposure (real `DecodeFSK` is
+unconditional while locked too, so legacy carries the identical theoretical risk), but newly reachable
+in this port where it was previously accidentally muted. The original milestone-audit finding's own
+"minor there" assessment undersold this by roughly 4 orders of magnitude in sample count once this fix
+landed. **Deliberately deferred, not fixed in this same pass** — same fix shape could be applied to
+`TryVisLockStateMachine`'s own call site later if this ever proves reachable in practice; the new test's
+own `Assert.Equal(0, restartCount)` stands as a live guard against it regressing silently in the
+meantime.
+
+Test count: 474/474 (473 prior + 1 new), solution-wide build clean.
+
 ### Next steps
 
-MUST item 1 fixed and committed (see above). MUST items 2-3 not yet fixed. No commits from this
-milestone-audit entry itself beyond MUST item 1 — documentation-first, capturing all findings before
-further fix work so nothing gets lost regardless of prioritization.
+MUST items 1-2 fixed and committed (see above). MUST item 3 not yet fixed. Also tracked, not yet
+actioned: the deferred `TryVisLockStateMachine` narrow-FSK exposure noted in MUST fix 2's own entry
+above.
 
 **Explicit prerequisite before Phase 3 (chain/integration audit): build TX-side verification tests and
 confirm them first.** Phase 3's own mandate is to verify real input through the composed chain against
