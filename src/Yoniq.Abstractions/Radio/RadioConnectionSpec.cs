@@ -41,3 +41,18 @@ public sealed record RigctldConnectionSpec(string Host, int Port) : RadioConnect
 {
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(5);
 }
+
+/// <summary>See spec/03-cat-layer.md's "Linked Hamlib: bring-your-own-libhamlib". Connects to a
+/// system-installed <c>libhamlib</c> via P/Invoke — <paramref name="Model"/> is Hamlib's own
+/// <c>rig_model_t</c> (there is no Yoniq-side rig registry, see spec/02-radio-layer.md's "Rig
+/// identification"). <see cref="BaudRate"/>/<see cref="PttType"/> are passed through to Hamlib's own
+/// <c>rig_set_conf</c> config (spec/02-radio-layer.md's "PTT usage" — Yoniq does not implement RTS/DTR
+/// itself). The manual library-path override (spec/03's discovery-order tier 3) is deliberately
+/// <i>not</i> part of this spec — it's a one-time app-level setting, not per-connection identity —
+/// and is supplied to whatever constructs the Hamlib backend's DI registration instead.</summary>
+public sealed record HamlibConnectionSpec(uint Model) : RadioConnectionSpec
+{
+    public string? SerialPort { get; init; }
+    public int? BaudRate { get; init; }
+    public string? PttType { get; init; }
+}

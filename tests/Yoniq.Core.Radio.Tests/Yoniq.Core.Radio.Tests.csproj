@@ -21,6 +21,7 @@
     <ProjectReference Include="..\..\src\Yoniq.Core.Radio\Yoniq.Core.Radio.csproj" />
     <ProjectReference Include="..\..\src\Yoniq.Core.Radio.Cat\Yoniq.Core.Radio.Cat.csproj" />
     <ProjectReference Include="..\..\src\Yoniq.Core.Radio.Rigctld\Yoniq.Core.Radio.Rigctld.csproj" />
+    <ProjectReference Include="..\..\src\Yoniq.Core.Radio.Hamlib\Yoniq.Core.Radio.Hamlib.csproj" />
   </ItemGroup>
 
 </Project>

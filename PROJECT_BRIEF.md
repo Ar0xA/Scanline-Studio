@@ -2,7 +2,79 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-04, latest, ACTIVE) — Phase 2 (radio layer) DONE, committed and pushed
+## Resume here (2026-08-04, latest, ACTIVE) — Linked Hamlib backend implemented, all tests green, NOT YET COMMITTED
+
+**"Compile Hamlib in like WSJT-X?" question answered, then built.** User asked how to bundle Hamlib
+in-process. Investigated for real rather than assuming: researched WSJT-X's actual approach (they
+maintain a private Hamlib fork, statically link it via a "superbuild" CMake step — one static binary,
+no runtime swap) and ran it past an `/adhd` ideation pass (5 cognitive frames, 30 ideas) plus two rounds
+of Opus `auditor` review. Landed on **"bring-your-own-libhamlib"**: Yoniq never builds/forks/vendors
+Hamlib at all — `Yoniq.Core.Radio.Hamlib` P/Invokes whatever `libhamlib` the user's OS/package manager
+already has installed, discovered at runtime, version-gated to major-4, falling back to the
+already-working `rigctld` client on failure. Rejected the WSJT-X-style static approach specifically
+because this is a solo hobby project with a constrained CI-minutes budget and no unmerged Hamlib
+patches to justify carrying a fork. Full reasoning: `spec/03-cat-layer.md`'s "Linked Hamlib:
+bring-your-own-libhamlib" section.
+
+**Built and tested, this session:**
+- `Yoniq.Core.Radio.Hamlib` (new project): `INativeLibraryLoader`/`NativeLibraryLoader` (seam around
+  `NativeLibrary.TryLoad`/`GetExport`), `HamlibLibraryLocator` (3-tier discovery — user override tried
+  *exclusively* when set, else bare-soname-then-known-extra-dirs), `IHamlibNative`/`HamlibNative` (the
+  frozen P/Invoke surface — `rig_init`/`open`/`close`/`cleanup`, `token_lookup`/`set_conf`,
+  `set_freq`/`get_freq`, `set_mode`/`get_mode`, `set_ptt`/`get_ptt`, `rig_version`), `HamlibVersionGate`
+  (pure string parsing, major-4-only), `IHamlibRuntime`/`HamlibRuntime`/`IHamlibNativeFactory` (caches
+  discovery+version-gate **eagerly in the constructor**, not lazily — matters because a lazy-on-first-
+  query shape would put blocking native I/O on whatever thread first calls `ConnectAsync`, e.g. a future
+  UI click handler), `HamlibRadioProtocol` (the actual `IRadioProtocol`), `HamlibProtocolFactory`.
+  `HamlibConnectionSpec` added to `Yoniq.Abstractions`. 40 new tests in `Yoniq.Core.Radio.Tests`
+  (fixture/fake-driven unit tests + 4 real-interop tests against this machine's actual installed
+  `libhamlib.so.4` 4.5.5 driving Hamlib's own hardware-free Dummy rig backend — confirmed genuinely
+  running, not skipping, via real ~120-165ms durations).
+- **Real bugs the plan-review process caught before any code existed** (2 rounds of `auditor`
+  plan-review, restated ADHD/scope rule each time): `hamlib_version2` is a `const char*` **data
+  export**, not a function — P/Invoking it as a function delegate would have crashed the version probe
+  itself; Hamlib error codes are negative and split into soft/hard via `RIG_IS_SOFT_ERRCODE` — a naive
+  "nonzero = command-level" classification would have made a dead/unplugged rig spin `CommandFailed`
+  forever instead of ever triggering `RadioController`'s reconnect; no thread was specified for the
+  blocking native calls, which would have frozen the UI thread on a PTT keystroke; and library discovery
+  was being re-run on every backoff reconnect instead of cached once. Round 2 caught residue from round
+  1's own fixes (a missing UTF-8 null terminator, the semaphore/cancellation contract for an
+  uncancellable native call, the `RIG_MODE_*` table stating bit *positions* where "exact-value equality"
+  needed bit *values*). One more real design bug found later, writing tests: the locator's override-path
+  precedence contradicted its own spec text (implemented as a last-resort fallback; spec said it should
+  *win* over auto-detection) — fixed in both places before tests were written against it.
+- Full implementation plan (context, every design decision, both plan-review rounds' findings, the
+  files/tests list): `/home/artien/.claude/plans/temporal-launching-valiant.md`. Full spec:
+  `spec/03-cat-layer.md`'s "Linked Hamlib: bring-your-own-libhamlib" section (discovery order, version
+  gate, frozen P/Invoke surface, `IHamlibNative` seam, threading contract, license provenance).
+  `LICENSES.md` got a new "Runtime dependencies consumed but not bundled" section (Hamlib LGPL-2.1,
+  nothing bundled).
+
+**Explicitly deferred, not built this pass** (see the plan's "Explicitly out of scope" section):
+cross-backend auto-demotion to rigctld (no home for that policy yet — `IRadioController` has no "try the
+next backend" concept, needs the `Yoniq.Application`/settings layer, which doesn't exist), and the
+Settings UI for the manual library-override path (hard-coded as a constructor parameter for now).
+
+**Test results**: full solution 678/678 (`Yoniq.Core.Radio.Tests` 95/95 including the 40 new Hamlib
+tests; `Yoniq.Core.Sstv.Tests` 528/528 unchanged, confirming no DSP regression; everything else
+unchanged). One pre-existing flake noted, not chased (off-scope per the ADHD rule):
+`RigctldDummyRigIntegrationTests.Capabilities_PttUnsupportedOnTheDummyRig_IsProbedCorrectly`
+intermittently fails only under the full parallel test run (a subprocess-connection-wait timing race,
+confirmed by running 100% green twice with `xunit.parallelizeTestCollections=false`) — pre-existing test
+infrastructure fragility exposed by adding more concurrent real-process/real-native tests, not a defect
+in the new Hamlib code.
+
+**Not committed yet** — everything above is uncommitted working-tree changes (new
+`src/Yoniq.Core.Radio.Hamlib/` project, new test files, `spec/03-cat-layer.md`, `LICENSES.md`,
+`Yoniq.Abstractions/Radio/RadioConnectionSpec.cs`, `Yoniq.sln`,
+`tests/Yoniq.Core.Radio.Tests/Yoniq.Core.Radio.Tests.csproj`). Ask the user before committing/pushing,
+per standing rule.
+
+**Next**: `TemplateCatProtocol` fallback backend, or the Application-layer wiring (DI registration,
+Settings UI for the library-path override, actual cross-backend demotion policy) — nothing decided yet,
+same "don't default silently" rule as usual.
+
+## Resume here (2026-08-04, superseded by the entry above) — Phase 2 (radio layer) DONE, committed and pushed
 
 **Done, tested, committed (`cb84f9b`), pushed to `origin/master`.** Built the first radio-layer code in the project:
 `Yoniq.Abstractions.Radio` interfaces, `RadioController` (`Yoniq.Core.Radio`), and
