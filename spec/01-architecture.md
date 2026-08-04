@@ -88,7 +88,7 @@ Each `Yoniq.Core.*` project is a bounded module: it may be extracted to its own 
 
 - All hardware I/O (serial, TCP, audio callbacks) is asynchronous (`async`/`await`, `Task`-based), never blocking the UI thread. This directly satisfies the CLAUDE.md rule "All hardware communication must be asynchronous."
 - Audio callback threads (see [[05-audio-engine]]) are real-time-priority and must not allocate or call into `async` machinery; they hand samples off to lock-free ring buffers consumed by the DSP pipeline on a dedicated processing thread.
-- Radio polling loops (see [[02-radio-layer]]) run on a background `Task` per connected radio, publishing state changes via `IObservable<RadioState>` (System.Reactive) or `IAsyncEnumerable<RadioState>` — TBD in [[02-radio-layer]], but never via raw thread + Win32 message posting (replacing `PostMessage`/`WM_*` pattern in `cradio.cpp`).
+- Radio polling loops (see [[02-radio-layer]]) run on a background `Task` per connected radio, publishing state changes via `IObservable<RadioState>` (System.Reactive — decided and implemented, `RadioController`'s `StateChanges`/`ConnectionEvents`), never via raw thread + Win32 message posting (replacing `PostMessage`/`WM_*` pattern in `cradio.cpp`).
 - UI updates marshal back to the UI thread via Avalonia's `Dispatcher`, applied only in the `Yoniq.UI` layer.
 
 ## Error handling

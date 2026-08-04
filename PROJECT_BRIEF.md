@@ -36,7 +36,14 @@ Plan file: `/home/artien/.claude/plans/starry-whistling-pearl.md`. Full narrativ
 flrig/OmniRig-as-client backends, `TemplateCatProtocol`, and all `Yoniq.Application`/UI/settings-
 persistence wiring — all Phase 3/4 per `spec/14-roadmap.md`.
 
-**Next**: Phase 3 (minimal UI, first end-to-end path) is the roadmap's next step, or await further user direction.
+**Next — live open question, not yet decided**: user wants to talk through, next session, whether to do
+Phase 3 (minimal UI, first end-to-end path — the roadmap's default next step) or jump to implementing
+linked Hamlib (`spec/03-cat-layer.md`'s backend #1, P/Invoke against `libhamlib`, currently a "Definition
+of done" bullet with "packaging story not yet designed" — no code, no design pass yet). Nothing decided
+yet either way — **start the next session by discussing this choice**, don't default to Phase 3 silently
+just because it's what the roadmap lists first. If linked Hamlib is picked, the Hamlib reference clone
+from this session (`hamlib/`, gitignored) is already in place and can be read directly for the native
+API surface (`include/hamlib/rig.h`) rather than re-cloning.
 
 ## Resume here (2026-08-04, latest, ACTIVE) — Hamlib question RESOLVED: no hand-written CAT protocols at all
 
