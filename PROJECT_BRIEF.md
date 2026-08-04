@@ -20,7 +20,20 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-04, latest) — Working the SHOULD backlog (13 items). 3 done so far.
+## Resume here (2026-08-04, latest) — Working the SHOULD backlog (13 items). 4 done so far.
+
+**Luma `Limit256` clamp added to 3 RX decoders** (SHOULD item 11): traced legacy's real per-CHANNEL
+clamp pattern directly (`Main.cpp:4275-4430`), not a uniform per-family rule. Found a genuinely
+surprising legacy asymmetry, code-review-confirmed: in the PD/MP/MN family, Y1 gets `Limit256` but Y2
+(a SECOND luma read via the IDENTICAL peak-pick path) does NOT -- a real legacy quirk, faithfully
+preserved, not "fixed" toward symmetry. 3 new tests (`Limit256ClampTests.cs`), confirmed to discriminate
+(reverted the clamp, all 3 failed with predicted values, restored, re-confirmed). Code review: PASS.
+Full suite 520/520, including all real-legacy-capture golden vectors unchanged -- directly answers the
+one real caution the review raised (the clamp boundary isn't strictly a no-op for peak-picked near-white
+overshoot, but that's legacy-faithful behavior, not a port-introduced regression, and no real fixture
+hits it).
+
+## Resume here (2026-08-04, earlier) — Working the SHOULD backlog (13 items). 3 done so far.
 
 User: "take the shoulds." Triaged all 13 open SHOULD items (10 from Phase 1-2, 3 from Phase 3) by effort;
 working through them with the same test+review discipline as the MUST fixes. Progress:
