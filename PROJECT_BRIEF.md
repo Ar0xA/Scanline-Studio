@@ -20,7 +20,35 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-04, latest) — Working the SHOULD backlog (13 items). 4 done so far.
+## Resume here (2026-08-04, latest) — RX-side SHOULD cluster DONE (6 items). TX-side cluster running in a parallel fork.
+
+User approved running two pipelines in parallel: a `fork` (isolated git worktree) handling the TX-side
+SHOULD items (4: frequency-mapping truncation, 5: OutHEAD leader-tone port), while this session
+continued the RX-orchestrator cluster (6, 7, 9, and boundary-hardening 8/10) directly. **All 6
+RX-side items now resolved:**
+
+- **Item 7 (narrow-FSK suspended during AVT training) — real fix.** Confirmed directly against source:
+  legacy's `DecodeFSK` runs unconditionally throughout AVT training and aborts it on a valid narrow
+  packet. Interleaved `TryNarrowFskScan` into `TryResolveAvtTraining`'s own per-sample loop (matching
+  `TryInterleavedHeaderScan`'s established lockstep pattern) -- a first attempt (checking once in
+  `TryDecodeHeader`) failed the new end-to-end test on a bulk push, caught and corrected during
+  development. New test confirmed to discriminate (reverted, decoder locked "avt" instead of "mn110" as
+  predicted). Code review: PASS.
+- **Item 9 — documented, no code change.** Added a precise doc comment on `AbandonInProgressImage()`
+  explaining exactly why its missing cursor-resync is safe today (both call sites), so a future new
+  call site doesn't silently break the coupling.
+- **Items 6, 8, 10 — investigated and deferred, not fixed.** Each looked cheap at first but turned out
+  to need either a real architectural change (item 6: filter-state checkpoint/rewind, no such mechanism
+  exists in `SearchBandpassFilter`/`HilbertFmDemodulator` today) or carried a genuine regression risk
+  once traced through (item 8: the obvious one-line fix would introduce a NEW negative-index crash at
+  stream start; item 10: changing a silent clamp to a loud throw is a real behavior change with unclear
+  benefit for the highest-consequence reader in the file). Precisely documented in spec/14-roadmap.md
+  so the investigation isn't lost, not fixed reactively without a concrete failure driving the design.
+
+521/521 tests pass. Committed and pushed (this session's own work; the TX-side fork's work is still in
+its own separate worktree, not yet merged -- check on it next).
+
+## Resume here (2026-08-04, earlier) — Working the SHOULD backlog (13 items). 4 done so far.
 
 **Luma `Limit256` clamp added to 3 RX decoders** (SHOULD item 11): traced legacy's real per-CHANNEL
 clamp pattern directly (`Main.cpp:4275-4430`), not a uniform per-family rule. Found a genuinely

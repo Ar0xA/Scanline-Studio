@@ -2919,30 +2919,34 @@ real TX generators, not inferred.
    legacy RX still locks on the VIS leader), but a real unported TX segment with no
    `docs/removed-features.md` entry and no code comment — a CLAUDE.md §2 process-rule gap, same class as
    S27's CQ100 gap before it was fixed.
-6. **[C] Mid-image narrow restart leaves ~1 line with a stale demod-cache config.** When a non-narrow
+6. **[C] Mid-image narrow restart leaves ~1 line with a stale demod-cache config — ASSESSED, DEFERRED**
+   (see "Items 6, 8, 10" below). When a non-narrow
    locked image is abandoned mid-image for a narrow-mode commit (S8), `_bandpassFilteredSamples`
    (`useLocked`) and `_demodulatedFrequencies` (`isNarrow`) are both per-index-frozen caches already
    driven ahead by the abandoned line's own decode — so roughly the first line of the NEW narrow image
    is stuck with the OLD mode's `useLocked=true`/`isNarrow=false` config, meaning S9's own narrow Hilbert
    retune doesn't apply to it. Bounded (~1 line), but confirmed, not just risked — neither S8's nor S9's
    own individual review was positioned to see this, since it only exists at their intersection.
-7. **[C] Narrow-FSK detection is fully suspended for the whole ~7.1s AVT-training window.** Legacy calls
+7. **[C] Narrow-FSK detection is fully suspended for the whole ~7.1s AVT-training window — DONE.** Legacy calls
    `DecodeFSK` unconditionally throughout AVT training and would actually abort training on a valid
    MN/MC packet found during it; this port's `TryDecodeHeader` short-circuits to AVT resolution while
    `_avtTrainingPending`, so a narrow packet overlapping an AVT header is silently missed. Not documented
    anywhere in the S7/S8 comments.
-8. **[B] Pre-lock watermark's `<=` should be strict `<`.** `FilteredRawSampleAt` reads
+8. **[B] Pre-lock watermark's `<=` should be strict `<` — ASSESSED, DEFERRED** (see "Items 6, 8, 10"
+   below). `FilteredRawSampleAt` reads
    `_rawSamples[Rel(index-1)]`; if a trim ever left `_bufferBase == _bandpassFilteredProcessedUpTo`, the
    next fill would throw. Currently unreachable — protected only by an undocumented numeric coupling
    (`preLockRetentionSamples` ≈1.3s exceeds the 380ms narrow-discriminator window that's the actual
    driver) that nothing enforces or comments on.
-9. **[B] `TryInterleavedHeaderScan`'s entry invariant holds by reachability, not construction.** S7's
+9. **[B] `TryInterleavedHeaderScan`'s entry invariant holds by reachability, not construction — DONE**
+   (documented, no behavior change — see "TryInterleavedHeaderScan's entry invariant" below). S7's
    `AbandonInProgressImage()` created a second way for `_mode` to become null without going through
    `EndOfImage()` (which is what normally re-syncs `_syncBypassProcessedUpTo`/`_visLockProcessedUpTo`).
    Currently safe only because that call site always leaves `_avtTrainingPending` true, short-circuiting
    the scan entirely until a guaranteed `Commit()`. A future "abandon without committing" path would
    throw.
-10. **[B] `PixelSampleReader`'s `Math.Clamp` silently substitutes the boundary sample** for an
+10. **[B] `PixelSampleReader`'s `Math.Clamp` silently substitutes the boundary sample — ASSESSED,
+    DEFERRED** (see "Items 6, 8, 10" below) for an
     already-trimmed index, at the one call site that actually writes pixels — converting what `Rel()`'s
     throw elsewhere in the file treats as a loud bug into a silent one, at the highest-consequence reader.
     Safe today (locked watermark stays 2000 samples of margin back), but the inconsistency itself is a
@@ -3585,6 +3589,120 @@ the robot-36/robot-72/pd90/mn110 real-legacy-capture golden vectors, all unchang
 no real fixture actually triggers it.
 
 Test count: 520/520 (517 prior + 3 in `Limit256ClampTests.cs`), solution-wide build clean.
+
+### Narrow-FSK suspended during AVT training window (SHOULD item 7) — DONE
+
+Confirmed directly against source: legacy's `DecodeFSK` (`sstv.cpp:1858`) runs UNCONDITIONALLY every
+sample, including throughout AVT training -- called before the `if(!m_Sync||...)` block AVT's own
+case-3-8 state machine lives inside (`:1889`). Its narrow-packet-completion handler (`:2589-2593`)
+commits to the narrow mode whenever `(m_SyncRestart || !m_Sync) && m_NextMode && (m_SyncMode >= 0)`.
+Independently traced every real `m_SyncMode` assignment during AVT training (round-2-review correction
+of an earlier, imprecise citation): the real values are 4/5/6/7/8 (`:2161/2173/2180/2202/2208/2212/
+2217/2224/2230/2235`) plus the 256 timeout sentinel (`:2157/2167/2185`) -- all `>= 0`. `m_Sync` stays
+false throughout training (the only `m_Sync = 1` assignment anywhere in legacy is `Start()`, `:1743`).
+So a valid narrow packet found DURING AVT training genuinely aborts it in legacy. This port's
+`TryDecodeHeader` used to short-circuit straight into `TryResolveAvtTraining` while
+`_avtTrainingPending`, silently missing any such packet.
+
+**Real design correction found during development, not just a code-review nit**: the first working
+version checked `TryNarrowFskScan` once in `TryDecodeHeader` itself (bounded to
+`_avtTrainingFallbackDeadlineSample`) before ever calling `TryResolveAvtTraining`. This failed the new
+end-to-end test: a bulk single `PushSamples` call lets `TryResolveAvtTraining`'s own while loop consume
+the ENTIRE buffer in one shot on the FIRST call (`TotalSamplesReceived` is already the whole buffer), so
+`TryDecodeHeader` never got a "second chance" call while `_avtTrainingPending` was already true to check
+data that arrived in the SAME push -- the exact "bulk vs. streaming ordering" bug class MUST fix 2 fixed
+elsewhere. Fixed by moving the check INSIDE `TryResolveAvtTraining`'s own per-sample loop, interleaved
+exactly like `TryInterleavedHeaderScan`'s own already-established lockstep pattern: an initial catch-up
+call (`TryNarrowFskScan(Math.Min(TotalSamplesReceived, _avtTrainingProcessedUpTo))`) before the loop,
+then `TryNarrowFskScan(_avtTrainingProcessedUpTo + 1)` at the top of every iteration, checked BEFORE
+that iteration's own AVT training step (matching legacy's real per-sample order, DecodeFSK before the
+sync-mode switch). On a match, explicitly clears `_avtTrainingPending`/`_avtTrainingLock`/
+`_avtPllDemodulator` (matching `EndOfImage`'s own reset list for these same 3 fields), since `Commit()`'s
+own teardown (`AbandonInProgressImage`) doesn't touch AVT-training-specific state.
+
+New `NarrowFskDuringAvtTrainingTests.cs`: encodes a real AVT image, takes a 4.5s prefix (inside AVT's
+own ~2.73s-8.04s training window), appends a FULL real MN110 transmission immediately after, pushes the
+combined buffer, asserts the decoder locks onto MN110 (not AVT) with zero restarts (a first-ever lock,
+not a restart -- AVT training never committed to `_mode`). Confirmed to discriminate: reverted just this
+fix (`git stash` on the one changed file), re-ran, decoder locked onto "avt" instead of "mn110" as
+predicted, restored, re-confirmed passing. A header-only splice was tried first and found insufficient
+-- `Commit()` defers `ModeDetected` for non-AVT modes until `TryResolveSyncAnchorCorrection` succeeds,
+which needs several lines' worth of buffered samples PAST the anchor; the full image provides that.
+
+Code-level review: verdict PASS. Independently re-verified the entire `m_SyncMode`/`m_Sync` legacy
+premise line-by-line against source (confirmed correct) and every interleaving/field-reset/trim-safety
+detail (all clean). Two cheap doc nits fixed: the `m_SyncMode` value list corrected (6/7 were missing,
+512 was wrongly included -- it's `Stop()`'s value, not a training one) in both the fix's own comment and
+the test's XML doc; a stale comment claiming `_narrowFskProcessedUpTo` pauses for the whole training
+window was corrected (no longer true -- it now advances throughout training via the interleaving this
+fix adds). One low risk noted and accepted: the persistent `_narrowFskDecoder` now sees AVT audio it
+never did before (more legacy-faithful, since `DecodeFSK` is unconditional in legacy too) -- covered by
+the existing `AvtTrainingLockDecoderTests`/`AvtNoiseTolerantDetectionTests` (both bulk-push full AVT
+transmissions and assert `detectedMode.Id == "avt"`, which a false narrow-positive during training would
+flip outright), all still passing.
+
+Test count: 521/521 (520 prior + 1 in `NarrowFskDuringAvtTrainingTests.cs`), solution-wide build clean.
+
+### TryInterleavedHeaderScan's entry invariant (SHOULD item 9) — documented, no behavior change
+
+`AbandonInProgressImage()` is a second way `_mode` becomes null without going through `EndOfImage()`
+(which normally re-syncs `_syncBypassProcessedUpTo`/`_visLockProcessedUpTo` before
+`TryInterleavedHeaderScan` -- the pre-lock scanner gated on `_mode is null` -- would run again). This
+method doesn't do that resync. Currently safe by REACHABILITY, not by construction: both existing call
+sites (`Commit()`, which immediately re-assigns `_mode`; and S7's AVT-training-abandon path, which
+leaves `_avtTrainingPending` true, short-circuiting `TryDecodeHeader` past `TryInterleavedHeaderScan`
+until a guaranteed later `Commit()`) never actually let `TryInterleavedHeaderScan` observe the unsynced
+cursors this method leaves behind. Added a precise doc comment on `AbandonInProgressImage()` itself
+explaining this coupling explicitly, so a FUTURE call site that abandons an image without either
+committing a new one or entering AVT training doesn't silently break it. No code/behavior change --
+both existing call sites are exhaustively safe today, and this method doesn't need a resync neither of
+its current callers requires.
+
+### Items 6, 8, 10 — assessed, deferred (not fixed)
+
+All three looked cheap on first read; each turned out to need either a real architectural change (item
+6) or carried a genuine regression risk once traced through (items 8, 10) -- disproportionate to their
+own [C]/[B] severity and currently-unreachable/bounded status. Documented precisely instead of fixed, so
+the investigation isn't lost and isn't silently re-discovered later.
+
+**Item 6 (mid-image narrow restart stale demod-cache config)**: `BandpassFilteredSampleAt`/
+`DemodulatedFrequencyAt` are forward-fill caches that freeze each index's `useLocked`/`isNarrow` gate
+decision AT COMPUTE TIME, never revisited. When a non-narrow locked image is abandoned mid-image for a
+narrow-mode commit (S8), a mid-image narrow-FSK interrupt's own anchor can land BEHIND where these
+caches already advanced to (the just-decoded line's own pixel reads already drove them forward,
+~1 line's worth) -- so the new narrow image's own first few samples read values computed under the OLD
+mode's filter config. Investigated whether this is even a real port-vs-legacy divergence (legacy's own
+real-time single-pass filters can't retroactively reprocess a sample either, once fed) -- concluded it
+genuinely is: legacy is NEVER "ahead" of real time, so it never creates this situation in the first
+place, while this port's lazy forward-fill caching (needed to support bulk-push callers) can race ahead
+of the logical decode position, creating a staleness window with no legacy equivalent. A correct fix
+needs retroactive cache invalidation AND a filter-state rewind/checkpoint for `SearchBandpassFilter`/
+`HilbertFmDemodulator` (both single-delay-line, coefficient-swap-only filters with no snapshot/restore
+mechanism today, confirmed by reading both classes) -- a real architectural addition, disproportionate
+to a bounded ~1-line, [C]-severity finding. Deferred, not chased further this pass.
+
+**Item 8 (pre-lock watermark's `<=` should be strict `<`)**: `FilteredRawSampleAt` reads
+`_rawSamples[Rel(index-1)]`; if `TrimBuffers`' watermark chain ever let `_bufferBase ==
+_bandpassFilteredProcessedUpTo` exactly (both its `Math.Min(watermark, _bandpassFilteredProcessedUpTo)`
+sites, pre-lock and locked, allow equality), the next fill would throw via `Rel()`. Investigated the
+obvious fix (`_bandpassFilteredProcessedUpTo - 1` instead) and found a REAL regression risk: early in
+any stream, before this cursor has advanced past 0, that would force the watermark chain to `-1`,
+which several downstream `D11At(watermark-1)`/`D12At(watermark-1)`/`D19At(watermark-1)`/
+`FskSpaceAt(watermark-1)` catch-up calls assume is always `>= 0` (no explicit guard exists today because
+it's never been reachable). A careless fix would trade a currently-unreachable, well-margined future
+crash for a newly-reachable, immediate one at stream start. A correct fix needs an explicit floor
+clamp threaded through consistently, not a one-line change. Left as documented (the existing comment
+already explains the numeric coupling that keeps this safe today), not fixed.
+
+**Item 10 (`PixelSampleReader`'s `Math.Clamp` vs `Rel()`'s throw)**: real inconsistency (one component
+silently substitutes a boundary sample, the other throws loudly, for what's structurally the same
+"read behind the trim watermark" condition) but changing the clamp to a throw is a genuine behavior
+change with an unclear benefit -- "safe today" per the existing comment (locked watermark stays 2000
+samples of margin back), and a new throw path risks surfacing in production differently than the silent
+substitution would, for a component (`PixelSampleReader`) that's the single highest-consequence reader
+in the file (the one that actually writes pixels). Left as documented, not changed -- flagged as a real
+inconsistency worth a future look if this margin's own assumptions ever change, not fixed reactively
+without a concrete failure to design against.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
