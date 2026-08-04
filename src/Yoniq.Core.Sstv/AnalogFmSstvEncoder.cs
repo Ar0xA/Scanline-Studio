@@ -20,10 +20,40 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
 
     public int SampleRate { get; }
 
-    public async IAsyncEnumerable<float> EncodeAsync(
+    // Milestone-audit Phase 3 SHOULD finding (spec/14-roadmap.md): without this guard, a too-small
+    // image throws IndexOutOfRangeException from deep inside a scanline encoder's own pixel-index
+    // loop (e.g. RgbSequentialScanlineEncoder.cs's `image.GetScanline(lineIndex)[x]` for x up to
+    // mode.ImageWidth-1) -- after the header and part of a line have already been yielded to the
+    // sink, leaving no clean error state -- and a too-large one silently crops with no signal at all.
+    // Legacy is structurally immune (its Line* functions read width straight from the bitmap itself,
+    // Main.cpp:6692 etc.) -- this port's equivalent contract is "the image IS sized to the mode,"
+    // enforced here instead of assumed by every caller.
+    //
+    // Deliberately a plain (non-iterator) method delegating to EncodeAsyncCore, not
+    // `async IAsyncEnumerable<float> EncodeAsync` directly: a C# iterator method's body doesn't run
+    // until the FIRST `MoveNextAsync()` call, so a guard written inside the iterator itself would
+    // still defer the throw to whenever the caller starts enumerating -- better than throwing after
+    // partial output, but not as clean as throwing synchronously at the `EncodeAsync()` call site
+    // itself, which this split achieves.
+    public IAsyncEnumerable<float> EncodeAsync(
         SstvModeDefinition mode,
         IImageSource image,
-        [EnumeratorCancellation] CancellationToken ct = default)
+        CancellationToken ct = default)
+    {
+        if (image.Width != mode.ImageWidth || image.Height != mode.ImageHeight)
+        {
+            throw new ArgumentException(
+                $"Image dimensions {image.Width}x{image.Height} do not match mode '{mode.Id}' expected {mode.ImageWidth}x{mode.ImageHeight}.",
+                nameof(image));
+        }
+
+        return EncodeAsyncCore(mode, image, ct);
+    }
+
+    private async IAsyncEnumerable<float> EncodeAsyncCore(
+        SstvModeDefinition mode,
+        IImageSource image,
+        [EnumeratorCancellation] CancellationToken ct)
     {
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
         var phase = 0.0;

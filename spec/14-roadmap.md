@@ -2951,7 +2951,7 @@ real TX generators, not inferred.
     YCbCrLinePaired don't clamp pre-`YCtoRGB`; RgbSequential and MonoAveragedPaired do, matching their
     own legacy sites) — a real cross-family inconsistency, not a uniform policy choice. Only bites on
     out-of-band/overdriven input, which no existing fixture exercises.
-12. **[D] Robot 36's tone-selector reads ~1ms later than legacy's own decisive window**, inside the
+12. **[D] Robot 36's tone-selector reads ~1ms later than legacy's own decisive window — DONE**, inside the
     demodulator's settling region toward the following porch — correct on the clean synthetic/fixture
     signal, fragile (biased toward the ambiguous-band toggle fallback) on a real noisy one. **MUST
     fix 3's code-level review found this got MORE relevant, not less**: correcting the luma segment's
@@ -3386,7 +3386,8 @@ segment's length anywhere on the TX side for a MUST-fix-3/MUST-4-shaped mismatch
 counts (all 43 modes, including R24's internal double-increment) and phase continuity (`CVCO::Do`, never
 reset per segment) were independently re-derived from source and confirmed to match.
 
-**New SHOULD-level finding: no image/mode dimension contract validation in the TX orchestrator.**
+**New SHOULD-level finding: no image/mode dimension contract validation in the TX orchestrator — DONE
+(see "Working the SHOULD backlog" below).**
 `AnalogFmSstvEncoder.EncodeAsync` (`:23-39`) never checks `IImageSource.Width`/`.Height` against
 `mode.ImageWidth`/`.ImageHeight` before encoding; every scanline encoder then indexes the image blindly
 (e.g. `RgbSequentialScanlineEncoder.cs:26`, `image.GetScanline(lineIndex)[x]` for `x` up to
@@ -3474,6 +3475,75 @@ Test count: 513/513 (512 prior + 1 in `LineCursorRoundingTests.cs`), solution-wi
 Remaining open: the 3 new SHOULD-level landmines from Phase 3 (TX dimension-contract guard, RX
 event-scheduler contract, RX `LineDecoded` live-alias) plus the pre-existing SHOULD/COULD/NICE-TO-HAVE
 backlog from Phase 1-2 — none reachable without a live caller/UI, none urgent.
+
+## Working the SHOULD backlog — 2026-08-04
+
+User: "take the shoulds." Working through all 13 open SHOULD items (10 from Phase 1-2, 3 from Phase 3),
+triaged by effort. Doc-only batch (event-scheduler contract, `LineDecoded` live-alias, finding 13 status)
+already done above. This section covers the real code fixes.
+
+### TX image/mode dimension-contract guard (Phase 3 SHOULD) — DONE
+
+`AnalogFmSstvEncoder.EncodeAsync` never validated an image's dimensions against the mode before
+encoding. Split into a public non-iterator `EncodeAsync` (validates `image.Width/Height` against
+`mode.ImageWidth/Height`, throws `ArgumentException` if mismatched) delegating to a private
+`EncodeAsyncCore` iterator (the original body, unchanged) — a plain iterator method's body doesn't run
+until the first `MoveNextAsync`, so the guard needed to move outside the iterator to throw synchronously
+at the `EncodeAsync()` call site, not merely on first enumeration. `ISstvEncoder`'s own XML doc now states
+the throw-on-mismatch contract for any future implementer.
+
+New `AnalogFmSstvEncoderInputValidationTests.cs` (4 tests): too-small image throws immediately (checked
+via `Assert.Throws` on the un-enumerated call, not `ThrowsAsync`), too-large image throws immediately,
+a width-only mismatch throws (code-review finding: the first two tests varied both axes together),
+correctly-sized image doesn't throw and produces samples.
+
+Code-level review: verdict PASS-WITH-RISKS. Confirmed no interface break (only implementer), exact-match
+is the right rule (no `*ScanlineEncoder.cs` ever legitimately reads outside the mode canvas), exception
+type/param convention matches the codebase's own sibling usage. One real risk flagged and independently
+resolved: whether any existing golden-vector fixture `.bmp` might not exactly match its mode's canvas
+size (which would make this guard newly throw where the old code silently cropped) — checked directly
+(`file` on all 8 fixture bmps): every one is byte-for-byte exactly its mode's `ImageWidth x ImageHeight`,
+confirmed safe. Two cheap nits fixed (doc comment on the interface, the width-only test case); one nit
+left undone (paired-encoder height-not-divisible-by-2 still unguarded — a future-mode-only gap, not
+reachable by any mode this port currently defines).
+
+### Robot 36 tone-selector read-point hardening (SHOULD item 12) — DONE
+
+**Round-1 finding caught a real mistake before it shipped**: the first version of this fix backed the
+tone-selector's read point off from the segment's exact last sample using an INVENTED
+`SettlingMarginSamples = 6` constant, on the assumption that legacy has no narrower "decisive window" to
+port instead. Independently re-verified directly against source and found this assumption wrong: legacy
+(`sstv.cpp:664-665`, case smR36) sets real `m_SG`/`m_CG` constants — `m_CG` sits exactly 1.0ms before the
+tone segment's own nominal end — and `Main.cpp:4286-4297`'s RX switch only re-decides `m_DSEL` for
+`ps ∈ [m_SG, m_CG)`, freezing at whatever it was once `ps` reaches `m_CG`. This port's pre-fix read
+(`endSample - 1`) was reading a full ~1.0ms (~11 samples at 11025Hz) LATER than legacy's own real last
+decision — a genuine fidelity gap, not a theoretical contamination worry, and squarely inside the
+following 1900Hz porch's own settling zone (1900Hz being exactly the ambiguity midpoint).
+
+Rewrote using the real legacy constant: new `DecisiveWindowTailMarginMs = 1.0` (traced directly to
+`sstv.cpp:664-665`'s derivation, replacing the invented margin), read point now
+`endSample - 1 - round(1.0ms in samples)`. Removed the old version's lower clamp against the segment
+start (round-1 review's own nit: unreachable, and its fallback would have been wrong if ever reached) —
+confirmed unreachable at every sample rate this port supports (the margin would need to be within ~1
+sample of the segment's full 4.5ms duration).
+
+Round-2 code-level review: verdict PASS, both round-1 risks confirmed resolved. Two cheap nits fixed:
+a doc-comment precision correction (the read lands ~0.1 sample before `m_CG`'s exact boundary, not
+exactly on it — deliberate, trades a hair of precision for robustness against `Math.Round`'s worst-case
+direction, not an off-by-one) and a note on a latent legacy inconsistency (`sstv.cpp:665` computes `m_CG`
+from the bare/nominal `SampFreq`, not the slant-corrected `m_SampFreq` every neighboring line in the same
+switch uses — looks like a legacy typo, deliberately not reproduced, flagged so a future reader doesn't
+"fix" this port toward it).
+
+Golden-vector re-measurement (zero-tolerance technique): robot-36 RX decode-vs-source and
+self-encode-vs-real-audio-decode deltas both UNCHANGED (5.04, 4.79) — expected, not a null result: on
+this clean synthetic fixture the tone is fully decisive across its whole span, so old and new read points
+land on the same side of the ±200Hz threshold either way. This fix only changes behavior when the OLD
+read point was contaminated toward the porch — noisy/real signals or active slant correction, which this
+particular fixture doesn't exercise. Confirmed via code review, not assumed.
+
+Test count: 517/517 (513 prior + 4 in `AnalogFmSstvEncoderInputValidationTests.cs`), solution-wide build
+clean.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 

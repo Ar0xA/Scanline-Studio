@@ -27,6 +27,31 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
     // derived rather than presented as a directly-read value.
     private const double AmbiguityHalfWidthHz = 200.0;
 
+    // SHOULD item 12 (spec/14-roadmap.md): legacy's tone-selector decode branch is NOT gated by the
+    // segment's own full nominal span -- round-1-review correction, an earlier version of this fix
+    // wrongly assumed no narrower legacy window existed and applied an invented margin instead.
+    // Confirmed directly against source: `sstv.cpp:664-665` (SetSampFreq, case smR36) sets
+    // `m_SG = (88.0+1.25)*SampFreq/1000` and `m_CG = (88.0+3.5)*SampFreq/1000` -- both measured from
+    // the START OF THE Y SCAN (ps=88.0ms is exactly where the tone-selector tone begins, matching
+    // this port's own segment boundary). `Main.cpp:4286-4297`'s RX switch enters the TCS branch for
+    // `ps < m_CG`, but its own body only executes (`ps -= m_SG; if (ps >= 0)`) once ps has reached
+    // m_SG -- so legacy's real per-sample m_DSEL re-decision only ever happens for
+    // ps in [m_SG, m_CG) = tone-relative [1.25ms, 3.5ms), and FREEZES at whatever it was on the last
+    // sample before ps reaches m_CG once the next branch (`ps < m_CB`, chroma) takes over. m_CG sits
+    // 1.0ms before the tone segment's own real end (4.5ms - 3.5ms) -- this port's real fidelity gap
+    // was reading a full 1.0ms (~11 samples at 11025Hz) later than legacy's own last real decision,
+    // squarely inside the following 1900Hz porch's own settling/contamination zone (1900Hz being
+    // exactly the ambiguity midpoint) -- not a generic "boundary safety margin," a genuine missing
+    // legacy constant.
+    //
+    // Round-2-review note: `sstv.cpp:665` computes m_CG from the bare (nominal/ini) `SampFreq`, not
+    // the member `m_SampFreq` every neighboring line in that same switch uses (the one slant/AFC
+    // rewrite) -- looks like a legacy typo, not reproduced here deliberately (this port always uses
+    // its own already-slant-corrected `sampleRate` parameter). Flagged so a future reader doesn't
+    // "fix" this port to match the typo; no measurable behavioral impact either way (the window is
+    // 2.25ms wide, slant correction is well under 1%).
+    private const double DecisiveWindowTailMarginMs = 1.0;
+
     private double[]? _rMinusY;
     private double[]? _bMinusY;
 
@@ -63,7 +88,6 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
 
                 case ToneSelectorSegment selector:
                 {
-                    var startSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
                     idealSamplesSoFar += selector.DurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
                     // Legacy re-decides m_DSEL on every single sample of this segment with no
@@ -72,7 +96,21 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
                     // segment's LAST sample decided, not an average and not the first sample.
                     // Tone-selector always reads bare -- matches legacy's own GetPixelLevel here
                     // (Main.cpp:4289), never GetPictureLevel. Unaffected by piece 10.
-                    var freq = reader.ReadBare(endSample - 1, endSample);
+                    //
+                    // SHOULD item 12 (spec/14-roadmap.md, milestone audit): read near legacy's own real
+                    // last-decided sample (m_CG's boundary), not this segment's own full nominal end --
+                    // see DecisiveWindowTailMarginMs's own doc comment for the full derivation. The
+                    // extra `-1` (beyond DecisiveWindowTailMarginMs's own rounding) is deliberate, not
+                    // an off-by-one: round-2-review confirmed this reads ~0.1 sample earlier than
+                    // legacy's exact last decisive sample (still strictly inside legacy's own
+                    // [1.25ms, 3.5ms) decisive window either way), trading a hair of precision for
+                    // robustness against `Math.Round`'s own worst-case rounding landing past m_CG.
+                    // No lower clamp against the segment's own start: m_CG sits at tone-relative 3.5ms,
+                    // comfortably inside the segment's own [0, 4.5ms) span at every sample rate this
+                    // port supports (reaching the segment start would need DecisiveWindowTailMarginMs
+                    // within ~1 sample of the full segment duration, which it structurally never is).
+                    var decisiveWindowEndSample = endSample - 1 - (int)Math.Round(DecisiveWindowTailMarginMs / 1000.0 * sampleRate);
+                    var freq = reader.ReadBare(decisiveWindowEndSample, decisiveWindowEndSample + 1);
                     var midpoint = (selector.LowFrequencyHz + selector.HighFrequencyHz) / 2;
                     var deviation = freq - midpoint;
                     isEvenLine = deviation >= AmbiguityHalfWidthHz || deviation < -AmbiguityHalfWidthHz

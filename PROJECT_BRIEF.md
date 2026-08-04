@@ -20,7 +20,30 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-04, latest) — MUST 4 (RX line-cursor rounding) FIXED. All 4 milestone-audit MUST bugs now closed.
+## Resume here (2026-08-04, latest) — Working the SHOULD backlog (13 items). 3 done so far.
+
+User: "take the shoulds." Triaged all 13 open SHOULD items (10 from Phase 1-2, 3 from Phase 3) by effort;
+working through them with the same test+review discipline as the MUST fixes. Progress:
+
+**Done**: doc-only batch (event-scheduler contract on `LineDecoded`/`ModeDetected`/`DecodeRestarted`,
+`LineDecoded`'s live-alias hazard, finding 13's status update) — committed `db13bf7`. TX image/mode
+dimension-contract guard (`AnalogFmSstvEncoder.EncodeAsync` now throws synchronously on a mismatched
+image instead of throwing mid-stream or silently cropping) — 4 new tests, code review PASS-WITH-RISKS
+(one real risk independently checked and ruled out: all 8 fixture bmps confirmed exactly match their
+mode's canvas size). Robot 36 tone-selector read-point hardening (SHOULD item 12) — **round-1 review
+caught a real mistake**: the first attempt used an invented margin constant instead of porting legacy's
+actual `m_SG`/`m_CG` decisive-window boundary (`sstv.cpp:664-665`), independently re-verified against
+source and confirmed the review was right, then rewrote using the real legacy constant. Round-2 review:
+PASS. Golden-vector deltas unchanged as expected (fix only affects noisy/real signals, not this clean
+fixture). Both fixes committed together, 517/517 tests pass. Full detail in spec/14-roadmap.md's
+"Working the SHOULD backlog" section.
+
+**Remaining (10 items)**: TX frequency-mapping truncation, OutHEAD leader-tone port, Limit256 clamps (3
+decoders), mid-image narrow restart stale cache, narrow-FSK-suspended-during-AVT-training, and 3
+currently-unreachable boundary-hardening items (assess real-fix-vs-doc-only for each, per CLAUDE.md's
+"don't guard against scenarios that can't happen" guidance).
+
+## Resume here (2026-08-04, earlier) — MUST 4 (RX line-cursor rounding) FIXED. All 4 milestone-audit MUST bugs now closed.
 
 Fixed the one confirmed bug Phase 3 found (see the entry below this one for the audit itself). Same
 discipline as MUST fixes 1-3: dedicated test first (`LineCursorRoundingTests.cs`, Robot 72 step-edge,
