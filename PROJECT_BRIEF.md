@@ -2,9 +2,9 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-04, latest, ACTIVE) — Phase 2 (radio layer) DONE: IRadioController + rigctld client
+## Resume here (2026-08-04, latest, ACTIVE) — Phase 2 (radio layer) DONE, committed and pushed
 
-**Done, tested, not yet committed.** Built the first radio-layer code in the project:
+**Done, tested, committed (`cb84f9b`), pushed to `origin/master`.** Built the first radio-layer code in the project:
 `Yoniq.Abstractions.Radio` interfaces, `RadioController` (`Yoniq.Core.Radio`), and
 `RigctldClientProtocol`/`RigctldProtocolFactory` (`Yoniq.Core.Radio.Rigctld`). Full solution
 639/639 tests pass (528 pre-existing DSP, untouched — confirmed via `git status`; 111 new/other).
@@ -36,8 +36,7 @@ Plan file: `/home/artien/.claude/plans/starry-whistling-pearl.md`. Full narrativ
 flrig/OmniRig-as-client backends, `TemplateCatProtocol`, and all `Yoniq.Application`/UI/settings-
 persistence wiring — all Phase 3/4 per `spec/14-roadmap.md`.
 
-**Next**: nothing committed yet — ask before committing/pushing, per standing rule. After that, Phase
-3 (minimal UI, first end-to-end path) is the roadmap's next step, or await further user direction.
+**Next**: Phase 3 (minimal UI, first end-to-end path) is the roadmap's next step, or await further user direction.
 
 ## Resume here (2026-08-04, latest, ACTIVE) — Hamlib question RESOLVED: no hand-written CAT protocols at all
 
