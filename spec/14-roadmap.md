@@ -1138,8 +1138,10 @@ legacy's live default is Hilbert, PLL is AVT-only now).
   S9 MN/MC narrow retune — **DONE, discovered already closed**: Band-2 item S6 (`6da0a65`) IS this
   exact fix (`HilbertFmDemodulator.ProcessSample`'s `isNarrow`-selected `(off, out)` pairs, gated in
   `AnalogFmSstvDecoder.DemodulatedFrequencyAt` on `_mode.NarrowModeCode is not null`) — this Band-3
-  listing was simply never updated when S6 shipped; no new code needed — S8 mid-image narrow re-lock,
-  S7 mid-image AVT re-lock, S17 AVT training-entry restructure, S11 AVT PLL domain, S10 extended-VIS
+  listing was simply never updated when S6 shipped; no new code needed — S8 mid-image narrow re-lock —
+  **DONE**, see this file's own "S8" entry below, much smaller than originally scoped (the per-sample
+  FSK decoder already existed and was already correct; this wired it up as a persistent scanner) — S7
+  mid-image AVT re-lock, S17 AVT training-entry restructure, S11 AVT PLL domain, S10 extended-VIS
   7-bit — **DONE**, see this file's own "S10" entry below, widened in scope from the original narrow
   "escape byte only" framing to the real underlying gap (every normal VIS-code match in the
   fixed-window path, not just the escape byte) — S12 sint2/sint3 freeze gating [sint1 already fixed],
@@ -2408,6 +2410,91 @@ answer, `FindByExtendedCode` would just fail to match), not fixed here.
 Test count: 460/460 (458 prior + 2 new: `WrongParityBit_NormalVisCode_NeverLocksViaFixedWindowPath`,
 `WrongParityBit_EscapeByte_NeverLocksAsExtendedViaFixedWindowPath` in `VisToneRaceHeaderTests.cs`),
 solution-wide build clean.
+
+## S8 — mid-image narrow-mode (MN/MC) FSK re-lock
+
+**Scope turned out much smaller than the roadmap implied.** Investigating before designing anything
+found `NarrowFskHeaderDecoder` — a per-sample port of legacy's real `CSSTVDEM::DecodeFSK`
+(`sstv.cpp:2378-2606`) — already existed, already faithful, already tested (two prior rounds of
+line-by-line auditor review per its own doc comment). It was only ever used in a one-shot, fixed-window
+way (`AnalogFmSstvDecoder.TryDecodeNarrowModeHeader`, fresh instance per call at `_consumedSamples`) —
+the same "cold-started every call" architectural gap S5/S16 already fixed elsewhere. S8 is "wire the
+already-correct decoder up as a persistent, continuously-fed scanner," not "build a new FSK decoder."
+
+Confirmed directly against source: legacy's real `DecodeFSK(int(d19), int(dsp))` call (`sstv.cpp:1858`)
+is unconditional every sample — outside and before the `if(!m_Sync||m_SyncRestart||m_SyncAVT)` gate
+(`sstv.cpp:1889`) that restricts `m_sint1`/`m_sint2`/`m_sint3` and the VIS-decode switch. Also confirmed:
+`CSSTVDEM::Stop()` (`sstv.cpp:1769-1791`) never touches any `m_fsk*` field — legacy's real narrow-FSK
+state is genuinely never externally reset, only self-resets internally on its own failure/success
+paths, exactly matching `NarrowFskHeaderDecoder`'s already-existing design.
+
+**Fix**: added a persistent `_narrowFskDecoder`/`_narrowFskProcessedUpTo` pair (constructed once,
+decoder-lifetime, never `Reset()`), wired into a new shared `AnalogFmSstvDecoder.TryNarrowFskScan`
+method, called from both `TryInterleavedHeaderScan` (pre-lock) and `TryVisLockStateMachine`
+(mid-reception, piece 6c) — unlike S31's AVT restriction, a narrow-FSK match needs no special-casing at
+the mid-reception call site, since it's immediately actionable via the same `Commit()` every other
+restart already uses (confirmed: `Commit()`'s body has no AVT-specific or VIS-specific step).
+
+`NarrowFskHeaderDecoder.ProcessSample` now returns `(int ModeCode, int SamplesSinceBitClockOrigin)?`
+instead of bare `int?` — the caller needs the packet's own timing to compute a real anchor. New
+`VisHeader.NarrowPostBitClockOriginDurationMs` (539ms) constant for that arithmetic.
+
+**Auditor plan-review** (found 2 real blockers before any code shipped, both resolved per the
+auditor's own concrete suggested fixes, adopted directly):
+1. The persistent scan cursor cannot share `_syncBypassProcessedUpTo`/`_visLockProcessedUpTo`'s own
+   500ms `EndOfImage` jump — doing so would starve the narrow-FSK scanner of exactly the post-image
+   window a real mode-change announcement is most likely to arrive in, defeating the whole point of
+   this fix. Fixed by giving `TryNarrowFskScan` its own independent inner loop/cursor, outside the
+   existing lockstep for-statement and entry-invariant check.
+2. The original design assumed `NarrowFskHeaderDecoder`'s own internal sample counter could be treated
+   as an absolute index (since the instance is never reset). Auditor: unsafe premise, nothing enforces
+   it, a future caller-side skip would silently produce a wrong anchor, not a crash. Fixed: the class
+   returns a RELATIVE offset (`SamplesSinceBitClockOrigin`) instead, and the reference point itself was
+   corrected from the mode-0 guard-tone trigger (real, unbounded-in-practice jitter — envelope-settling
+   lag plus mode 1's own 50ms hold tolerating a trigger up to ~50ms late) to the mode-3→4 transition
+   (tightly pinned by construction — a single pass/fail recheck, not a hold).
+
+**Two further regressions found empirically** (full-suite run, not anticipated by either plan-review
+round — found the way this project's own methodology requires, by actually running everything before
+calling a piece done):
+1. An early implementation bound `TryNarrowFskScan`'s call inside `TryInterleavedHeaderScan` by
+   `TotalSamplesReceived` (reasoning: "no fixed-window sibling to race against"). Wrong risk addressed
+   — `scanBound` isn't only about protecting a fixed-window path, it's what stops ANY pre-lock detector
+   reading ahead into a second, not-yet-legitimately-reached transmission on a bulk single-`PushSamples`
+   call (the same "bulk vs. streaming ordering" class Band-1 items 2+3 already fixed elsewhere). Caught
+   by `LegacyDerivedSpansTests.FskSpaceCursor_NeverResets_AcrossBackToBackNarrowTransmissions`
+   (`ModeDetected` fired 4 times instead of 2) and `BandpassCacheChunkInvarianceTests` (unrelated
+   fixture, same root cause). Fixed: bound by `scanBound`, matching the other two detectors.
+2. Even after that fix, the same test still failed. Root cause: `Commit()` already fast-forwards
+   `_visLockProcessedUpTo` to `_consumedSamples` on every commit (regardless of which path found the
+   match) specifically so `VisLockStateMachine`'s own mid-reception scan never re-examines a header
+   that just committed — `_narrowFskProcessedUpTo` needed the identical treatment and didn't have it.
+   Since image 1's real header was found via the FIXED-WINDOW path (which uses its own separate, local,
+   fresh decoder instance, not the new persistent one), the persistent decoder had never actually been
+   fed samples 0.._consumedSamples — the first mid-reception scan fed it image 1's own real header for
+   the first time, correctly decoded it (real, valid content), and fired a spurious second restart.
+   Fixed: added the same `Math.Max` fast-forward in `Commit()` and in the sync-anchor-correction delta
+   step, right alongside the existing `_visLockProcessedUpTo` ones. Explicitly NOT the same as the
+   `EndOfImage` jump item 1 of the plan-review blockers avoided reintroducing — this is the smaller,
+   always-necessary "don't re-discover what was just committed" correction, not an artificial lookahead.
+
+**Code-level review** (after implementation, EQUIVALENT-WITH-RISKS, no behavioral bug found, ready to
+commit): independently re-derived the anchor arithmetic against `sstv.cpp` and confirmed it exact at
+11025Hz (±1 sample at 44100Hz); confirmed both empirical regressions are fully fixed with no third path
+needing the same treatment (every `_consumedSamples` mutation site checked); confirmed no interaction
+with S6/S9's narrow-mode retune (different signal domain); confirmed the unregistered-mode-code handling
+matches legacy's own resume-on-failure behavior. Found a handful of doc/test-wording nits (a misleading
+"first/last sample" claim in the new isolated unit test's comment, a watermark-safety argument that
+should have cited the existing catch-up mechanism rather than a cursor-ordering claim Commit()'s
+fast-forward can violate, a backwards inequality in a comment, a too-loose buffer-bound test threshold,
+an O(n²) test helper) — all fixed directly.
+
+Test count: 465/465 (460 prior + 5 new: `SamplesSinceBitClockOrigin_MatchesExactDataBitPhaseLength` in
+`NarrowFskHeaderDecoderTests.cs`; `HeaderAfterLeadingSilence_IsRecognizedAndDecodedViaPersistentScan`,
+`HeaderAfterLeadingSilence_AnchorMatchesExpectedWithinMeasuredTolerance`,
+`MidReception_RealNarrowTransmissionAfterAnotherMode_RestartsAndDecodesCorrectly`,
+`BufferStaysBounded_AcrossMultipleImageCycles_WithPersistentNarrowFskCursor` in new
+`NarrowFskNoiseTolerantDetectionTests.cs`), solution-wide build clean.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 

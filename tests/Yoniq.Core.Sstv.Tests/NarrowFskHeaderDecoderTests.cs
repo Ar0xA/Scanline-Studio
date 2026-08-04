@@ -50,7 +50,7 @@ public class NarrowFskHeaderDecoderTests
                         : decoder.ProcessSample(0, Space);
                     if (result is not null)
                     {
-                        locked = result;
+                        locked = result.Value.ModeCode;
                     }
                 }
             }
@@ -183,6 +183,60 @@ public class NarrowFskHeaderDecoderTests
         var locked = FeedDataBits(decoder, 0x02);
 
         Assert.Null(locked);
+    }
+
+    [Fact]
+    public void SamplesSinceBitClockOrigin_MatchesExactDataBitPhaseLength()
+    {
+        // S8 fix (spec/14-roadmap.md): pins the exact value AnalogFmSstvDecoder.TryNarrowFskScan's
+        // anchor arithmetic depends on. Code-level auditor review correction: the "bit-clock origin"
+        // (the mode-3->4 transition) is NOT the first sample FeedDataBits below feeds -- it lands
+        // ~121 samples EARLIER, inside FeedGuardAndStartBit's own start-bit-training-pulse feed
+        // (mode 2's trigger fires at start-bit onset, mode 3 passes its own single recheck 121
+        // samples later, and mode 4 -- the origin itself -- begins the very next sample). The lock
+        // also does NOT complete on the literal last sample FeedDataBits feeds -- it completes
+        // whenever the decoder's own internal truncated-cumulative bit boundary is first reached
+        // within the final bit's window, which this test's own samplesInBit (rounded, not truncated)
+        // feed doesn't line up with exactly. Both are accounted for in the formula below, independently
+        // re-derived by that review (exact at 11025Hz): asserting the resulting SamplesSinceBitClockOrigin
+        // value directly, not re-deriving "origin sample" or "final sample" as independent facts.
+        var decoder = new NarrowFskHeaderDecoder(SampleRate);
+        FeedGuardAndStartBit(decoder, guardMs: 100);
+
+        (int ModeCode, int SamplesSinceBitClockOrigin)? locked = null;
+        var stxByte = VisHeader.NarrowStxByte;
+        var modeCodeByte = 0x02;
+        var checksum = (modeCodeByte ^ VisHeader.NarrowMarkerByte) & 0xFF;
+        var bytes = new[] { stxByte, VisHeader.NarrowMarkerByte, modeCodeByte, checksum };
+        var samplesInBit = MsToSamples(VisHeader.NarrowBitDurationMs);
+        foreach (var value in bytes)
+        {
+            for (var bitIndex = 0; bitIndex < 6; bitIndex++)
+            {
+                var bit = (value >> bitIndex) & 1;
+                for (var i = 0; i < samplesInBit; i++)
+                {
+                    var result = bit == 1 ? decoder.ProcessSample(Mark, 0) : decoder.ProcessSample(0, Space);
+                    if (result is not null)
+                    {
+                        locked = result;
+                    }
+                }
+            }
+        }
+
+        Assert.NotNull(locked);
+        Assert.Equal(0x02, locked!.Value.ModeCode);
+
+        // NOT 24*samplesInBit-1: the decoder's own _nextBitBoundary is the TRUNCATED cumulative
+        // exact-ms value at each step ((int)(k*22ms-worth-of-samples) for k=1..24, see ProcessSample's
+        // default: case), not 24 independently-rounded per-bit windows -- this class's own real
+        // drift-correction design (its class doc comment: "drift-corrects the 24-bit stream the way
+        // naive repeated integer addition would not"). A single truncation of the 24-bit TOTAL happens
+        // to equal this cumulative-truncation result exactly, since _nextBitBoundaryExact always holds
+        // the exact running sum (k*22ms), never accumulating error from previous truncations.
+        var expectedSamplesSinceOrigin = (int)(24 * VisHeader.NarrowBitDurationMs / 1000.0 * SampleRate) - 1;
+        Assert.Equal(expectedSamplesSinceOrigin, locked.Value.SamplesSinceBitClockOrigin);
     }
 
     [Fact]

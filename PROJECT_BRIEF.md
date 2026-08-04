@@ -20,7 +20,7 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-03, latest) — Working through remaining Band-3 items, IN PROGRESS
+## Resume here (2026-08-04) — Working through remaining Band-3 items, IN PROGRESS
 
 S31 is done and committed (`b5a5cb4`, see the entry below). User then asked to fix the rest of Band 3.
 Roadmap's own pattern-3 finding groups the 8 remaining items into 2 work packages + 2 standalone items:
@@ -30,39 +30,27 @@ done), **MN/MC package** (S9 retune + S8 mid-image re-lock — S14/S15 already d
 its doc entry was doable.
 
 **Status as of this update:**
-- **S9 — DONE, no code needed.** Discovered already closed: Band-2 item S6 (`6da0a65`, already
-  committed before this session) IS this exact fix. Roadmap updated to reflect the merge.
-- **S13 — DONE (doc-only).** Added the missing `docs/removed-features.md` entry for the `m_Type`
-  demodulator selector (code itself stays blocked on Phase-3 settings UI).
-- **S10 — DONE, implemented, tested, both auditor rounds clean (plan-review + code-level review, both
-  EQUIVALENT-WITH-RISKS/no blockers), 460/460 tests including all 7 real golden-vector fixtures
-  unchanged (the auditor's flagged stop-bit-boundary timing risk did not materialize). Widened from the
-  roadmap's narrow "escape byte only" framing to the real, broader gap: `TryDecodeVisHeader` (fixed-
-  window path) decided VIS-byte matches from 7 bits (parity-stripped); `VisLockStateMachine` already did
-  this correctly. Full detail: `spec/14-roadmap.md`, search "S10 — extended-VIS escape byte". **Not yet
-  committed** (bundling with S9/S13's doc changes into one commit, or separate — ask user).
-- **S8, S7, S11, S17, S12 — not started yet.** S8's scope turned out MUCH smaller than the roadmap
-  implied: `NarrowFskHeaderDecoder` (the per-sample FSK state machine) already exists and is already a
-  faithful, tested port of legacy's `DecodeFSK` — it's just only ever used in a one-shot fixed-window
-  way today (fresh instance per call, matching the SAME "cold-started every call" pattern S5/S16 already
-  fixed for VIS/AVT). S8 is "wire the existing decoder up as a persistent, continuously-fed scanner"
-  (mirroring `VisLockStateMachine`'s own wiring into `TryInterleavedHeaderScan`/`TryVisLockStateMachine`),
-  not "build a new FSK decoder." Confirmed against source: legacy's real `DecodeFSK` call
-  (`sstv.cpp:1858`) is UNCONDITIONAL every sample, no `!m_Sync` gate at all — even less restricted than
-  the VIS-restart path. Design sketch so far (not yet plan-reviewed or built): `NarrowFskHeaderDecoder`
-  needs a trigger-fire-sample tracking addition (mirroring `VisLockStateMachine`'s own pattern, but
-  simpler since this decoder is never Reset() — legacy's real `m_fsk*` state is confirmed, by reading
-  `CSSTVDEM::Stop()` directly, NEVER externally reset either, only self-resets internally); wire into
-  BOTH `TryInterleavedHeaderScan` (pre-lock) AND `TryVisLockStateMachine` (mid-reception, unlike AVT's
-  S31 restriction — a narrow-FSK match is immediately actionable via the existing `Commit()`, no
-  multi-stage hand-off needed the way AVT training was); needs its own `TrimBuffers` watermark term
-  (same category of risk the S31 auditor caught, watch for it up front this time). S7/S11/S17 (all AVT,
-  one work package) and S12 not yet investigated in detail.
+- **S9, S10, S13 — DONE and COMMITTED** (commit `739f4e5`, pushed). S9: discovered already closed by
+  Band-2 item S6, doc-only fix. S13: `docs/removed-features.md` entry added, code stays blocked on
+  Phase-3 UI. S10: widened from "escape byte only" to the real gap (every VIS-byte match in the
+  fixed-window path ignored the parity bit); both auditor rounds clean. Full detail: `spec/14-roadmap.md`.
+- **S8 — DONE, implemented, tested, both auditor rounds clean (plan-review found 2 real blockers, both
+  resolved per the auditor's own concrete guidance; code-level review after implementation: no
+  behavioral bug found, only doc/test-wording nits, all fixed). Full suite green (465/465). Not yet
+  committed** (bundling with S9/S10/S13 already committed separately — S8 is its own next commit).
+  Scope was much smaller than the roadmap implied: `NarrowFskHeaderDecoder` (the per-sample FSK state
+  machine) already existed as a faithful, tested port of legacy's `DecodeFSK` — only ever used in a
+  one-shot fixed-window way. S8 wires it up as a persistent, continuously-fed scanner (new
+  `AnalogFmSstvDecoder.TryNarrowFskScan`), reachable both pre-lock and mid-reception. Two real
+  regressions were found empirically (full-suite run, not anticipated by either plan-review or
+  code-level review round) — a "bulk vs. streaming ordering" bug and a missing `Commit()`-side
+  cursor fast-forward, both fixed. Full detail: `spec/14-roadmap.md`, search "S8 — mid-image
+  narrow-mode".
+- **S7, S11, S17 (AVT package), S12 — not started yet.**
 
-**Uncommitted as of this writing**: `docs/removed-features.md` (S13), `spec/14-roadmap.md`,
-`src/Yoniq.Core.Sstv/{AnalogFmSstvDecoder,VisHeader,VisLockStateMachine,SstvModeRegistry}.cs` (S10),
-`tests/Yoniq.Core.Sstv.Tests/{VisHeaderTests,VisToneRaceHeaderTests}.cs` (S10). Ask before committing,
-per standing rule.
+**Uncommitted as of this writing**: S8's full diff (`NarrowFskHeaderDecoder.cs`, `AnalogFmSstvDecoder.cs`,
+`VisHeader.cs`, `NarrowFskHeaderDecoderTests.cs`, new `NarrowFskNoiseTolerantDetectionTests.cs`,
+`spec/14-roadmap.md`). Ask before committing, per standing rule.
 
 ## Resume here (2026-08-03, later) — S31 (AVT never decodes on real capture) root-caused and FIXED
 
