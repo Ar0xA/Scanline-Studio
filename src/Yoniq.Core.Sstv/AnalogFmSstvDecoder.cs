@@ -729,6 +729,41 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         return _visDataD19Samples[Rel(index)];
     }
 
+    // Milestone-audit Phase 3 (spec/14-roadmap.md, "Other RX chain findings"): CLAUDE.md §4's
+    // concurrency rule requires every cross-thread event stream to state its scheduler and
+    // slow-subscriber behavior -- these three didn't. Stated here, for all three below:
+    //
+    // Scheduler: NONE. Each is a plain C# multicast delegate, invoked SYNCHRONOUSLY from inside
+    // PushSamples's own call stack (TryProcessBuffer's per-line loop, or the header-detection
+    // branches above it) -- there is no thread marshaling, no SynchronizationContext capture, no
+    // background dispatch. The calling thread (whatever thread called PushSamples) IS the thread
+    // every subscriber runs on.
+    //
+    // Slow-subscriber behavior: BLOCKS. A subscriber that does real work (rendering, I/O) blocks
+    // PushSamples -- and therefore the caller -- for the duration. No buffering, no dropping.
+    //
+    // Re-entrancy: UNGUARDED. A subscriber that calls PushSamples again (directly, or indirectly via
+    // a scheduler that re-enters synchronously) re-enters TryProcessBuffer while `mode`/`pixels`/
+    // `lineDecoder` locals from the OUTER call are still live on the stack, mutating the same
+    // `_consumedSamples`/`_nextLine`/`_mode`/`_pixels` fields the outer call will resume reading from
+    // once the inner call returns -- the outer call then continues against fields that may belong to
+    // a different image/epoch than its own captured locals. No production caller does this today (no
+    // reachable path re-enters PushSamples from within one of these three handlers), so currently
+    // safe -- but a future UI/`Yoniq.Application` subscriber must not call back into this decoder
+    // synchronously from any of these three handlers.
+    //
+    // LineDecoded specifically also hands out a LIVE ALIAS of this decoder's own mutable pixel
+    // buffer, not a copy -- MutableImageSource wraps `pixels` (the same array `Commit`/
+    // `AbandonInProgressImage` will later replace or that subsequent lines will keep mutating in
+    // place), matching the pattern GoldenVectorTests.cs's own `Snapshot` helper works around test-side
+    // (see that helper's own doc comment for the general hazard). A subscriber that queues the
+    // `IImageSource` for later/async rendering instead of consuming it synchronously will read torn or
+    // stale-image data. Not a legacy divergence (legacy's own `PostMessage`-driven UI read a bitmap
+    // the DSP side also owned) -- but an undocumented ownership contract at exactly the seam the
+    // eventual UI will attach to. Deliberately NOT changed to a defensive copy here: no production
+    // subscriber exists yet to need one, and CLAUDE.md's own guidance is not to add cost/complexity
+    // for a scenario that can't happen today -- documented so whoever wires the first real subscriber
+    // makes an informed choice (consume synchronously, or copy at the subscription site).
     public event Action<DecodedImageUpdate>? LineDecoded;
 
     public event Action<SstvModeDefinition>? ModeDetected;
