@@ -240,6 +240,20 @@ internal static class VisHeader
         NarrowLeaderDurationMs + NarrowGuardDurationMs + NarrowBitDurationMs // leader + guard + start-bit train
         + NarrowBitDurationMs * 6 * NarrowByteCount; // 4 bytes, 6 bits each (WriteFSK only ever sends 6 bits/byte)
 
+    /// <summary>S8 fix (spec/14-roadmap.md): duration from <see cref="NarrowFskHeaderDecoder"/>'s own
+    /// internal "bit-clock origin" (the mode-3-&gt;4 transition, i.e. the first sample of the 24-bit
+    /// data-bit sampling phase) to the packet's real end -- <see cref="NarrowBitDurationMs"/>/2 (the
+    /// mode-3 recheck's own 11ms offset from where the origin lands) plus the 24 data bits themselves
+    /// (<see cref="NarrowBitDurationMs"/>*6*<see cref="NarrowByteCount"/> = 528ms). Auditor plan-review
+    /// derived and independently re-confirmed this exact formula (539ms) as the anchor this class's
+    /// persistent mid-stream scan (<c>AnalogFmSstvDecoder.TryNarrowFskScan</c>) should use, in
+    /// preference to anchoring off the mode-0 guard-tone trigger instead (which has real,
+    /// unbounded-in-practice jitter the mode-3 recheck doesn't) -- see that method's own doc comment
+    /// for the full reasoning and the measured-tolerance test that verifies this in practice rather
+    /// than trusting the derivation alone.</summary>
+    public const double NarrowPostBitClockOriginDurationMs =
+        NarrowBitDurationMs / 2 + NarrowBitDurationMs * 6 * NarrowByteCount;
+
     /// <summary>Ported directly from <c>CSSTVMOD::WriteFSK</c> (<c>sstv.cpp:2942</c>): 6 bits,
     /// LSB first, bit=1 sent as <see cref="LeaderFrequencyHz"/> (1900Hz), bit=0 sent as
     /// <see cref="NarrowSpaceFrequencyHz"/> (2100Hz) — legacy only ever transmits/reads the low 6

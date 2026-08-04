@@ -69,16 +69,45 @@ internal sealed class NarrowFskHeaderDecoder
     private int _runningXor;
     private int _modeCodeByte;
 
+    // S8 fix (spec/14-roadmap.md): tracks samples elapsed since the mode-3->4 transition ("bit-clock
+    // origin" -- the instant bit sampling begins), NOT an absolute sample index. Deliberately relative:
+    // this class is now fed continuously for the whole decoder's lifetime by a caller whose own cursor
+    // bookkeeping (EndOfImage/Commit fast-forwards) this class must stay completely ignorant of --
+    // auditor plan-review flagged an earlier draft's "this instance's own sample-0 is absolute sample
+    // 0" premise as unsafe (nothing enforces every feed advancing by exactly 1 from a true zero; a
+    // future caller-side skip would silently produce a wrong anchor, not a crash). The caller computes
+    // the true origin as (its own absolute index for this call) - SamplesSinceBitClockOrigin.
+    // Auditor plan-review also corrected the anchor's own reference point: the mode-0 guard-tone
+    // TRIGGER (an earlier draft's choice) has real, unbounded-in-practice jitter (envelope-settling lag
+    // on the rising/falling s/m tones, plus mode 1's own 50ms hold tolerating a trigger up to ~50ms
+    // late and still succeeding) -- the mode-3 recheck is tightly pinned instead (a single pass/fail
+    // sample, not a hold, so it can only succeed within the 22ms start-bit window it's checking against).
+    private int _samplesSinceBitClockOrigin;
+
     public NarrowFskHeaderDecoder(int sampleRate)
     {
         _sampleRate = sampleRate;
     }
 
     /// <summary>Feeds one sample's mark(1900Hz)/space(2100Hz) envelope pair through the state
-    /// machine. Returns the decoded mode code once a full packet locks with a valid checksum;
-    /// otherwise null (still searching -- every legacy failure path resumes scanning internally,
-    /// so there is no separate "aborted" outcome to report).</summary>
-    public int? ProcessSample(int m, int s)
+    /// machine. Returns the decoded mode code and how many samples ago this instance's own internal
+    /// "bit-clock origin" (the mode-3->4 transition, see <see cref="_samplesSinceBitClockOrigin"/>'s
+    /// own doc comment) occurred, once a full packet locks with a valid checksum; otherwise null
+    /// (still searching -- every legacy failure path resumes scanning internally, so there is no
+    /// separate "aborted" outcome to report).
+    ///
+    /// Code-level auditor review note (S8 fix, spec/14-roadmap.md): assumes CONTIGUOUS feeding since
+    /// whatever sample last produced the current "bit-clock origin" -- i.e. every sample in between
+    /// must have been fed too, none skipped. The caller (<c>AnalogFmSstvDecoder.Commit</c>) can fast-
+    /// forward ITS OWN bookkeeping cursor past a stretch of samples this instance was never fed (when
+    /// a DIFFERENT detection path commits a match while this instance happens to be mid-packet,
+    /// mode&gt;=4) -- if that ever happens, <see cref="_samplesSinceBitClockOrigin"/> would undercount
+    /// the true elapsed time once feeding resumes, biasing a subsequent lock's anchor late by the
+    /// skipped span. Not fixed: reachable only via an already-improbable false-positive continuation
+    /// (any real gap of more than about one bit period, ~22ms, already desyncs the bit clock and
+    /// resets this state machine to mode 0 on its own, via the existing `d &lt; AmplitudeThreshold`
+    /// check), and no test has ever reached it.</summary>
+    public (int ModeCode, int SamplesSinceBitClockOrigin)? ProcessSample(int m, int s)
     {
         var d = Math.Abs(m - s);
 
@@ -132,6 +161,12 @@ internal sealed class NarrowFskHeaderDecoder
                         _nextBitBoundary = (int)_nextBitBoundaryExact;
                         _bitCount = 0;
                         _bitAccumulator = 0;
+                        // -1 here, not 0: the mode-3->4 transition itself is not yet a `default:`
+                        // case call (matches this class's own "a mode change made during sample N's
+                        // call only takes effect starting sample N+1's call" convention, see class
+                        // doc comment) -- the first `default:` call below increments this to 0,
+                        // representing that NEXT sample as the origin itself (0 samples elapsed).
+                        _samplesSinceBitClockOrigin = -1;
                         _mode = 4;
                     }
                     else
@@ -142,6 +177,7 @@ internal sealed class NarrowFskHeaderDecoder
                 break;
 
             default: // sstv.cpp:2430-2603 -- bit sampling + byte dispatch (modes 4, 16, 17, 18)
+                _samplesSinceBitClockOrigin++;
                 _time++;
                 if (_time >= _nextBitBoundary)
                 {
@@ -168,7 +204,7 @@ internal sealed class NarrowFskHeaderDecoder
                             _bitAccumulator = 0;
                             if (lockedCode is not null)
                             {
-                                return lockedCode;
+                                return (lockedCode.Value, _samplesSinceBitClockOrigin);
                             }
                         }
                     }
