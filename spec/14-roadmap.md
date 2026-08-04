@@ -2908,13 +2908,13 @@ real TX generators, not inferred.
 
 **SHOULD — real, worth doing soon, bounded or conditional impact:**
 
-4. **[A] TX frequency-mapping drops legacy's two integer truncations.** Legacy's `ColorToFreq`/`GetRY`
+4. **[A] TX frequency-mapping drops legacy's two integer truncations — DONE.** Legacy's `ColorToFreq`/`GetRY`
    chain truncates twice (int arithmetic); every port TX encoder maps in unrounded doubles. Net: a
    systematic (not random) ~0-4Hz, mean ~2Hz, one-sided-high bias on every transmitted pixel — visually
    nil, but it means true bit-exact TX parity against a real legacy decode is unattainable until this is
    modeled (two `Math.Floor`s), and it's the reason TX golden-vector capture (if ever done) wouldn't
    match byte-for-byte even with a perfectly-timed encoder.
-5. **[A] `OutHEAD` pre-VIS tone burst never emitted** (800ms normal / 400ms narrow, `Main.cpp:7270-7292`,
+5. **[A] `OutHEAD` pre-VIS tone burst never emitted — DONE** (800ms normal / 400ms narrow, `Main.cpp:7270-7292`,
    called unconditionally before VIS at legacy's shipped `m_VOX=0` default). Not a decode blocker (a real
    legacy RX still locks on the VIS leader), but a real unported TX segment with no
    `docs/removed-features.md` entry and no code comment — a CLAUDE.md §2 process-rule gap, same class as
@@ -3585,6 +3585,133 @@ the robot-36/robot-72/pd90/mn110 real-legacy-capture golden vectors, all unchang
 no real fixture actually triggers it.
 
 Test count: 520/520 (517 prior + 3 in `Limit256ClampTests.cs`), solution-wide build clean.
+
+## TX-side SHOULD cluster (items 4, 5) — DONE, in an isolated fork worktree
+
+User approved running two pipelines in parallel: a `fork` (isolated git worktree) handling the
+TX-side SHOULD items (4: frequency-mapping truncation, 5: OutHEAD leader-tone port), while the main
+session continued the RX-orchestrator cluster (6, 7, 9, boundary-hardening 8/10) directly in the main
+working tree. This section covers the fork's own work; the RX-side cluster's own entry lives
+separately (main branch). Same test+review discipline as every other fix this session, run
+independently in this worktree.
+
+### SHOULD item 4 — TX frequency-mapping integer truncation — DONE
+
+Legacy's real pixel-to-frequency TX chain truncates TWICE via integer arithmetic: `GetRY`
+(`ComLib.cpp:3653-3668`) assigns a `double` RHS into `int&` out-parameters (truncates toward zero,
+confirmed always non-negative for real 8-bit RGB input so `Math.Floor` is the correct C# equivalent),
+then `ColorToFreq`/`ColorToFreqNarrow` (`ComLib.cpp:3491-3501`) does `d*(max-min)/256` using INTEGER
+division. A THIRD, family-specific truncation was found by reading `TMmsstv::LineRM` directly
+(`Main.cpp:6796-6799`): RM8/RM12's luma averaging (`YY = (YY + Y[x]) / 2`) is also integer division.
+This port mapped in unrounded doubles end to end -- a systematic ~0-4Hz one-sided bias on every
+transmitted pixel.
+
+Added `YCbCr.FromRgb`'s own `Math.Floor`+`Math.Clamp` (matching `GetRY`+`LimitRGB`'s exact order) and
+a new shared `YCbCr.ColorToFreq(colorValue, luminanceMinHz, luminanceMaxHz)` (`Math.Floor` after the
+multiply-divide, proven bit-exact to C++ integer division: the multiply is an exact integer product
+under 2^53, the divide is by a power of two). Wired into all 5 `*ScanlineEncoder.cs` files, replacing
+each one's own inline unrounded formula; `MonoAveragedPairedScanlineEncoder.cs` also got the RM8/RM12-
+specific integer-division averaging fix.
+
+New `YCbCrColorToFreqTruncationTests.cs`: exhaustive sweep (every integer 0-255, both bands this port
+defines) confirming bit-exact match against an independent from-scratch reimplementation of legacy's
+real integer division; confirmed to discriminate (temporarily reverted to floating-point division,
+re-ran, confirmed failure at 1503 vs 1503.125, restored). `YCbCrTests.cs`'s existing round-trip
+tolerance widened from +/-1 to +/-4 -- measured via a 2,000,000-sample random sweep, not guessed
+(expected and legacy-faithful: legacy's own real TX/RX round-trip is lossy by this same chain).
+
+Code-level review (round 1): EQUIVALENT-WITH-RISKS. Two real risks, both fixed: (1) `YCbCr.FromRgb`'s
+C# operation grouping (`16 + a*r + b*g + c*b`, left-to-right) differed from legacy's exact grouping
+(`16.0 + (a*R + b*G + c*B)`, weighted terms summed first) -- floating-point addition isn't
+associative, and every R=G=B gray level's exact chroma value is precisely 128 (the weight
+coefficients sum to exactly zero), i.e. exactly on the truncation boundary, so the two groupings could
+land different gray levels on different sides of it. Reparenthesized to match legacy exactly. (2) A
+misleading golden-vector comment claiming the TX-direction real-legacy-decode test was re-measured and
+found unchanged "because a sub-3Hz shift is below one quantization level" -- WRONG: that test reads
+checked-in files from disk and never invokes the encoder at all, so "unchanged" was a tautology, not
+evidence. Corrected to disclose the real gap: TX-vs-real-legacy validation of this fix doesn't exist
+yet, needs a fresh `TxCapture/` re-capture (out of scope, needs the user's own real legacy install).
+Two doc-comment nits also fixed (multiply-exactness under-specified; "+/-4 gives margin" corrected to
+"+/-4 equals the exact measured max, not a margin").
+
+Golden-vector re-measurement (the one test in `GoldenVectorTests.cs` that live-encodes): all 8 modes
+moved (martin-m1 1.29->1.34, robot-36 4.79->4.16, scottie-s1 0.48->0.37, robot-72 4.64->4.13, pd90
+1.58->0.18, rm8 3.43->3.80, mn110 1.10->0.14, avt 9.65->9.87), mostly improved, a few worsened
+slightly (accepted-tradeoff category, same as every other fix this session), all comfortably inside
+existing tolerances.
+
+### SHOULD item 5 — OutHEAD pre-VIS leader-tone burst — DONE
+
+Legacy (`Main.cpp:7270-7292`, `TMmsstv::OutHEAD`) emits a leader-tone burst UNCONDITIONALLY at the
+very start of every real transmission (`Main.cpp:7393`, called before the VIS/narrow-FSK header block)
+at the shipped `sys.m_VOX==0` default -- narrow: 1900,2300,1900,2300 (400ms); normal:
+1900,1500,1900,1500,2300,1500,2300,1500 (800ms), all 100ms/tone. This port's TX encoder never emitted
+it at all -- a real missing TX segment, no `docs/removed-features.md` entry, same class of gap S27's
+CQ100 omission was before it got fixed. AVT gets the SAME 800ms non-narrow burst as every other
+non-narrow mode, not a special AVT-only header -- confirmed directly against source (AVT's own
+3x-VIS-repeat logic, `Main.cpp:7429`, lives INSIDE the later non-narrow branch OutHEAD precedes).
+
+Added `VisHeader.GenerateOutHeadSegments(bool narrow)` plus 3 new named constants
+(`OutHeadToneDurationMs`/`OutHeadNarrowDurationMs`/`OutHeadNormalDurationMs`), wired into
+`AnalogFmSstvEncoder.GenerateFrequencySegments` as the very first segments emitted, before the
+existing AVT/narrow/extended/normal branch.
+
+New tests (`VisHeaderTests.cs`): two pure unit tests pin the exact tone sequences; a third
+(theory, 3 cases: robot-36/avt/mn110) drives the REAL encoder end to end and measures the actual
+generated audio's frequency at t=150ms via a zero-crossing-rate estimator -- this should land on
+OutHEAD's own second tone (1500Hz normal, 2300Hz narrow), which is NOT what a no-OutHEAD encode would
+produce at that timestamp (VIS's own leader is an unbroken 300ms of 1900Hz). Confirmed to discriminate
+(temporarily removed the segment-emission wiring, all 3 cases failed measuring ~1894Hz, matching the
+no-OutHEAD prediction almost exactly, restored).
+
+Full-suite run surfaced 2 real consequences of the new 400-800ms of leading audio, both fixed:
+`NarrowFskNoiseTolerantDetectionTests`' anchor-position test needed its `expectedAnchor` formula
+updated to add the new leading burst; `SstvRoundTripTests`' AVT-specific tolerance needed raising
+(10.0 -> 16.0, measured 11.21) since AVT's own already-documented-fragile training lock absorbs a
+modest quality cost from the longer preamble (mode detection unaffected).
+
+**Code-level review (round 1): EQUIVALENT-WITH-RISKS, one real finding fixed properly (not just
+patched around) rather than dismissed.** 5 test files (`SyncBypassDetectionTests.cs`,
+`SyncBypass1DetectionTests.cs`, `SyncScanInterleaveTests.cs`, `PiecesSixCReachabilityTests.cs`,
+`SyncBypassNarrowDetectionTests.cs`) strip a fixed header-duration offset from live-encoded audio to
+reach a "headerless" body, specifically to exercise the sync-interval-bypass path (`m_sint1`/
+`m_sint2`/`m_sint3`). None of their skip formulas included the new OutHEAD term -- post-fix, every one
+was 400-800ms short, meaning they were silently locking via the REAL VIS header path instead of the
+bypass path they exist to test, while every assertion still passed (a VIS lock is more accurate than a
+bypass lock, so nothing looked wrong from outside -- the exact "round-trip passes while both halves
+agree on something wrong" shape CLAUDE.md's own Scottie incident warns about, just for a test fixture
+instead of production code). Fixed all 5 by adding the missing `OutHeadNormalDurationMs`/
+`OutHeadNarrowDurationMs` term. Re-measuring afterward surfaced something genuinely interesting: the
+OLD documented deltas for these files (SyncBypassDetectionTests: 19.01/12.65/25.13/13.85;
+SyncBypass1DetectionTests: 39.03; SyncBypassNarrowDetectionTests: 24.27/21.17/19.62/16.38/14.29/11.42)
+were themselves measuring VIS-lock accuracy, not real sync-bypass accuracy -- with the strip offset
+now correct and the bypass path genuinely engaged, freshly measured values are all SMALLER, not
+larger (SyncBypassDetectionTests: 3.48/4.93/6.91/4.86, tolerance 29.0->14.0;
+SyncBypass1DetectionTests: 6.63, tolerance 43.0->10.0; SyncBypassNarrowDetectionTests:
+13.76/13.20/13.04/9.19/8.84/8.29, tolerance 25.0->18.0) -- a genuine sync-bypass anchor turns out to
+be MORE precise than what the old (contaminated) numbers were ever actually measuring.
+
+A second finding was a weakly-supported explanation, not a wrong assertion: an early comment
+attributed AVT's own tolerance increase to "AGC/level-detection settling," which round-1 review
+found implausible (AVT already carries ~10s of its own preamble before line 0, so its AGC is long
+converged either way; its training PLL is documented elsewhere as amplitude-scale-invariant) and
+proposed an alternative (unverified) mechanism instead. Corrected to present both as open hypotheses,
+explicitly noting no instrumented measurement was taken to settle it -- round-2 review additionally
+caught that the alternative "whole-VIS-repeat-block-shift" hypothesis doesn't even fully fit either,
+since AVT's numbers moved in OPPOSITE directions across two different tests for this same fix
+(SstvRoundTripTests' self-round-trip worsened, GoldenVectorTests' self-vs-real-legacy-decode
+improved) -- flagged as genuinely unresolved rather than smoothed over with a plausible-sounding story.
+
+Round-2 review: PASS-WITH-RISKS, both round-1 findings confirmed resolved at the code level; residual
+findings were all documentation staleness introduced BY the correction itself (two of the five fixed
+test files' own comments still cited their old, pre-fix-contaminated numbers) -- all fixed the same
+way, by actually re-measuring rather than just updating prose.
+
+Test count: 527/527 (520 prior + 3 in `VisHeaderTests.cs`'s new theory + 2 in its two unit tests),
+solution-wide build clean.
+
+**Not pushed or merged** -- this work lives in its own isolated git worktree/branch, left for the
+user/orchestrating session to review and merge back.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 

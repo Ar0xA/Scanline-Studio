@@ -141,6 +141,54 @@ internal static class VisHeader
     /// rather than computing parity, so this quirk stays correctly recognized end-to-end.</summary>
     public const int Rm12ForcedParityBit = 1;
 
+    /// <summary>
+    /// SHOULD item 5 (spec/14-roadmap.md): direct port of legacy's <c>TMmsstv::OutHEAD</c>
+    /// (`Main.cpp:7270-7292`), the pre-VIS leader-tone burst -- called UNCONDITIONALLY at the very
+    /// start of every real transmission (`Main.cpp:7393`, <c>OutHEAD()</c>, immediately before the
+    /// VIS/narrow-FSK header block at `:7395`), at legacy's shipped <c>sys.m_VOX==0</c> default (the
+    /// only branch this port can model -- no VOX/PTT layer exists yet, matching
+    /// <see cref="AnalogFmSstvEncoder.GenerateFooterSegments"/>'s own identical <c>m_VOX</c> scoping
+    /// note). This was a real missing TX segment before this fix -- no code comment, no
+    /// docs/removed-features.md entry, same class of gap S27's CQ100 omission was before it got
+    /// fixed. Not a decode blocker for a real legacy RX (it still locks on the VIS leader itself
+    /// regardless of what precedes it), but genuinely the FIRST audio any real transmission carries,
+    /// missing from this port's own TX output until now.
+    ///
+    /// Exact tone sequences, both 100ms/tone (`Main.cpp:7274-7292`, the <c>case 0:</c> arm of
+    /// <c>switch(sys.m_VOX)</c>):
+    /// <list type="bullet">
+    /// <item>Narrow: 1900, 2300, 1900, 2300 (400ms total)</item>
+    /// <item>Normal: 1900, 1500, 1900, 1500, 2300, 1500, 2300, 1500 (800ms total)</item>
+    /// </list>
+    /// </summary>
+    public const double OutHeadToneDurationMs = 100.0;
+    public const double OutHeadNarrowDurationMs = OutHeadToneDurationMs * 4; // 400ms
+    public const double OutHeadNormalDurationMs = OutHeadToneDurationMs * 8; // 800ms
+
+    public static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateOutHeadSegments(bool narrow)
+    {
+        const double toneDurationMs = OutHeadToneDurationMs;
+
+        if (narrow)
+        {
+            yield return (1900, toneDurationMs);
+            yield return (2300, toneDurationMs);
+            yield return (1900, toneDurationMs);
+            yield return (2300, toneDurationMs);
+        }
+        else
+        {
+            yield return (1900, toneDurationMs);
+            yield return (1500, toneDurationMs);
+            yield return (1900, toneDurationMs);
+            yield return (1500, toneDurationMs);
+            yield return (2300, toneDurationMs);
+            yield return (1500, toneDurationMs);
+            yield return (2300, toneDurationMs);
+            yield return (1500, toneDurationMs);
+        }
+    }
+
     public static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateSegments(int visCode, int? forcedParityBit = null)
     {
         yield return (LeaderFrequencyHz, LeaderDurationMs);
