@@ -6,10 +6,10 @@ Yoniq v2 is licensed under the **GNU Lesser General Public License v3.0 or later
 
 ## Why LGPL-3.0-or-later
 
-Yoniq v2 is a derivative work of YONIQ/MMSSTV: the rewrite specs in `spec/` explicitly plan to port algorithms, protocol framing logic, and DSP constants from the legacy C++Builder source (`sstv.cpp`, `Fft.cpp`, `fir.cpp`, `cradio.cpp`), not to reimplement them clean-room. Upstream YONIQ/MMSSTV states its own license as LGPL-3.0-or-later:
+Yoniq v2 is a derivative work of YONIQ/MMSSTV: the rewrite specs in `spec/` explicitly plan to port DSP/codec algorithms and constants from the legacy C++Builder source (`sstv.cpp`, `Fft.cpp`, `fir.cpp`), not to reimplement them clean-room. (CAT/rig-control code — `cradio.cpp` — is explicitly **not** ported; see [[spec/03-cat-layer]] and `CLAUDE.md` §2 — Yoniq is a pure client of external CAT backends instead. This doesn't change the LGPL rationale below, since the DSP core alone is still a substantial derivative work.) Upstream YONIQ/MMSSTV states its own license as LGPL-3.0-or-later:
 
 - `yoniq-old/YONIQ-main/README.md`: *"MMSSTV LGPL source repository"*.
-- Every ported source file carries a per-file LGPL-3-or-later header (e.g. `cradio.h`, `sstv.h`): *"MMSSTV is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License ... version 3 ... or (at your option) any later version."*
+- Every ported source file carries a per-file LGPL-3-or-later header (e.g. `sstv.h`, `fir.h`): *"MMSSTV is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser General Public License ... version 3 ... or (at your option) any later version."*
 
 Matching the upstream license is both the legally consistent choice for a derivative work and practically the right fit: LGPL permits commercial use and charging for distribution (unlike the freeware clause below), while not forcing GPL on downstream consumers of the plugin API ([[spec/11-plugin-system]]).
 
