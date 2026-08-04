@@ -15,6 +15,14 @@ Real reference data captured from a real, running legacy YONIQ/MMSSTV install, p
 | `rm8.bmp` | Grayscale gradient (R=G=B=(x+y) ramp) instead of the color formula above — RM8 is genuinely monochrome (no chroma channels at all), so the color gradient isn't a fair fixture for it; matches `SstvRoundTripTests`' own `CreateGrayscaleGradientTestImage` convention. |
 | `scottie-s1.mmv` / `robot72.mmv` / `pd90.mmv` / `rm8.mmv` / `mn110.mmv` / `avt.mmv` | Task #7 (spec/14-roadmap.md) additions — same real-capture methodology as `robot36.mmv`/`martin-m1.mmv` above. |
 | `scottie-s1_RX.bmp` / `robot72_RX.bmp` / `pd90_RX.bmp` / `rm8_RX.bmp` / `mn110_RX.bmp` / `avt_RX.bmp` | Legacy's own decode of the corresponding `.mmv` above, same capture method as `robot36_RX.bmp`. |
+| `scottie-dx.bmp` / `mr73.bmp` / `r24.bmp` | Same synthetic gradient formula, generated for TX-direction fixture prep (see `TxCapture/README.md`) — these 3 modes had no existing RX-direction fixture at all before that, each flagged by the milestone audit as the sole mode exercising a specific code path. Not yet paired with a real legacy `_RX.bmp` decode. |
+
+## TX-direction fixtures (pending, see `TxCapture/README.md`)
+
+All of the above validates RX only — real legacy-encoded audio decoded by this port. `TxCapture/`
+contains this port's own encoder output (`.mmv` format, ready to feed into a real legacy install via
+`File → Play`) for all 11 modes above, closing the corresponding TX-direction gap. See that folder's
+own README for the exact capture steps and current status.
 
 ## `.mmv` format (confirmed directly against `yoniq-old/YONIQ-main/Sound.cpp`, not RIFF/WAV)
 

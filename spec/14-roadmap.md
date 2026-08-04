@@ -3213,6 +3213,59 @@ through a real legacy decode, the reverse direction of the existing RX fixtures)
 user's own time with the real legacy binary, same category as Task #7 and finding 13's Scottie-DX/MR73/
 R24 coverage gaps, not something this session can do unaided.
 
+### TX-side capture prep — DONE (waiting on the user's own real-legacy-install time)
+
+User is setting up the real legacy binary under Wine locally and asked whether this session could
+prepare the TX-side `.mmv` files itself. Investigated the legacy capture mechanism directly
+(`Sound.cpp`) before assuming anything: no CLI/headless RX mode exists (only `-r`/`-i` flags, unrelated),
+but the SAME `.mmv` format already used for the existing RX fixtures can be fed into legacy via its own
+`File → Play` menu action and replayed through its real-time RX pipeline — no live audio hardware/
+routing needed. This session has no screenshot/visual-feedback tooling to drive that GUI reliably, so
+the actual `File → Play` / save-image steps stay the user's own — but everything else (generating
+correctly-formatted TX audio, and later processing the results into real fixtures/tests) is fully
+automatable and was done now.
+
+**New file-format writers, verified before any fixture generation (user's own explicit request: "be
+sure to have opus verify the correctness of these two tools before assuming they work")**:
+`MmvFile.Write` and `BmpFile.Write` (inverses of the existing `Read` methods, `tests/Yoniq.Core.Sstv.Tests/`).
+Opus code-level review (read-only, against `Sound.cpp`/the standard BMP/DIB spec) found `BmpFile.Write`
+clean but caught a REAL blocker in `MmvFile.Write`'s first draft: `(short)Math.Round(clamped *
+32768.0f)` could wrap a full-scale +1.0 sample to -32768 instead of saturating at +32767 (`Math.Round`
+has no `float` overload, so the multiply widens to `double`; .NET's saturating float→int32 conversion
+catches the intermediate 32768.0 fine, but the SUBSEQUENT int32→short narrowing is plain truncation,
+not saturation — 32768 = `0x8000` truncates to a `short` as -32768). Genuinely reachable, not
+hypothetical: `AnalogFmSstvEncoder` yields raw full-scale `Math.Sin(phase)`, so ~1.3% of every cycle's
+samples land in the wrap window — every generated file would have been silently corrupted with a
+~2x-full-scale impulse roughly every 75 samples throughout the whole transmission. Fixed by clamping in
+the integer domain (`Math.Clamp(Math.Round(...), short.MinValue, short.MaxValue)`) instead of relying
+on the cast to saturate. New round-trip tests (`FixtureFileFormatTests.cs`, 14 tests, including a
+10,000-sample full-cycle sine sweep) confirmed to discriminate the bug directly (reverting the fix
+reproduces the exact `+1.0 → -1.0` wrap); `BmpFile.Write`'s own review found zero defects, confirmed by
+a hand-traced 2x2/3x3 round-trip plus 5 parametrized round-trip tests across odd/even widths.
+
+**11 TX `.mmv` files generated** (`tests/Yoniq.Core.Sstv.Tests/Fixtures/GoldenVectors/TxCapture/`,
+11025Hz, matching every other fixture): the 8 modes with existing RX fixtures (reusing their exact
+source `.bmp`), plus 3 modes the milestone audit flagged as having zero coverage anywhere (Scottie DX,
+MR73, R24 — each the sole mode exercising a specific code path), with newly-generated source `.bmp`s
+using the same established gradient formula. Generated via a temporary test-project generator, run
+once, then fully reverted (git diff clean) per this project's own established methodology.
+
+**Self-decode verification, not just file-format correctness** — user's own explicit follow-up
+question caught a real gap: the file-format round-trip tests alone don't prove the ACTUAL generated
+files are valid, decodable transmissions, only that arbitrary float values survive the byte format.
+New `TxCaptureFixturesTests.cs` (11 tests, kept permanently, not reverted) reads each real generated
+file back exactly as a human would hand it to legacy, decodes it with this port's own decoder, and
+confirms zero restarts, the correct mode detected, and a correct decode within the same tolerances the
+existing RX-direction golden-vector tests use. All 11 pass.
+
+**Next**: `TxCapture/README.md` documents the exact steps and file-naming convention for the user's own
+side (set legacy's sample rate to 11025Hz first — mismatched rates trigger a silent lowpass-resample
+prompt on `File → Play`, defeating the whole point). No rush — fixtures can be wired in individually as
+results come back, without waiting for all 11.
+
+Test count: 501/501 (476 prior + 14 in `FixtureFileFormatTests.cs` + 11 in `TxCaptureFixturesTests.cs`),
+solution-wide build clean.
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.

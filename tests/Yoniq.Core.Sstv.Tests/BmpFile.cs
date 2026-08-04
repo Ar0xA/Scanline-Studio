@@ -106,4 +106,53 @@ internal static class BmpFile
 
         return new ArrayImageSource(width, height, pixels);
     }
+
+    /// <summary>Inverse of <see cref="Read"/> -- writes the same uncompressed 24bpp, no-color-table,
+    /// 40-byte-DIB-header (BITMAPINFOHEADER) variant, bottom-up row order, BGR pixel order. Added for
+    /// TX-side golden-vector fixture prep (spec/14-roadmap.md, "Milestone audit, Phase 1+2" ->
+    /// "Explicit prerequisite before Phase 3") -- generates new source .bmp images for modes that
+    /// don't have an existing RX-direction fixture yet, using the same gradient convention
+    /// (CreateGradientTestImage's own R/G/B formula, replicated in the generator, not here) so the
+    /// whole fixture set stays visually/formulaically consistent.</summary>
+    public static void Write(string path, IImageSource image)
+    {
+        var width = image.Width;
+        var height = image.Height;
+        var stride = ((width * 3) + 3) / 4 * 4;
+        var pixelDataOffset = 54;
+        var pixelDataSize = stride * height;
+        var fileSize = pixelDataOffset + pixelDataSize;
+
+        var data = new byte[fileSize];
+        data[0] = (byte)'B';
+        data[1] = (byte)'M';
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(2), fileSize);
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(10), pixelDataOffset);
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(14), 40); // DIB header size
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(18), width);
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(22), height); // positive -> bottom-up
+        BinaryPrimitives.WriteInt16LittleEndian(data.AsSpan(26), 1); // planes
+        BinaryPrimitives.WriteInt16LittleEndian(data.AsSpan(28), 24); // bitCount
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(30), 0); // compression (BI_RGB)
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(34), pixelDataSize);
+
+        for (var fileRow = 0; fileRow < height; fileRow++)
+        {
+            // Mirrors Read's own flip: pixels[] is addressed top-down (GetScanline(0) = visual top),
+            // BMP storage is bottom-up.
+            var imageRow = height - 1 - fileRow;
+            var scanline = image.GetScanline(imageRow);
+            var rowOffset = pixelDataOffset + (fileRow * stride);
+
+            for (var x = 0; x < width; x++)
+            {
+                var pixelOffset = rowOffset + (x * 3);
+                data[pixelOffset] = scanline[x].B;
+                data[pixelOffset + 1] = scanline[x].G;
+                data[pixelOffset + 2] = scanline[x].R;
+            }
+        }
+
+        File.WriteAllBytes(path, data);
+    }
 }
