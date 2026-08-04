@@ -909,12 +909,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // accident. Provably bounded, not permanently stallable: TryNarrowFskScan is called at
             // least once per TryInterleavedHeaderScan call (i.e. at least once per PushSamples call,
             // while _mode is null -- now potentially many more times, once per interleaved-loop
-            // iteration, but never fewer)
-            // EXCEPT during the up-to-~7.1s _avtTrainingPending window (TryDecodeHeader short-circuits
-            // past TryInterleavedHeaderScan entirely while pending, see that method's own doc comment)
-            // -- a temporary, bounded pause (this cursor resumes advancing the instant AVT training
-            // resolves), not the permanent stall BufferedSampleCount_StaysBounded_ForLongNeverLockingStream
-            // guards against.
+            // iteration, but never fewer). SHOULD item 7 correction (spec/14-roadmap.md): an earlier
+            // version of this comment claimed this cursor pauses for the whole up-to-~7.1s
+            // _avtTrainingPending window because TryDecodeHeader used to short-circuit past
+            // TryInterleavedHeaderScan entirely while pending -- no longer true. TryResolveAvtTraining
+            // now interleaves its own TryNarrowFskScan call every training sample (see that method's
+            // own doc comment), so this cursor keeps advancing throughout AVT training too, not just
+            // resuming once training resolves. The bound-provably-stallable conclusion only gets
+            // stronger, not weaker.
             watermark = Math.Min(watermark, _narrowFskProcessedUpTo);
 
             watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
@@ -1328,7 +1330,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // AVT's training-lock resolution spans multiple TryDecodeHeader calls once entered (its
         // completion point is data-dependent, not a fixed duration) -- while pending, skip straight
         // back into it rather than re-running header detection or falling through to the other
-        // fallbacks, which would be wrong once the mode is already known to be AVT.
+        // fallbacks, which would be wrong once the mode is already known to be AVT. SHOULD item 7
+        // (spec/14-roadmap.md): TryResolveAvtTraining's own loop now also races a narrow-FSK scan in
+        // lockstep -- see that method's own doc comment for why this needs to be interleaved
+        // per-sample rather than checked once here (a bulk single push lets TryResolveAvtTraining's
+        // own while loop consume the whole buffer in one call, before TryDecodeHeader would ever be
+        // re-entered to try a narrow check "next time").
         if (_avtTrainingPending)
         {
             return TryResolveAvtTraining();
@@ -2029,6 +2036,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // unconditionally reassigned by InitializeAfc/InitializeSlant on the eventual real Commit() either
     // way; the latter's own mid-pending-window trim-retention cost (see TryVisLockStateMachine's own
     // new AVT branch doc comment) is a deliberate, bounded, accepted tradeoff, not an oversight.
+    // SHOULD item 9 (spec/14-roadmap.md): this is a SECOND way `_mode` can become null without going
+    // through `EndOfImage()` (the first being a normal image completing) -- `EndOfImage()` is what
+    // normally re-syncs `_syncBypassProcessedUpTo`/`_visLockProcessedUpTo` (its own `resumeFrom` jump)
+    // before `TryInterleavedHeaderScan` (the pre-lock scanner gated on `_mode is null`) would ever run
+    // again. This method does NOT do that resync. Currently safe by REACHABILITY, not by construction:
+    // every call site of this method (`Commit()`, and S7's own AVT-training-abandon-for-a-cleaner-match
+    // path) either immediately re-assigns `_mode` itself (`Commit()`) or leaves `_avtTrainingPending`
+    // true (short-circuiting `TryDecodeHeader` straight past `TryInterleavedHeaderScan` entirely until
+    // a guaranteed later `Commit()`) -- so `TryInterleavedHeaderScan` never actually observes the
+    // unsynced cursors this method leaves behind. A future call site that abandons an in-progress image
+    // WITHOUT either committing a new one or entering AVT training would break that coupling silently
+    // (no compiler error, no test failure until such a path is added) and could let
+    // `TryInterleavedHeaderScan` re-examine already-accounted-for samples. Not fixed here: the two
+    // existing call sites are exhaustively safe today, and adding a resync this method's own current
+    // callers don't need would be validating a scenario that can't currently happen -- flagged so a
+    // FUTURE new call site's author checks this coupling explicitly instead of discovering it via a
+    // hard-to-diagnose spurious restart.
     private void AbandonInProgressImage()
     {
         _mode = null;
@@ -2789,8 +2813,59 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // see AvtPllSampleAt's own doc comment for the full derivation and why this is a fidelity fix,
         // not an accuracy one (PllFmDemodulator's own internal AGC makes it scale-invariant to the
         // difference between the old and new feeds).
+        //
+        // SHOULD item 7 (spec/14-roadmap.md): confirmed directly against source, legacy's DecodeFSK
+        // (sstv.cpp:1858) runs UNCONDITIONALLY every sample, including throughout AVT training (it's
+        // called before the `if(!m_Sync||...)` block AVT's own case-3-8 state machine lives inside,
+        // sstv.cpp:1889). Its own narrow-packet-completion handler (sstv.cpp:2589-2593) commits to the
+        // narrow mode whenever `(m_SyncRestart || !m_Sync) && m_NextMode && (m_SyncMode >= 0)` --
+        // round-2-review correction: AVT training's own real m_SyncMode values are 4/5/6/7/8
+        // (sstv.cpp:2161/2173/2180/2202/2208/2212/2217/2224/2230/2235) plus the 256 timeout sentinel
+        // (:2157/2167/2185) -- 512 is Stop()'s own value (:1786), not a training state, an earlier
+        // version of this comment miscited it. All of training's real values are still >= 0 either
+        // way, and m_Sync is still false during training (the image isn't locked yet -- the only
+        // `m_Sync = 1` assignment anywhere in legacy is Start(), sstv.cpp:1743), so a valid narrow
+        // packet found DURING AVT training genuinely aborts it in legacy. This port used to
+        // short-circuit TryDecodeHeader straight into this method while pending, silently missing any
+        // such packet.
+        //
+        // TryNarrowFskScan is interleaved HERE, per-sample, rather than checked once in TryDecodeHeader
+        // before this loop starts -- matching TryInterleavedHeaderScan's own established lockstep
+        // pattern (see that method's own doc comment for the identical reasoning): a bulk single
+        // PushSamples call would otherwise let this while loop's own `TotalSamplesReceived` bound
+        // consume the ENTIRE buffer in one shot, on the very first call, before TryDecodeHeader would
+        // ever be re-entered to give a narrow check a "next time" -- found empirically, not
+        // anticipated, by this port's own end-to-end test. The initial catch-up call (matching
+        // TryInterleavedHeaderScan's own `Math.Min(scanBound, _syncBypassProcessedUpTo)`) brings
+        // _narrowFskProcessedUpTo up to wherever this training's own cursor already sits (it can lag
+        // behind here too, e.g. narrow-FSK scanning during the pre-lock VIS-header search never ran
+        // this far ahead); the per-iteration call then advances it by exactly one sample per training
+        // sample, reproducing legacy's real per-sample order (DecodeFSK before the sync-mode switch)
+        // for every sample this loop actually examines.
+        if (TryNarrowFskScan(Math.Min(TotalSamplesReceived, _avtTrainingProcessedUpTo)))
+        {
+            _avtTrainingPending = false;
+            _avtTrainingLock = null;
+            _avtPllDemodulator = null;
+            return true;
+        }
+
         while (_avtTrainingProcessedUpTo < TotalSamplesReceived)
         {
+            if (TryNarrowFskScan(_avtTrainingProcessedUpTo + 1))
+            {
+                // Commit() (inside TryNarrowFskScan) already ran the general in-progress-image
+                // teardown (AbandonInProgressImage), but AVT training's own fields are training-
+                // specific and untouched by that -- clear them explicitly, matching EndOfImage's own
+                // reset list for these same fields, so a LATER _mode-null re-entry into TryDecodeHeader
+                // (e.g. once the narrow image itself ends) doesn't wrongly resume a training attempt
+                // that's no longer relevant.
+                _avtTrainingPending = false;
+                _avtTrainingLock = null;
+                _avtPllDemodulator = null;
+                return true;
+            }
+
             var avtDemodulatedHz = _avtPllDemodulator!.ProcessSample(AvtPllSampleAt(_avtTrainingProcessedUpTo));
             var completedAt = _avtTrainingLock!.ProcessSample(avtDemodulatedHz);
             _avtTrainingProcessedUpTo++;
