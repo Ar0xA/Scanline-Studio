@@ -41,10 +41,14 @@ Full rewrite (C++Builder/VCL → C#/Avalonia), **not** incremental refactor.
 compatibility with the old codebase. "Prefer refactor over rewrite" applies **within** the new C#
 codebase once built, not to the initial port.
 
-- **Port-first is scoped to DSP/codec math only** — SSTV encode/decode, filters, demodulators, CAT
-  framing (`sstv.cpp`, `Fft.cpp`, `fir.cpp`, `cradio.cpp`): port the **exact** legacy algorithm
-  (same filter structure/discriminator/constants), don't invent-and-tune. This does **not** extend to
+- **Port-first is scoped to DSP/codec math only** — SSTV encode/decode, filters, demodulators
+  (`sstv.cpp`, `Fft.cpp`, `fir.cpp`): port the **exact** legacy algorithm (same filter
+  structure/discriminator/constants), don't invent-and-tune. This does **not** extend to
   the surrounding GUI/architecture — that is intentionally being modernized.
+- **CAT/rig control is explicitly NOT ported.** No hand-written per-rig protocol code (legacy
+  `cradio.cpp`'s `Freq*` methods) exists or is planned — Yoniq is a pure client of external CAT
+  backends (Hamlib linked in-process, `rigctld`, flrig, OmniRig-as-client). See `spec/03-cat-layer.md`.
+  `cradio.cpp` is a removed-feature reference only, never a port target.
 - **Removal rule:** dropping a capability instead of porting it needs a
   [docs/removed-features.md](docs/removed-features.md) entry (legacy files, replacement if any, affected
   users). "Superseded"/"replaced" claims must state what's **not** covered — see that doc's
@@ -83,11 +87,12 @@ C++Builder/VCL conventions that **silently produce wrong results** if ported nai
   **Windows-31J / CP932** for Japanese-origin content (confirmed in `Mmsstv Japanese.ini`, `MMCG.DEF`,
   inline literals) — **never** assume UTF-8. Register `System.Text.CodePagesEncodingProvider` at
   startup. No legacy text enters the codebase without a documented decode step.
-- **Binary-is-bytes rule:** legacy `AnsiString`/`char[]` protocol/binary fields (e.g. `cradio.h`'s
-  `CmdInit`/`CmdRx`/`CmdTx`/`cmdGNR`) must be modeled as `byte[]`/`ReadOnlyMemory<byte>`, **never**
-  string/JSON — they carry raw bytes ≥0x80 and embedded nulls that a text-based migration would corrupt.
-- **Behavioral-parity rule:** any DSP-core (`sstv.cpp`/`Fft.cpp`/`fir.cpp`) or CAT-layer (`cradio.cpp`)
-  port needs **golden-vector tests** — real legacy-captured reference input/output with a documented
+- **Binary-is-bytes rule:** raw CAT/protocol byte fields (e.g. `TemplateCatProtocol`'s user-editable
+  hex command templates, `spec/03-cat-layer.md`) must be modeled as `byte[]`/`ReadOnlyMemory<byte>`,
+  **never** string/JSON-literal — raw bytes ≥0x80 and embedded nulls are legitimate frame content that a
+  text-based representation would corrupt.
+- **Behavioral-parity rule:** any DSP-core (`sstv.cpp`/`Fft.cpp`/`fir.cpp`) port needs
+  **golden-vector tests** — real legacy-captured reference input/output with a documented
   tolerance/rounding rule (`spec/13-testing.md`). A round-trip test alone is insufficient (both halves
   can be wrong the same way); legacy is `double`, the new DSP core is `float` — that needs a **stated,
   tested tolerance**, not an assumed "close enough."

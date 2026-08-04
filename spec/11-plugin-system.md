@@ -2,7 +2,7 @@
 
 ## Related
 
-[[02-radio-layer]]/[[03-cat-layer]] (plugin-contributed rig protocols) · [[07-image-pipeline]] (plugin-contributed filters) · [[15-template-designer]] (the actual home of a CItems successor extension point) — **correction after review**: legacy MMSSTV *does* have an extension mechanism. `CItems/ECUSTOM.TXT` documents it explicitly: *"the functions provided in the custom item are offered as a DLL file... MMSSTV merely loads the DLL on-the-fly."* PERIMG, QSLBox, TextArt, and TEXTBOX are the four reference implementations of that ABI, each built as its own DLL (`CItems/QSLBox/qslbox.bpr` → `qslbox.dll`), not compiled-in fixed features. This is a real, previously-published plugin surface — potentially with third-party DLLs in the wild built against it — and this document previously and incorrectly claimed no such precedent existed. See [docs/removed-features.md](../docs/removed-features.md) for the full accounting.
+[[02-radio-layer]]/[[03-cat-layer]] (plugin-contributed CAT backend clients) · [[07-image-pipeline]] (plugin-contributed filters) · [[15-template-designer]] (the actual home of a CItems successor extension point) — **correction after review**: legacy MMSSTV *does* have an extension mechanism. `CItems/ECUSTOM.TXT` documents it explicitly: *"the functions provided in the custom item are offered as a DLL file... MMSSTV merely loads the DLL on-the-fly."* PERIMG, QSLBox, TextArt, and TEXTBOX are the four reference implementations of that ABI, each built as its own DLL (`CItems/QSLBox/qslbox.bpr` → `qslbox.dll`), not compiled-in fixed features. This is a real, previously-published plugin surface — potentially with third-party DLLs in the wild built against it — and this document previously and incorrectly claimed no such precedent existed. See [docs/removed-features.md](../docs/removed-features.md) for the full accounting.
 
 ## Purpose
 
@@ -12,7 +12,7 @@ Provide a stable, versioned extension surface so functionality (rig protocols, i
 
 | Extension point | Interface | Backing module |
 |---|---|---|
-| Rig protocol | `IRadioProtocol` | [[03-cat-layer]] |
+| CAT backend client | `IRadioProtocol` | [[03-cat-layer]] |
 | Image filter | `IImageFilter` | [[07-image-pipeline]] |
 | Log export format | `ILogExporter` | [[08-logging]] |
 | Macro action | `IMacroAction` | [[09-ui]] |

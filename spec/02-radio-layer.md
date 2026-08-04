@@ -39,14 +39,20 @@ public interface IRadioTransport : IAsyncDisposable
     bool IsOpen { get; }
 }
 
-public interface IRadioProtocol
+public interface IRadioProtocol : IAsyncDisposable
 {
-    string RigId { get; }                       // e.g. "yaesu-ft-991a"
+    string RigId { get; }                       // e.g. "hamlib-native", "rigctld-client", "flrig-client"
     RadioCapabilities Capabilities { get; }
-    Task<RadioState> PollAsync(IRadioTransport transport, CancellationToken ct);
-    Task SetFrequencyAsync(IRadioTransport transport, long hz, CancellationToken ct);
-    Task SetModeAsync(IRadioTransport transport, RadioMode mode, CancellationToken ct);
-    Task SetPttAsync(IRadioTransport transport, bool tx, CancellationToken ct);
+    Task<RadioState> PollAsync(CancellationToken ct);
+    Task SetFrequencyAsync(long hz, CancellationToken ct);
+    Task SetModeAsync(RadioMode mode, CancellationToken ct);
+    Task SetPttAsync(bool tx, CancellationToken ct);
+}
+
+public interface IRadioProtocolFactory
+{
+    bool CanHandle(RadioConnectionSpec spec);
+    IRadioProtocol Create(RadioConnectionSpec spec);
 }
 
 [Flags]
@@ -76,37 +82,17 @@ public interface IRadioController
 }
 ```
 
-`RadioConnectionSpec` is a discriminated union (via an abstract record with subtypes `SerialCatConnectionSpec`, `RigctldConnectionSpec`, `NoneConnectionSpec`) describing *how* to reach the rig; `IRadioController` is the single facade the `Yoniq.Application` layer talks to regardless of which subtype is active. Selecting "no radio" is a first-class, fully supported spec — SSTV and logging must work with zero radios connected (see [[01-architecture]] error handling).
+`RadioConnectionSpec` is a discriminated union via an open abstract record base — only `NoneConnectionSpec` and `RigctldConnectionSpec` exist today; future backends (linked Hamlib, flrig, OmniRig-as-client — [[03-cat-layer]]) each add their own sealed subtype without requiring existing code to change, since `IRadioController` never switches on the concrete subtype itself (only each registered `IRadioProtocolFactory`'s own `CanHandle` does — see its doc comment). `IRadioController` is the single facade the `Yoniq.Application` layer talks to regardless of which subtype is active. Selecting "no radio" is a first-class, fully supported spec — SSTV and logging must work with zero radios connected (see [[01-architecture]] error handling).
 
 ## PTT usage
 
-PTT (push-to-talk) keying doubles as a hardware capability, not just a CAT command: some setups key PTT via RTS/DTR lines on the same serial port (legacy `usePTT` flag in `CRADIOPARA`) rather than a CAT command. `IRadioTransport` for serial exposes an optional `ISerialLineControl` (RTS/DTR toggle) that `IRadioProtocol` implementations may use instead of `SetPttAsync` framing, selected per rig definition.
+PTT (push-to-talk) keying doubles as a hardware capability, not just a CAT command: some setups key PTT via RTS/DTR lines on the same serial port (legacy `usePTT` flag in `CRADIOPARA`) rather than a CAT command. For the TCP-based backends (`rigctld`, flrig — [[03-cat-layer]]), PTT is a wire command like any other `SetPttAsync` call. For linked Hamlib, PTT type (CAT command vs. RTS vs. DTR) is one of Hamlib's own per-rig configuration options, selected when opening the rig — Yoniq passes it through, it does not implement RTS/DTR toggling itself.
 
-## Rig registry
+## Rig identification
 
-Each supported rig is described by a declarative `RigDefinition` (id, display name, manufacturer, default baud rate, supported capability flags, protocol implementation type) collected into an `IRigRegistry`. This directly replaces the `RADIO_POLL*` enum in `cradio.h`. Concrete protocol registrations live in [[03-cat-layer]]; this layer only defines the registry contract:
+No `IRigRegistry`/`RigDefinition` of declarative per-rig entries exists — there is nothing to register, since no protocol implementation is chosen per rig (see [[03-cat-layer]]'s backend list). A rig is identified to whichever backend is active by that backend's own model identifier (e.g. a Hamlib rig-model number, or nothing at all for `rigctld`/flrig, which already know what they're connected to). This directly replaces the `RADIO_POLL*` enum in `cradio.h`; exact migration of a legacy user's saved rig selection to a specific backend + model ID is deferred to implementation time (see [[12-settings]]) since it depends on which backend(s) ship first and how completely their own model list covers legacy's.
 
-```csharp
-public interface IRigRegistry
-{
-    IReadOnlyList<RigDefinition> All { get; }
-    RigDefinition? Find(string rigId);
-}
-```
-
-Migration mapping from the legacy `RADIO_POLL*` enum (kept 1:1 so existing users' saved rig selection can be migrated automatically — see [[12-settings]]):
-
-| Legacy enum | New `rigId` |
-|---|---|
-| `RADIO_POLLYAESUHF` | `yaesu-hf-legacy` |
-| `RADIO_POLLYAESUVU` | `yaesu-vu-legacy` |
-| `RADIO_POLLICOM` / `RADIO_POLLICOMN` | `icom-civ`, `icom-civ-negative` |
-| `RADIO_POLLOMNIVI` / `RADIO_POLLOMNIVIN` | `ten-tec-omni-vi`, `ten-tec-omni-vi-negative` |
-| `RADIO_POLLKENWOOD` / `RADIO_POLLKENWOODN` | `kenwood`, `kenwood-negative` |
-| `RADIO_POLLFT1000D`, `RADIO_POLLFT920`, `RADIO_POLLFT9000`, `RADIO_POLLFT2000`, `RADIO_POLLFT950`, `RADIO_POLLFT450` | `yaesu-ft1000d`, `yaesu-ft920`, `yaesu-ft9000`, `yaesu-ft2000`, `yaesu-ft950`, `yaesu-ft450` |
-| `RADIO_POLLJST245` / `RADIO_POLLJST245N` | `jrc-jst245`, `jrc-jst245-negative` |
-
-OmniRig (`OmniRig_OCX.cpp`, Windows-only ActiveX) is **not** ported as-is — it is superseded by native CAT protocol implementations plus native [[04-rigctld]] support for the single-application-controls-the-rig case. This is a *partial*, not full, replacement, and CLAUDE.md's removal rule requires saying so precisely: OmniRig's actual distinguishing feature was **rig-sharing arbitration** — letting several applications (e.g. YONIQ and a separate logger) share one serial-connected rig through a single broker process, without each app fighting to open the same COM port. Native CAT cannot replicate this at all (two OS processes cannot open the same serial port concurrently). [[04-rigctld]] replicates it *only if every application on the machine is reconfigured* to talk through the same `rigctld` instance instead of opening the port directly — a real, user-visible migration step, not a transparent swap. `Config.cfg` in the legacy tree (`omnirig=0`) shows this was a user-facing toggle, i.e. real users depend on it today. See [docs/removed-features.md](../docs/removed-features.md) for the full accounting and the recommended user migration path.
+OmniRig (`OmniRig_OCX.cpp`, Windows-only ActiveX) is **not** ported as-is — bundling its own OCX/TLB into Yoniq is rejected, superseded by [[03-cat-layer]]'s OmniRig-as-*client* backend plus [[04-rigctld]]. Unlike the native-CAT-protocol replacement originally proposed here, OmniRig-as-client actually **does** restore OmniRig's original rig-sharing-arbitration value: Yoniq becomes just another OmniRig-aware application talking to the same already-running broker as a logger or other software, the same relationship [[04-rigctld]]'s client mode has to `rigctld`. See [docs/removed-features.md](../docs/removed-features.md) for the full accounting.
 
 ## Polling
 
@@ -114,10 +100,12 @@ OmniRig (`OmniRig_OCX.cpp`, Windows-only ActiveX) is **not** ported as-is — it
 
 ## Testing hooks
 
-`IRadioTransport` and `IRadioProtocol` are the seams for testing (see [[13-testing]]): a `FakeRadioTransport` replays scripted byte sequences and asserts on written bytes, allowing every rig's `Freq*`-equivalent parser to be unit tested without hardware, and allowing `IRadioController` orchestration (reconnect/backoff/state fan-out) to be tested against a fake protocol independent of any real rig.
+`IRadioTransport` and `IRadioProtocol` are the seams for testing (see [[13-testing]]): for the TCP-based backends, a `FakeRadioTransport` replays scripted byte sequences and asserts on written bytes; for the call-based backends (linked Hamlib, OmniRig), a fake native-call/COM shim plays the same role. Either way, `IRadioController` orchestration (reconnect/backoff/state fan-out) is tested against a fake `IRadioProtocol` independent of any real rig or backend.
 
 ## Definition of done
 
-- [ ] `Yoniq.Abstractions.Radio` interfaces above compiled and documented via XML doc comments.
-- [ ] `IRadioController` reference implementation with connect/disconnect/backoff, unit-tested against a fake transport + fake protocol.
-- [ ] Rig registry loads from a static list, resolvable by legacy-migrated `rigId`.
+- [x] `Yoniq.Abstractions.Radio` interfaces above compiled and documented via XML doc comments.
+- [x] `IRadioController` reference implementation with connect/disconnect/backoff, unit-tested against a fake `IRadioProtocol` (protocols own their own transport, so the controller itself never touches `IRadioTransport` directly — see the "Core abstractions" code above). `RadioController` (`Yoniq.Core.Radio`), 12 orchestration tests in `RadioControllerTests`.
+- [x] `IRadioProtocolFactory`-based backend resolution (exactly-one-match, typed error on zero/ambiguous
+      match — see "Rig identification" above) unit-tested; no static rig registry exists to load.
+      `NoneRadioProtocolFactory`/`RigctldProtocolFactory` are the two concrete implementations so far.

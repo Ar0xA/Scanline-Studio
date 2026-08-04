@@ -2,48 +2,97 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-04, latest, ACTIVE) — Open question: should Yoniq bundle Hamlib directly, not just talk to rigctld?
+## Resume here (2026-08-04, latest, ACTIVE) — Phase 2 (radio layer) DONE: IRadioController + rigctld client
 
-**This is the live task — work this before writing any Phase 2 code.** Phase 1 (DSP core) is closed
-out (see the entry below this one); Phase 2 (radio layer) hasn't started yet.
+**Done, tested, not yet committed.** Built the first radio-layer code in the project:
+`Yoniq.Abstractions.Radio` interfaces, `RadioController` (`Yoniq.Core.Radio`), and
+`RigctldClientProtocol`/`RigctldProtocolFactory` (`Yoniq.Core.Radio.Rigctld`). Full solution
+639/639 tests pass (528 pre-existing DSP, untouched — confirmed via `git status`; 111 new/other).
+Plan file: `/home/artien/.claude/plans/starry-whistling-pearl.md`. Full narrative:
+`spec/14-roadmap.md`, search "Phase 2 — Radio layer (no CAT rigs yet) — DONE".
 
-**The question, in the user's own words**: "instead of ONLY supporting rigctld i also want to build
-hamlib into the application, kind of like wsjtx does." WSJT-X links Hamlib's own C library directly
-into its binary for broad rig support, rather than requiring a separately-running `rigctld` daemon.
+**Key points if resuming cold**:
+- An auditor plan-review pass ran *before* any code was written (this is new architecture, not a
+  port) and changed 5 real design decisions — `IRadioProtocol` dropped its `IRadioTransport`
+  parameter, `IRadioProtocolFactory`-based backend resolution (exactly-one-match), a poll-loop error
+  taxonomy (protocol errors vs. transport errors, only the latter trigger backoff/reconnect),
+  `\dump_caps` parsing rejected in favor of probing `f`/`m`/`t` at connect, and the buffer-survival
+  contract on `IRadioTransport.ReadAsync`.
+- Hamlib cloned locally at `hamlib/` (gitignored, same convention as `yoniq-old/YONIQ-main/`) —
+  resolved the plan-review's flagged highest-risk unknown (rigctld's exact response framing) by
+  reading `tests/rigctl_parse.c` directly. Also confirmed Hamlib's hardware-free "Dummy" rig backend
+  (`RIG_MODEL_DUMMY`, model 1) is real.
+- User suggested testing against that real Dummy rig instead of only fixtures — landed as
+  `RigctldDummyRigIntegrationTests` (4 tests, real `rigctld` subprocess, best-effort/skips if
+  unavailable). User installed `libhamlib-utils` mid-session so these actually run and pass here.
+- Two real bugs the test suite itself caught (not review): a `Task.Run` closure race in `ConnectAsync`
+  reading `_pollLoopCts` at execution time instead of capturing it first (real
+  `NullReferenceException`, fixed), and one test-side ordering bug (asserted `LastKnownState` after
+  `DisconnectAsync`, which deliberately clears it).
+- Specs updated to match: `spec/02-radio-layer.md`, `spec/03-cat-layer.md`, `spec/04-rigctld.md`
+  (Definition-of-done checkboxes reflect what's actually built now).
 
-**Why this isn't a small tweak — it re-litigates an existing spec decision**: `spec/04-rigctld.md`'s
-own "Non-goals" section already explicitly considered and rejected this: "YONIQ does not vendor or
-bundle Hamlib itself... Bundling Hamlib's rig backends directly is out of scope; that duplication is
-exactly what client mode avoids." The current plan (`spec/02-radio-layer.md`) is: hand-written native
-`IRadioProtocol` implementations per rig (`Yoniq.Core.Radio`/[[03-cat-layer]]) PLUS an `rigctld` TCP
-client (`Yoniq.Core.Radio.Rigctld`, [[04-rigctld]]) as an alternate `IRadioProtocol` — no native Hamlib
-dependency anywhere.
+**Not started / explicitly out of scope this pass**: `RigctldServer` (server mode), linked Hamlib,
+flrig/OmniRig-as-client backends, `TemplateCatProtocol`, and all `Yoniq.Application`/UI/settings-
+persistence wiring — all Phase 3/4 per `spec/14-roadmap.md`.
 
-**Relevant standing constraint** (`CLAUDE.md` §4, concurrency/scheduler rule's sibling): "No Win32/COM
-outside an explicit optional module: no `System.Drawing`, P/Invoke, or COM interop in
-`Yoniq.Core.*`/`Yoniq.UI`. A Windows-only integration gets its own optional project, never a hard
-dependency of cross-platform code." Hamlib itself is cross-platform (Linux/macOS/Windows all supported
-upstream), so this exact rule doesn't forbid it outright, but its spirit (native/platform-specific
-interop stays isolated, never baked into core cross-platform assemblies) is directly relevant to how
-any Hamlib option would need to be scoped/packaged if pursued.
+**Next**: nothing committed yet — ask before committing/pushing, per standing rule. After that, Phase
+3 (minimal UI, first end-to-end path) is the roadmap's next step, or await further user direction.
 
-**Real tradeoffs neither side of this conversation has weighed yet** (not a decision, just the shape of
-the question): native binary bundling/distribution complexity across 3 OSes and Hamlib's own frequent
-backend-library ABI churn, vs. code duplication/maintenance cost of hand-written `IRadioProtocol`s per
-rig; licensing compatibility (Hamlib is LGPL, same family as this project); whether "bundle Hamlib" and
-"keep rigctld client mode" are mutually exclusive or complementary (WSJT-X itself supports rigctld-style
-network control too, not just linked-in Hamlib); what `IRadioController`'s own interface shape would
-need to look like to support both without one leaking into the other.
+## Resume here (2026-08-04, latest, ACTIVE) — Hamlib question RESOLVED: no hand-written CAT protocols at all
 
-**Not started**: no code, no updated spec, no decision. This is a genuinely open architecture/interface-
-design question — the kind CLAUDE.md's global collaboration note suggests the `/adhd` skill for
-(parallel divergent ideation) as an alternative to reasoning through it solo, rather than defaulting
-straight to a single proposed design.
+**Decided, docs updated, no code yet.** The open question logged below this entry (whether to bundle
+Hamlib alongside hand-written per-rig `IRadioProtocol`s) resolved into something bigger once the user
+clarified their actual position: they don't want **any** hand-written transceiver CAT code in this
+project, full stop — "other people already doing that work." Not an `/adhd` run in the end; the user's
+own clarification made the direction unambiguous before that was needed.
 
-**Plan for resuming**: user agreed to run `/adhd` on this question (not yet run as of this writing) —
-start there rather than reasoning through it solo or jumping straight to a design. Suggested framing for
-the `/adhd` prompt: whether/how to add Hamlib support to `IRadioController`'s scope alongside (not
-necessarily instead of) the existing rigctld-client plan, given the tradeoffs listed above.
+**New decision**: Yoniq is a pure client of external CAT backends, never a per-rig protocol
+implementer. Backend priority order: Hamlib linked in-process (P/Invoke, WSJT-X style) → `rigctld`
+client → flrig client → OmniRig-as-client (Windows COM, talking to an already-running instance, not
+bundling its OCX) → `TemplateCatProtocol` user-authored hex-template fallback for anything none of the
+above cover.
+
+**Docs updated this session** (no code changed):
+- `CLAUDE.md` §2/§4 — CAT framing (`cradio.cpp`) removed from the port-first scope; explicit new rule
+  that CAT/rig control is never ported; binary-is-bytes example repointed at `TemplateCatProtocol`.
+- `spec/03-cat-layer.md` — fully rewritten, "CAT Layer (per-rig protocol implementations)" →
+  "External CAT Backends." Documents the 5-backend list above, the transport-vs-call-based split
+  (rigctld/flrig use `IRadioTransport`; linked Hamlib/OmniRig are call-based and manage their own
+  transport), and that legacy byte-fixture parity no longer applies (external backends own their own
+  CAT correctness).
+- `spec/02-radio-layer.md` — dropped `IRigRegistry`/`RigDefinition`/the native `RADIO_POLL*`→`rigId`
+  migration table (nothing to register, no protocol chosen per rig); `RadioConnectionSpec` subtypes now
+  one per backend; PTT section reframed (Hamlib owns its own PTT-type config, Yoniq doesn't implement
+  RTS/DTR itself); OmniRig paragraph corrected — OmniRig-as-*client* (new) actually restores rig-sharing
+  arbitration that native CAT never could, unlike what the pre-edit text implied.
+- `spec/04-rigctld.md` — old "Non-goals" line rejecting Hamlib bundling removed/reversed; new section
+  states rigctld-client and linked-Hamlib are complementary (arbitration vs. no-daemon-required), not
+  either/or.
+- `docs/removed-features.md` — new entry, "Native per-rig CAT protocol implementations" (the ~14 legacy
+  `cradio.cpp` families), explicit that legacy's standalone/offline CAT mode has **no equivalent**
+  now — every backend but the template fallback needs an external process/library/driver present.
+  Existing OmniRig entry corrected to reflect the new OmniRig-as-client backend restoring arbitration.
+- `spec/11-plugin-system.md`, `spec/13-testing.md`, `spec/14-roadmap.md` — cross-references and the
+  Phase 2/4 plan updated to match (Phase 2: rigctld client first; Phase 4: linked Hamlib + template
+  fallback first, flrig/OmniRig-as-client after if there's still demand).
+
+**Open follow-up, not yet designed**: Hamlib native-binary packaging (per-OS bundling, ABI-churn
+handling) needs its own design pass before the linked-Hamlib backend can actually be built — flagged in
+`spec/03-cat-layer.md`'s Definition of done, not resolved here.
+
+**Next**: Phase 2 code can start now that this no longer blocks `IRadioController`'s shape — `rigctld`
+client first per the roadmap's own priority order.
+
+## Resume here (2026-08-04, superseded by the entry above) — Original framing of the Hamlib question
+
+Original framing was narrower than the eventual decision: "should Yoniq bundle Hamlib directly
+(alongside rigctld), not just talk to rigctld" — i.e. Hamlib as an *addition* to the already-planned
+hand-written per-rig `IRadioProtocol`s. The user's follow-up clarified they didn't want the hand-written
+protocols at all, which is the actual decision recorded above. Kept here only for the historical
+reasoning trail (constraints considered: `CLAUDE.md` §4's P/Invoke-isolation rule, Hamlib's LGPL
+license compatibility, native binary bundling/ABI-churn cost) — not an open question anymore, don't
+re-litigate from this framing.
 
 ## Resume here (2026-08-04, latest) — SHOULD backlog fully closed, merged to master, pushed. DSP core stable.
 

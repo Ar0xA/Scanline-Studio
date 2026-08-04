@@ -5,6 +5,10 @@
 # gitignored, not tracked, per LICENSES.md.
 yoniq-old/
 QSSTV-main/
+# Hamlib reference source — https://github.com/Hamlib/Hamlib — a local clone at hamlib/ lets specs
+# and implementation verify rigctld's real wire grammar against source instead of prose (spec/04-
+# rigctld.md); reference only, never vendored/compiled into Yoniq, gitignored, never committed.
+hamlib/
 # Local Claude Code settings — machine/session-specific, not shared project config.
 .claude/settings.local.json
 
