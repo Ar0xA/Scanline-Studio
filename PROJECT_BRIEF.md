@@ -29,7 +29,7 @@ case-0↔1 boundary, not the full case-2/9/3 freeze the item is named for. Full 
 `spec/14-roadmap.md`, search "S12 — m_sint2/m_sint3" and "AVT package: S7".
 
 **Band 4 (4 items: S27, S29, S30, S21 — S13's doc half already closed earlier) — DONE and COMMITTED**
-(`<fill in next commit hash>`). User asked for "a good deep documentation and comment update and audit."
+(`89cb135`). User asked for "a good deep documentation and comment update and audit."
 All four are pure doc/test additions, zero DSP behavior change (confirmed by an unchanged full-suite
 result, 472/472, before and after):
 - **S27** — `docs/removed-features.md` CQ100 entry + `HilbertFmDemodulator.cs` stale comment fix.
