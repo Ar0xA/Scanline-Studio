@@ -20,60 +20,42 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-04) — Band 3 is now FULLY DONE, all 8 original items closed
+## Resume here (2026-08-04, later) — Band 3 AND Band 4 both fully DONE and COMMITTED
 
-S31 is done and committed (`b5a5cb4`). User then asked to fix the rest of Band 3. Roadmap's own
-pattern-3 finding grouped the 8 remaining items into 2 work packages + 2 standalone items: **AVT
-package** (S7 mid-image re-lock + S11 PLL domain + S17 training-entry restructure — S16 already done),
-**MN/MC package** (S9 retune + S8 mid-image re-lock — S14/S15 already done), plus standalone S10
-(extended-VIS 7-vs-8-bit) and S12 (sint2/sint3 freeze gating). S13's code is blocked on Phase-3 UI, only
-its doc entry was doable. **All 8 are now done and committed.**
+S31 done (`b5a5cb4`). Band 3 (8 items: S31 already counted separately, then S7-S17 family) done and
+committed across `739f4e5`/`34bad37`/`0bb7c60`/`7354469` — S12 (`m_sint2`/`m_sint3` freeze gating) was
+the last item, landing after a plan-review round caught the original proposal only covered the
+case-0↔1 boundary, not the full case-2/9/3 freeze the item is named for. Full detail:
+`spec/14-roadmap.md`, search "S12 — m_sint2/m_sint3" and "AVT package: S7".
 
-**Final status:**
-- **S9, S10, S13 — DONE and COMMITTED** (`739f4e5`). S9: discovered already closed by Band-2 item S6,
-  doc-only fix. S13: `docs/removed-features.md` entry added, code stays blocked on Phase-3 UI. S10:
-  widened from "escape byte only" to the real gap (every VIS-byte match in the fixed-window path
-  ignored the parity bit); both auditor rounds clean.
-- **S8 — DONE and COMMITTED** (`34bad37`). Scope was much smaller than the roadmap implied:
-  `NarrowFskHeaderDecoder` (the per-sample FSK state machine) already existed as a faithful, tested
-  port of legacy's `DecodeFSK` — only ever used in a one-shot fixed-window way. S8 wires it up as a
-  persistent, continuously-fed scanner (new `AnalogFmSstvDecoder.TryNarrowFskScan`), reachable both
-  pre-lock and mid-reception. Two real regressions were found empirically (a "bulk vs. streaming
-  ordering" bug and a missing `Commit()`-side cursor fast-forward), both fixed.
-- **S7, S11, S17 (AVT package) — DONE and COMMITTED** (`0bb7c60`). S7: extracted
-  `AbandonInProgressImage()` from `Commit()`'s own former inline teardown, now also called from
-  `TryVisLockStateMachine`'s AVT branch (previously discarded every mid-image AVT match). S11:
-  `AgcSampleAt` now caches the UNCLIPPED AGC value; new `AvtPllSampleAt` reads the same cache and
-  divides out only the `*32` scale term, never the clip — feeds the AVT PLL legacy's real `m_pll.Do(ad)`
-  signal domain (auditor plan-review caught a real flaw in the first draft before any code shipped:
-  dividing the already-clipped value back down was wrong). Golden-vector deltas confirmed unchanged as
-  predicted (fidelity fix, not accuracy fix). S17: measured (temporary instrumentation, fully reverted)
-  that the port's analytic AVT training entry lands one block late vs. legacy's real entry, but
-  `AvtTrainingLockStateMachine`'s completion timing recalculates absolutely per-block, so the
-  imprecision has zero effect on final accuracy — closed via documentation, no code. Code-level review:
-  EQUIVALENT-WITH-RISKS, no blockers, 3 doc-only findings fixed. Full detail: `spec/14-roadmap.md`,
-  search "AVT package: S7".
-- **S12 — DONE and READY TO COMMIT** (not yet committed as of this writing). `TrySyncIntervalDetectionStep`'s
-  m_sint2/m_sint3 blocks ran unconditionally every sample; legacy gates them to case 0 only (`m_sint3`)
-  or cases 0-1 (`m_sint2`'s SyncMax continuation), with zero code in cases 2/9/3 (real VIS-bit
-  decode/verify). **First plan-review round caught a real design gap before any code shipped**: the
-  original proposal reused the pre-existing `_syncBypass1PrimaryHeld` field (already gating `m_sint1`),
-  which only tracks legacy's case-0↔1 boundary, not the case-2/9/3 freeze the item is named for — it
-  can go false mid-VIS-decode when d12 dips (exactly what VIS data-bit tones cause). Fix actually
-  shipped: exposed `VisLockStateMachine`'s own state (already modeling case 0/1/2/9/3 exactly) via two
-  new properties, `IsSearching` and `IsAtOrBeforeConfirmLock`, read at the top of
-  `TrySyncIntervalDetectionStep` (which already runs before `VisLockStateMachine.ProcessSample` for the
-  same sample, giving the correct pre-transition value for free). Code-level review: EQUIVALENT, ready
-  to commit, 3 doc-only findings fixed (a stale "m_sint2 already gated for free" claim corrected; two
-  low-severity divergences newly documented rather than silently absorbed). Two new isolated unit tests
-  in `VisLockStateMachineTests.cs`. Full suite green (468/468), no tolerance changes needed. Full
-  detail: `spec/14-roadmap.md`, search "S12 — m_sint2/m_sint3".
+**Band 4 (4 items: S27, S29, S30, S21 — S13's doc half already closed earlier) — DONE and COMMITTED**
+(`<fill in next commit hash>`). User asked for "a good deep documentation and comment update and audit."
+All four are pure doc/test additions, zero DSP behavior change (confirmed by an unchanged full-suite
+result, 472/472, before and after):
+- **S27** — `docs/removed-features.md` CQ100 entry + `HilbertFmDemodulator.cs` stale comment fix.
+  Investigated fresh rather than trusting the inventory table's narrow "FIR tap-tripling" framing: found
+  `g_dblToneOffset` touches 44 lines across `sstv.cpp`, not ~30. **Code-level audit caught the first
+  draft's own removed-features.md entry was still incomplete** — 2 more real `sys.m_bCQ100`-gated DSP
+  effects (an `m_OFP` sync-timing shift, a narrowed AFC capture window) were missing, found and added
+  before commit.
+- **S29** — new `MakeFilter_OddTap_TrailingSlotStaysZero_NotSymmetric` test
+  (`SearchBandpassFilterTests.cs`), pinning the already-documented-but-unpinned odd-tap trailing-zero
+  divergence with an executable guard.
+- **S30** — new `Constructor_MiddleDecimationTier_16To40kHz_SelectsTap24Df1_AndDecodesCorrectly` test
+  (`HilbertFmDemodulatorTests.cs`), giving `CHILL`'s 16-40kHz middle decimation tier its first
+  instance-level (not just raw-kernel) coverage.
+- **S21** — new `MonoAveragedPairedScanlineDecoderTests.cs`, replacing the vague "a couple of levels"
+  RM8/RM12 int-truncation estimate with an exact measured bound (max 2 levels, `-1..+2` signed) via an
+  exhaustive sweep against an independently-replicated legacy two-truncation chain. Code-level audit
+  independently re-derived the exact bound in closed form and confirmed it correct, plus fixed 2
+  citation/wording nits in the test's own comments.
 
-**Uncommitted as of this writing**: S12's diff (`AnalogFmSstvDecoder.cs`, `VisLockStateMachine.cs`,
-`VisLockStateMachineTests.cs`, `spec/14-roadmap.md` S12 entry + Band-3 summary line). Ask before
-committing/pushing, per standing rule. Once committed, **Band 3 is fully closed** — nothing further
-queued from the original 30-item DSP-simplification inventory except Band 4/5 items (documentation-only
-or correctly-blocked, see the Band-3/4/5 summary further down this file).
+Full detail: `spec/14-roadmap.md`, search "Band 4 — documentation/test-only items".
+
+**Nothing outstanding from the original 30-item DSP-simplification inventory** except Band 5
+(documentation-only/correctly-blocked, no action needed — see the Band-3/4/5 summary further down this
+file). Next: Task #8 (Phase 3 chain/integration audit, `docs/audit-playbook.md`) is the natural next
+step now that Bands 1-4 are all closed, or await further user direction.
 
 ## Resume here (2026-08-03, later) — S31 (AVT never decodes on real capture) root-caused and FIXED
 

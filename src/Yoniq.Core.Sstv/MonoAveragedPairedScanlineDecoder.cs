@@ -24,7 +24,11 @@ internal sealed class MonoAveragedPairedScanlineDecoder : IScanlineDecoder
     // `(freq-LuminanceMinHz)*256/(LuminanceMaxHz-LuminanceMinHz)` for any mode on the standard
     // 1500-2300Hz band (which RM8/RM12 both use, unmodified defaults) -- so this multiplies the
     // zero-centered form of that SAME value, not a separately-derived one.
-    private const double RmGainFactor = 256.0 / (256.0 - 32.0);
+    // internal, not private: S21 (spec/14-roadmap.md) references this same constant directly from
+    // MonoAveragedPairedScanlineDecoderTests' int-truncation divergence test, so the two-truncation
+    // legacy-chain replication there stays pinned to the SAME gain value this class actually uses
+    // rather than a separately-drifting literal copy.
+    internal const double RmGainFactor = 256.0 / (256.0 - 32.0);
 
     public int RowsPerTransmissionLine => 2;
 
@@ -60,13 +64,21 @@ internal sealed class MonoAveragedPairedScanlineDecoder : IScanlineDecoder
                     var freq = reader.ReadPeakPicked(startSample, endSample);
                     var rawValue = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
 
-                    // Legacy truncates to int twice here (once inside GetPixelLevel, once at
-                    // `d *= gain`) -- not replicated, matching every other decoder in this codebase
-                    // (none reproduce legacy's int-truncation semantics either). Unmodeled divergence:
-                    // asymmetric across mid-gray (legacy truncates-toward-zero on the still-negative
-                    // pre-bias value below mid-gray, i.e. rounds UP there; this port's clamp rounds
-                    // DOWN on the already-positive post-bias value), max a couple of levels -- well
-                    // inside the existing 10.0 round-trip / 15.0-25.0 golden-vector tolerances.
+                    // Legacy truncates to int twice here (once inside GetPixelLevel's own `d *=
+                    // sys.m_DemWhite/m_DemBlack`, confirmed both default to 128.0/16384.0 --
+                    // ComLib.h:242-243, Main.cpp:876-877 -- once more at this branch's own
+                    // `d *= gain`, Main.cpp:4438) -- not replicated, matching every other decoder in
+                    // this codebase (none reproduce legacy's int-truncation semantics either).
+                    // S21 (spec/14-roadmap.md): exact divergence bound MEASURED, not estimated --
+                    // MonoAveragedPairedScanlineDecoderTests.IntTruncationDivergence_MatchesLegacysExactTwoTruncationChain_WithinMeasuredBound
+                    // exhaustively replicates legacy's real double-truncation chain (over every
+                    // achievable int16 input, +-16384, matching this port's own AGC'd-sample domain)
+                    // against this exact formula and finds a max divergence of EXACTLY 2 levels
+                    // (never more), asymmetric (legacy-minus-port ranges -1..+2, not +-2) -- legacy
+                    // truncates-toward-zero on the still-negative pre-bias value below mid-gray (i.e.
+                    // rounds UP there), this port's clamp-then-cast rounds DOWN on the already-positive
+                    // post-bias value. Well inside the existing 10.0 round-trip / 15.0-25.0
+                    // golden-vector tolerances.
                     var corrected = (rawValue - 128.0) * RmGainFactor + 128.0;
                     y[x] = (byte)Math.Clamp(corrected, 0, 255);
                 }

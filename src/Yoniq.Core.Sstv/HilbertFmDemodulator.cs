@@ -50,11 +50,14 @@ namespace Yoniq.Core.Sstv;
 /// calls and independently re-confirmed by a second reviewer doing the same simulation fresh from
 /// source. The per-tier `m_OFF`/`m_OUT` multipliers (x2/x0.5 at df=1, x4/x0.25 at df=2) exist
 /// specifically to cancel this lag-dependent scaling, making the final Hz mapping lag-/rate-independent
-/// -- confirmed as a real derivation (the multipliers exactly cancel `2^df`), not a coincidence. Only
-/// the 12-tap/df0 (below 16kHz, covers this port's 11025Hz) and 48-tap/df2 (>=40kHz, covers 44100Hz)
-/// tiers have real coverage from this port's actual supported rates; the middle (16-40kHz) tier is
-/// implemented for completeness (cheap, just parameterized data) but untested until/unless a rate in
-/// that range is used.</item>
+/// -- confirmed as a real derivation (the multipliers exactly cancel `2^df`), not a coincidence. The
+/// 12-tap/df0 (below 16kHz, covers this port's 11025Hz) and 48-tap/df2 (>=40kHz, covers 44100Hz)
+/// tiers have real coverage from this port's actual supported rates; the middle (16-40kHz, 24-tap/df1)
+/// tier is implemented for completeness -- no currently-supported sample rate reaches it -- but S30
+/// (spec/14-roadmap.md) added instance-level coverage anyway
+/// (`HilbertFmDemodulatorTests.Constructor_MiddleDecimationTier_16To40kHz_SelectsTap24Df1_AndDecodesCorrectly`,
+/// 22050Hz) so its tier-selection and tierMultiplier wiring are proven correct even though nothing
+/// in this port constructs it today.</item>
 /// <item><b>Narrow-mode retune (Band-2 item S6)</b>: <c>ProcessSample</c> takes an <c>isNarrow</c>
 /// parameter selecting between two precomputed <c>(off, out)</c> pairs -- normal (center 1900Hz,
 /// bandwidth 800Hz) and narrow (<c>NARROW_CENTER</c>=2172Hz, <c>NARROW_BW</c>=256Hz, `sstv.h:441-444`),
@@ -105,9 +108,15 @@ namespace Yoniq.Core.Sstv;
 ///
 /// Explicitly NOT ported: the `N&lt;8` coefficient-normalization branch in <c>MakeHilbert</c>
 /// (provably unreachable for every tap value this port ever constructs, 12/24/48, all >=8); the
-/// `sys.m_bCQ100`-specific tap-tripling (no CQ100-equivalent hardware modeled anywhere in this port,
-/// CLAUDE.md §4's no-Win32-hardware-specific-paths stance); `g_dblToneOffset` (a legacy global,
-/// confirmed always 0.0, matching this port's existing precedent of omitting it elsewhere).
+/// `sys.m_bCQ100`-specific tap-tripling (`sstv.cpp:3048-3050`, `m_tap *= 3`) and every
+/// `g_dblToneOffset` (a legacy global) reference this class would otherwise need for CQ100 parity --
+/// S27 fix: an earlier version of this comment claimed `g_dblToneOffset` is "confirmed always 0.0,"
+/// which overstated it -- it's confirmed 0.0 on every path this port's architecture can reach, since
+/// `g_dblToneOffset` is set to -1000.0 ONLY under legacy's `-i` command-line flag
+/// (`Main.cpp:1065-1077`), never via the GUI/`.ini`, and this port has no command-line-argument entry
+/// point that could set an equivalent. See `docs/removed-features.md`'s "CQ100 mode" entry for the
+/// full accounting (not just this class's own tap-tripling -- `g_dblToneOffset` touches 44 distinct
+/// referencing lines across `sstv.cpp` alone, plus display/labeling-only reads elsewhere).
 /// </summary>
 internal sealed class HilbertFmDemodulator
 {

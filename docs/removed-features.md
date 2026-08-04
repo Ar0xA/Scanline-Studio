@@ -47,6 +47,35 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 - **Replacement**: none. `Yoniq.Core.Sstv.NarrowFskHeaderDecoder` (Piece 13, [[spec/14-roadmap]]) ports only modes 0–4/16/17/18 — the MN/MC narrow-mode-announce packet sharing the same guard-tone/start-bit/bit-sampling mechanism and mode-4 STX dispatch. A `0x2a` STX byte is treated identically to any other unrecognized value (reset, resume scanning) rather than routed to a callsign decode.
 - **Impact**: no RX support for legacy's FSK callsign-ID feature. Structurally independent from the mode-announce packet (own leader/guard tone, own TX call sites) — not a partial replacement of a feature this port needs elsewhere, a standalone capability gap.
 
+## CQ100 mode (`-i` command-line switch)
+
+- **Legacy**: `sys.m_bCQ100`/`g_dblToneOffset`, both set exactly once, at startup, from a `-i`
+  command-line flag (`Main.cpp:1065-1077`) — never reachable via the GUI, an `.ini` setting, or any
+  other path (confirmed by a whole-tree grep: no other assignment site for either variable exists
+  besides `sstv.cpp:26`'s own `g_dblToneOffset = 0.0` initializer). Four distinct effects, all gated
+  behind this same flag: (1) a global **-1000Hz** tone offset (`g_dblToneOffset = -1000.0`) added to
+  nearly every hardcoded tone/filter frequency constant throughout `sstv.cpp` — VIS-decode envelope
+  detectors, sync-interval/AFC frequencies, bandpass filter cutoffs, AVT training PLL center, `CHILL`'s
+  own `m_OFF` (44 distinct referencing lines / 46 occurrences in `sstv.cpp` alone, plus further reads in
+  `Main.cpp` and `Option.cpp` for display/labeling only, not DSP); (2) `CHILL::SetWidth` **triples**
+  the Hilbert FIR's tap count when this flag is set (`sstv.cpp:3048-3050`, `m_tap *= 3`), independent of
+  the sample-rate tiering this port's `HilbertFmDemodulator` constructor already models; (3) an
+  `m_OFP` sync-timing shift (`sstv.cpp:1181-1184`): `m_OFP = (d + (1100.0/g_dblToneOffset)) *
+  SampFreq/1000.0` — note this is a **division** by `g_dblToneOffset`, not the additive shift every
+  other site uses, moving the sync/offset phase by roughly -1.1ms; (4) the AFC capture window
+  (`m_AFC_LowVal`/`m_AFC_HighVal`) is narrowed to sync±50Hz in both the narrow and normal branches
+  (`sstv.cpp:1678-1681`/`1688-1691`), replacing the wider default capture range — a real DSP effect
+  independent of `g_dblToneOffset` itself, gated by the same `sys.m_bCQ100` flag.
+- **Replacement**: none. CQ100 is a specific hardware satellite/digital-radio transceiver with a
+  shifted audio passband; this port has no command-line-argument entry point (or any other
+  equivalent) that could set an analogous flag, and no CQ100-specific hardware integration is planned.
+- **Impact**: none for any user of this port today — `g_dblToneOffset`/`sys.m_bCQ100` are confirmed
+  at their inert defaults (`0.0`/`FALSE`) on every path this port's own architecture can reach (no
+  `-i`-equivalent flag exists to set them otherwise), so every existing tone/filter constant and AFC
+  capture window in this port already matches legacy's own real shipped-default (non-CQ100) behavior
+  exactly. Only relevant if CQ100 hardware support is ever explicitly scoped in as a new feature, which
+  is not currently planned.
+
 ## Picture-demodulator selector (`m_Type`: PLL / zero-crossing / Hilbert)
 
 - **Legacy**: `CSSTVDEM::m_Type`, a user-facing 3-way dispatch selecting the RX picture demodulator (`sstv.cpp:2256-2268`/`2310-2318`: `case 0` = PLL/`CPLL`, `case 1` = zero-crossing/`CFQC`, `default` = Hilbert/`CHILL`), exposed via `Option.cpp`'s `RGDemType` control and persisted to the `.ini` as `DemType` (`Main.cpp:1937`).
