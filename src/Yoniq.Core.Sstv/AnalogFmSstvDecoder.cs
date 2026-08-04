@@ -424,11 +424,56 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             _levelAgc.Do(scaled);
             _levelAgc.Fix();
             var ad = _levelAgc.Agc(scaled) * 32.0;
-            _agcSamples.Add(Math.Clamp(ad, -16384.0, 16384.0));
+            // S11 fix (spec/14-roadmap.md): _agcSamples now stores this UNCLIPPED (the clamp moved to
+            // this method's own return statement below) so AvtPllSampleAt can recover legacy's real
+            // pre-clip `ad` value exactly, by dividing back out the *32 -- see that method's own doc
+            // comment. Every EXISTING reader of this cache (via this method's return value) sees no
+            // behavior change: the clamp still applies at the same point relative to every caller.
+            _agcSamples.Add(ad);
             _agcCurMaxSamples.Add(_levelAgc.CurMax);
         }
 
-        return _agcSamples[Rel(index)];
+        return Math.Clamp(_agcSamples[Rel(index)], -16384.0, 16384.0);
+    }
+
+    // S11 fix (spec/14-roadmap.md): legacy's real AVT training PLL is fed `ad` directly (`sstv.cpp`
+    // cases 3-7's own `m_pll.Do(ad)`, e.g. :2129/2159/2169/2187/2222) -- the AGC output BEFORE the
+    // *32 scale-up AND the ±16384 clip (`sstv.cpp:1835-1839`: `double ad = m_lvl.AGC(d); d = ad*32;`
+    // clipped -- TWO SEPARATE variables). Every OTHER envelope-detector consumer in this file
+    // (D11At/D12At/D19At/FskSpaceAt, the sync-bypass detectors, VisLockStateMachine's own feed) reads
+    // AgcSampleAt directly because they all correctly want legacy's `d` (the *32'd, clipped value) --
+    // the AVT PLL is the ONE consumer that genuinely needs the pre-scale, unclipped `ad` instead, not
+    // an oversight that AgcSampleAt itself should be "fixed" to match. Auditor plan-review: an earlier
+    // draft approximated this as AgcSampleAt(w)/32.0 (dividing the ALREADY-clipped value back down) --
+    // wrong, and backwards on its own severity claim: `|ad|` peaks at ~16384 by construction
+    // (`m_agc = 16384.0/m_CurMax`), so the *32'd/clipped domain is saturated at ±16384 for roughly 98%
+    // of every cycle at normal amplitude, not "rarely" -- dividing that back down would feed the PLL a
+    // hard-limited ±512 square wave, not a scaled copy of the real analog-ish `ad` waveform. This
+    // method instead reuses the SAME underlying _agcSamples cache (now storing the unclipped *32'd
+    // value, see AgcSampleAt's own comment) and divides back out only the *32 term, never the clip --
+    // exact in every case, not an approximation, and needs no new cursor/list/TrimBuffers entry since
+    // it's the same cache AgcSampleAt already maintains.
+    //
+    // Expected effect on measured AVT accuracy: none within the fixture's own natural measurement
+    // noise -- PllFmDemodulator's own internal AGC (see its class doc comment) normalizes input
+    // amplitude every half-cycle, making it scale-invariant to any consistent input multiplier far
+    // above its own ~1.0 floor; both the old (BandpassFilteredSampleAt*32768) and new (AvtPllSampleAt)
+    // feeds are the SAME underlying filtered signal, differing only by a slowly-varying scalar
+    // (m_agc/_levelAgc's own gain, updated every ~100ms) that PllFmDemodulator's own AGC already
+    // divides back out. This is a fidelity fix (matching legacy's real signal-domain choice exactly)
+    // for the AGC STAGE ONLY, not an accuracy fix -- stated honestly so it isn't later "corrected"
+    // back on a false assumption that a measured-delta improvement was expected and didn't appear.
+    // Code-level review (S7/S11/S17 batch) flagged the natural follow-on question: the UPSTREAM
+    // bandpass stage still diverges during AVT training -- legacy selects H1 whenever
+    // `m_Sync || m_SyncMode >= 3` (`sstv.cpp:1827`, true throughout AVT training's SyncMode 4-7), but
+    // BandpassFilteredSampleAt gates purely on `_mode is not null`, so this port runs H2/search for the
+    // whole training window instead. Pre-existing, already tracked as its own separate gap
+    // (SearchBandpassFilter.cs's own doc comment), not introduced or closed by this fix -- the AGC
+    // domain match above is real and exact, just not the full chain.
+    private double AvtPllSampleAt(int index)
+    {
+        AgcSampleAt(index); // ensures _agcSamples is filled up to index; its own (clamped) return value is not what this needs
+        return _agcSamples[Rel(index)] / 32.0;
     }
 
     // sstv.cpp:1824-1825 -- always-on, never gated by m_bpf. m_ad zeroed once at construction
@@ -1064,12 +1109,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 {
                     restarted = true;
                     // The abandoned (local `mode`, captured at the top of this outer-loop iteration),
-                    // not the new one -- TryVisLockStateMachine already called Commit(), which fired
-                    // ModeDetected for the *new* mode before we get here. Passing that same new mode
-                    // to DecodeRestarted too (an earlier version did, via `_mode!`) is a trap review
-                    // caught: a caller that allocates a buffer on ModeDetected and discards on
-                    // DecodeRestarted would discard the buffer it just allocated for the new mode,
-                    // not the old one it actually needs to throw away.
+                    // not the new one. For a non-AVT match, TryVisLockStateMachine already called
+                    // Commit(), which fired ModeDetected for the *new* mode before we get here; for an
+                    // AVT match (S7), Commit() hasn't run yet -- training is still pending, and
+                    // ModeDetected fires later once it resolves. Either way, passing the new mode here
+                    // too (an earlier version did, via `_mode!`) is a trap review caught: a caller that
+                    // allocates a buffer on ModeDetected and discards on DecodeRestarted would discard
+                    // the buffer it just allocated for the new mode, not the old one it actually needs
+                    // to throw away.
                     DecodeRestarted?.Invoke(mode);
                     break;
                 }
@@ -1077,7 +1124,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
             if (restarted)
             {
-                continue; // TryVisLockStateMachine already Commit()-ed the new transmission -- decode it from scratch
+                continue; // new transmission is either already Commit()-ed, or (AVT) mid-training -- either way, _mode is null and the outer loop's own header-detection branch takes it from here
             }
 
             if (_nextLine >= mode.ImageHeight)
@@ -1388,23 +1435,37 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 continue;
             }
 
-            // S31 fix: deliberately still discard an AVT match found here (unlike
-            // TryInterleavedHeaderScan's own pre-lock call site, which now hands one off to
-            // TryStartAvtTraining). This call site runs while _mode is NOT null (an image is already
-            // mid-decode -- see this method's own doc comment above) and result.Value.LineStartSample
-            // for AVT means "end of its own first VIS block," not a line-0 anchor -- Commit()-ing it
-            // directly here would start decoding image pixels for the WRONG mode's line geometry at
-            // the wrong sample. Safely restarting into pending AVT training mid-decode would need the
-            // same in-progress-image teardown Commit() already does for every other mode (_mode/
-            // _lineDecoder/_pixels/_nextLine/_bandpassLockedFromSample, several cursors --
-            // TryStartAvtTraining does none of that today, it's only ever been called while _mode is
-            // null). A deliberate, narrow, deferred non-goal, not a silent gap: S31's own reported
-            // failure is a first-transmission (never-locked) scenario this port had zero coverage
-            // for; a genuine second/interrupting AVT transmission arriving mid-reception is a
-            // separate, rarer case with no existing test or reported bug against it.
+            // S7 fix (spec/14-roadmap.md): S31 originally left this deliberately discarding an AVT
+            // match found here, since TryStartAvtTraining didn't perform the same in-progress-image
+            // teardown Commit() does for every other mode, and result.Value.LineStartSample for AVT
+            // means "end of its own first VIS block," not a line-0 anchor. AbandonInProgressImage()
+            // (extracted from Commit()'s own former inline header, same fix) now provides that
+            // teardown without also setting a new _mode, since AVT training isn't resolved yet here.
+            // Returning true unconditionally (not TryStartAvtTraining's own bool) is required: this
+            // method's caller (TryProcessBuffer's per-line loop) already fires DecodeRestarted with
+            // its own pre-captured (pre-abandonment) mode local and re-enters the outer while(true)
+            // loop's `if (_mode is null && !TryDecodeHeader())` check on any true return -- which
+            // correctly routes into TryResolveAvtTraining on the next call whether training resolved
+            // same-call (rare, _mode already Avt) or is still pending (_mode still null) -- the exact
+            // same machinery the pre-lock path already relies on, no new machinery needed here.
+            //
+            // Auditor plan-review flagged, and this deliberately accepts: _syncBypassProcessedUpTo
+            // (frozen at wherever the FIRST transmission locked, only re-anchored by EndOfImage, which
+            // this path does not call) pins TrimBuffers' pre-lock-branch watermark there for the whole
+            // pending window once _mode goes null -- retaining the abandoned image's audio rather than
+            // trimming it, bounded by the same up-to-~7.1s AVT training window this port already
+            // accepts elsewhere (TrimBuffers' own _avtTrainingPending term docs the crash this WOULD
+            // cause without that term; this is "more retained than ideal", not a repeat of that bug).
+            // A genuine second/interrupting AVT transmission arriving mid-reception is already a rare
+            // case; the false-positive-lock cost this now carries (destroying a good image on a
+            // spurious AVT match, matching legacy's own equally-uncorrectable case-3-through-8 shape)
+            // is the same category of accepted risk VisLockStateMachine's own class doc comment and
+            // S8's narrow-FSK mid-reception wiring already carry, not a new class of risk.
             if (result.Value.Mode == SstvModeRegistry.Avt)
             {
-                continue;
+                AbandonInProgressImage();
+                TryStartAvtTraining(_visLockOriginSample + result.Value.LineStartSample);
+                return true;
             }
 
             // No manual _visLockProcessedUpTo++ here (an earlier version had one): Commit() itself
@@ -1759,8 +1820,32 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// needed to bound -- see <c>BandpassCacheChunkInvarianceTests</c>.</summary>
     internal event Action<int>? LockAnchorCommitted;
 
+    // S7 fix (spec/14-roadmap.md): extracted from Commit()'s own former inline header so the new
+    // mid-reception AVT hand-off (TryVisLockStateMachine) can reuse the exact same "abandon whatever
+    // is currently mid-decode" step Commit() already performs for every other restart, without also
+    // setting a new _mode (AVT training isn't resolved yet at that point). Auditor code-level review
+    // (of the extraction itself, during plan-review) confirmed this is behavior-preserving for every
+    // EXISTING Commit() caller: nothing between the old inline header and the rest of that method's
+    // body reads _mode/_lineDecoder/_pixels/_nextLine/_bandpassLockedFromSample before they're
+    // reassigned, and int.MaxValue matches EndOfImage's own existing "no lock" convention for
+    // _bandpassLockedFromSample. Deliberately does NOT touch _afcTracker/_slantTracker/
+    // _syncEnvelopeDetector/_afcBoundSample or _syncBypassProcessedUpTo/_syncBypassOriginSample --
+    // the former are only ever read from the per-line loop (which requires _mode != null) and are
+    // unconditionally reassigned by InitializeAfc/InitializeSlant on the eventual real Commit() either
+    // way; the latter's own mid-pending-window trim-retention cost (see TryVisLockStateMachine's own
+    // new AVT branch doc comment) is a deliberate, bounded, accepted tradeoff, not an oversight.
+    private void AbandonInProgressImage()
+    {
+        _mode = null;
+        _lineDecoder = null;
+        _pixels = null;
+        _nextLine = 0;
+        _bandpassLockedFromSample = int.MaxValue; // matches EndOfImage's own "no lock" convention
+    }
+
     private void Commit(SstvModeDefinition matched, int lineStartSample)
     {
+        AbandonInProgressImage();
         _consumedSamples = Math.Max(0, lineStartSample);
         LockAnchorCommitted?.Invoke(_consumedSamples);
         _bandpassLockedFromSample = _consumedSamples; // Band-1 item 4b -- see field's own doc comment
@@ -2463,6 +2548,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // `if(!m_Sync) m_pll.Do(ad);`, unconditional during that case) through _avtTrainingOriginSample
         // itself -- verified directly against source, not assumed, per the plan-review's own explicit
         // flag that this needed checking rather than guessing.
+        //
+        // S7 code-level review note: legacy's case-3 feed is actually `if(!m_Sync) m_pll.Do(ad)`
+        // (sstv.cpp:2128) -- gated on NOT already being locked. S7 made a new call path reachable where
+        // that's false (a mid-reception AVT match arriving while a DIFFERENT mode is already locked and
+        // being abandoned): legacy would skip this 30ms warm-up span entirely in that case, but this
+        // port always includes it, since visHeaderEndSample alone doesn't carry "was something already
+        // locked" and threading that through wasn't judged worth the complexity -- 30ms at the head of
+        // an ~1850ms warm-up window is immaterial to whether the PLL settles before real training
+        // content starts (confirmed: S7's own new mid-reception AVT test decodes correctly).
         _avtPllWarmupStartSample = visHeaderEndSample - MsToSamples(VisHeader.BitDurationMs);
 
         return TryResolveAvtTraining();
@@ -2485,20 +2579,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         {
             for (var w = _avtPllWarmupStartSample; w < _avtTrainingOriginSample; w++)
             {
-                _avtPllDemodulator!.ProcessSample(BandpassFilteredSampleAt(w) * 32768.0);
+                _avtPllDemodulator!.ProcessSample(AvtPllSampleAt(w));
             }
 
             _avtPllWarmedUp = true;
         }
 
-        // Piece A/B: BandpassFilteredSampleAt, not raw -- legacy's real AVT input is `ad` (sstv.cpp:1835,
-        // POST-2-tap-LPF-POST-bandpass-filter, post-AGC, unscaled), a domain this port doesn't model
-        // at all (only "raw" and "AGC+x32+clip" exist here). Adding both filters closes two of the
-        // three missing stages and is unambiguously closer to legacy; the AGC-domain gap stays exactly
-        // as already flagged and deferred from the Hilbert demodulator piece, not expanded into here.
+        // S11 fix (spec/14-roadmap.md): AvtPllSampleAt, not BandpassFilteredSampleAt*32768 -- legacy's
+        // real AVT input is `ad` (sstv.cpp:1835, POST-2-tap-LPF/POST-bandpass-filter/POST-AGC, but
+        // BEFORE the separate *32+clip scaling every other envelope detector in this file needs). This
+        // closes the AGC-domain gap Piece A/B's own comment previously flagged and deferred here --
+        // see AvtPllSampleAt's own doc comment for the full derivation and why this is a fidelity fix,
+        // not an accuracy one (PllFmDemodulator's own internal AGC makes it scale-invariant to the
+        // difference between the old and new feeds).
         while (_avtTrainingProcessedUpTo < TotalSamplesReceived)
         {
-            var avtDemodulatedHz = _avtPllDemodulator!.ProcessSample(BandpassFilteredSampleAt(_avtTrainingProcessedUpTo) * 32768.0);
+            var avtDemodulatedHz = _avtPllDemodulator!.ProcessSample(AvtPllSampleAt(_avtTrainingProcessedUpTo));
             var completedAt = _avtTrainingLock!.ProcessSample(avtDemodulatedHz);
             _avtTrainingProcessedUpTo++;
 

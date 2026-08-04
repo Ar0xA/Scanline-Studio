@@ -1141,12 +1141,18 @@ legacy's live default is Hilbert, PLL is AVT-only now).
   listing was simply never updated when S6 shipped; no new code needed — S8 mid-image narrow re-lock —
   **DONE**, see this file's own "S8" entry below, much smaller than originally scoped (the per-sample
   FSK decoder already existed and was already correct; this wired it up as a persistent scanner) — S7
-  mid-image AVT re-lock, S17 AVT training-entry restructure, S11 AVT PLL domain, S10 extended-VIS
+  mid-image AVT re-lock, S11 AVT PLL domain — **DONE**, see this file's own "AVT package" entry below
+  (bundled with S17 per this Band's own pattern-3 finding that the AVT items are one work package) —
+  S17 AVT training-entry restructure — **CLOSED via documentation, no code change**, see the same "AVT
+  package" entry — measured (not assumed) that the port's analytic training entry lands one block late
+  vs. legacy's real search-based entry, but completion timing recalculates absolutely per-block, so the
+  imprecision has zero effect on final accuracy — S10 extended-VIS
   7-bit — **DONE**, see this file's own "S10" entry below, widened in scope from the original narrow
   "escape byte only" framing to the real underlying gap (every normal VIS-code match in the
-  fixed-window path, not just the escape byte) — S12 sint2/sint3 freeze gating [sint1 already fixed],
+  fixed-window path, not just the escape byte) — S12 sint2/sint3 freeze gating [sint1 already fixed] —
+  only remaining untouched item —
   S13 m_Type demodulator toggle [code blocked on Phase-3 settings UI, but its missing
-  removed-features.md entry is Band-4 work now, **DONE**]. 6 of 8 original items land on mode families
+  removed-features.md entry is Band-4 work now, **DONE**]. 7 of 8 original items land on mode families
   task #7 already captured fixtures for — fix when
   measured, not reasoned.
 - **Band 4 — documentation/test-only, near-zero cost, no DSP change** (S27 CQ100 removed-features.md
@@ -2495,6 +2501,144 @@ Test count: 465/465 (460 prior + 5 new: `SamplesSinceBitClockOrigin_MatchesExact
 `MidReception_RealNarrowTransmissionAfterAnotherMode_RestartsAndDecodesCorrectly`,
 `BufferStaysBounded_AcrossMultipleImageCycles_WithPersistentNarrowFskCursor` in new
 `NarrowFskNoiseTolerantDetectionTests.cs`), solution-wide build clean.
+
+## AVT package: S7 (mid-image re-lock), S11 (PLL signal domain), S17 (training-entry restructure)
+
+Bundled as one plan-review (matching this project's own pattern-3 finding: AVT items are one work
+package, not independent). Auditor verdicts per item: S7 ready to build after one on-paper decision
+(made below); S11 not ready as originally proposed (a real flaw in the first draft, caught before any
+code shipped); S17 close via documentation, no code needed, confirmed empirically rather than assumed.
+
+### S7 — mid-image AVT re-lock, DONE
+
+S31 left `AnalogFmSstvDecoder.TryVisLockStateMachine` (mid-reception re-verification, piece 6c)
+deliberately discarding an AVT match found there, since `TryStartAvtTraining` didn't perform the same
+in-progress-image teardown `Commit()` already does for every other restart. Fix: extracted
+`Commit()`'s own 5-field header (`_mode`/`_lineDecoder`/`_pixels`/`_nextLine`/`_bandpassLockedFromSample`)
+into a shared `AbandonInProgressImage()` helper — `Commit()` calls it first then sets its own new-lock
+state on top (pure refactor, verified behavior-preserving for every existing caller); the new
+mid-reception AVT branch calls it then `TryStartAvtTraining(...)`, leaving `_mode` null (training isn't
+resolved yet) and returning `true` unconditionally — the caller (`TryProcessBuffer`'s per-line loop)
+already fires `DecodeRestarted` with its own pre-captured mode and correctly re-enters the outer loop's
+`_mode is null` routing either way (training resolved same-call or still pending).
+
+Auditor plan-review independently verified all three load-bearing claims (the extraction is
+behavior-preserving; the caller machinery is correct; S31's own `_avtPllWarmupStartSample` `TrimBuffers`
+protection already covers this new entry path with no changes needed) and flagged one real,
+previously-unconsidered cost, accepted rather than engineered around: once `_mode` goes null mid-image,
+`_syncBypassProcessedUpTo` (frozen at wherever the FIRST transmission locked, only re-anchored by
+`EndOfImage`, which this path deliberately doesn't call) pins the pre-lock watermark there for the whole
+up-to-~7.1s pending window — retaining the abandoned image's audio rather than trimming it. Bounded (by
+the same AVT-pending window this port already accepts elsewhere), not a repeat of the crash class
+`TrimBuffers`' own `_avtTrainingPending` term prevents — the on-paper decision was to accept and assert
+the bound in a new test rather than re-anchor the sync-bypass cursor in the AVT branch (which would
+touch load-bearing state outside `AbandonInProgressImage()`'s own clean scope for a rare-case
+optimization). Also flagged and accepted: false-positive-lock cost is now asymmetric (destroys a good
+image instead of being free), matching legacy's own equally-uncorrectable case-3-through-8 shape and
+the same accepted-risk category `VisLockStateMachine`'s own class doc comment and S8 already carry.
+
+New tests: `MidReception_RealAvtTransmissionAfterAnotherMode_RestartsAndDecodesCorrectly` (repurposed
+from the old S31-era test that pinned the opposite, now-superseded behavior — asserts `DecodeRestarted`
+fires with the OLD mode and `ModeDetected` with `Avt`, per the auditor's own requested pin) and
+`MidReception_RealAvtTransmissionAfterAnotherMode_ChunkedPush_StaysBounded` (chunked, not bulk — the
+only shape that exercises the `_avtPllWarmupStartSample` protection and the accepted retention
+tradeoff; measures rather than assumes the "settles well below peak" property instead of predicting an
+exact bound).
+
+### S11 — AVT training PLL signal-domain mismatch, DONE
+
+Legacy's real `m_pll.Do(ad)` (`sstv.cpp` cases 3-7) reads `ad` — the AGC output BEFORE the separate
+`*32` scale-up and ±16384 clip every OTHER envelope-detector consumer in this file needs (`d`, what
+`AgcSampleAt` already returns). The port's AVT PLL feed used `BandpassFilteredSampleAt(w)*32768.0` —
+pre-AGC entirely, not even the same family as `ad`.
+
+**First draft rejected by the auditor's own plan-review round, caught before any code shipped**: the
+proposed fix (`AgcSampleAt(w)/32.0`, dividing the already-clipped value back down) was based on an
+inverted premise — `|ad|` peaks at ~16384 by construction (`m_agc = 16384.0/m_CurMax`), so the clip
+triggers whenever `|ad| > 512`, meaning `AgcSampleAt`'s own output is a hard-limited square wave for
+roughly 98% of every cycle at normal amplitude, not "rarely." Dividing that back down would have fed
+the PLL a ±512 square wave, not a scaled copy of the real waveform.
+
+**Fix actually shipped**: `_agcSamples` now stores the value UNCLIPPED (the `Math.Clamp` moved to
+`AgcSampleAt`'s own return statement — zero behavior change for every existing reader of that return
+value), and a new `AvtPllSampleAt(index)` reads the same cache directly, dividing back out only the
+`*32` term, never the clip. Exact in every case, not an approximation; reuses the existing cache instead
+of adding a new one (zero new cursor/list/`TrimBuffers` entries) — the auditor's own recommended
+smaller variant of its "new dedicated cache" option, once the clamp-move insight made a full parallel
+cache unnecessary.
+
+**Acceptance criterion, corrected before measuring**: auditor traced `PllFmDemodulator`'s own internal
+per-half-cycle AGC (normalizes peak-to-peak to a fixed target) against `CPLL::Do`, confirming the class
+is scale-invariant to any consistent input multiplier far above its own ~1.0 floor — both the old and
+new feeds are the SAME underlying filtered signal, differing only by a slowly-varying scalar the PLL's
+own AGC already divides back out. Expected (and correct) result: **no measurable change** in `avt.mmv`'s
+own decode delta — this is a fidelity fix (matching legacy's real signal domain exactly), not an
+accuracy fix, stated honestly so it isn't later "corrected" back on a false assumption. Measured directly
+(not assumed): `Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource` 5.80→5.79,
+`EncoderOutput_DecodesSimilarlyTo_RealLegacyAudioDecode` 9.92→9.88 — both unchanged within measurement
+noise, exactly as predicted.
+
+### S17 — AVT training-entry restructure, CLOSED via documentation, no code needed
+
+The port's `TryStartAvtTraining` analytically skips all 3 VIS repeats before constructing
+`AvtTrainingLockStateMachine`; legacy's real case 3 hands off right after the FIRST repeat, then spends
+repeats 2-3 as failed marker-search noise inside cases 4-7's own search loop — a materially different,
+search-based entry mechanism the port simplifies away from.
+
+Per the roadmap's own "decide based on measured effect" instruction for this item (not "build the
+restructure unconditionally"): auditor plan-review found a source-derived argument that the entry
+mechanism can't matter — `AvtTrainingLockStateMachine`'s own case-6-equivalent recalculates the overall
+completion timeout ABSOLUTELY from each decoded block's own position in the 32-block sequence (its `h`
+byte), not cumulatively from entry, so any error in HOW the state machine entered training cannot
+propagate past the first successfully-decoded block. Recommended one cheap empirical check (~20 lines,
+temporary instrumentation, added and fully reverted, same methodology as S31's own investigation) before
+closing: record `(h, sample)` for every checksum-passing block in `AvtTrainingLockStateMachine` while
+decoding the real `avt.mmv` fixture.
+
+**Measured, not assumed**: the port's analytic skip does NOT land exactly on the training's real first
+block — the first successfully-decoded block is `h=0x5e` (block 2 of 32), not `h=0x5f` (block 1), a real
+~166ms landing imprecision the "ideal" case didn't predict. 31 of 32 blocks decode successfully
+(`h=0x5e` down to `h=0x40`). This is a STRONGER confirmation than the auditor's own "ideal-landing"
+argument, not a weaker one: it shows the real landing genuinely isn't perfect, yet — because completion
+timing recalculates absolutely from whichever block locks first, not cumulatively — this measured
+imprecision has zero effect on the training's own final completion accuracy. The restructure would only
+recover that one missed block, which recovery doesn't change the answer at all. No code change; closed
+via documentation, matching S9/S15's own precedent for this project's "fix when measured, not reasoned"
+rule working in the OTHER direction (measurement showing a fix isn't needed, not confirming one is).
+
+### Code-level review, all three items combined
+
+Verdict: **EQUIVALENT-WITH-RISKS, no blockers.** S11's signal domain confirmed bit-exact against
+`sstv.cpp:1834-1839`/every AVT case's own `m_pll.Do(ad)` call site; every existing `_agcSamples` reader
+confirmed to still go through the clamped return, not the raw cache. S7's `AbandonInProgressImage()`
+extraction confirmed behavior-preserving field-for-field; the deliberately-NOT-reset
+`_visLockStateMachine`/`_visLockOriginSample` pair confirmed correct (resetting either alone would have
+been the actual bug); trim safety traced explicitly through both the locked-branch and pending-window
+watermark paths, no cursor can outrun retained data. S17 confirmed zero residual diagnostic
+instrumentation in either touched file. Three documentation-only findings closed directly (no behavior
+change, so no re-test needed): `AvtPllSampleAt`'s doc comment now states its fix is AGC-stage-only, not
+full-chain (the upstream bandpass stage still runs H2/search instead of legacy's real H1 throughout AVT
+training — a real, separate, ALREADY-tracked gap per `SearchBandpassFilter.cs`'s own doc comment, not
+opened or closed by S11); `_avtPllWarmupStartSample`'s computation now documents the one real behavioral
+divergence S7 makes newly reachable (legacy's case-3 PLL feed is gated `!m_Sync`, so it skips its own
+30ms warm-up span when a mode is already locked — this port always includes it; immaterial to the
+~1850ms warm-up window, confirmed by S7's own passing mid-reception test, but was previously unflagged);
+two stale comments at the `TryVisLockStateMachine` call site corrected (claimed `Commit()` always runs
+before `DecodeRestarted` fires — true for non-AVT restarts, not for the AVT branch, where training is
+still pending). Two remaining nits accepted as genuinely cosmetic, not fixed: a single duplicate-fed
+sample on the AVT restart path (state machine can't re-match on it) and a per-call vs. per-fill
+`Math.Clamp` move in `AgcSampleAt` (free in practice). One off-scope finding logged in one line per this
+project's own ADHD-scope rule, not chased: legacy sets `m_ReqSave` to preserve a substantially-complete
+partial image on ANY mid-reception restart (`sstv.cpp:2135-2137`); this port drops the in-progress image
+unconditionally on every restart path, not just the new AVT one — pre-existing, no
+`docs/removed-features.md` entry yet.
+
+Test count: 466/466 (465 prior + 1 net new: `MidReception_RealAvtTransmissionAfterAnotherMode_
+ChunkedPush_StaysBounded` in `AvtNoiseTolerantDetectionTests.cs`; the existing
+`MidReception_RealAvtTransmissionAfterAnotherMode_RestartsAndDecodesCorrectly` was rewritten in place to
+pin the new restart behavior rather than added as a new test; no new tests for S11 (verified via the
+existing golden-vector re-measurement) or S17 (closed via documentation, temporary instrumentation
+fully reverted)), solution-wide build clean.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
