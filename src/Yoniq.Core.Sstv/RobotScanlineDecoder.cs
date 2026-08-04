@@ -31,8 +31,9 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
     // segment's own full nominal span -- round-1-review correction, an earlier version of this fix
     // wrongly assumed no narrower legacy window existed and applied an invented margin instead.
     // Confirmed directly against source: `sstv.cpp:664-665` (SetSampFreq, case smR36) sets
-    // `m_SG = (88.0+1.25)*SampFreq/1000` and `m_CG = (88.0+3.5)*SampFreq/1000` -- both measured from
-    // the START OF THE Y SCAN (ps=88.0ms is exactly where the tone-selector tone begins, matching
+    // `m_SG = (88.0+1.25)*m_SampFreq/1000` and `m_CG = (88.0+3.5)*SampFreq/1000` -- comprehensive-review
+    // correction, an earlier version of this line wrongly wrote both using the bare `SampFreq`; only
+    // `m_CG` actually does that (see the round-2 note below for why). Both measured from
     // this port's own segment boundary). `Main.cpp:4286-4297`'s RX switch enters the TCS branch for
     // `ps < m_CG`, but its own body only executes (`ps -= m_SG; if (ps >= 0)`) once ps has reached
     // m_SG -- so legacy's real per-sample m_DSEL re-decision only ever happens for
@@ -50,6 +51,12 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
     // its own already-slant-corrected `sampleRate` parameter). Flagged so a future reader doesn't
     // "fix" this port to match the typo; no measurable behavioral impact either way (the window is
     // 2.25ms wide, slant correction is well under 1%).
+    //
+    // Comprehensive-review note: this constant is derived for smR36 specifically (`88.0+3.5` is
+    // literally that mode's own m_CG formula) -- safe today only because `ColorEncoding.YCbCrRobot`
+    // maps to exactly Robot 36 (`SstvModeRegistry.cs`) and nothing else defines a `ToneSelectorSegment`
+    // for this decoder to run against. Nothing enforces that coupling here if a future mode ever
+    // shared this decoder with a differently-timed tone-selector segment.
     private const double DecisiveWindowTailMarginMs = 1.0;
 
     private double[]? _rMinusY;
