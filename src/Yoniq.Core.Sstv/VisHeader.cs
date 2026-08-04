@@ -20,18 +20,40 @@ internal static class VisHeader
 
     public const int DataBitCount = 7;
 
+    /// <summary>S10 fix (spec/14-roadmap.md): legacy's real <c>m_VisData</c> accumulator is always 8
+    /// bits wide (<c>m_VisCnt</c> starts at 8, `sstv.cpp:1966-1967`/`2068-2069`) — 7 data bits PLUS
+    /// the parity bit — and its mode-lookup <c>switch(m_VisData)</c> (`sstv.cpp:1993-2074`) matches
+    /// the FULL 8-bit byte for every arm, the escape check (<c>case 0x23</c>, `sstv.cpp:2066`) included
+    /// — they're arms of the same switch, not two separately-timed decisions. This is the bit count
+    /// needed before the normal-vs-extended decision can be made at all; see
+    /// <see cref="AnalogFmSstvDecoder.TryDecodeVisHeader"/> and <see cref="ExtendedVisEscapeCode"/>'s
+    /// own doc comment for why decoding only 7 (parity-stripped) bits was a real, previously-shipped
+    /// divergence from legacy on real (noisy) audio.</summary>
+    public const int FirstByteBitCount = DataBitCount + 1;
+
     /// <summary>Escape marker for the two-byte "extended VIS" mechanism (MR/MP/ML families) — see
     /// <see cref="GenerateExtendedSegments"/>. Legacy's raw literal for this byte is 0x23, which
     /// happens to already have its top bit 0 without matching the even-parity formula normal codes
     /// use (verified: 0x23's low 7 bits have odd parity, but bit7 is 0, not the 1 an even-parity
-    /// scheme would compute) — legacy's RX doesn't check parity validity at all, it just matches
-    /// raw bit patterns (`Main.cpp`'s `case 2: case 9:` VIS decode), so this port doesn't either.</summary>
+    /// scheme would compute) — legacy's RX doesn't check parity VALIDITY (there's no formula check),
+    /// but it does match the full 8-bit RAW pattern including whatever parity bit was actually
+    /// received (`sstv.cpp`'s `case 2: case 9:` VIS decode, full-byte <c>switch(m_VisData)</c>) — a
+    /// 7-bit-only match (this port's own pre-S10 behavior) would accept a real 0x23-pattern byte
+    /// REGARDLESS of its 8th bit, which legacy would reject outright (falls to `default:`,
+    /// `sstv.cpp:2071-2073`) whenever that bit doesn't happen to be 0. Compared as a full 8-bit value
+    /// (<see cref="FirstByteBitCount"/>), not 7, as of the S10 fix.</summary>
     public const int ExtendedVisEscapeCode = 0x23;
 
     public const double PrefixDurationMs =
         LeaderDurationMs + BreakDurationMs + LeaderDurationMs // leader-break-leader
         + BitDurationMs // start bit
-        + BitDurationMs * DataBitCount; // first 7 data bits (enough to detect the escape code)
+        + BitDurationMs * DataBitCount; // first 7 data bits -- the parity bit is part of the "tail"
+                                        // duration constants below, NOT this prefix (matches
+                                        // GenerateSegments' own real TX segment boundary); the
+                                        // DECODER's own "enough samples to decide normal-vs-extended"
+                                        // gate needs PrefixDurationMs + BitDurationMs (FirstByteBitCount
+                                        // total bit-slots), one more than this constant alone -- see
+                                        // TryDecodeVisHeader's own gate.
 
     public const double NormalTailDurationMs =
         BitDurationMs // parity bit
@@ -44,12 +66,12 @@ internal static class VisHeader
 
     public const double TotalDurationMs = PrefixDurationMs + NormalTailDurationMs;
 
-    /// <summary>Bit count of <see cref="GenerateExtendedSegments"/>'s combined escape+code word (one
-    /// raw byte's worth more than <see cref="DataBitCount"/>'s normal-VIS 7) — named here so
-    /// <see cref="ExtendedSearchCeilingMs"/> can share it rather than repeating the literal
-    /// <c>DataBitCount + 9</c> already used at <c>AnalogFmSstvDecoder.TryDecodeVisHeader</c>'s own
-    /// call site.</summary>
-    public const int ExtendedDataBitCount = DataBitCount + 9;
+    /// <summary>Bit count of <see cref="GenerateExtendedSegments"/>'s combined escape+code word: the
+    /// full first byte (<see cref="FirstByteBitCount"/>, 8 bits — S10 fix) plus the second (real
+    /// extended-mode code) byte's own 8 raw bits, no separate start/stop bit between them. Named here
+    /// so <see cref="ExtendedSearchCeilingMs"/> and <c>AnalogFmSstvDecoder.TryDecodeVisHeader</c>'s own
+    /// call site share one constant instead of each repeating the arithmetic independently.</summary>
+    public const int ExtendedDataBitCount = FirstByteBitCount + 8;
 
     /// <summary>Shared retry margin every local, bounded header-detection scan in this file's
     /// consumers (<c>AnalogFmSstvDecoder.TryDecodeVisDataBits</c>/<c>TryDecodeNarrowModeHeader</c>)
@@ -66,14 +88,15 @@ internal static class VisHeader
     public const double ConfirmHoldMs = BitDurationMs / 2;
 
     /// <summary><c>AnalogFmSstvDecoder.TryDecodeVisDataBits</c>'s own local search-ceiling formula
-    /// (see that method's doc comment for the full reasoning), for a normal <see cref="DataBitCount"/>-bit
-    /// VIS code — the ONLY other consumer of this exact arithmetic (Band-1 S3 fix, pre-Phase-2 audit)
-    /// is <see cref="MaxSearchCeilingMs"/>, computed from this and its two siblings below rather than
-    /// hand-transcribed, so the two can never silently desync.</summary>
+    /// (see that method's doc comment for the full reasoning), for the <see cref="FirstByteBitCount"/>-bit
+    /// first-byte decision (S10 fix: 8 bits, not <see cref="DataBitCount"/>'s 7 — see that constant's
+    /// own doc comment) — the ONLY other consumer of this exact arithmetic (Band-1 S3 fix, pre-Phase-2
+    /// audit) is <see cref="MaxSearchCeilingMs"/>, computed from this and its two siblings below rather
+    /// than hand-transcribed, so the two can never silently desync.</summary>
     public const double NormalSearchCeilingMs =
         LeaderDurationMs * 2 + BreakDurationMs + RetryMarginMs
         + ConfirmHoldMs
-        + DataBitCount * BitDurationMs;
+        + FirstByteBitCount * BitDurationMs;
 
     /// <summary>Same formula as <see cref="NormalSearchCeilingMs"/>, for the extended
     /// (<see cref="ExtendedDataBitCount"/>-bit) VIS code.</summary>
@@ -113,8 +136,9 @@ internal static class VisHeader
     /// literal received byte, transmitting a correctly-computed-but-different parity bit would make
     /// this port's RM12 unrecognizable to a real legacy receiver. Passed to
     /// <see cref="GenerateSegments"/>'s <c>forcedParityBit</c> parameter for this one mode only.
-    /// Decode is unaffected: <see cref="DecodeVisCode"/> only ever reads the 7 data bits, never the
-    /// parity bit, for every mode.</summary>
+    /// S10 fix (spec/14-roadmap.md): decode now matches this exact forced byte too --
+    /// <see cref="SstvModeRegistry.FindByFullVisByte"/> special-cases RM12 via this same constant
+    /// rather than computing parity, so this quirk stays correctly recognized end-to-end.</summary>
     public const int Rm12ForcedParityBit = 1;
 
     public static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateSegments(int visCode, int? forcedParityBit = null)
@@ -135,18 +159,6 @@ internal static class VisHeader
         var parityBit = forcedParityBit ?? parity;
         yield return (parityBit == 1 ? Bit1FrequencyHz : Bit0FrequencyHz, BitDurationMs);
         yield return (StartStopFrequencyHz, BitDurationMs);
-    }
-
-    /// <summary>Reconstructs the VIS code from 7 measured bits (LSB first, matching <see cref="GenerateSegments"/>).</summary>
-    public static int DecodeVisCode(ReadOnlySpan<int> dataBits)
-    {
-        var visCode = 0;
-        for (var bitIndex = 0; bitIndex < dataBits.Length; bitIndex++)
-        {
-            visCode |= dataBits[bitIndex] << bitIndex;
-        }
-
-        return visCode;
     }
 
     /// <summary>

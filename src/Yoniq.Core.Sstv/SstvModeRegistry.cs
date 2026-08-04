@@ -264,7 +264,8 @@ public static class SstvModeRegistry
     // VIS code: legacy's switch matches the *full* received byte (7 data bits + even parity bit as
     // MSB), case 0x84 (sstv.cpp) -- this port's VisCode field, like every other mode's here
     // (e.g. Robot36's 8 from legacy's 0x88), stores only the 7 data bits actually carried by
-    // VisHeader.GenerateSegments/DecodeVisCode, i.e. 0x84 & 0x7F = 0x04 = 4, not 0x84 itself.
+    // VisHeader.GenerateSegments, i.e. 0x84 & 0x7F = 0x04 = 4, not 0x84 itself (FindByFullVisByte
+    // reconstructs the full byte, including parity, for matching -- see its own doc comment).
     //
     // ImageHeight: modeled here as 120, not 240 -- correction after initially misreading the TX
     // loop (see RM8/RM12's CreateMonoAveragedMode doc comment, which caught this): LineR24 itself
@@ -555,9 +556,11 @@ public static class SstvModeRegistry
     // a bug in this port's original (correct) parity-stripping logic. Since legacy's VIS-decode
     // switch (sstv.cpp:1993-2074) matches the literal received byte, this port's header generator
     // now transmits RM12's forced byte 0x86 (not a computed-parity 0x06) via
-    // VisHeader.GenerateSegments's forcedParityBit parameter / VisHeader.Rm12ForcedParityBit --
-    // otherwise this port's RM12 TX would have been unrecognizable to a real legacy receiver. RX is
-    // unaffected either way: VisHeader.DecodeVisCode only ever reads the 7 data bits.
+    // VisHeader.GenerateSegments's forcedParityBit parameter / VisHeader.Rm12ForcedParityBit. RX
+    // (S10 fix, spec/14-roadmap.md): FindByFullVisByte reconstructs this exact forced byte too
+    // (special-cases Rm12 via the same Rm12ForcedParityBit constant, see its own doc comment) --
+    // before that fix, RX matched only the parity-stripped 7-bit value and this RM12 quirk genuinely
+    // didn't matter for decode; it does now, and is correctly handled.
     //
     // RX applies an RM-specific gain correction (`d *= 256.0/(256.0-32.0)`, Main.cpp:4438) on top of
     // its own GetPictureLevel/GetPixelLevel calibration pipeline before writing the pixel -- see
@@ -651,23 +654,24 @@ public static class SstvModeRegistry
         Sc2180, Sc2120, Sc260,
     ];
 
-    public static SstvModeDefinition? FindByVisCode(int visCode) =>
-        All.FirstOrDefault(m => m.ExtendedVisCode is null && m.NarrowModeCode is null && m.VisCode == visCode);
-
     public static SstvModeDefinition? FindByExtendedCode(int extendedCode) =>
         All.FirstOrDefault(m => m.ExtendedVisCode == extendedCode);
 
     /// <summary>Matches the *full* legacy VIS byte -- 7 data bits plus the even-parity bit as bit 7
-    /// (e.g. R36's real case is <c>0x88</c>, not the parity-stripped <c>8</c> <see cref="FindByVisCode"/>
-    /// matches) -- the way legacy's own real-time bit-decode actually compares it
-    /// (`sstv.cpp:1993-2074`'s `switch(m_VisData)`, a `default:` rejects any byte with the wrong
-    /// parity bit outright). Reuses <see cref="VisHeader.GenerateSegments"/>'s own parity computation
-    /// (including <see cref="VisHeader.Rm12ForcedParityBit"/> for RM12's real anomalous byte) as the
-    /// single source of truth, rather than re-transcribing a second copy of the mode-code table --
-    /// verified to reproduce every one of the 24 real legacy bytes at `sstv.cpp:1993-2074` byte-for-byte.
-    /// Only used by <see cref="VisLockStateMachine"/>, which (unlike <see cref="FindByVisCode"/>'s
-    /// windowed-average-frequency callers) actually reads the parity bit as part of its own byte
-    /// accumulation.</summary>
+    /// (e.g. R36's real case is <c>0x88</c>, not the parity-stripped <c>8</c> stored in
+    /// <see cref="SstvModeDefinition.VisCode"/>) -- the way legacy's own real-time bit-decode actually
+    /// compares it (`sstv.cpp:1993-2074`'s `switch(m_VisData)`, a `default:` rejects any byte with the
+    /// wrong parity bit outright). Reuses <see cref="VisHeader.GenerateSegments"/>'s own parity
+    /// computation (including <see cref="VisHeader.Rm12ForcedParityBit"/> for RM12's real anomalous
+    /// byte) as the single source of truth, rather than re-transcribing a second copy of the mode-code
+    /// table -- verified to reproduce every one of the 24 real legacy bytes at `sstv.cpp:1993-2074`
+    /// byte-for-byte. S10 fix (spec/14-roadmap.md): used by both <see cref="VisLockStateMachine"/> and
+    /// <c>AnalogFmSstvDecoder.TryDecodeVisHeader</c> -- a parity-stripped 7-bit-only match
+    /// (this method's own predecessor, <c>FindByVisCode</c>, removed as of this fix since it lost its
+    /// only caller) would accept a real byte pattern regardless of its 8th bit, which legacy would
+    /// reject whenever that bit doesn't happen to be correct -- a real divergence on noisy real audio,
+    /// invisible to any self-generated round-trip test since this port's own encoder always transmits
+    /// correct parity.</summary>
     internal static SstvModeDefinition? FindByFullVisByte(int fullByte)
     {
         foreach (var mode in All)
