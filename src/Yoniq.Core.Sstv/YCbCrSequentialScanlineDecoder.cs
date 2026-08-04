@@ -36,17 +36,28 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
 
                 // Trimmed to m_KSS/m_KS2S, not the raw scan duration -- legacy's real x-mapping is
                 // `x = ps * Width / m_KSS` (`m_KS2S` for RY/BY), never `x = ps * Width / m_KS`.
+                //
+                // Milestone-audit MUST fix (spec/14-roadmap.md, "Milestone audit, Phase 1+2", finding
+                // 1; see RgbSequentialScanlineDecoder.cs's own copy of this fix for the full
+                // derivation): the segment's own START position must be tracked separately from the
+                // trimmed intra-segment pixel walk, and idealSamplesSoFar advanced by the segment's
+                // FULL untrimmed duration afterward -- not accumulated from the trimmed per-pixel
+                // steps, which used to start every segment after the first early.
+                var segmentStartSample = idealSamplesSoFar;
                 var perPixelDurationMs = scan.DurationMs / mode.ImageWidth
                     * SstvModeRegistry.GetPixelPitchTrimFactor(mode, scan.ChannelName);
+                var pixelWalk = 0.0;
                 for (var x = 0; x < mode.ImageWidth; x++)
                 {
-                    var startSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
-                    idealSamplesSoFar += perPixelDurationMs / 1000.0 * sampleRate;
-                    var endSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
+                    var startSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
+                    pixelWalk += perPixelDurationMs / 1000.0 * sampleRate;
+                    var endSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
 
                     var freq = read(startSample, endSample);
                     destination[x] = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
                 }
+
+                idealSamplesSoFar = segmentStartSample + scan.DurationMs / 1000.0 * sampleRate;
             }
             else
             {

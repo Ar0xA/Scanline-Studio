@@ -50,6 +50,15 @@ internal sealed class MonoAveragedPairedScanlineDecoder : IScanlineDecoder
                 // Trimmed to m_KSS, not the raw scan duration -- legacy's real x-mapping is
                 // `x = ps * Width / m_KSS`, never `x = ps * Width / m_KS`. RM8/RM12 has no chroma
                 // segment, so this is always the luma (non-chroma) branch of the trim factor.
+                //
+                // Milestone-audit MUST fix 3 note (spec/14-roadmap.md, "Milestone audit, Phase 1+2"):
+                // this decoder was DELIBERATELY left with the old single-accumulator shape (unlike
+                // RgbSequentialScanlineDecoder.cs's own copy of that fix) -- RM8/RM12 has exactly one
+                // scan segment per line, so there is no SUBSEQUENT segment for a trimmed-accumulation
+                // error to shift early (confirmed by measurement, not just this argument: rm8's own
+                // golden-vector delta was numerically unchanged, 13.76 before and after). If a
+                // trailing segment is ever added to this family, this loop would need the same
+                // segmentStartSample-based restructuring the other 4 decoders got, or the bug returns.
                 var perPixelDurationMs = scan.DurationMs / mode.ImageWidth
                     * SstvModeRegistry.GetPixelPitchTrimFactor(mode, scan.ChannelName);
                 for (var x = 0; x < mode.ImageWidth; x++)
