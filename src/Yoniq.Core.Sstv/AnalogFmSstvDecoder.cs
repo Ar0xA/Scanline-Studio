@@ -200,11 +200,21 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // (`_consumedSamples += (int)Math.Round(_effectiveSamplesPerLine)`), so line k started at
     // k*round(E) instead of legacy's exact k*E -- a drift that compounds across the whole image
     // (same trimmed-vs-full mismatch MUST fix 3 fixed within one scan segment, one level up: between
-    // lines instead of within a line). Code-level review note: the ROUNDED per-line cursor actually
+    // lines instead of within a line). "k*E" here assumes a constant E across the image, true only
+    // without Auto Slant -- comprehensive-review note: legacy's own `y = int(n/m_TW)` naturally
+    // RETROACTIVELY repositions every line boundary the instant `m_TW` changes mid-image (the same `n`
+    // divided by a new `m_TW`), while this port's own per-line accumulator only applies a slant
+    // correction to lines from that point FORWARD -- an already-documented, separate port gap (see
+    // `SlantTracker`'s own doc comment, "retroactive re-decode not ported"), not something this fix
+    // changes or claims to close. Code-level review note: the ROUNDED per-line cursor actually
     // used to decode (_consumedSamples, below) still isn't bit-identical to legacy's own `int(n/m_TW)`
     // (that's effectively a ceiling against m_TW, this port's is Math.Round's round-half-to-even) --
-    // a small, uniform, non-compounding (~0.1px) bias absorbed by SyncAnchorCorrector, unlike the
-    // compounding drift this fix removes. Invariant: kept exactly equal to _consumedSamples at every
+    // a small, uniform, non-compounding bias absorbed by SyncAnchorCorrector, unlike the compounding
+    // drift this fix removes -- comprehensive-review correction: an earlier version of this comment
+    // called it "~0.1px," which only holds at 44100Hz; at 11025Hz (Robot 36's own pixel pitch is ~3
+    // samples there) the same sub-sample rounding bias is worth up to ~0.33px (mean ~0.16px). Still
+    // uniform and non-compounding either way, just not a single rate-independent figure. Invariant:
+    // kept exactly equal to _consumedSamples at every
     // OTHER site that assigns _consumedSamples (Commit -- including via TryDecodeNarrowModeHeader's
     // own assignment immediately followed by a Commit call, TryResolveSyncAnchorCorrection,
     // EndOfImage's dead-time skip) -- it only diverges from the rounded _consumedSamples during the
@@ -909,14 +919,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // accident. Provably bounded, not permanently stallable: TryNarrowFskScan is called at
             // least once per TryInterleavedHeaderScan call (i.e. at least once per PushSamples call,
             // while _mode is null -- now potentially many more times, once per interleaved-loop
-            // iteration, but never fewer). SHOULD item 7 correction (spec/14-roadmap.md): an earlier
-            // version of this comment claimed this cursor pauses for the whole up-to-~7.1s
-            // _avtTrainingPending window because TryDecodeHeader used to short-circuit past
-            // TryInterleavedHeaderScan entirely while pending -- no longer true. TryResolveAvtTraining
-            // now interleaves its own TryNarrowFskScan call every training sample (see that method's
-            // own doc comment), so this cursor keeps advancing throughout AVT training too, not just
-            // resuming once training resolves. The bound-provably-stallable conclusion only gets
-            // stronger, not weaker.
+            // iteration, but never fewer). SHOULD item 7 correction (spec/14-roadmap.md, comprehensive
+            // code-review round): an earlier version of this comment claimed this cursor PAUSES for
+            // the whole up-to-~7.1s _avtTrainingPending window -- imprecise, and worth stating
+            // correctly rather than just "no longer true": TryDecodeHeader still short-circuits PAST
+            // TryInterleavedHeaderScan entirely while `_avtTrainingPending` (that guard is unchanged,
+            // see TryDecodeHeader's own doc comment) -- what changed is that the OTHER path this
+            // cursor advances through, TryResolveAvtTraining, now ALSO interleaves its own
+            // TryNarrowFskScan call every training sample (see that method's own doc comment). So this
+            // cursor no longer sits idle during training -- not because the short-circuit went away,
+            // but because a second call site now feeds it. The bound-provably-stallable conclusion
+            // only gets stronger, not weaker.
             watermark = Math.Min(watermark, _narrowFskProcessedUpTo);
 
             watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
@@ -1469,7 +1482,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         return TryInterleavedHeaderScan();
     }
 
-    // S8 fix (spec/14-roadmap.md): shared by BOTH TryInterleavedHeaderScan (pre-lock) and
+    // S8 fix (spec/14-roadmap.md): shared by TryInterleavedHeaderScan (pre-lock) and
     // TryVisLockStateMachine (mid-reception) -- legacy's real DecodeFSK call has no equivalent of
     // either method's own gating (see _narrowFskDecoder's own field doc comment), so unlike
     // VisLockStateMachine (which needs two separately-shaped call sites, one merged into the
@@ -1478,6 +1491,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // (TryInterleavedHeaderScan passes scanBound, TryVisLockStateMachine passes its own
     // upperBoundSample) -- this method does no bound computation of its own beyond clamping to
     // TotalSamplesReceived as a final safety net.
+    //
+    // SHOULD item 7 (spec/14-roadmap.md) added a THIRD caller, TryResolveAvtTraining -- comprehensive
+    // code-review correction, an earlier version of this comment (and its own "shared by BOTH")
+    // predates that and was left stale. That caller passes its own two bounds
+    // (Math.Min(TotalSamplesReceived, _avtTrainingProcessedUpTo) for the initial catch-up,
+    // _avtTrainingProcessedUpTo + 1 per training-loop iteration) -- same pattern, a caller-supplied
+    // bound this method doesn't second-guess.
     //
     // Round-1 code-level-review-caught regression, corrected here: an earlier draft had
     // TryInterleavedHeaderScan call this with TotalSamplesReceived directly instead of scanBound,
@@ -2876,6 +2896,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // this far ahead); the per-iteration call then advances it by exactly one sample per training
         // sample, reproducing legacy's real per-sample order (DecodeFSK before the sync-mode switch)
         // for every sample this loop actually examines.
+        //
+        // Comprehensive-review note: this scan's own D19At/FskSpaceAt ultimately read
+        // BandpassFilteredSampleAt (via AgcSampleAt), whose `useLocked` gate requires `_mode is not
+        // null` -- always false during AVT training (training hasn't committed `_mode` yet), so this
+        // scan runs against the H2 (search) filter config. Legacy's own DecodeFSK, by contrast, reads
+        // whichever filter `m_Sync || m_SyncMode >= 3` selects (sstv.cpp:1827) -- true throughout AVT
+        // training (SyncMode 4-8), so legacy makes this same narrow-vs-continue-training decision from
+        // the LOCKED filter's output. This is a pre-existing, already-documented port gap (see
+        // BandpassFilteredSampleAt's own doc comment) that this fix makes load-bearing for the first
+        // time -- before this fix, nothing decided anything from that gap during training; now a real
+        // narrow-packet match/no-match decision does. Not fixed here (the gap itself is out of this
+        // item's scope), flagged so it's not mistaken for new-and-clean.
         if (TryNarrowFskScan(Math.Min(TotalSamplesReceived, _avtTrainingProcessedUpTo)))
         {
             _avtTrainingPending = false;

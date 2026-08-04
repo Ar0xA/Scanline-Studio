@@ -28,9 +28,12 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
                 // bare (Main.cpp:4338/4347, GetPixelLevel) -- legacy never peak-picks chroma here.
                 // SHOULD item 11 (spec/14-roadmap.md): clamp folded into the same switch -- legacy
                 // Limit256's luma (Main.cpp:4332, `d = Limit256(d)` right after luma's own read) but
-                // NOT R-Y/B-Y (Main.cpp:4341-4342/4350-4351 store the raw `short(d)` with no Limit256
-                // call at all) -- confirmed directly against source, a real legacy asymmetry to
-                // preserve, not a port gap to close uniformly.
+                // NOT R-Y/B-Y, neither of which ever calls Limit256 -- comprehensive-review correction:
+                // R-Y (Main.cpp:4341-4342) genuinely stores the raw `short(d)` into `m_D36[1][x]`, but
+                // B-Y (:4350-4351) doesn't store anywhere at all -- `d = GetPixelLevel(ip)` feeds
+                // straight into `YCtoRGB(R,G,B, m_Y36[x], m_D36[1][x], d)` as its own live argument.
+                // Same conclusion (no clamp) either way, confirmed directly against source -- a real
+                // legacy asymmetry to preserve, not a port gap to close uniformly.
                 (double[] destination, Func<int, int, double> read, bool clamp) = scan.ChannelName switch
                 {
                     "Y" => (y, (Func<int, int, double>)reader.ReadPeakPicked, true),
