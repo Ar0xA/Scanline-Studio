@@ -128,6 +128,23 @@ internal sealed class VisLockStateMachine
         _isExtended = false;
     }
 
+    // S12 fix (spec/14-roadmap.md): AnalogFmSstvDecoder.TrySyncIntervalDetectionStep (m_sint2/m_sint3)
+    // needs to distinguish legacy's own switch(m_SyncMode) cases the same way this class's states
+    // already do (Search=case0, ConfirmLock=case1, DecodeVis/DecodeExtendedVis=case2/9,
+    // Verify=case3) -- the pre-existing _syncBypass1PrimaryHeld proxy only tracks the case-0<->1
+    // boundary and goes false again as soon as d12 dips during real VIS-bit decoding, which is NOT
+    // the same as legacy's real case-2/9/3 freeze (m_sint2/m_sint3 have no code at all in those
+    // cases, regardless of d12's momentary value). These two properties expose the distinction
+    // legacy's switch already makes for free.
+    //
+    // Read by the caller BEFORE this same sample's ProcessSample runs (TryInterleavedHeaderScan
+    // calls TrySyncIntervalDetectionStep first, then ProcessSample, for the same sample index) --
+    // so a caller reading these mid-TrySyncIntervalDetectionStep sees the state as of the END of
+    // the PREVIOUS sample, exactly matching legacy's switch(m_SyncMode) using m_SyncMode's value
+    // from before this sample's own transition logic runs.
+    internal bool IsSearching => _state == LockState.Search; // case 0 -- m_sint3's own gate, and m_sint2's SyncStart gate
+    internal bool IsAtOrBeforeConfirmLock => _state is LockState.Search or LockState.ConfirmLock; // cases 0-1 -- m_sint2's SyncMax gate
+
     /// <summary>Feeds one sample -- as of piece 7b, the caller (<c>AnalogFmSstvDecoder.AgcSampleAt</c>)
     /// passes the shared AGC'd/scaled ±16384-ish signal (matching legacy's own d11/d12/d13/d19 input,
     /// see <c>LevelAgc</c>'s doc comment), not a raw sample directly. Returns the locked mode and the
