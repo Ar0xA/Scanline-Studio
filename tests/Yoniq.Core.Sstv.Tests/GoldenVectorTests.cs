@@ -80,6 +80,89 @@ public class GoldenVectorTests
         Assert.True(delta < 15.0, $"[{modeId}] legacy-own-decode baseline delta {delta:F2} unexpectedly large -- check fixture/crop.");
     }
 
+    private const string TxCaptureDir = "Fixtures/GoldenVectors/TxCapture";
+
+    public static readonly TheoryData<string, string, string, int, bool> TxFixtures = new()
+    {
+        // (mode id, source bmp, legacy TX_RX bmp, picture height, row-doubled) -- the reverse
+        // direction of Fixtures above: THIS PORT'S OWN encoder output, played back through a real
+        // legacy install and decoded there (Fixtures/GoldenVectors/TxCapture/README.md). This is the
+        // "TX-side verification tests" the milestone audit's own "Explicit prerequisite before
+        // Phase 3" note (spec/14-roadmap.md) required before the chain/integration audit can run --
+        // until now, TX only had internal round-trip coverage (this port's encoder decoded by this
+        // port's own decoder agreeing with itself), exactly the failure shape CLAUDE.md's own Scottie
+        // incident warns about (both halves can be wrong the same way).
+        //
+        // Source bmp names/picture heights reused verbatim from Fixtures/DecoderFixtures above for
+        // the 8 modes that already had RX fixtures; scottie-dx/mr73/r24 are the 3 modes the milestone
+        // audit flagged as having zero coverage anywhere (TxCapture/README.md's own "New source
+        // images" note).
+        { "robot-36", "robot36.bmp", "robot-36_TX_RX.bmp", 240, false },
+        { "martin-m1", "martin-m1.bmp", "martin-m1_TX_RX.bmp", 256, false },
+        { "scottie-s1", "scottie-s1.bmp", "scottie-s1_TX_RX.bmp", 256, false },
+        { "robot-72", "robot72.bmp", "robot-72_TX_RX.bmp", 240, false },
+        { "pd90", "pd90.bmp", "pd90_TX_RX.bmp", 256, false },
+        { "rm8", "rm8.bmp", "rm8_TX_RX.bmp", 240, false },
+        { "mn110", "mn110.bmp", "mn110_TX_RX.bmp", 256, false },
+        { "avt", "avt.bmp", "avt_TX_RX.bmp", 240, false },
+        { "scottie-dx", "scottie-dx.bmp", "scottie-dx_TX_RX.bmp", 256, false },
+        { "mr73", "mr73.bmp", "mr73_TX_RX.bmp", 256, false },
+        // R24 is genuinely 120 real transmitted rows, nearest-neighbor row-doubled by legacy's own
+        // RX display (SstvModeRegistry.R24's own doc comment, Main.cpp:4160-4168 `R=y*2`) -- its
+        // source bmp is 120 rows tall, but legacy's saved TX_RX bmp is the usual 256-row canvas with
+        // each real row duplicated into 2 consecutive display rows. A plain CropToTop would compare
+        // doubled rows against undoubled source rows and misalign by 2x -- rowDoubled=true selects
+        // the even-indexed rows of the top 240 (0, 2, 4, ..., 238) instead, undoing the doubling
+        // before comparing.
+        { "r24", "r24.bmp", "r24_TX_RX.bmp", 120, true },
+    };
+
+    [Theory]
+    [MemberData(nameof(TxFixtures))]
+    public void LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage(
+        string modeId, string sourceBmp, string txRxBmp, int pictureHeight, bool rowDoubled)
+    {
+        var source = BmpFile.Read(Path.Combine(FixtureDir, sourceBmp));
+        var rawRx = BmpFile.Read(Path.Combine(TxCaptureDir, txRxBmp));
+        var rx = rowDoubled
+            ? CropToTopEvenRows(rawRx, pictureHeight)
+            : CropToTop(rawRx, pictureHeight);
+
+        var delta = MeasureAveragePerChannelDelta(source, rx, pictureHeight);
+
+        // Measured directly (not assumed), via the same temporary-zero-tolerance technique used
+        // throughout this session: robot-36 3.30, martin-m1 1.53, scottie-s1 1.05, robot-72 3.21,
+        // pd90 2.40, rm8 5.15, mn110 2.60, avt 0.86, scottie-dx 1.03, mr73 3.22, r24 3.70. All 11
+        // restart-free, correct mode detected, and comfortably BELOW the RX-direction
+        // LegacyOwnDecode_MatchesSourceImage_EstablishesBaselineDelta numbers for the same modes
+        // (robot-36 6.99, martin-m1 1.57) despite going through this port's own encoder first -- real
+        // evidence this port's TX output is a valid, accurately decodable transmission to a real
+        // legacy receiver, not just internally self-consistent (the exact gap
+        // spec/14-roadmap.md's "Explicit prerequisite before Phase 3" note flagged). Each tolerance
+        // below is ~2x its own measured value (same margin style as the RX baseline's 15.0), still
+        // comfortably under the ~42.67 corruption floor this gradient-image metric measures
+        // elsewhere in this file.
+        var toleranceByModeId = new Dictionary<string, double>
+        {
+            ["robot-36"] = 8.0,
+            ["martin-m1"] = 5.0,
+            ["scottie-s1"] = 4.0,
+            ["robot-72"] = 8.0,
+            ["pd90"] = 6.0,
+            ["rm8"] = 12.0,
+            ["mn110"] = 7.0,
+            ["avt"] = 4.0,
+            ["scottie-dx"] = 4.0,
+            ["mr73"] = 8.0,
+            ["r24"] = 10.0,
+        };
+        var tolerance = toleranceByModeId[modeId];
+
+        Assert.True(
+            delta < tolerance,
+            $"[{modeId}] real-legacy-decode-of-this-ports-TX delta {delta:F2} exceeded tolerance {tolerance}.");
+    }
+
     public static readonly TheoryData<string, string, string, int> DecoderFixtures = new()
     {
         { "robot-36", "robot36.mmv", "robot36.bmp", 240 },
@@ -581,6 +664,23 @@ public class GoldenVectorTests
         }
 
         return new ArrayImageSource(image.Width, pictureHeight, pixels);
+    }
+
+    // R24-only: undoes legacy's own display-side row-doubling (SstvModeRegistry.R24's doc comment)
+    // by taking every other row of the top `sourceHeight * 2` rows, rather than a plain top-N crop.
+    private static IImageSource CropToTopEvenRows(IImageSource image, int sourceHeight)
+    {
+        var pixels = new Rgb24[image.Width * sourceHeight];
+        for (var y = 0; y < sourceHeight; y++)
+        {
+            var line = image.GetScanline(y * 2);
+            for (var x = 0; x < image.Width; x++)
+            {
+                pixels[(y * image.Width) + x] = line[x];
+            }
+        }
+
+        return new ArrayImageSource(image.Width, sourceHeight, pixels);
     }
 
     private static double MeasureAveragePerChannelDelta(IImageSource expected, IImageSource actual, int height)
