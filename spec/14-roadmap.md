@@ -3292,6 +3292,125 @@ comfortably under the ~42.67 corruption floor this gradient-image metric measure
 
 Test count: 512/512 (501 prior + 11 in `GoldenVectorTests.cs`), solution-wide build clean.
 
+### Phase 3 — chain/integration audit (docs/audit-playbook.md) — 2026-08-04
+
+Two `auditor` calls, isolated context each, per the playbook's Phase 3 instructions: audit the SEAMS
+between already-reviewed units (Phase 2), not re-litigate per-unit correctness. RX chain (AGC → sync/VIS
+→ AVT/narrow-FSK → demodulator → 5 decoder families → buffer/cursor) and TX chain (encoder orchestrator →
+5 encoder families → VIS header handoff) run separately, since TX/RX don't share runtime state.
+
+**RX chain verdict: NOT EQUIVALENT.** One confirmed MUST bug, two risks, two nits.
+
+**TX chain verdict: EQUIVALENT-WITH-RISKS.** No analog of the MUST-bug-class found — structurally
+impossible (see below). One new SHOULD-level finding, three already-tracked nits re-confirmed at the seam.
+
+#### MUST 4 — RX per-line cursor rounds every line; legacy never rounds within a transmission
+
+Independently re-verified against both sides directly (not just trusted from the auditor):
+`AnalogFmSstvDecoder.cs:1094/1125` computes `lineSampleCount = (int)Math.Round(_effectiveSamplesPerLine)`
+and advances `_consumedSamples += lineSampleCount` — i.e. line *k* starts at `anchor + k*round(E)`.
+Legacy (`Main.cpp:4133-4148`, `DrawSSTVNormal`) uses ONE continuous integer sample counter `n` for the
+whole transmission and derives each line's boundary as `y = int(double(n)/SSTVSET.m_TW)` — a `double`
+division against the running counter, never rounded per line. Line *k* starts at exactly `anchor + k*E`
+in legacy; this port's line starts drift from that by up to ~0.5 samples/line, compounding across the
+image (same bug shape as MUST fix 3, promoted one level up: MUST fix 3 fixed rounded-vs-unrounded
+*within* a line/segment; this is the same mismatch *between* lines).
+
+**Structurally invisible to Auto Slant**, which could otherwise mask/correct it: `ApplySlantTracking`
+(`:2898-2954`) tracks its own separate, exact fractional grid (`_slantIdealSamplesSoFarInLine`, rolled
+over with carried remainder, never reset to 0 — `:2951`), so the measured sync-peak position stays
+constant regardless of the line-cursor's own rounding error, and `SlantTracker` never sees a drift to
+correct.
+
+Predicted per-mode magnitude (arithmetic from each mode's own registry timing at 11025Hz, not yet
+measured against a dedicated test): Robot 72 worst at ~0.50 samples/line × 240 lines ≈ 120 samples drift
+by the last line (~25-50px depending on channel); RM8 ~0.47/line × 120 ≈ 56 samples; Robot 36 ~0.25/line
+× 120 ≈ 30 samples; Scottie S1/Martin M1/PD90 much smaller (their line pitch lands closer to an integer
+at 11025Hz). Correlates with — not proof of, stated as a hypothesis — the existing decoder-vs-source
+delta ranking in this file (~line 3153): robot-36/robot-72/rm8 are the three worst-scoring fixtures,
+pd90/martin-m1 the two best, matching the `|round(E)-E|` magnitude ranking above.
+
+Not caught by any existing test: golden-vector tolerances (15.0-25.0) absorb a few pixels of horizontal
+shear; TX is not making the equivalent mistake (Batch A/Phase-3-TX both confirm TX's accumulator is
+drift-free), so no test compares this port's own RX decode against a bit-exact-timed reference precise
+enough to expose sub-pixel-per-line drift.
+
+**Fix shape (not yet applied):** keep a `double` line-start accumulator alongside `_consumedSamples`
+(mirrors MUST fix 3's own `segmentStartSample`/`pixelWalk` split), advance it by the unrounded
+`_effectiveSamplesPerLine` every line, and pass its rounded value as `lineStartSample` — `_consumedSamples`
+itself is load-bearing for at least six other cursors/watermarks and should keep tracking the rounded
+accumulator's value, not be replaced by a double.
+
+#### Other RX chain findings
+
+- **[risk] No stated scheduler/re-entrancy contract for `LineDecoded`/`DecodeRestarted`/`ModeDetected`.**
+  All three are invoked synchronously from inside the cursor-advance loop (`:1127`/`:1171`/`:2112`). A
+  subscriber that re-enters `PushSamples` (directly or via a scheduler) would resume the outer loop with
+  stale `mode`/`pixels`/`lineDecoder` locals against a different `_consumedSamples` epoch. Unreachable
+  today (no production subscriber exists yet), but CLAUDE.md §4's concurrency rule requires every
+  cross-thread stream to state its scheduler and slow-subscriber behavior — none of these three do yet.
+  Real landmine for the eventual `Yoniq.Application`/UI wiring.
+- **[risk] `LineDecoded` hands a live alias of the mutable `_pixels` array**, not a copy (`:1127`,
+  `MutableImageSource` wraps the same array `Commit`/`AbandonInProgressImage` later replace or mutate).
+  Same landmine category as above — the eventual UI subscriber needs to know this before it queues an
+  `IImageSource` for later rendering.
+- **[nit] Last pixel of a line can read an AFC-uncorrected sample**, ≤1px, one `m_AFCDiff` magnitude —
+  `ApplyAfcCorrections`'s bound (`:1110`) and the decoders' own line extent can differ by up to ~0.85
+  samples (two independent roundings).
+- **[nit] `_afcBoundSample` computed from the nominal sample rate, not the effective (slant-corrected)
+  one** — already-recorded NICE-TO-HAVE 24, now confirmed larger in practice than that entry's original
+  "~0.1%" estimate once MUST-4's own drift is accounted for (robot-72 overruns by ~120 samples with the
+  drift present).
+
+Checked and clean (explicitly, not skipped): cross-module unit/scaling handoffs (AGC → bandpass →
+Hilbert demod, all traced against `sstv.cpp`'s equivalent domain, no unconverted handoff); filter-config
+flips at the `useLocked`/`isNarrow` boundary (one delay line, coefficient-table swap only, no stale
+parallel state); second-image reset completeness (every field not reset by `EndOfImage` is either
+unconditionally reassigned on the next `Commit`, deliberately persistent to match legacy, or already
+tracked — no fourth un-reset item found beyond MUST fixes 1-3).
+
+#### TX chain: why the MUST-bug-class is structurally impossible here
+
+Legacy's TX accumulator (`CSSTVMOD::Write`, `sstv.cpp:2842-2846`) is `m_dPos += tim*m_TxSampFreq/1000`,
+reset only once per transmission (`InitTXBuf`) — never per line or segment. `AnalogFmSstvEncoder.cs:36-46`
+mirrors this exactly (one accumulator spanning header + every pixel + footer), and all five
+`*ScanlineEncoder.cs` files feed it the same per-pixel duration they yield (`scan.DurationMs /
+mode.ImageWidth`, matching legacy's own `tw /= width`) — there is no second, trimmed derivation of a
+segment's length anywhere on the TX side for a MUST-fix-3/MUST-4-shaped mismatch to hide in. Cross-line
+counts (all 43 modes, including R24's internal double-increment) and phase continuity (`CVCO::Do`, never
+reset per segment) were independently re-derived from source and confirmed to match.
+
+**New SHOULD-level finding: no image/mode dimension contract validation in the TX orchestrator.**
+`AnalogFmSstvEncoder.EncodeAsync` (`:23-39`) never checks `IImageSource.Width`/`.Height` against
+`mode.ImageWidth`/`.ImageHeight` before encoding; every scanline encoder then indexes the image blindly
+(e.g. `RgbSequentialScanlineEncoder.cs:26`, `image.GetScanline(lineIndex)[x]` for `x` up to
+`mode.ImageWidth-1`) — independently confirmed directly. A too-small image throws `IndexOutOfRangeException`
+mid-stream (after header + partial line already yielded, no clean error state); a too-large one silently
+crops with no signal. Legacy is structurally immune (its `Line*` functions read width from the bitmap
+itself). Not reachable today (every caller — tests and the TX fixture generator — already passes a
+correctly-sized image), but a real landmine once real image input (crop/resize UI, arbitrary file load)
+lands in a later phase. Fix is one guard at `EncodeAsync`'s entry, not a math change.
+
+Already-tracked nits re-confirmed at the seam, no new severity: AVT's 3-sample DC-hold vs legacy's true
+zero on its training tail (NICE-TO-HAVE 18 — one untested hypothesis noted: this sits at exactly the
+preamble→first-body-line boundary, the same region S31, already fixed, used to fail at; not investigated
+further, S31 itself is closed); no TX BPF/`m_outgain` stage (NICE-TO-HAVE 20); footer trailing-carrier
+unit mix assuming `m_TxSampOff==0` (NICE-TO-HAVE 22).
+
+#### Phase 3 summary
+
+**Findings, prioritized:**
+- **MUST**: MUST 4 (RX line-cursor rounding) — the only chain-level bug found; everything else Phase 1-2
+  already covers is fixed.
+- **SHOULD** (new, added to the existing Phase 1-2 SHOULD list): TX dimension-contract guard; RX
+  event-scheduler contract (`LineDecoded`/`DecodeRestarted`/`ModeDetected`); RX `LineDecoded` live-alias
+  hazard.
+- **NICE-TO-HAVE** (new): the two AFC-boundary nits above.
+
+Not yet fixed — reported for prioritization, per the user's own standing "document everything so nothing
+is lost" preference. 512/512 tests still pass (nothing here is caught by any existing test, per each
+finding's own "why the tests don't catch it" note above).
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
