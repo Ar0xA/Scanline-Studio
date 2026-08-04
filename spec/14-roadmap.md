@@ -3004,11 +3004,64 @@ own (no filter/phase state); batch C's independent re-derivation confirming S17'
 argument holds exactly (budget arithmetic matches legacy's real case-3-through-8 timing to sub-ms
 precision).
 
+### MUST fix 1 — AVT buffer-trim, DONE
+
+`TrimBuffers()`'s locked branch included `_afcProcessedUpTo`/`_slantProcessedUpTo` unconditionally in
+its watermark `Math.Min` chain. AVT is the one mode where `InitializeAfc`/`InitializeSlant` both leave
+`_afcTracker`/`_slantTracker` null — two SEPARATE legacy guards, not one (AFC: `sstv.cpp:2258/2263/2267`'s
+`m_afc && m_CurMax>16 && mode!=smAVT`, inside all three `m_Type` branches; Slant/AutoStop:
+`Main.cpp:3886`'s `(m_AutoStop||m_AutoSync||KRSA->Checked) && mode!=smAVT` — a code-level review
+correction caught an earlier draft of this fix's own comment mis-citing both to the same guard). With
+both trackers null, `ApplyAfcCorrections`/`ApplySlantTracking` both return immediately every call
+without ever advancing their own cursor again once frozen at commit time — permanently pinning the
+whole AVT image's buffer for its entire ~90s duration (240 lines × 375ms), retaining tens to hundreds of
+MB depending on sample rate. Same failure class Band-1 item S2 already fixed pre-lock, silently reopened
+here on the locked side for AVT specifically.
+
+**Fix**: mirrors the pre-lock branch's own already-established pattern for these exact two cursors (its
+own comment: "AFC/Slant don't exist yet ... excluded here ... because there's nothing to include") —
+`_afcProcessedUpTo`/`_slantProcessedUpTo` are now only folded into the locked watermark `Math.Min` chain
+when their tracker is actually non-null. For every other mode (where both trackers are real), the
+existing defensive stall-protection property (documented in the same comment block: "an idle-forever
+previous lock, e.g. AFC/Slant stalled, shouldn't be able to grow unboundedly either") is preserved
+exactly unchanged.
+
+**New regression test** (`AvtNoiseTolerantDetectionTests.LockedAvtImage_BuffersActuallyTrimMidDecode_NotJustAtTheVeryEnd`):
+pushes a full AVT image in 20000-sample chunks, samples `BufferedSampleCount` after every chunk once
+locked, and checks the buffered count plateaus (not just "ends small," since the existing
+`ChunkedPush_StaysBounded` test only samples at the very end, after the image's own final `EndOfImage`
+already resets everything — this test samples DURING the locked decode itself). Two checks: a relative
+plateau ratio (second-half peak < 1.5× first-half peak) AND an absolute ceiling (a generous multiple of
+one line's own sample count), the second added per code-level review — a relative ratio alone would also
+pass a slower-but-still-unbounded leak. Also asserts the decoded image still matches the source within
+the existing 20.0 AVT tolerance, since `PixelSampleReader`'s index lambda clamps rather than throwing on
+an out-of-range read — an over-aggressive watermark would otherwise silently corrupt pixels rather than
+crash, and a buffer-only check wouldn't catch that. **Confirmed to actually discriminate the bug**, not
+just pass coincidentally: temporarily reverted the fix and re-ran — pre-fix measured 493334 samples
+(first-half peak) growing to 993334 (second-half peak, exactly 2.01×, both failing assertions); restored
+the fix, re-confirmed passing.
+
+**Code-level review**: EQUIVALENT-WITH-RISKS, ready to commit. Verified every reader that could read
+"behind" the new AVT watermark stays safely bounded by the remaining chain terms (pixel decode's own
+small margin needs, `ApplyAfcCorrections`/`ApplySlantTracking`'s own early-returns, the sync-anchor-
+correction warm-up being unreachable for AVT, `_avtPllWarmupStartSample`'s own pre-lock-only term, the
+unconditional D11/D12/D19/FskSpace catch-ups) — no path found where the fix releases data a live reader
+still indexes. Verified the stall-protection property can only ever be skipped for AVT specifically (the
+one non-AVT window where trackers are momentarily uninitialized, `_pendingAnchorCorrectionMode is not
+null`, is already excluded earlier in the same method). Two citation nits fixed (the AFC/Slant guard
+mix-up above); two test-strengthening suggestions folded in before commit (the pixel-correctness
+assertion and the absolute-ceiling check, both described above).
+
+Test count: 473/473 (472 prior + 1 new: `LockedAvtImage_BuffersActuallyTrimMidDecode_NotJustAtTheVeryEnd`
+in `AvtNoiseTolerantDetectionTests.cs`, strengthened with a pixel-correctness assertion and an absolute
+buffer ceiling per code-level review, both folded into the same test rather than split out separately),
+solution-wide build clean.
+
 ### Next steps
 
-MUST items 1-3 not yet fixed (all confirmed, not yet actioned as of this entry). No commits from this
-milestone-audit entry itself — documentation only, capturing all findings before any fix work begins so
-nothing gets lost regardless of prioritization.
+MUST item 1 fixed and committed (see above). MUST items 2-3 not yet fixed. No commits from this
+milestone-audit entry itself beyond MUST item 1 — documentation-first, capturing all findings before
+further fix work so nothing gets lost regardless of prioritization.
 
 **Explicit prerequisite before Phase 3 (chain/integration audit): build TX-side verification tests and
 confirm them first.** Phase 3's own mandate is to verify real input through the composed chain against
