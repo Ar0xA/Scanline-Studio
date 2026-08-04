@@ -26,11 +26,16 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
                 // picks the destination array, not a second parallel switch that could drift out of
                 // sync with this one. "Y" peak-picks (Main.cpp:4330, GetPictureLevel); "RY"/"BY" stay
                 // bare (Main.cpp:4338/4347, GetPixelLevel) -- legacy never peak-picks chroma here.
-                (double[] destination, Func<int, int, double> read) = scan.ChannelName switch
+                // SHOULD item 11 (spec/14-roadmap.md): clamp folded into the same switch -- legacy
+                // Limit256's luma (Main.cpp:4332, `d = Limit256(d)` right after luma's own read) but
+                // NOT R-Y/B-Y (Main.cpp:4341-4342/4350-4351 store the raw `short(d)` with no Limit256
+                // call at all) -- confirmed directly against source, a real legacy asymmetry to
+                // preserve, not a port gap to close uniformly.
+                (double[] destination, Func<int, int, double> read, bool clamp) = scan.ChannelName switch
                 {
-                    "Y" => (y, (Func<int, int, double>)reader.ReadPeakPicked),
-                    "RY" => (rMinusY, reader.ReadBare),
-                    "BY" => (bMinusY, reader.ReadBare),
+                    "Y" => (y, (Func<int, int, double>)reader.ReadPeakPicked, true),
+                    "RY" => (rMinusY, reader.ReadBare, false),
+                    "BY" => (bMinusY, reader.ReadBare, false),
                     _ => throw new NotSupportedException($"Unknown channel '{scan.ChannelName}'."),
                 };
 
@@ -54,7 +59,8 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
                     var endSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
 
                     var freq = read(startSample, endSample);
-                    destination[x] = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+                    var value = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+                    destination[x] = clamp ? Math.Clamp(value, 0, 255) : value;
                 }
 
                 idealSamplesSoFar = segmentStartSample + scan.DurationMs / 1000.0 * sampleRate;

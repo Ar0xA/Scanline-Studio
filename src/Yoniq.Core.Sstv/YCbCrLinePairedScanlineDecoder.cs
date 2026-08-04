@@ -29,12 +29,21 @@ internal sealed class YCbCrLinePairedScanlineDecoder : IScanlineDecoder
                 // picks the destination array. "Y1"/"Y2" BOTH peak-pick in legacy (Main.cpp:4385/4420,
                 // GetPictureLevel) -- PD/MP/MN's two luma segments are not a "first only" case; "RY"/
                 // "BY" stay bare (Main.cpp:4393/4402, GetPixelLevel).
-                (double[] destination, Func<int, int, double> read) = scan.ChannelName switch
+                //
+                // SHOULD item 11 (spec/14-roadmap.md): clamp does NOT follow the same "both luma
+                // segments alike" pattern peak-picking does -- confirmed directly against source, a
+                // real, easy-to-miss legacy asymmetry (not a port gap to close uniformly). Y1 gets
+                // Limit256 (Main.cpp:4387, `d = Limit256(d)` right after Y1's own read); Y2 does NOT
+                // (Main.cpp:4420-4422: `d = GetPictureLevel(ip); d += 128;` feeds straight into
+                // YCtoRGB with no Limit256 call at all in between) -- genuinely no clamp on Y2 in
+                // legacy, not merely an omission this port should "correct." RY/BY also unclamped
+                // (Main.cpp:4396-4397/4405-4406, same as YCbCrSequentialScanlineDecoder's own chroma).
+                (double[] destination, Func<int, int, double> read, bool clamp) = scan.ChannelName switch
                 {
-                    "Y1" => (y1, (Func<int, int, double>)reader.ReadPeakPicked),
-                    "Y2" => (y2, reader.ReadPeakPicked),
-                    "RY" => (rMinusY, reader.ReadBare),
-                    "BY" => (bMinusY, reader.ReadBare),
+                    "Y1" => (y1, (Func<int, int, double>)reader.ReadPeakPicked, true),
+                    "Y2" => (y2, reader.ReadPeakPicked, false),
+                    "RY" => (rMinusY, reader.ReadBare, false),
+                    "BY" => (bMinusY, reader.ReadBare, false),
                     _ => throw new NotSupportedException($"Unknown channel '{scan.ChannelName}'."),
                 };
 
@@ -60,7 +69,8 @@ internal sealed class YCbCrLinePairedScanlineDecoder : IScanlineDecoder
                     var endSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
 
                     var freq = read(startSample, endSample);
-                    destination[x] = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+                    var value = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+                    destination[x] = clamp ? Math.Clamp(value, 0, 255) : value;
                 }
 
                 idealSamplesSoFar = segmentStartSample + scan.DurationMs / 1000.0 * sampleRate;
