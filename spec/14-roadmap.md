@@ -2932,8 +2932,8 @@ real TX generators, not inferred.
    MN/MC packet found during it; this port's `TryDecodeHeader` short-circuits to AVT resolution while
    `_avtTrainingPending`, so a narrow packet overlapping an AVT header is silently missed. Not documented
    anywhere in the S7/S8 comments.
-8. **[B] Pre-lock watermark's `<=` should be strict `<` — ASSESSED, DEFERRED** (see "Items 6, 8, 10"
-   below). `FilteredRawSampleAt` reads
+8. **[B] Pre-lock watermark's `<=` should be strict `<` — DONE** (see "Pre-lock watermark strict
+   inequality" below). `FilteredRawSampleAt` reads
    `_rawSamples[Rel(index-1)]`; if a trim ever left `_bufferBase == _bandpassFilteredProcessedUpTo`, the
    next fill would throw. Currently unreachable — protected only by an undocumented numeric coupling
    (`preLockRetentionSamples` ≈1.3s exceeds the 380ms narrow-discriminator window that's the actual
@@ -3658,12 +3658,51 @@ committing a new one or entering AVT training doesn't silently break it. No code
 both existing call sites are exhaustively safe today, and this method doesn't need a resync neither of
 its current callers requires.
 
-### Items 6, 8, 10 — assessed, deferred (not fixed)
+### Pre-lock watermark strict inequality (SHOULD item 8) — DONE
 
-All three looked cheap on first read; each turned out to need either a real architectural change (item
-6) or carried a genuine regression risk once traced through (items 8, 10) -- disproportionate to their
-own [C]/[B] severity and currently-unreachable/bounded status. Documented precisely instead of fixed, so
-the investigation isn't lost and isn't silently re-discovered later.
+**Self-correction, worth recording**: this item was first assessed (like items 6/10) as needing "an
+explicit floor clamp threaded through consistently, not a one-line change" and deferred. Re-examined the
+same day after the user asked "are 6/8/10 not fixes, or just need more research?" -- reconsidering
+`FilteredRawSampleAt`'s own ternary (`index > 0 ? (...reads index-1...) : _rawSamples[Rel(index)] * 0.5`)
+showed the earlier conclusion was too conservative: the problematic `index-1` read only happens for
+`index >= 1`, so wrapping the subtraction in `Math.Max(0, ...)` rather than using a bare `- 1` gives
+EXACTLY today's own value (0) at the one boundary case that worried the original assessment
+(`_bandpassFilteredProcessedUpTo == 0`), and exactly one less everywhere else -- a genuinely safe,
+minimal, one-line-per-site change after all.
+
+Both `TrimBuffers` sites (pre-lock and locked branches) changed from
+`Math.Min(watermark, _bandpassFilteredProcessedUpTo)` to
+`Math.Min(watermark, Math.Max(0, _bandpassFilteredProcessedUpTo - 1))`. Updated the adjacent
+load-bearing-invariant comment (the one `DemodulatedFrequencyAt(watermark - 1)`'s own catch-up call
+relies on, "watermark is ALWAYS <= _bandpassFilteredProcessedUpTo") to note the tightened bound only
+strengthens that invariant, never weakens it.
+
+No dedicated test added: the condition is currently unreachable (other retention margins already keep
+this term from ever being the chain's own minimum), so there's no observable behavior to write a
+discriminating test against -- relied on the mathematical proof (documented in the fix's own comment)
+plus the full suite staying green (521/521, unchanged count and unchanged pass) as the correctness
+signal instead.
+
+Code-level review: verdict PASS. Independently re-derived the arithmetic identity (`Math.Max(0, X-1)`
+equals today's `X` at `X==0`, equals `X-1` for `X>=1`), confirmed the crash-prevention claim holds at
+both the `X==0` boundary and every `X>=1` case, confirmed the load-bearing invariant is strengthened not
+weakened (tightening one term in a `Math.Min` chain can only make the chain's own result smaller-or-equal,
+never larger), confirmed no other reader of `_bandpassFilteredProcessedUpTo` assumed the old
+non-strict relationship, and confirmed strict monotonicity (`_bufferBase` can only ever retain
+equal-or-more data than before, never less -- the safe direction). One doc-accuracy nit fixed: the
+fix's own comment overstated which specific downstream call would have broken under a bare `-1` at the
+`X==0` boundary (an earlier clamp+early-return already absorbs it) -- `Math.Max(0, ...)` is still the
+right choice for being locally self-evident, just the originally-stated failure mode wasn't the real one.
+
+Test count: unchanged at 521/521 (no new tests -- see "No dedicated test added" above), solution-wide
+build clean.
+
+### Items 6, 10 — assessed, deferred (not fixed)
+
+Both looked cheap on first read; each turned out to need either a real architectural change (item 6) or
+carried a genuine regression risk once traced through (item 10) -- disproportionate to their own
+[C]/[B] severity and currently-unreachable/bounded status. Documented precisely instead of fixed, so the
+investigation isn't lost and isn't silently re-discovered later.
 
 **Item 6 (mid-image narrow restart stale demod-cache config)**: `BandpassFilteredSampleAt`/
 `DemodulatedFrequencyAt` are forward-fill caches that freeze each index's `useLocked`/`isNarrow` gate
@@ -3680,19 +3719,6 @@ needs retroactive cache invalidation AND a filter-state rewind/checkpoint for `S
 `HilbertFmDemodulator` (both single-delay-line, coefficient-swap-only filters with no snapshot/restore
 mechanism today, confirmed by reading both classes) -- a real architectural addition, disproportionate
 to a bounded ~1-line, [C]-severity finding. Deferred, not chased further this pass.
-
-**Item 8 (pre-lock watermark's `<=` should be strict `<`)**: `FilteredRawSampleAt` reads
-`_rawSamples[Rel(index-1)]`; if `TrimBuffers`' watermark chain ever let `_bufferBase ==
-_bandpassFilteredProcessedUpTo` exactly (both its `Math.Min(watermark, _bandpassFilteredProcessedUpTo)`
-sites, pre-lock and locked, allow equality), the next fill would throw via `Rel()`. Investigated the
-obvious fix (`_bandpassFilteredProcessedUpTo - 1` instead) and found a REAL regression risk: early in
-any stream, before this cursor has advanced past 0, that would force the watermark chain to `-1`,
-which several downstream `D11At(watermark-1)`/`D12At(watermark-1)`/`D19At(watermark-1)`/
-`FskSpaceAt(watermark-1)` catch-up calls assume is always `>= 0` (no explicit guard exists today because
-it's never been reachable). A careless fix would trade a currently-unreachable, well-margined future
-crash for a newly-reachable, immediate one at stream start. A correct fix needs an explicit floor
-clamp threaded through consistently, not a one-line change. Left as documented (the existing comment
-already explains the numeric coupling that keeps this safe today), not fixed.
 
 **Item 10 (`PixelSampleReader`'s `Math.Clamp` vs `Rel()`'s throw)**: real inconsistency (one component
 silently substitutes a boundary sample, the other throws loudly, for what's structurally the same
