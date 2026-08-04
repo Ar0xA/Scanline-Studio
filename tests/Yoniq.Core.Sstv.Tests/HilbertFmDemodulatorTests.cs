@@ -171,6 +171,38 @@ public class HilbertFmDemodulatorTests
         }
     }
 
+    [Fact]
+    public void Constructor_MiddleDecimationTier_16To40kHz_SelectsTap24Df1_AndDecodesCorrectly()
+    {
+        // S30 (spec/14-roadmap.md): CHILL::SetWidth's middle decimation tier (16-40kHz -> 24 taps,
+        // m_df=1, sstv.cpp:3032-3047) is implemented in this class's own constructor (the
+        // `sampleRate >= 16000` branch) but, until now, never exercised by any test at the INSTANCE
+        // level -- MakeHilbert_SelectedValues_MatchIndependentlyComputedFixture_Tap48At44100Hz and its
+        // siblings above exercise the raw tap=24 coefficient generator at 22050Hz already (via
+        // MakeHilbert's own [InlineData(24, 22050.0)] cases), but every actual HilbertFmDemodulator
+        // instance constructed anywhere else in this test file (and in AnalogFmSstvDecoder) uses only
+        // 11025Hz (tap=12/df=0, the low tier) or 44100Hz (tap=48/df=2, the high tier) -- the middle
+        // tier's own tierMultiplier=2.0 wiring (_offWide/_outWide/_offNarrow/_outNarrow) had no
+        // end-to-end proof it actually decodes correctly, only that its raw filter kernel is right in
+        // isolation. 22050Hz sits inside [16000, 40000), selecting tap=24/df=1.
+        const int sampleRate = 22050;
+
+        Assert.Equal(12, new HilbertFmDemodulator(sampleRate).HalfTap); // tap=24/2 -- directly pins tier selection, not just its downstream effect
+
+        foreach (var freq in new[] { 1500.0, 1900.0, 2300.0 })
+        {
+            var demod = new HilbertFmDemodulator(sampleRate);
+            var samples = GenerateTone(freq, sampleRate, count: sampleRate); // 1 full second, generous settle
+            double last = 0;
+            foreach (var s in samples)
+            {
+                last = demod.ProcessSample(s, isNarrow: false);
+            }
+
+            Assert.True(Math.Abs(last - freq) < 2.0, $"middle tier (22050Hz) freq={freq}: settled output {last}");
+        }
+    }
+
     [Theory]
     [InlineData(11025)]
     [InlineData(44100)]

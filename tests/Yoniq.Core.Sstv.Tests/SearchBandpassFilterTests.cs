@@ -114,6 +114,31 @@ public class SearchBandpassFilterTests
     }
 
     [Theory]
+    [InlineData(23, 11025.0, 400.0, 2500.0)]
+    [InlineData(25, 11025.0, 1100.0, 2600.0)]
+    public void MakeFilter_OddTap_TrailingSlotStaysZero_NotSymmetric(int tap, double sampleRate, double fcl, double fch)
+    {
+        // S29 (spec/14-roadmap.md): a guard for the odd-tap trailing-zero divergence this class's own
+        // doc comment already documents (see the comment above MakeFilter itself) but that, until now,
+        // had no executable assertion pinning it -- only MakeFilter_IsSymmetric_ForEvenTap exists, and
+        // it deliberately excludes odd tap. Legacy's real mirroring loops (fir.cpp:421-426) write
+        // exactly 2*(tap/2)+1 entries (integer division) -- for an EVEN tap that's tap+1 (the whole
+        // array); for an ODD tap it's only tap entries, leaving the array's last slot (index tap) never
+        // written, so it stays at whatever the caller's buffer already held. This port's own array is
+        // C#'s guaranteed-zero-init, matching legacy's own H1/H2 member buffers (also zero-initialized
+        // at construction). Neither of this port's two currently-reachable tap counts (24@11025Hz,
+        // 96@44100Hz) is odd, so this divergence is real but latent -- this test exists so a future
+        // refactor that "helpfully" fully populates the trailing slot (looking like it's fixing an
+        // off-by-one) fails loudly instead of silently diverging from legacy's real behavior.
+        var h = SearchBandpassFilter.MakeFilter(tap, sampleRate, fcl, fch);
+
+        Assert.Equal(tap + 1, h.Length);
+        Assert.Equal(0.0, h[tap]); // the untouched trailing slot -- exact, never written by either mirroring loop
+        Assert.NotEqual(0.0, h[tap - 1]); // sanity: the slot just before it WAS written, a real coefficient
+        Assert.NotEqual(h[0], h[tap]); // not symmetric the way the even-tap case is -- h[0] is real, h[tap] is the untouched zero
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void ProcessSample_ImpulseResponse_IsCausal_NotCentered(bool useLocked)
