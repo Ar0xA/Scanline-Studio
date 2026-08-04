@@ -2947,10 +2947,11 @@ real TX generators, not inferred.
     throw elsewhere in the file treats as a loud bug into a silent one, at the highest-consequence reader.
     Safe today (locked watermark stays 2000 samples of margin back), but the inconsistency itself is a
     risk.
-11. **[D] Luma `Limit256` clamp missing in 3 of 5 RX decoders** (Robot36, YCbCrSequential,
+11. **[D] Luma `Limit256` clamp missing in 3 of 5 RX decoders — DONE** (Robot36, YCbCrSequential,
     YCbCrLinePaired don't clamp pre-`YCtoRGB`; RgbSequential and MonoAveragedPaired do, matching their
     own legacy sites) — a real cross-family inconsistency, not a uniform policy choice. Only bites on
-    out-of-band/overdriven input, which no existing fixture exercises.
+    out-of-band/overdriven input, which no existing fixture exercises. See "Working the SHOULD backlog"
+    below.
 12. **[D] Robot 36's tone-selector reads ~1ms later than legacy's own decisive window — DONE**, inside the
     demodulator's settling region toward the following porch — correct on the clean synthetic/fixture
     signal, fragile (biased toward the ambiguous-band toggle fallback) on a real noisy one. **MUST
@@ -3544,6 +3545,46 @@ particular fixture doesn't exercise. Confirmed via code review, not assumed.
 
 Test count: 517/517 (513 prior + 4 in `AnalogFmSstvEncoderInputValidationTests.cs`), solution-wide build
 clean.
+
+### Luma `Limit256` clamp added to 3 RX decoders (SHOULD item 11) — DONE
+
+Traced legacy's real per-CHANNEL clamp pattern directly (`Main.cpp:4275-4430`) rather than assuming a
+uniform "clamp every luma channel" rule -- the actual rule is per-channel, not per-family, and includes
+one genuinely surprising asymmetry:
+
+- Robot36 (`Main.cpp:4275-4297`): Y clamped (`Limit256`, line 4282); chroma (R-Y/B-Y via tone-select)
+  NOT clamped (line 4304, raw `short(d)`).
+- Robot72/MR/ML family (`Main.cpp:4316-4366`): Y clamped (line 4332); R-Y/B-Y NOT clamped
+  (lines 4342/4351).
+- PD/MP/MN family (`Main.cpp:4381-4430`): Y1 clamped (line 4387); R-Y/B-Y NOT clamped
+  (lines 4396-4397/4405-4406); **Y2 -- a SECOND luma read via the identical `GetPictureLevel` peak-pick
+  path Y1 uses -- is NOT clamped** (`Main.cpp:4420-4422` feeds straight into `YCtoRGB` with no
+  `Limit256` call at all). Confirmed by code-level review as a real legacy asymmetry, not a misread --
+  worth noting since it's the single easiest part of this fix to get wrong (the intuitive assumption is
+  "both luma segments alike," which peak-picking IS but clamping is NOT).
+
+Threaded a `clamp: bool` through each decoder's existing per-channel dispatch (the channel switch in
+`YCbCrSequentialScanlineDecoder.cs`/`YCbCrLinePairedScanlineDecoder.cs`, a new parameter on
+`RobotScanlineDecoder.cs`'s shared `DecodePixels` helper), applying `Math.Clamp(value, 0, 255)` only
+where legacy does.
+
+New `Limit256ClampTests.cs` (3 tests, one per decoder): drives each decoder directly with a constant
+out-of-band frequency (2700Hz, 400Hz past `LuminanceMaxHz`, raw pre-clamp value 384) via a scripted
+`PixelSampleReader` stub, and asserts the clamped channel(s) land at 255 while unclamped channel(s) keep
+the raw 384 -- including a dedicated Y1-vs-Y2 assertion. Confirmed to discriminate the bug: temporarily
+reverted the clamp in all three source files, re-ran, all 3 failed with the exact predicted unclamped
+values (74 vs 255, 120 vs 0, etc.), restored, re-confirmed all 3 pass.
+
+Code-level review: verdict PASS. Y1-vs-Y2 asymmetry independently re-confirmed against source. One real
+caution flagged, addressed directly rather than dismissed: the port's clamp boundary (`value` reaches
+256 exactly at `LuminanceMaxHz`) is not strictly a no-op for all in-band input -- `ReadPeakPicked`'s
+own "larger of two samples" bias could in principle read slightly over the nominal band on near-white
+content and clip a couple of levels. This is legacy-faithful (legacy's own `Limit256` clips the exact
+same peak-picked overshoot), not a port-introduced divergence, and the full suite (520/520, including
+the robot-36/robot-72/pd90/mn110 real-legacy-capture golden vectors, all unchanged tolerances) confirms
+no real fixture actually triggers it.
+
+Test count: 520/520 (517 prior + 3 in `Limit256ClampTests.cs`), solution-wide build clean.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 

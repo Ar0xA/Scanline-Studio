@@ -82,7 +82,11 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
                 case ScanSegment scan when scanSegmentsSeen == 0:
                     // Luma peak-picks in legacy (Main.cpp:4280, GetPictureLevel) -- unlike the
                     // tone-selector and chroma sites below, which stay bare (GetPixelLevel).
-                    DecodePixels(scan, mode, sampleRate, lineStartSample, reader.ReadPeakPicked, ref idealSamplesSoFar, y);
+                    // SHOULD item 11 (spec/14-roadmap.md): luma also gets legacy's own Limit256 clamp
+                    // here (Main.cpp:4282, `d = Limit256(d)` right after the same `d += 128`-equivalent
+                    // domain this port's own formula already produces) -- chroma does NOT (see the
+                    // chroma call below's own comment).
+                    DecodePixels(scan, mode, sampleRate, lineStartSample, reader.ReadPeakPicked, ref idealSamplesSoFar, y, clamp: true);
                     scanSegmentsSeen++;
                     break;
 
@@ -124,8 +128,12 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
                 {
                     // Chroma always reads bare -- matches legacy's own GetPixelLevel here
                     // (Main.cpp:4303), never GetPictureLevel. Unaffected by piece 10.
+                    // SHOULD item 11 (spec/14-roadmap.md): confirmed directly against source -- legacy
+                    // stores this raw (`m_D36[m_DSEL][x] = short(d);`, Main.cpp:4304) with NO Limit256
+                    // call, unlike luma above. Not a port gap to fix, a real legacy asymmetry to
+                    // preserve: clamp: false.
                     var target = isEvenLine ? _rMinusY : _bMinusY;
-                    DecodePixels(chromaScan, mode, sampleRate, lineStartSample, reader.ReadBare, ref idealSamplesSoFar, target!);
+                    DecodePixels(chromaScan, mode, sampleRate, lineStartSample, reader.ReadBare, ref idealSamplesSoFar, target!, clamp: false);
                     scanSegmentsSeen++;
                     break;
                 }
@@ -154,7 +162,8 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
         int lineStartSample,
         Func<int, int, double> read,
         ref double idealSamplesSoFar,
-        double[] destination)
+        double[] destination,
+        bool clamp)
     {
         // Trimmed to m_KSS/m_KS2S, not the raw scan duration -- legacy's real x-mapping is
         // `x = ps * Width / m_KSS` for luma, `x = ps * Width / m_KS2S` for the tone-selected chroma
@@ -179,7 +188,8 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
 
             var freq = read(startSample, endSample);
             // Inverse of ColorToFreq, not "+1500" -- uses the mode's own LuminanceMinHz/MaxHz.
-            destination[x] = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+            var value = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+            destination[x] = clamp ? Math.Clamp(value, 0, 255) : value;
         }
 
         idealSamplesSoFar = segmentStartSample + scan.DurationMs / 1000.0 * sampleRate;
