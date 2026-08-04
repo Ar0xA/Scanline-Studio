@@ -1135,11 +1135,18 @@ legacy's live default is Hilbert, PLL is AVT-only now).
   correctness, only "correct" today because the only caller is a test harness pushing whole buffers.
 - **Band 3 — worth doing eventually, bundle with the matching new golden-vector fixture** (S31 AVT
   real-capture header-detection failure — **DONE**, see this file's own "S31" entry further down —
-  S9 MN/MC narrow retune, S8 mid-image narrow re-lock, S7 mid-image AVT re-lock, S17 AVT
-  training-entry restructure, S11 AVT PLL domain, S10 extended-VIS 7-bit, S12 sint2/sint3 freeze
-  gating [sint1 already fixed], S13 m_Type demodulator toggle [code blocked on Phase-3 settings UI,
-  but its missing removed-features.md entry is Band-4 work now]). 6 of 8 original items land on mode
-  families task #7 already captured fixtures for — fix when measured, not reasoned.
+  S9 MN/MC narrow retune — **DONE, discovered already closed**: Band-2 item S6 (`6da0a65`) IS this
+  exact fix (`HilbertFmDemodulator.ProcessSample`'s `isNarrow`-selected `(off, out)` pairs, gated in
+  `AnalogFmSstvDecoder.DemodulatedFrequencyAt` on `_mode.NarrowModeCode is not null`) — this Band-3
+  listing was simply never updated when S6 shipped; no new code needed — S8 mid-image narrow re-lock,
+  S7 mid-image AVT re-lock, S17 AVT training-entry restructure, S11 AVT PLL domain, S10 extended-VIS
+  7-bit — **DONE**, see this file's own "S10" entry below, widened in scope from the original narrow
+  "escape byte only" framing to the real underlying gap (every normal VIS-code match in the
+  fixed-window path, not just the escape byte) — S12 sint2/sint3 freeze gating [sint1 already fixed],
+  S13 m_Type demodulator toggle [code blocked on Phase-3 settings UI, but its missing
+  removed-features.md entry is Band-4 work now, **DONE**]. 6 of 8 original items land on mode families
+  task #7 already captured fixtures for — fix when
+  measured, not reasoned.
 - **Band 4 — documentation/test-only, near-zero cost, no DSP change** (S27 CQ100 removed-features.md
   entry + a stale code comment, S13's doc half, S29 odd-tap assert/guard, S30 add a decimation-tier
   unit test, S21 record the already-measured tolerance rationale).
@@ -2326,6 +2333,81 @@ Test count: 458/458 `Yoniq.Core.Sstv.Tests` (452 prior + 6: 2 new `avt` rows in 
 Two plan-review rounds (auditor) plus one code-level review after implementation — code-level verdict:
 EQUIVALENT-WITH-RISKS, no blockers, ready to commit as-is; a handful of stale-comment nits it found were
 fixed directly rather than deferred.
+
+## S9, S13 — closed while working the remaining Band-3 items (S9 already done, S13 doc-only)
+
+After S31, the user asked to fix the rest of Band 3. Investigating each item before writing code (per
+this project's own "fix when measured, not reasoned" rule) found two of the eight didn't need new code:
+
+- **S9 (MN/MC narrow retune) — already closed.** Band-2 item S6 (`6da0a65`) already ported exactly
+  this: `HilbertFmDemodulator.ProcessSample`'s `isNarrow`-selected `(off, out)` pairs
+  (`NARROW_CENTER`=2172Hz/`NARROW_BW`=256Hz vs. normal 1900Hz/800Hz, matching `CHILL::SetWidth`'s
+  narrow branch exactly), gated in `AnalogFmSstvDecoder.DemodulatedFrequencyAt` on
+  `_mode.NarrowModeCode is not null && thisIndex >= _bandpassLockedFromSample`. The Band-3 inventory
+  entry was simply never updated/merged when S6 shipped — same gap, two tracking numbers. No code.
+- **S13 (m_Type demodulator selector) — doc entry only.** The code toggle itself (PLL/zero-crossing/
+  Hilbert RX picture demodulator) is correctly blocked on the not-yet-built Phase-3 settings UI. Added
+  the missing `docs/removed-features.md` entry (CLAUDE.md §2 process debt, independent of the code
+  blocker) — "Picture-demodulator selector (`m_Type`...)" section.
+
+## S10 — extended-VIS escape byte (and every normal VIS byte) decided from 7 bits, not legacy's real 8
+
+**Widened in scope from the original narrow framing** ("extended-VIS escape byte decided from 7 bits,
+not 8") to the real underlying gap, found while investigating it: legacy's real `m_VisData` accumulator
+is always 8 bits wide (`m_VisCnt` starts at 8, `sstv.cpp:1966-1967`) — 7 data bits PLUS the parity bit
+— before its mode-lookup `switch(m_VisData)` (`sstv.cpp:1993-2074`) ever runs, for EVERY arm: the escape
+check (`case 0x23`) and every normal single-byte mode case are arms of the exact same switch, not two
+separately-timed decisions. `VisLockStateMachine` (the noise-tolerant fallback path) already did this
+correctly — it accumulates 8 bits and matches via `SstvModeRegistry.FindByFullVisByte` (full byte,
+parity included). Only `AnalogFmSstvDecoder.TryDecodeVisHeader` (the fixed-window path, tried first on
+every header) was wrong: it read only 7 bits, decoded via a parity-stripped helper, and looked up via a
+parity-stripped registry lookup — for BOTH the escape check and normal-mode matching.
+
+**Practical effect** (why no existing test caught this): on a REAL, noisy capture, if a VIS byte's 7
+data bits happen to match a real mode's low-7-bits but the 8th (parity) bit gets corrupted by noise,
+legacy rejects the whole byte outright (`default: m_SyncMode=0`) — this port's fixed-window path would
+have accepted it anyway, parity never checked. Invisible to any self-round-trip test since this port's
+own encoder (`VisHeader.GenerateSegments`) always transmits a correctly-computed parity bit.
+
+**Fix**: `TryDecodeVisHeader` now reads `VisHeader.FirstByteBitCount` (8, new named constant) bits
+before deciding normal-vs-extended, and uses `SstvModeRegistry.FindByFullVisByte` (already existing,
+already tested, already used by `VisLockStateMachine`) for both the escape check and normal-mode
+lookup — reusing proven-correct code rather than inventing new escape-specific logic. The extended-path
+bit-slicing was re-partitioned accordingly (still 16 total bits, `VisHeader.ExtendedDataBitCount`
+unchanged) but slices cleanly at the new 8-bit boundary instead of skipping a bit. `NormalSearchCeilingMs`
+bumped by one bit-slot (1035→1065ms) to stay in sync with the new 8-bit first decision;
+`MaxSearchCeilingMs` itself is unaffected (still dominated by the 1305ms extended ceiling). Removed the
+now-dead parity-stripped helpers (`SstvModeRegistry.FindByVisCode`, `VisHeader.DecodeVisCode`) rather
+than leaving an unused "match ignoring parity" API around — auditor's own framing: "leaving a public
+helper around is how this bug re-enters." Deduped `VisLockStateMachine`'s own local `0x23` escape
+constant to reference `VisHeader.ExtendedVisEscapeCode` directly instead of an independently-drifting
+copy.
+
+**Auditor plan-review** (round 1, EQUIVALENT-WITH-RISKS, ready to build): independently re-verified
+against `sstv.cpp` that this is genuinely one gap, not two (escape and normal-mode ARE the same switch);
+recomputed all 24 non-extended legacy VIS bytes from the registry and confirmed all reproduce correctly
+post-fix, including RM12's own forced-parity quirk (`Rm12ForcedParityBit`); confirmed the ceiling
+analysis (`MaxSearchCeilingMs` genuinely unaffected). Flagged one real risk to watch: the 8th
+bit-decision point lands close to the 1200Hz stop-bit boundary on real audio (~14.5ms measured
+trigger-settling lag vs. a similarly-sized margin) — if golden vectors regressed, the instruction was to
+investigate the decision-point timing, not widen tolerances. **All 7 real golden-vector fixtures passed
+unchanged, no tolerance touched** — risk did not materialize.
+
+**Code-level review** (after implementation, EQUIVALENT-WITH-RISKS, no blockers, ready to commit):
+independently sanity-checked the stop-bit-boundary risk wasn't just "tests happen to pass" — confirmed
+algebraically that even if a decision did drift into the stop-bit region, `VisBitDecision.TryDecide`
+can only REJECT there (d11/d13 both non-responsive to 1200Hz), never produce a wrong bit, so the worst
+case is degraded anchor precision via fallback, never a wrong mode. Found and fixed two doc-comment
+nits (`ExtendedDataBitCount`'s definition reworded for clarity, its stale "already used at" claim
+fixed). One pre-existing (not introduced by this fix), narrow, non-blocking risk noted but not chased:
+a mid-word bit-rejection during the extended-code's second-byte decode could in principle re-trigger at
+a different alignment while the caller still assumes the escape byte was proven — requires a specific
+rare failure sequence, degrades to a wrong extended-mode-lookup attempt at worst (not a silent wrong
+answer, `FindByExtendedCode` would just fail to match), not fixed here.
+
+Test count: 460/460 (458 prior + 2 new: `WrongParityBit_NormalVisCode_NeverLocksViaFixedWindowPath`,
+`WrongParityBit_EscapeByte_NeverLocksAsExtendedViaFixedWindowPath` in `VisToneRaceHeaderTests.cs`),
+solution-wide build clean.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 

@@ -88,8 +88,11 @@ public class VisToneRaceHeaderTests
         // (fed directly, sample-by-sample) now share the same VisBitDecision predicate but keep
         // fully independent detector instances and timing -- this asserts they still land on the
         // same decoded mode for the same real header, rather than trusting the shared-predicate
-        // refactor without a direct cross-check. AVT excluded: VisLockStateMachine deliberately never
-        // reports it (see that class's own doc comment), so it can't be part of this comparison.
+        // refactor without a direct cross-check. AVT excluded: this test's plain GenerateSegments
+        // construction only emits ONE VIS block, not AVT's full 3-repeat+training preamble, so the
+        // full decoder side would never reach ModeDetected for it here -- unrelated to whether
+        // VisLockStateMachine itself reports AVT (it does, as of the S31 fix; see that class's own
+        // doc comment), just a mismatch with this specific test's simplified header construction.
         var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
         var segments = mode.ExtendedVisCode is not null
             ? VisHeader.GenerateExtendedSegments(mode.ExtendedVisCode.Value)
@@ -158,6 +161,78 @@ public class VisToneRaceHeaderTests
 
         Assert.NotNull(detected);
         Assert.Equal(mode.Id, detected!.Id);
+    }
+
+    [Fact]
+    public void WrongParityBit_NormalVisCode_NeverLocksViaFixedWindowPath()
+    {
+        // S10 fix (spec/14-roadmap.md): TryDecodeVisHeader (the fixed-window path, exercised here via
+        // a header starting at sample 0) now decides normal-mode matches from the FULL 8-bit byte
+        // (FindByFullVisByte), not just the parity-stripped 7 data bits -- matching legacy's real
+        // switch(m_VisData), which rejects a byte with the wrong parity bit outright (sstv.cpp:2071-
+        // 2073's `default:`). Deliberately wrong parity (something no real encoder ever transmits) is
+        // exactly the real-audio bit-error scenario this fix targets. Mirrors
+        // VisLockStateMachineTests.FlippedParityBit_NeverLocks for the fixed-window path specifically.
+        var mode = SstvModeRegistry.Robot36;
+        var correctParity = 0;
+        for (var bitIndex = 0; bitIndex < 7; bitIndex++)
+        {
+            correctParity ^= (mode.VisCode >> bitIndex) & 1;
+        }
+
+        var segments = VisHeader.GenerateSegments(mode.VisCode, forcedParityBit: correctParity ^ 1).Append((0.0, 3000.0));
+        var samples = RenderSegments(segments, SampleRate);
+
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+        SstvModeDefinition? detected = null;
+        decoder.ModeDetected += m => detected ??= m;
+
+        decoder.PushSamples(samples);
+
+        Assert.Null(detected);
+    }
+
+    [Fact]
+    public void WrongParityBit_EscapeByte_NeverLocksAsExtendedViaFixedWindowPath()
+    {
+        // S10 fix: the escape byte (0x23) is ALSO decided from the full 8-bit byte now, not just its
+        // 7 data bits -- 0xA3 (0x23 with bit7=1, a real byte no encoder in this port ever transmits,
+        // since GenerateExtendedSegments' escape byte always has bit7=0) must NOT be treated as the
+        // extended-VIS escape marker, matching legacy's switch(m_VisData) (sstv.cpp:2066/2071-2073):
+        // only literal 0x23 matches case 0x23, 0xA3 falls to `default:` and is rejected outright.
+        // GenerateExtendedSegments has no forcedParityBit-style hook for its own first byte (by
+        // design -- see its own doc comment), so this constructs the raw 16-bit extended-VIS segment
+        // sequence directly, with 0xA3 in place of the real 0x23 escape byte.
+        const int wrongEscapeByte = 0xA3;
+        var segments = new List<(double FrequencyHz, double DurationMs)>
+        {
+            (VisHeader.LeaderFrequencyHz, VisHeader.LeaderDurationMs),
+            (VisHeader.BreakFrequencyHz, VisHeader.BreakDurationMs),
+            (VisHeader.LeaderFrequencyHz, VisHeader.LeaderDurationMs),
+            (VisHeader.StartStopFrequencyHz, VisHeader.BitDurationMs),
+        };
+        // 16 raw bits, LSB first: low byte = wrongEscapeByte, high byte = an arbitrary real extended
+        // code (Mr73's) -- irrelevant to the outcome, since the wrong escape byte alone must already
+        // cause rejection before the second byte would ever matter.
+        var combined = wrongEscapeByte | (SstvModeRegistry.Mr73.ExtendedVisCode!.Value << 8);
+        for (var bitIndex = 0; bitIndex < 16; bitIndex++)
+        {
+            var bit = (combined >> bitIndex) & 1;
+            segments.Add((bit == 1 ? VisHeader.Bit1FrequencyHz : VisHeader.Bit0FrequencyHz, VisHeader.BitDurationMs));
+        }
+
+        segments.Add((VisHeader.StartStopFrequencyHz, VisHeader.BitDurationMs));
+        segments.Add((0.0, 3000.0));
+
+        var samples = RenderSegments(segments, SampleRate);
+
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+        SstvModeDefinition? detected = null;
+        decoder.ModeDetected += m => detected ??= m;
+
+        decoder.PushSamples(samples);
+
+        Assert.Null(detected);
     }
 
     private static float[] RenderSegments(IEnumerable<(double FrequencyHz, double DurationMs)> segments, int sampleRate)

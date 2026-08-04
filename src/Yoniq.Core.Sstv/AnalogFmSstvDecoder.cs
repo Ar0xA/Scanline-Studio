@@ -2116,10 +2116,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
     private bool TryDecodeVisHeader()
     {
-        // Prefix (leader/break/leader/start-bit + first 7 data bits) is the same length whether
-        // this is a normal single-byte VIS code or an "extended" MR/MP/ML one (see VisHeader) — we
-        // don't know which until those 7 bits are decoded, so read the prefix first, then decide.
-        var prefixSampleCount = (int)Math.Round(VisHeader.PrefixDurationMs / 1000.0 * _sampleRate);
+        // S10 fix: prefix now covers the first FULL byte (leader/break/leader/start-bit + 7 data bits
+        // + parity bit, VisHeader.FirstByteBitCount = 8) -- legacy's real m_VisData accumulates all 8
+        // bits (m_VisCnt starts at 8, sstv.cpp:1966-1967) before ITS OWN mode-lookup switch
+        // (sstv.cpp:1993-2074) ever runs, for BOTH the escape check (case 0x23) and every normal-mode
+        // case -- they're arms of the SAME switch(m_VisData), not two separately-timed decisions. We
+        // don't know normal-vs-extended until those 8 bits are decoded, so wait for the full first
+        // byte (VisHeader.PrefixDurationMs's own 7-data-bit span PLUS one more bit-slot for parity,
+        // not PrefixDurationMs alone -- code-level auditor review finding: without the extra
+        // BitDurationMs here this gate is one bit-slot short of what TryDecodeVisDataBits below
+        // actually needs, which is harmless in practice (the bit loop just returns null and this
+        // method retries on the next call) but wastes a redundant attempt) before deciding.
+        var prefixSampleCount = (int)Math.Round((VisHeader.PrefixDurationMs + VisHeader.BitDurationMs) / 1000.0 * _sampleRate);
         if (TotalSamplesReceived - _consumedSamples < prefixSampleCount)
         {
             return false;
@@ -2127,14 +2135,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
         var headerStart = _consumedSamples;
 
-        var firstByteBits = TryDecodeVisDataBits(headerStart, VisHeader.DataBitCount);
+        var firstByteBits = TryDecodeVisDataBits(headerStart, VisHeader.FirstByteBitCount);
         if (firstByteBits is null)
         {
             return false; // weak/ambiguous tone race -- legacy aborts the whole attempt (sstv.cpp:1983)
         }
 
-        var firstByteValue = VisHeader.DecodeVisCode(firstByteBits);
-        var isExtended = firstByteValue == VisHeader.ExtendedVisEscapeCode;
+        var firstFullByte = VisHeader.DecodeRawByte(firstByteBits);
+        var isExtended = firstFullByte == VisHeader.ExtendedVisEscapeCode;
         var tailDurationMs = isExtended ? VisHeader.ExtendedTailDurationMs : VisHeader.NormalTailDurationMs;
         var totalHeaderSampleCount = (int)Math.Round((VisHeader.PrefixDurationMs + tailDurationMs) / 1000.0 * _sampleRate);
 
@@ -2146,23 +2154,21 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         SstvModeDefinition? mode;
         if (isExtended)
         {
-            // 1 leftover bit from the escape byte (its bit 7, unused) + all 8 bits of the real
-            // extended-mode byte = 9 more bit-slots before the stop bit -- windows 7-15 of the same
-            // continuous tone race, not a fresh decode (TryDecodeVisDataBits recomputes bits 0-6
+            // 8 more bits (the real extended-mode byte) before the stop bit -- windows 8-15 of the
+            // same continuous tone race, not a fresh decode (TryDecodeVisDataBits recomputes bits 0-7
             // too, deterministically identical to firstByteBits above; harmless redundancy).
-            var allBits = TryDecodeVisDataBits(headerStart, VisHeader.DataBitCount + 9);
+            var allBits = TryDecodeVisDataBits(headerStart, VisHeader.ExtendedDataBitCount);
             if (allBits is null)
             {
                 return false;
             }
 
-            var remainingBits = allBits[VisHeader.DataBitCount..];
-            var extendedCode = VisHeader.DecodeRawByte(remainingBits.AsSpan(1, 8));
+            var extendedCode = VisHeader.DecodeRawByte(allBits.AsSpan(VisHeader.FirstByteBitCount, 8));
             mode = SstvModeRegistry.FindByExtendedCode(extendedCode);
         }
         else
         {
-            mode = SstvModeRegistry.FindByVisCode(firstByteValue);
+            mode = SstvModeRegistry.FindByFullVisByte(firstFullByte);
         }
 
         if (mode is null)
