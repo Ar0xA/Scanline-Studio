@@ -3006,9 +3006,22 @@ precision).
 
 ### Next steps
 
-MUST items 1-3 not yet fixed (all confirmed, not yet actioned as of this entry). Phase 3 (chain/
-integration audit) not yet run. No commits from this milestone-audit entry itself — documentation only,
-capturing all findings before any fix work begins so nothing gets lost regardless of prioritization.
+MUST items 1-3 not yet fixed (all confirmed, not yet actioned as of this entry). No commits from this
+milestone-audit entry itself — documentation only, capturing all findings before any fix work begins so
+nothing gets lost regardless of prioritization.
+
+**Explicit prerequisite before Phase 3 (chain/integration audit): build TX-side verification tests and
+confirm them first.** Phase 3's own mandate is to verify real input through the composed chain against
+LEGACY-captured output, NOT an internal round-trip — but batch A's finding stands: TX currently has
+**zero** legacy-decode-verified coverage, only internal round-trip (this port's own encoder → this
+port's own decoder agreeing with itself), which is exactly the failure shape CLAUDE.md's own Scottie
+incident warns about. Running Phase 3's TX-side chain audit on top of that gap would mean auditing
+against a reference this port doesn't actually have yet. User's explicit direction: get TX tests built
+and verified BEFORE running Phase 3, not after — do not skip straight to the chain audit with this gap
+still open. This likely means capturing TX-side golden vectors (this port's own encoder output run
+through a real legacy decode, the reverse direction of the existing RX fixtures) — bottlenecked on the
+user's own time with the real legacy binary, same category as Task #7 and finding 13's Scottie-DX/MR73/
+R24 coverage gaps, not something this session can do unaided.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
