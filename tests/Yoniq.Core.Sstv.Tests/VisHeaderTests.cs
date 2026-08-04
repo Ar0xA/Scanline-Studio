@@ -37,7 +37,7 @@ public class VisHeaderTests
         var headerDurationMs = VisHeader.GenerateAvtSegments(SstvModeRegistry.Avt.VisCode).Sum(s => s.DurationMs);
 
         // Legacy's own RX budget for this exact preamble, sstv.cpp:2140: 3 VIS blocks (910ms each,
-        // Main.cpp:7429) + the training sequence (Main.cpp:7563-7575: 32 * (1 marker + 16 bits) *
+        // Main.cpp:7430) + the training sequence (Main.cpp:7563-7575: 32 * (1 marker + 16 bits) *
         // 9.7646ms + a trailing 0.30514375ms blip).
         var expectedMs = 3 * VisHeader.AvtVisBlockDurationMs + VisHeader.AvtTrainingSequenceDurationMs;
         Assert.Equal(8042.24754375, expectedMs, precision: 6);

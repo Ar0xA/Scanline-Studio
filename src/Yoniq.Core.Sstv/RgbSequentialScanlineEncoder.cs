@@ -28,6 +28,11 @@ internal sealed class RgbSequentialScanlineEncoder : IScanlineEncoder
                         // (no GetRY step for this family, matching legacy's own ColorToFreq(cp->b.r)
                         // etc. call sites, Main.cpp:6610-6629), so only YCbCr.ColorToFreq's own
                         // internal integer-division truncation applies here, not FromRgb's.
+                        // Comprehensive-review addition: this family's own narrow half (MC110/140/180)
+                        // is `TMmsstv::LineMC` (Main.cpp:6827-6845), which uses `ColorToFreqNarrow`
+                        // (`Main.cpp:6837/6840/6843`) instead of plain `ColorToFreq` -- covered by
+                        // `YCbCr.ColorToFreq`'s own (min,max) generalization, not a separate call here
+                        // (the mode's own LuminanceMinHz/MaxHz select which band applies).
                         yield return (YCbCr.ColorToFreq(value, mode.LuminanceMinHz, mode.LuminanceMaxHz), perPixelDurationMs);
                     }
 
