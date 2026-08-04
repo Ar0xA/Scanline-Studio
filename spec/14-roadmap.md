@@ -467,8 +467,12 @@ convention here (direct gray write, no matrix); porting it isn't inventing a thi
 judgment calls both hold:
 - **No truncation replication**: legacy truncates to `int` twice (once inside `GetPixelLevel`, once at
   `d *= gain`); this port keeps doubles throughout, matching every other decoder in this codebase.
-  Documented as an accepted, asymmetric-across-mid-gray divergence of a couple of levels, well inside
-  existing 10.0-25.0 tolerances.
+  Documented as an accepted, asymmetric-across-mid-gray divergence, originally estimated as "a couple
+  of levels" — **S21 (Band 4) later measured this exactly**: an exhaustive sweep over every achievable
+  input in this port's own AGC'd ±16384 domain finds a max divergence of precisely 2 levels, never
+  more, asymmetric as predicted (legacy-minus-port ranges -1..+2, not a symmetric ±2) — see this file's
+  own "S21" entry further down. Well inside existing 10.0-25.0 tolerances, now confirmed rather than
+  assumed.
 - **No compensating TX-side gain**: legacy's TX (`LineRM`, `Main.cpp:6785-6801`) has no matching
   correction — confirmed RX-only. Round-trip is genuinely non-identity by design (predicted delta
   ~2.4 avg/~4.7 max: the offset terms cancel exactly, `112*8/7=128`, leaving pure gain error), but this
@@ -1157,9 +1161,14 @@ legacy's live default is Hilbert, PLL is AVT-only now).
   **Band 3 is now fully done, all 8 original items closed** (7 landed on mode families task #7 already
   captured fixtures for, fix when measured not reasoned; S12 needed direct source-derived design work
   instead, no fixture dependency).
-- **Band 4 — documentation/test-only, near-zero cost, no DSP change** (S27 CQ100 removed-features.md
-  entry + a stale code comment, S13's doc half, S29 odd-tap assert/guard, S30 add a decimation-tier
-  unit test, S21 record the already-measured tolerance rationale).
+- **Band 4 — documentation/test-only, near-zero cost, no DSP change — DONE, all 4 items** (S13's doc
+  half already closed alongside S9/S10; S27 CQ100 `removed-features.md` entry + a stale code comment —
+  **DONE**, code-level audit caught the first draft's own entry was still incomplete (2 more real
+  `m_bCQ100`-gated DSP effects missed) before it shipped; S29 odd-tap assert/guard — **DONE**; S30 added
+  a decimation-tier unit test — **DONE**; S21 recorded the already-measured tolerance rationale —
+  **DONE**, exact bound measured (2 levels max, `-1..+2` signed) rather than the prior "a couple of
+  levels" estimate. See this file's own "Band 4" entry further down for full detail. Zero DSP behavior
+  change across all 4 items, confirmed by an unchanged full-suite result.
 - **Band 5 — not worth it / correctly blocked** (S18 per-channel TX gain, S19 CLVL peak-hold, S20
   dead `m_agcfast` branch, S22 sint1/sint3 double-fire, S23 `m_ReqSave` [blocked on Phase 4], S24
   `m_SyncRestart` toggle [blocked on Phase 3], S25 AVT case-8 dead code, S26 `MakeHilbert` unreachable
@@ -2704,6 +2713,103 @@ produces the momentary dip this gate specifically guards against.
 
 Test count: 468/468 (466 prior + 2 new, both in `VisLockStateMachineTests.cs`), solution-wide build
 clean.
+
+## Band 4 — documentation/test-only items (S27, S29, S30, S21), DONE
+
+All four Band-4 items are pure documentation/test additions — no DSP behavior change anywhere, verified
+by an unchanged full-suite result before and after. (S13's doc half was already closed earlier, alongside
+S9/S10.) User asked for "a good deep documentation and comment update and audit," so each item below was
+re-verified against legacy source directly rather than trusted from the original inventory table's own
+summary, and the whole batch got a dedicated code-level auditor review before commit.
+
+### S27 — CQ100 mode: missing `removed-features.md` entry + a stale code comment
+
+Investigated fresh rather than trusting the inventory table's narrower "FIR tap-tripling" framing: an
+exhaustive grep of every `g_dblToneOffset` reference in `sstv.cpp` found 44 distinct referencing lines
+(46 occurrences) across the whole DSP core (VIS-decode envelope detectors, sync-interval/AFC
+frequencies, bandpass filter cutoffs, the AVT training PLL center, `CHILL`'s own `m_OFF`) — not just
+`HilbertFmDemodulator`'s tap-tripling, which is a second, independent CQ100-gated effect
+(`sstv.cpp:3048-3050`, `m_tap *= 3`). **Code-level audit caught the first draft's own doc entry was
+still incomplete** despite that grep: two more real `sys.m_bCQ100`-gated DSP effects existed
+independent of `g_dblToneOffset` itself and were missing from `removed-features.md` — an `m_OFP`
+sync-timing shift (`sstv.cpp:1181-1184`, a division by `g_dblToneOffset`, not the additive shift every
+other site uses, roughly -1.1ms) and a narrowed AFC capture window (`sstv.cpp:1678-1681`/`1688-1691`,
+sync±50Hz replacing the wider default range in both narrow and normal branches). Both added to the
+entry; the "~30 call sites" estimate corrected to the exact 44/46 figure in all three places it
+appeared (`removed-features.md`, this entry, `HilbertFmDemodulator.cs`'s own comment). All four effects
+are set from exactly one place, a `-i` command-line flag at startup (`Main.cpp:1065-1077`) — never
+reachable via the GUI, an `.ini` key, or any other path (confirmed by a whole-tree grep finding no other
+assignment site for either `g_dblToneOffset` or `sys.m_bCQ100`), and this port has no command-line-flag
+entry point that could set an equivalent. Fixed the stale comment in `HilbertFmDemodulator.cs` (previously
+claimed `g_dblToneOffset` is "confirmed always 0.0," which overstated it — corrected to "confirmed 0.0
+on every path this port's architecture can reach," matching `SearchBandpassFilter.cs`'s own already-
+correct wording for the same fact) and cross-referenced the new `removed-features.md` entry.
+
+### S29 — `MakeFilter` odd-tap trailing-zero divergence: add an executable guard
+
+The existing `MakeFilter_IsSymmetric_ForEvenTap` test already deliberately excludes odd tap (both of
+this port's currently-reachable tap counts, 24@11025Hz and 96@44100Hz, are even), and the class's own
+doc comment already documented WHY (legacy's real mirroring loops, `fir.cpp:421-426`, write exactly
+`2*(tap/2)+1` entries — for an odd tap that's one short of the full `tap+1` array, leaving the last
+slot at its zero-init default) — but nothing pinned this with an executable assertion. Added
+`MakeFilter_OddTap_TrailingSlotStaysZero_NotSymmetric` (`SearchBandpassFilterTests.cs`), parametrized
+over two odd tap counts (23, 25) at the port's real filter parameters: asserts the trailing slot is
+exactly 0.0, the slot just before it is a real nonzero coefficient, and the array is provably not
+symmetric the way the even-tap case is. Guards against a future refactor that "helpfully" fully
+populates the trailing slot (looking like an off-by-one fix) silently diverging from legacy's real
+(latent, currently unreachable) behavior.
+
+### S30 — `CHILL` middle decimation tier (16-40kHz): add instance-level coverage
+
+The raw filter-coefficient generator (`MakeHilbert`) was already exercised at the middle tier's tap
+count via existing `[InlineData(24, 22050.0)]` cases, but no test ever constructed an actual
+`HilbertFmDemodulator` INSTANCE at a sample rate in the 16-40kHz range — meaning the tier-selection
+logic itself (`sampleRate >= 16000` branch) and its `tierMultiplier=2.0` wiring
+(`_offWide`/`_outWide`/`_offNarrow`/`_outNarrow`) had no end-to-end proof, only the isolated kernel.
+Added `Constructor_MiddleDecimationTier_16To40kHz_SelectsTap24Df1_AndDecodesCorrectly`
+(`HilbertFmDemodulatorTests.cs`) at 22050Hz: asserts `HalfTap == 12` (directly pins tier selection, not
+just its downstream effect) and that settled tone readback at 1500/1900/2300Hz is correct, mirroring
+the existing `SettledOutput_SteadyTone_ReadsBackCorrectFrequency` pattern already used for the other
+two tiers. Updated the class's own doc comment to note this tier is no longer untested, just unused by
+any currently-supported sample rate.
+
+### S21 — RM8/RM12 int-truncation divergence: record the exact measured bound
+
+The existing doc comment (`MonoAveragedPairedScanlineDecoder.cs`) already correctly identified the
+divergence (legacy truncates to `int` twice — once inside `GetPixelLevel`'s own `d *=
+m_DemWhite`/`m_DemBlack`, once at the RM8/RM12 branch's own `d *= gain`; `GetPictureLevel`, the function
+the RM8/RM12 branch actually calls, itself calls `GetPixelLevel` exactly once, so this collapses one
+hop without changing the truncation count) but only estimated its size as "a couple of levels." Read
+`Main.cpp:4038-4073`/`4437-4449` and `ComLib.h:242-243` directly to pin the exact chain
+(`m_DemWhite`/`m_DemBlack` both default to `128.0/16384.0`, confirmed via `Main.cpp:875-877`, and
+`m_DemCalibration` defaults to 0/`Main.cpp:878`, so `GetPixelLevel`'s calibration branch is never live
+on the default path this port models — the single default pair covers this port's whole reachable
+domain, not an incomplete scope), then wrote an exhaustive test
+(`MonoAveragedPairedScanlineDecoderTests.IntTruncationDivergence_MatchesLegacysExactTwoTruncationChain_WithinMeasuredBound`)
+that independently replicates legacy's real two-truncation chain and sweeps every achievable input in
+this port's own AGC'd ±16384 sample domain against the port's actual formula. **Exact measured result**:
+maximum divergence of precisely 2 levels, never more, and asymmetric as the original comment predicted
+but never quantified — legacy-minus-port ranges `-1..+2`, not a symmetric `±2`. `RmGainFactor` (was
+`private`) made `internal` so the test references the SUT's real constant rather than a
+separately-drifting literal copy. Both the code comment and the roadmap's own "Piece 12" note (search
+"No truncation replication") updated with the exact figure. Well inside the existing
+10.0 round-trip / 15.0-25.0 golden-vector tolerances, now confirmed by measurement rather than estimate.
+
+**Code-level audit** independently re-derived the exact bound in closed form (not just re-running the
+test) and confirmed `-1..+2`/max-abs-2 correct, confirmed the sweep domain is robust beyond its own
+stated ±16384 bound (both chains saturate identically outside roughly `[-14336,+14224]`, so the
+"every achievable" phrasing is harmless rather than an under-sweep), and confirmed no overflow/sign
+risk anywhere in the chain (both sides stay in `double` throughout, matching legacy's own `double`
+multipliers on `int` accumulators). Two comment-accuracy nits found and fixed: the test's own doc
+comment named `GetPixelLevel` where legacy's real call site is `GetPictureLevel` (which itself calls
+`GetPixelLevel` once — the numeric claim was never affected, just the citation); and a self-contradictory
+sentence about `Math.Truncate` vs `Math.Floor` was corrected to describe what the code actually needs
+(C#'s `(int)` cast's own toward-zero semantics).
+
+Test count: 472/472 (468 prior + 4 new: `MakeFilter_OddTap_TrailingSlotStaysZero_NotSymmetric` in
+`SearchBandpassFilterTests.cs` (2 theory cases), `Constructor_MiddleDecimationTier_16To40kHz_SelectsTap24Df1_AndDecodesCorrectly`
+in `HilbertFmDemodulatorTests.cs`, `IntTruncationDivergence_MatchesLegacysExactTwoTruncationChain_WithinMeasuredBound`
+in new `MonoAveragedPairedScanlineDecoderTests.cs`), solution-wide build clean, no DSP behavior change.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
