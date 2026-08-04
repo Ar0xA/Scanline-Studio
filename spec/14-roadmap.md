@@ -2962,12 +2962,18 @@ real TX generators, not inferred.
     is non-negative (not traced), but this is now the one read MUST fix 3 pushed right up against a
     segment boundary. Cheap hardening suggested but not applied: read at `endSample - 1` minus a small
     margin, or bound it by legacy's own `m_CG` decisive-window end rather than the segment's full end.
-13. **[D] Golden-vector coverage gaps: Scottie DX, MR73, R24.** Each is the ONLY mode exercising a
-    specific code path no other fixture reaches (Scottie DX: the sole `NeverPeakPicks` mode; MR73: the
-    sole mode where luma/chroma trim by different divisors; R24: the sole mode using legacy's row-
-    doubling substitution). A bug specific to any of these three paths would pass every existing test.
-    Needs new fixture capture — bottlenecked on the user's own time with the real legacy binary, same as
-    Task #7.
+13. **[D] Golden-vector coverage gaps: Scottie DX, MR73, R24 — SUBSTANTIALLY ADDRESSED.** Each is the
+    ONLY mode exercising a specific code path no other fixture reaches (Scottie DX: the sole
+    `NeverPeakPicks` mode; MR73: the sole mode where luma/chroma trim by different divisors; R24: the
+    sole mode using legacy's row-doubling substitution). The TX-side golden-vector work (this file's
+    own "TX-side golden-vector tests wired in" entry) added real-legacy-decode coverage for all three
+    via `LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage` — a real legacy install decoding
+    this port's own TX output for each mode, exercising each one's distinct code path end-to-end.
+    Not FULLY closed: that only covers the TX-encode direction; there's still no real legacy-CAPTURED
+    (RX-direction) fixture for any of these three, so a bug specific to how this port's RX chain
+    handles one of these three paths against REAL analog-captured audio (as opposed to this port's own
+    clean encoder output) would still pass every existing test. Downgraded from a live gap to a smaller,
+    honestly-scoped residual one.
 
 **COULD — worth doing, low urgency:**
 
