@@ -3198,7 +3198,8 @@ narrow-FSK exposure noted in MUST fix 2's own entry; the Robot 36 tone-selector 
 item 12); the Robot 36/72 step-edge test coverage gap noted in MUST fix 3's own entry above. None of
 these block anything — all are real, honestly documented, deliberately deferred. Remaining SHOULD/COULD/
 NICE-TO-HAVE items from the original Phase 2 findings list are still open. Phase 3 (chain/integration
-audit) still requires TX-side tests first, per the user's own explicit directive (see above).
+audit)'s own TX-side-tests-first prerequisite (user's own explicit directive, see above) is now DONE —
+see "TX-side golden-vector tests wired in" below.
 
 **Explicit prerequisite before Phase 3 (chain/integration audit): build TX-side verification tests and
 confirm them first.** Phase 3's own mandate is to verify real input through the composed chain against
@@ -3263,8 +3264,33 @@ side (set legacy's sample rate to 11025Hz first — mismatched rates trigger a s
 prompt on `File → Play`, defeating the whole point). No rush — fixtures can be wired in individually as
 results come back, without waiting for all 11.
 
-Test count: 501/501 (476 prior + 14 in `FixtureFileFormatTests.cs` + 11 in `TxCaptureFixturesTests.cs`),
-solution-wide build clean.
+### TX-side golden-vector tests wired in — DONE (all 11 modes) — 2026-08-04
+
+All 11 `<mode-id>_TX_RX.bmp` results came back from the user's real legacy install (Wine). New theory
+`LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage` in `GoldenVectorTests.cs` (11 cases) compares
+each source `.bmp` against legacy's own real decode of this port's own encoder output — this is the
+actual test spec/14-roadmap.md's own "Explicit prerequisite before Phase 3" note required: TX output
+verified against a REAL legacy decode, not just this port's own decoder agreeing with itself.
+
+R24 needed special handling, not a plain top-crop: its source `.bmp` is 120 rows (its real transmitted
+row count, `SstvModeRegistry.R24`'s own doc comment) but legacy's saved `_TX_RX.bmp` is the usual 256-row
+canvas with each real row duplicated into 2 consecutive display rows (`Main.cpp:4160-4168`, `R=y*2`). A
+plain `CropToTop` would compare doubled rows against undoubled source rows and misalign 2x — added
+`CropToTopEvenRows` (takes rows 0, 2, 4, ..., 238 of the top 240) to undo the doubling before comparing.
+
+Deltas measured directly via the same temporary-zero-tolerance technique used throughout this session:
+robot-36 3.30, martin-m1 1.53, scottie-s1 1.05, robot-72 3.21, pd90 2.40, rm8 5.15, mn110 2.60, avt 0.86,
+scottie-dx 1.03, mr73 3.22, r24 3.70. All 11 restart-free, correct mode detected first-try. Every one of
+these is BELOW the RX-direction `LegacyOwnDecode_MatchesSourceImage_EstablishesBaselineDelta` numbers for
+the same modes (robot-36 6.99, martin-m1 1.57) despite going through this port's own encoder first — real
+evidence this port's TX output is a valid, accurately decodable transmission to a real legacy receiver.
+Tolerances set to ~2x each measured value (same margin style as the RX baseline's 15.0), still
+comfortably under the ~42.67 corruption floor this gradient-image metric measures elsewhere in this file.
+
+**The "TX-side verification tests, built and confirmed" prerequisite is now fully satisfied.** Phase 3
+(chain/integration audit) can run.
+
+Test count: 512/512 (501 prior + 11 in `GoldenVectorTests.cs`), solution-wide build clean.
 
 ## Phase 2 — Radio layer (no CAT rigs yet)
 

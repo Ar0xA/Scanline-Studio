@@ -20,6 +20,37 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
+## Resume here (2026-08-04, latest) — TX-side golden-vector tests wired in, ALL 11 modes, prerequisite for Phase 3 satisfied
+
+All 11 `<mode-id>_TX_RX.bmp` files came back from the user's real legacy install running under Wine
+(user played each `TxCapture/<mode-id>_TX.mmv` via `File → Play` with legacy's sample rate set to
+11025Hz, per `TxCapture/README.md`). Wired into a new theory test,
+`LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage` in
+`tests/Yoniq.Core.Sstv.Tests/GoldenVectorTests.cs` (11 cases) — compares each source `.bmp` against a
+REAL legacy decode of THIS PORT'S OWN encoder output. This is the actual "TX-side verification tests,
+built and confirmed" gate spec/14-roadmap.md's "Explicit prerequisite before Phase 3" note required
+(see that file's own "TX-side golden-vector tests wired in" entry for full detail) — closes the gap
+where TX only had internal round-trip coverage (this port's encoder decoded by this port's own decoder
+agreeing with itself), the exact failure shape CLAUDE.md's Scottie incident warns about.
+
+R24 needed special handling: its source `.bmp` is 120 rows (its real transmitted row count) but
+legacy's saved `_TX_RX.bmp` is the usual 256-row canvas with each real row duplicated into 2 display
+rows (legacy's own row-doubling display quirk, already documented on `SstvModeRegistry.R24`). Added
+`CropToTopEvenRows` (takes rows 0, 2, 4, ..., 238 of the top 240) instead of reusing the existing
+`CropToTop`, which would have misaligned 2x.
+
+Deltas measured directly (temporary-zero-tolerance technique): robot-36 3.30, martin-m1 1.53,
+scottie-s1 1.05, robot-72 3.21, pd90 2.40, rm8 5.15, mn110 2.60, avt 0.86, scottie-dx 1.03, mr73 3.22,
+r24 3.70 — all restart-free, correct mode first-try, and every one BELOW the RX-direction baseline
+numbers for the same modes despite going through this port's own encoder first. Genuinely good news,
+not just a passing test: real evidence this port's TX output is valid, accurately decodable by a real
+legacy receiver.
+
+Full suite: 512/512 passing, solution-wide build clean. Committed and pushed.
+
+**Phase 3 (chain/integration audit) can now run — its own explicit prerequisite is satisfied.** Not yet
+started this session; next natural step per spec/14-roadmap.md's own plan.
+
 ## Resume here (2026-08-04, latest) — Milestone audit: ALL 3 MUST fixes DONE
 
 After Band 4 closed, ran the milestone-audit playbook (`docs/audit-playbook.md`), scoped to DSP core +
