@@ -2811,6 +2811,205 @@ Test count: 472/472 (468 prior + 4 new: `MakeFilter_OddTap_TrailingSlotStaysZero
 in `HilbertFmDemodulatorTests.cs`, `IntTruncationDivergence_MatchesLegacysExactTwoTruncationChain_WithinMeasuredBound`
 in new `MonoAveragedPairedScanlineDecoderTests.cs`), solution-wide build clean, no DSP behavior change.
 
+## Milestone audit, Phase 1+2 (docs/audit-playbook.md) — 2026-08-04
+
+After Band 1-4 closed and Task #7's 8 golden-vector fixtures landed, ran the milestone-audit playbook,
+scoped down from its generic template to this repo's actual current state (radio/CAT, DI wiring,
+localization, and UI aren't built yet — skipped as units; RX had heavy per-item auditor coverage this
+session already, so Phase 2 effort was weighted toward TX/encode and the cross-cutting cursor mechanism,
+both comparatively under-scrutinized).
+
+**Status: Phase 1 (unit map, done by the orchestrating session directly, no auditor spend) and Phase 2
+(4 batches, fully fanned out) are done. Phase 3 (chain/integration audit) has NOT yet run.** This is
+not a complete audit — Phase 3 is explicitly the part per-function/per-unit checks can't cover, and
+batch D itself found real golden-vector coverage gaps (Scottie DX, MR73, R24 each exercise a code path
+no other fixture does); batch A confirmed TX has zero legacy-decode-verified golden vectors at all
+(round-trip only), so TX chain-verification is fundamentally data-limited without a legacy-binary
+automation path this project doesn't have.
+
+### Phase 1 unit map
+
+| Unit | Files | Legacy ref | Golden vector |
+|---|---|---|---|
+| AGC/level detection | `LevelAgc.cs`, `SyncEnvelopeDetector.cs`, `AfcTracker.cs` | `CLVL`, `sstv.cpp` | shared, all 8 fixtures |
+| Sync/VIS header detection | `VisLockStateMachine.cs`, `SyncIntervalTracker.cs`, `VisHeader.cs` | `sstv.cpp:1889-1973`+ | all 8 |
+| AVT training | `AvtTrainingLockStateMachine.cs`, `PllFmDemodulator.cs` | `sstv.cpp` cases 3-8 | `avt.mmv` |
+| Narrow FSK header | `NarrowFskHeaderDecoder.cs` | `DecodeFSK` | `mn110.mmv` |
+| Picture demodulator | `HilbertFmDemodulator.cs`, `SearchBandpassFilter.cs` | `CHILL`, bandpass | all 8 |
+| RX: RgbSequential (Martin/Scottie/SC2) | `RgbSequentialScanlineDecoder.cs` | `Main.cpp` decode switch | `martin-m1`, `scottie-s1` |
+| RX: YCbCrRobot (Robot 36) | `RobotScanlineDecoder.cs` | same | `robot36` |
+| RX: YCbCrSequential (Robot72/R24) | `YCbCrSequentialScanlineDecoder.cs` | same | `robot72` |
+| RX: YCbCrLinePaired (PD/MP) | `YCbCrLinePairedScanlineDecoder.cs` | same | `pd90` |
+| RX: MonoAveragedPaired (RM8/RM12) | `MonoAveragedPairedScanlineDecoder.cs` | same | `rm8` |
+| TX: all 5 encoder families + orchestrator | `AnalogFmSstvEncoder.cs` + 5 `*ScanlineEncoder.cs` | `Main.cpp`'s `Line*`, `CSSTVMOD` | **none** — round-trip only |
+| Cross-cutting buffer/cursor/restart | `AnalogFmSstvDecoder.cs` (`TrimBuffers`/`Commit`/`EndOfImage`/`AbandonInProgressImage`) | `sstv.cpp` state machine | indirectly, via the above |
+
+### Phase 2 batches (all 4 run, `auditor` subagent, isolated context each)
+
+**Batch A — TX encoders vs legacy.** Verdict: EQUIVALENT-WITH-RISKS. Per-line channel order,
+sync/separator placement, per-channel durations, and line counts CONFIRMED correct for all 6 families /
+all 43 modes against the real `Line*` functions — the historical Scottie failure class (right duration,
+wrong order/sync placement) does not recur anywhere. VIS/header/AVT-preamble/narrow-FSK-packet TX all
+CONFIRMED byte/bit-exact.
+
+**Batch B — buffer/cursor/restart mechanism.** Verdict: EQUIVALENT-WITH-RISKS. `Stop()`/`EndOfImage()`
+parity with legacy CONFIRMED exact (resets precisely the same state legacy's own `Stop()` does, no more
+no less). Cursor enumeration CONFIRMED complete (found several the task's own framing didn't name, all
+verified clean). Every `RemoveRange` physical-length invariant CONFIRMED to hold.
+
+**Batch C — AVT + narrow-FSK interaction.** Verdict: EQUIVALENT-WITH-RISKS. S17's own closing claim
+(training-entry imprecision doesn't affect final accuracy) independently RE-DERIVED from source and
+CONFIRMED, not just re-trusted. Narrow-FSK's lack of a PLL-style warm-up gap CONFIRMED (no filter/phase
+state to warm up, unlike AVT's PLL).
+
+**Batch D — RX decoder family cross-check.** Verdict: **NOT EQUIVALENT**. Mode→`ColorEncoding` mapping
+CONFIRMED exact 1:1 against legacy's real RX switch partition for every one of legacy's six branches.
+Peak-pick-vs-bare read mode CONFIRMED correct per family, not by analogy, at every legacy call site.
+Channel order for the two default-branch (untested) mode families (Pasokon, MC) CONFIRMED from their
+real TX generators, not inferred.
+
+### Findings, prioritized (MUST/SHOULD/COULD/NICE-TO-HAVE)
+
+**MUST — confirmed, live-reachable bugs, fix soonest:**
+
+1. **[D] Pixel-pitch trim accumulator drift.** Independently confirmed by the orchestrating session
+   directly against `Main.cpp:4454-4503`, not just trusted from the auditor. Legacy's segment
+   *transitions* (`m_CG`/`m_CB` etc.) use the full, untrimmed nominal channel span; only the
+   pixel-index-*within*-a-segment mapping (`x = ps*Width/m_KSS`) uses the trimmed divisor, and any
+   leftover time at a segment's tail is simply discarded in legacy, never folded forward. This port's
+   decoders instead accumulate `idealSamplesSoFar` by the *trimmed* total across each scan segment
+   (`RgbSequentialScanlineDecoder.cs:25-30` and the identical pattern in the other 4 decoders), so every
+   scan segment after the first starts early — compounding across channels. Measured magnitude (per
+   batch D): PD90 Y2 shifts by up to 4.0px, Martin M1/Scottie S1 B/R channels by 1.33/2.67px, Pasokon
+   ~1.33px/segment. Unaffected: RM8/RM12 (single scan segment) and "group C" modes (trim factor exactly
+   1.0). Fixtures pass today because their 15.0-25.0 average-delta tolerance absorbs a few pixels of
+   channel misregistration — the exact "round-trip + golden vector both agree while wrong" shape
+   CLAUDE.md §4 warns about, since the trim was validated on the RX side alone (Piece 11) with nothing
+   pinning absolute segment-start positions against legacy's real untrimmed boundaries.
+2. **[C] `TryNarrowFskScan` is a whole-buffer pre-pass, not a per-sample interleave.** Independently
+   confirmed by the orchestrating session directly (`AnalogFmSstvDecoder.cs:1352-1365`: a complete
+   internal `for` loop from `_narrowFskProcessedUpTo` to `bound`, called and fully resolved BEFORE the
+   sync-bypass/VIS-lock lockstep loop takes even one step, `:1804-1809`). On a bulk `PushSamples`
+   containing an earlier other-mode transmission followed later by a narrow (MN/MC) one, the narrow scan
+   sweeps the whole buffer and can commit the LATER transmission before the sync-bypass/VIS-lock loop
+   ever examines the EARLIER one's samples — re-introducing, for the narrow-FSK path specifically, the
+   exact bug class the `m_sint1` decoder-ordering fix (piece 7d) was written to eliminate. The mid-image
+   caller (bounded to ~one line via `TryVisLockStateMachine`) has the same shape but is low-impact there;
+   the pre-lock bulk-push caller is the real exposure.
+3. **[B] AVT locked images never trim at all.** `_afcProcessedUpTo`/`_slantProcessedUpTo` are the
+   locked-branch watermark's two terms (`AnalogFmSstvDecoder.cs:883`), but AVT is the one mode whose AFC
+   and Slant trackers are permanently null (`InitializeAfc`/`InitializeSlant` return early for AVT,
+   `:2698-2704`/`:2796-2807`), so neither cursor ever advances once an AVT image locks. AVT is ~90s/image
+   (240 lines × 375ms) — `_bufferBase` stays pinned at the lock anchor for the whole image, retaining
+   ~56MB@11025Hz/~225MB@44100Hz per AVT image. Same failure class Band-1 item S2 fixed pre-lock,
+   re-opened here on the locked side for AVT specifically. Not caught by any existing test — the only
+   AVT buffer-bound test measures peak-vs-final AFTER the fixture's own final `EndOfImage` already
+   trimmed everything back down.
+
+**SHOULD — real, worth doing soon, bounded or conditional impact:**
+
+4. **[A] TX frequency-mapping drops legacy's two integer truncations.** Legacy's `ColorToFreq`/`GetRY`
+   chain truncates twice (int arithmetic); every port TX encoder maps in unrounded doubles. Net: a
+   systematic (not random) ~0-4Hz, mean ~2Hz, one-sided-high bias on every transmitted pixel — visually
+   nil, but it means true bit-exact TX parity against a real legacy decode is unattainable until this is
+   modeled (two `Math.Floor`s), and it's the reason TX golden-vector capture (if ever done) wouldn't
+   match byte-for-byte even with a perfectly-timed encoder.
+5. **[A] `OutHEAD` pre-VIS tone burst never emitted** (800ms normal / 400ms narrow, `Main.cpp:7270-7292`,
+   called unconditionally before VIS at legacy's shipped `m_VOX=0` default). Not a decode blocker (a real
+   legacy RX still locks on the VIS leader), but a real unported TX segment with no
+   `docs/removed-features.md` entry and no code comment — a CLAUDE.md §2 process-rule gap, same class as
+   S27's CQ100 gap before it was fixed.
+6. **[C] Mid-image narrow restart leaves ~1 line with a stale demod-cache config.** When a non-narrow
+   locked image is abandoned mid-image for a narrow-mode commit (S8), `_bandpassFilteredSamples`
+   (`useLocked`) and `_demodulatedFrequencies` (`isNarrow`) are both per-index-frozen caches already
+   driven ahead by the abandoned line's own decode — so roughly the first line of the NEW narrow image
+   is stuck with the OLD mode's `useLocked=true`/`isNarrow=false` config, meaning S9's own narrow Hilbert
+   retune doesn't apply to it. Bounded (~1 line), but confirmed, not just risked — neither S8's nor S9's
+   own individual review was positioned to see this, since it only exists at their intersection.
+7. **[C] Narrow-FSK detection is fully suspended for the whole ~7.1s AVT-training window.** Legacy calls
+   `DecodeFSK` unconditionally throughout AVT training and would actually abort training on a valid
+   MN/MC packet found during it; this port's `TryDecodeHeader` short-circuits to AVT resolution while
+   `_avtTrainingPending`, so a narrow packet overlapping an AVT header is silently missed. Not documented
+   anywhere in the S7/S8 comments.
+8. **[B] Pre-lock watermark's `<=` should be strict `<`.** `FilteredRawSampleAt` reads
+   `_rawSamples[Rel(index-1)]`; if a trim ever left `_bufferBase == _bandpassFilteredProcessedUpTo`, the
+   next fill would throw. Currently unreachable — protected only by an undocumented numeric coupling
+   (`preLockRetentionSamples` ≈1.3s exceeds the 380ms narrow-discriminator window that's the actual
+   driver) that nothing enforces or comments on.
+9. **[B] `TryInterleavedHeaderScan`'s entry invariant holds by reachability, not construction.** S7's
+   `AbandonInProgressImage()` created a second way for `_mode` to become null without going through
+   `EndOfImage()` (which is what normally re-syncs `_syncBypassProcessedUpTo`/`_visLockProcessedUpTo`).
+   Currently safe only because that call site always leaves `_avtTrainingPending` true, short-circuiting
+   the scan entirely until a guaranteed `Commit()`. A future "abandon without committing" path would
+   throw.
+10. **[B] `PixelSampleReader`'s `Math.Clamp` silently substitutes the boundary sample** for an
+    already-trimmed index, at the one call site that actually writes pixels — converting what `Rel()`'s
+    throw elsewhere in the file treats as a loud bug into a silent one, at the highest-consequence reader.
+    Safe today (locked watermark stays 2000 samples of margin back), but the inconsistency itself is a
+    risk.
+11. **[D] Luma `Limit256` clamp missing in 3 of 5 RX decoders** (Robot36, YCbCrSequential,
+    YCbCrLinePaired don't clamp pre-`YCtoRGB`; RgbSequential and MonoAveragedPaired do, matching their
+    own legacy sites) — a real cross-family inconsistency, not a uniform policy choice. Only bites on
+    out-of-band/overdriven input, which no existing fixture exercises.
+12. **[D] Robot 36's tone-selector reads ~1ms later than legacy's own decisive window**, inside the
+    demodulator's settling region toward the following porch — correct on the clean synthetic/fixture
+    signal, fragile (biased toward the ambiguous-band toggle fallback) on a real noisy one.
+13. **[D] Golden-vector coverage gaps: Scottie DX, MR73, R24.** Each is the ONLY mode exercising a
+    specific code path no other fixture reaches (Scottie DX: the sole `NeverPeakPicks` mode; MR73: the
+    sole mode where luma/chroma trim by different divisors; R24: the sole mode using legacy's row-
+    doubling substitution). A bug specific to any of these three paths would pass every existing test.
+    Needs new fixture capture — bottlenecked on the user's own time with the real legacy binary, same as
+    Task #7.
+
+**COULD — worth doing, low urgency:**
+
+14. **[D] Line-paired chroma trim is generalized from the sequential family's own rule** (`IsChromaChannel`
+    routes ALL families' RY/BY through `Ks2sTrimFactor`) rather than read from `LinePaired`'s own legacy
+    branch, which actually uses `m_KSS`. Numerically harmless today (the two factors are equal in every
+    currently-reachable group), but would silently break if a line-paired mode ever landed in the one
+    group where they differ. Likely gets touched incidentally while fixing MUST item 1 above.
+15. **[C] Three doc comments disagree about whether `_narrowFskProcessedUpTo` is ever re-anchored** —
+    `AnalogFmSstvDecoder.cs:333-334` and `:1346` both still claim it's never jumped; `:1984`/`:1999`/
+    `:2179` correctly show it being fast-forwarded. Doc-only fix, zero behavior implication.
+16. **[B] `InitializeSlant` uses a bare assignment where `InitializeAfc` deliberately uses `Math.Max`** —
+    an undocumented asymmetry. Harmless today (fresh tracker + fresh detector on every re-init, no
+    in-place buffer mutation the way AFC's correction has), but worth a comment or a matching guard.
+
+**NICE-TO-HAVE — cosmetic / near-zero impact:**
+
+17. [A] MR/ML "hold" segments emit 1900Hz instead of holding the last pixel's real frequency — ~1
+    sample, duration preserved, already documented as an approximation.
+18. [A] AVT's trailing blip is a literal tone (holds phase) where legacy writes 3 samples of true zero.
+19. [A] TX segment-boundary rounding uses `Math.Round`; legacy's real running accumulator truncates —
+    both are drift-free running accumulators, differing by ≤1 sample at any single boundary.
+20. [A] TX output isn't filtered/scaled the way legacy's real BPF+`m_outgain` pipeline is — only matters
+    if TX golden vectors are ever captured from real legacy audio.
+21. [A] RM8/RM12's TX luma average is kept as `double`; legacy averages already-truncated `int`s — same
+    class as MUST-adjacent finding 4, same fix if ever addressed.
+22. [A] TX footer trailing-carrier length uses the port's own (arguably saner) TX-mode duration where
+    legacy quirkily uses the RX-mode's; worth one documentation line, not a behavior change.
+23. [B] `FirstLockedBandpassIndex` never resets across images on a multi-image stream — diagnostic-only
+    field, no functional consumer.
+24. [B] `_afcBoundSample` caps the locked watermark at the image's nominal extent, pinning ~0.1% of a
+    slow-clock image's tail — bounded, near-zero.
+25. [C] AVT's never-locks fallback timeout fires ~9ms early relative to `AvtTrainingLockStateMachine`'s
+    own internal timeout, dropping a small margin term legacy's own formula includes.
+26. [C] `AvtTrainingLockStateMachine.ProcessSample` returns on the exact sample its counter hits zero;
+    legacy's own `Start()` call happens one sample later. ~1 sample.
+
+**Verified, no action needed** (recorded so nobody re-investigates): batch A's `YCbCr.FromRgb` missing
+`LimitRGB`-equivalent clamp (proven unreachable — Y/RY/BY extremes for any real 8-bit RGB input never
+exceed [0,255]); batch C's confirmation that narrow-FSK has no AVT-PLL-style warm-up-gap concern of its
+own (no filter/phase state); batch C's independent re-derivation confirming S17's original closing
+argument holds exactly (budget arithmetic matches legacy's real case-3-through-8 timing to sub-ms
+precision).
+
+### Next steps
+
+MUST items 1-3 not yet fixed (all confirmed, not yet actioned as of this entry). Phase 3 (chain/
+integration audit) not yet run. No commits from this milestone-audit entry itself — documentation only,
+capturing all findings before any fix work begins so nothing gets lost regardless of prioritization.
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.

@@ -20,6 +20,42 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
+## Resume here (2026-08-04, latest) — Milestone audit Phase 1+2 done, 3 MUST bugs found, NOT YET FIXED
+
+After Band 4 closed, ran the milestone-audit playbook (`docs/audit-playbook.md`), scoped to DSP core +
+TX/RX codec paths (radio/CAT/DI/localization/UI don't exist yet). Phase 1 (unit map) done directly by
+the orchestrating session; Phase 2 (4 batches, fanned out to `auditor`) all returned. **Phase 3
+(chain/integration audit) has NOT run yet.**
+
+**3 confirmed MUST-fix bugs, all independently re-verified against legacy source by the orchestrating
+session (not just trusted from the auditor), NONE fixed yet:**
+1. **Pixel-pitch trim accumulator drift** — most multi-segment RX decoders start each scan segment
+   after the first slightly early (compounds up to ~4px by the last channel); confirmed directly
+   against `Main.cpp:4454-4503`. Affects `RgbSequentialScanlineDecoder`/`RobotScanlineDecoder`/
+   `YCbCrSequentialScanlineDecoder`/`YCbCrLinePairedScanlineDecoder` (not RM8/RM12, single segment; not
+   "group C" modes, trim=1.0).
+2. **`TryNarrowFskScan` whole-buffer pre-pass** (`AnalogFmSstvDecoder.cs:1352-1365`) — on a bulk push
+   with an earlier non-narrow transmission followed by a later narrow one, the narrow scan can commit
+   the later transmission first, skipping the earlier one. Re-introduces the exact bug class the
+   `m_sint1` decoder-ordering fix (piece 7d) was written to eliminate, just for narrow-FSK.
+3. **AVT images never trim their buffers** — `InitializeAfc`/`InitializeSlant` return early for AVT
+   (both trackers null), so the locked watermark never advances for AVT's whole ~90s image; ~56-225MB
+   retained per AVT image, same failure class Band-1 item S2 already fixed pre-lock.
+
+None of these three need TX golden vectors or new fixtures to fix/verify — all independently testable
+now (pixel-pitch trim: existing RX golden vectors should improve; ordering bug: synthetic bulk-push
+test; AVT buffer growth: a buffered-sample-count probe mid-image).
+
+**Also documented, not yet actioned**: ~10 SHOULD items (TX frequency-truncation bias, missing
+`OutHEAD` TX segment + its `removed-features.md` entry, a mid-image narrow-restart 1-line stale-cache
+bug, narrow-FSK suspended during AVT training, 3 buffer-mechanism fragility risks, missing luma clamp
+in 3/5 RX decoders, Robot 36 tone-selector timing, 3 golden-vector coverage gaps: Scottie DX/MR73/R24)
+plus ~13 COULD/NICE-TO-HAVE items. **Full findings list, all prioritized, all reasoning: `spec/14-roadmap.md`,
+search "Milestone audit, Phase 1+2"** — read that before doing any fix work, don't re-derive from scratch.
+
+**Next**: user is deciding how to sequence the 3 MUST items. Phase 3 (chain audit) still pending after
+that. No code changes from the audit itself — this round was pure investigation + documentation.
+
 ## Resume here (2026-08-04, later) — Band 3 AND Band 4 both fully DONE and COMMITTED
 
 S31 done (`b5a5cb4`). Band 3 (8 items: S31 already counted separately, then S7-S17 family) done and
