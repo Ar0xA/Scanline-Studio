@@ -57,8 +57,9 @@ public class VisHeaderTests
         // untouched by this piece) inline formulas, so a future edit to either method's ceiling
         // can't silently desync from these shared constants without a test failing.
         //
-        // Normal (7-bit): leader*2(600) + break(10) + retryMargin(200) + confirmHold(15) + 7*bit(210) = 1035
-        Assert.Equal(1035.0, VisHeader.NormalSearchCeilingMs, precision: 6);
+        // Normal (8-bit as of S10 -- FirstByteBitCount, 7 data bits + parity, spec/14-roadmap.md):
+        // leader*2(600) + break(10) + retryMargin(200) + confirmHold(15) + 8*bit(240) = 1065
+        Assert.Equal(1065.0, VisHeader.NormalSearchCeilingMs, precision: 6);
         // Extended (16-bit): 600 + 10 + 200 + 15 + 16*30(480) = 1305
         Assert.Equal(1305.0, VisHeader.ExtendedSearchCeilingMs, precision: 6);
         // Narrow: guard*2(200) + bit*(1+24)(550) + retryMargin(200) = 950

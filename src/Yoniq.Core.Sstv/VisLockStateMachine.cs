@@ -77,7 +77,6 @@ internal sealed class VisLockStateMachine
     private const double ConfirmLockDurationMs = 15; // sstv.cpp:1948
     private const double BitDurationMs = 30; // sstv.cpp:1965/1986 (case1's post-lock reset, case2/9's per-bit window)
     private const double VerifyDurationMs = 30; // sstv.cpp:1965 reused for case3's own m_SyncTime (2131-2133 reads the same 30ms-window pattern)
-    private const int EscapeVisByte = 0x23; // sstv.cpp:2066
 
     private enum LockState { Search, ConfirmLock, DecodeVis, DecodeExtendedVis, Verify }
 
@@ -233,7 +232,7 @@ internal sealed class VisLockStateMachine
 
                     if (_state == LockState.DecodeVis)
                     {
-                        if (_visData == EscapeVisByte) // sstv.cpp:2066-2070
+                        if (_visData == VisHeader.ExtendedVisEscapeCode) // sstv.cpp:2066-2070 -- S10 fix: shared with TryDecodeVisHeader's own comparison, not an independently-drifting local copy
                         {
                             _state = LockState.DecodeExtendedVis;
                             _visData = 0;
