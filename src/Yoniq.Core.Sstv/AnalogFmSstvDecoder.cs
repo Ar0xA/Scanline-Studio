@@ -880,7 +880,39 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // hard-gated behind !m_Sync, matching legacy) until EndOfImage overwrites it fresh --
             // including it in this min() would pin the watermark for the whole image instead of
             // letting it advance as decoding progresses.
-            watermark = Math.Min(_afcProcessedUpTo, _slantProcessedUpTo);
+            //
+            // Milestone-audit MUST fix: _afcProcessedUpTo/_slantProcessedUpTo are ONLY included when
+            // their tracker actually exists. AVT is the one mode where InitializeAfc/InitializeSlant
+            // both return early with _afcTracker/_slantTracker left null (AFC/Slant are legacy
+            // features AVT doesn't have -- two SEPARATE `mode != smAVT` guards, not one: AFC's is
+            // `sstv.cpp:2258/2263/2267` inside all three m_Type branches' `if(m_afc && m_CurMax>16 &&
+            // SSTVSET.m_Mode!=smAVT) SyncFreq(...)`; Slant/AutoStop's is `Main.cpp:3886`'s
+            // `if((m_AutoStop||m_AutoSync||KRSA->Checked) && (SSTVSET.m_Mode!=smAVT))` -- code-level
+            // review correction, an earlier version of this comment cited only the Slant guard for
+            // both) -- ApplyAfcCorrections/
+            // ApplySlantTracking both then return immediately every call without ever advancing their
+            // own cursor again, so for AVT specifically these two terms are permanently frozen at
+            // whatever they were assigned once, at commit time, not "stalled" but simply inapplicable.
+            // Unconditionally including them (as this used to) meant an AVT image's own buffer NEVER
+            // trimmed for the image's whole ~90s duration (240 lines x 375ms), retaining tens to
+            // hundreds of MB across all 9 buffers depending on sample rate -- the exact unbounded-
+            // growth failure class Band-1 item S2 already fixed pre-lock, silently reopened here on
+            // the locked side for AVT. Mirrors the pre-lock branch's own already-established pattern
+            // for these same two cursors (see its own comment: "AFC/Slant don't exist yet ... excluded
+            // here ... because there's nothing to include") -- the defensive stall-protection property
+            // this comment describes is preserved exactly for every OTHER mode, where the tracker is
+            // real and a genuine stall would (correctly) still pin the watermark.
+            watermark = TotalSamplesReceived;
+            if (_afcTracker is not null)
+            {
+                watermark = Math.Min(watermark, _afcProcessedUpTo);
+            }
+
+            if (_slantTracker is not null)
+            {
+                watermark = Math.Min(watermark, _slantProcessedUpTo);
+            }
+
             watermark = Math.Min(watermark, _visLockProcessedUpTo);
 
             // S8 fix: included here too, unlike _syncBypassProcessedUpTo above -- _narrowFskProcessedUpTo
@@ -2788,7 +2820,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     }
 
     // Direct port of Auto Slant's setup (InitAutoStop, Main.cpp:3801-3862) -- excluded for AVT, same
-    // as AFC (Main.cpp:3886's `mode != smAVT` guard covers both features via the same outer gate).
+    // as AFC, but via its own SEPARATE guard (Main.cpp:3886's `mode != smAVT`, not the same gate AFC
+    // uses -- code-level review correction: an earlier version of this comment claimed "the same
+    // outer gate," but AFC's own real exclusion is `sstv.cpp:2258/2263/2267`'s
+    // `m_afc && m_CurMax>16 && mode!=smAVT`, a different guard in a different function).
     // See SlantTracker's doc comment for what's deliberately not ported (Auto Stop, Auto Sync, and
     // retroactive re-decode of already-buffered lines) and why the math itself still is.
     private void InitializeSlant(SstvModeDefinition mode)
