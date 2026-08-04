@@ -161,6 +161,24 @@ public class GoldenVectorTests
         // source measures at (see robot-36/martin-m1's own corruption-floor note further down in this
         // file -- not independently re-measured per new mode, since all six fixtures share the same
         // gradient construction and comparable dimensions).
+        //
+        // Re-measured again after the milestone-audit MUST fix 3 (spec/14-roadmap.md, "Milestone
+        // audit, Phase 1+2" -- the pixel-pitch trim accumulator drift affecting
+        // RgbSequentialScanlineDecoder/RobotScanlineDecoder/YCbCrSequentialScanlineDecoder/
+        // YCbCrLinePairedScanlineDecoder's own scan-segment boundary placement) together with MUST
+        // fix 2 (TryNarrowFskScan interleaving, which can shift narrow-mode anchor precision):
+        // martin-m1 1.263 -> 0.44 (big improvement), robot-36 14.476 -> 16.19 (worsened slightly,
+        // same accepted-tradeoff category as Piece A's own robot-36 note above -- a real, honestly
+        // recorded consequence of a genuine correctness fix, not chased to zero), scottie-s1 2.74 ->
+        // 1.92 (improved), robot-72 13.46 -> 14.57 (worsened slightly, same category), pd90 1.99 ->
+        // 0.96 (improved), rm8 13.76 -> 13.76 (UNCHANGED, exactly as predicted -- MonoAveragedPaired's
+        // single scan segment per line is structurally immune to this fix, confirmed not just
+        // assumed), mn110 12.79 -> 2.39 (big improvement -- NOT expected from fix 3 alone, since
+        // MN110 is a "group C" mode with trim factor exactly 1.0, making fix 3 a numeric no-op for
+        // it; plausibly attributable to fix 2's own improved narrow-FSK anchor precision instead, not
+        // independently isolated), avt 5.78 (was 5.79, unchanged within measurement noise). No
+        // tolerance changes needed -- every measured value stays comfortably within its existing
+        // bound.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 15.0,

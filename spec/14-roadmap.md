@@ -2953,7 +2953,15 @@ real TX generators, not inferred.
     out-of-band/overdriven input, which no existing fixture exercises.
 12. **[D] Robot 36's tone-selector reads ~1ms later than legacy's own decisive window**, inside the
     demodulator's settling region toward the following porch — correct on the clean synthetic/fixture
-    signal, fragile (biased toward the ambiguous-band toggle fallback) on a real noisy one.
+    signal, fragile (biased toward the ambiguous-band toggle fallback) on a real noisy one. **MUST
+    fix 3's code-level review found this got MORE relevant, not less**: correcting the luma segment's
+    own boundary (MUST fix 3) moved the tone-selector's read point 0.37ms later than before, so it now
+    lands on the exact LAST sample of the selector segment — right at the boundary with the 1900Hz
+    porch that follows (1900Hz being exactly the ambiguity midpoint, worst case for contamination).
+    Correct today (robot-36 still decodes with restarts=0), safe if the demodulator's own group delay
+    is non-negative (not traced), but this is now the one read MUST fix 3 pushed right up against a
+    segment boundary. Cheap hardening suggested but not applied: read at `endSample - 1` minus a small
+    margin, or bound it by legacy's own `m_CG` decisive-window end rather than the segment's full end.
 13. **[D] Golden-vector coverage gaps: Scottie DX, MR73, R24.** Each is the ONLY mode exercising a
     specific code path no other fixture reaches (Scottie DX: the sole `NeverPeakPicks` mode; MR73: the
     sole mode where luma/chroma trim by different divisors; R24: the sole mode using legacy's row-
@@ -3114,11 +3122,83 @@ meantime.
 
 Test count: 474/474 (473 prior + 1 new), solution-wide build clean.
 
+### MUST fix 3 — pixel-pitch trim accumulator drift, DONE
+
+The biggest and most invasive of the three MUST fixes, touching 4 decoder files identically. Legacy's
+real per-channel scan-segment BOUNDARIES (`Main.cpp:4454-4503`'s `ps < m_KS`/`ps < m_CG`/`ps < m_CB`
+checks) are defined using the mode's full, UNTRIMMED nominal channel span. Only the pixel-index-
+WITHIN-a-segment mapping (`x = ps*Width/m_KSS`, `ps` already relative to the segment's own start)
+uses the TRIMMED divisor. Any leftover time at a segment's tail (once `x` would reach `Width`) is
+simply never assigned a pixel in legacy — discarded, not folded into where the next segment starts.
+`RgbSequentialScanlineDecoder`/`RobotScanlineDecoder`/`YCbCrSequentialScanlineDecoder`/
+`YCbCrLinePairedScanlineDecoder` instead accumulated their running position by the TRIMMED total
+across each whole scan segment, so every segment after the first started early — compounding across
+channels.
+
+**Fix**: in each of the 4 files, capture `segmentStartSample = idealSamplesSoFar` BEFORE the per-pixel
+loop; walk pixels using a separate `pixelWalk` accumulator (the trimmed per-pixel duration) relative
+to that start; after the loop, set `idealSamplesSoFar = segmentStartSample + scan.DurationMs / 1000.0
+* sampleRate` (the segment's FULL untrimmed duration), discarding the trimmed pixel walk's own
+leftover exactly as legacy's own `x >= Width` boundary does. `RobotScanlineDecoder.cs`'s fix lives in
+its shared `DecodePixels` helper (`ref double idealSamplesSoFar`), used for both the luma and chroma
+scan segments. `MonoAveragedPairedScanlineDecoder.cs` (RM8/RM12) deliberately NOT touched — single
+scan segment per line, structurally immune (confirmed by measurement: rm8's own golden-vector delta
+was numerically unchanged) — a one-line comment added there instead, flagging that the bug would
+return if a trailing segment were ever added to that family.
+
+**Golden-vector re-measurement** (temporary zero-tolerance technique, together with MUST fix 2's own
+narrow-anchor-timing change): martin-m1 1.263→0.44 (big improvement), robot-36 14.476→16.19 (worsened
+slightly, same accepted-tradeoff category as an earlier Piece A finding — a real, honestly recorded
+consequence of a genuine correctness fix, not chased to zero), scottie-s1 2.74→1.92 (improved),
+robot-72 13.46→14.57 (worsened slightly, same category), pd90 1.99→0.96 (improved), rm8 13.76→13.76
+(UNCHANGED, confirming `MonoAveragedPaired`'s immunity directly), mn110 12.79→2.39 (improved — NOT
+attributed to this fix, since MN110 is a "group C" mode with trim factor exactly 1.0, a mathematical
+no-op for it; attributed to MUST fix 2 instead), avt 5.78 (was 5.79, unchanged). No tolerances needed
+changing.
+
+**New dedicated test file** `PixelPitchSegmentBoundaryTests.cs`: two isolated tests using synthetic
+hard step-edge images (unlike the real `.mmv` fixtures' smooth gradients, a sharp edge makes pixel-
+column drift directly measurable, isolated from AGC/noise). Martin M1's R channel (third of three scan
+segments, compounding drift from both G and B before it) and PD90's Y2 channel (fourth of four
+segments, the single worst-case drift magnitude among all affected decoders). **Confirmed to
+discriminate the bug directly**: reverting the fix moved the detected edge column from the true 160 to
+165 for both (a measured 5px systematic shift); restored, Martin M1 lands at 162 (2px off) and PD90 at
+161 (1px off), both within the ordinary-noise tolerance.
+
+**Attempted, not committed**: dedicated step-edge tests for `RobotScanlineDecoder`/
+`YCbCrSequentialScanlineDecoder` too, to close a code-level-review-flagged coverage gap. Investigation
+finding worth recording: Robot 72's chroma segments are only 69ms wide across the full 320-pixel width
+(~2.4 samples/pixel at 11025Hz) vs. Martin M1's/PD90's own ~5-6 samples/pixel — a sharp step edge on a
+channel this narrow is dominated by ordinary envelope-detector settling smear (the same real-time delay
+spans far more pixels when each pixel represents so little time), not by this fix's own segment-start
+placement. A correct test for these two families needs a differential (pre-fix-vs-post-fix column
+shift) design, not an absolute-position check — out of scope for this pass, tracked as a SHOULD-level
+follow-up rather than silently dropped.
+
+**Code-level review**: EQUIVALENT, ready to commit. Independently cross-checked the fix's whole premise
+— that `scan.DurationMs` really is legacy's real untrimmed nominal span — against `CSSTVSET::SetSampFreq`
+formulas for 7 different modes (MRT1, SCT1, R36, R72, PD90, AVT, MR73), all exact matches. Verified the
+Robot `ref`-threading composes correctly end-to-end (chroma now starts at exactly legacy's `m_SB`, was
+2.7px early). Verified TX independently confirms the trimmed-pitch/untrimmed-boundary asymmetry is
+real and RX-only (TX places segments at flat untrimmed pitch, no trim at all). Two real risks found and
+addressed: (1) the Robot 36 tone-selector read-timing risk, now folded into the existing SHOULD item 12
+above with the fix's own specific consequence documented; (2) the test coverage gap for Robot 36/72,
+investigated (see "attempted, not committed" above) and tracked rather than silently left. Several nits
+fixed directly: `MonoAveragedPairedScanlineDecoder.cs`'s own immunity now has a guarding comment; the
+two committed tests' tolerances tightened and their real measured values recorded in-comment instead of
+left implicit.
+
+Test count: 476/476 (474 prior + 2 new, both in `PixelPitchSegmentBoundaryTests.cs`), solution-wide
+build clean.
+
 ### Next steps
 
-MUST items 1-2 fixed and committed (see above). MUST item 3 not yet fixed. Also tracked, not yet
-actioned: the deferred `TryVisLockStateMachine` narrow-FSK exposure noted in MUST fix 2's own entry
-above.
+**All 3 MUST fixes are now DONE.** Also tracked, not yet actioned: the deferred `TryVisLockStateMachine`
+narrow-FSK exposure noted in MUST fix 2's own entry; the Robot 36 tone-selector read-timing risk (SHOULD
+item 12); the Robot 36/72 step-edge test coverage gap noted in MUST fix 3's own entry above. None of
+these block anything — all are real, honestly documented, deliberately deferred. Remaining SHOULD/COULD/
+NICE-TO-HAVE items from the original Phase 2 findings list are still open. Phase 3 (chain/integration
+audit) still requires TX-side tests first, per the user's own explicit directive (see above).
 
 **Explicit prerequisite before Phase 3 (chain/integration audit): build TX-side verification tests and
 confirm them first.** Phase 3's own mandate is to verify real input through the composed chain against

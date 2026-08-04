@@ -20,13 +20,14 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-04, latest) — Milestone audit: MUST fixes 1-2 DONE, fix 3 in progress
+## Resume here (2026-08-04, latest) — Milestone audit: ALL 3 MUST fixes DONE
 
 After Band 4 closed, ran the milestone-audit playbook (`docs/audit-playbook.md`), scoped to DSP core +
 TX/RX codec paths (radio/CAT/DI/localization/UI don't exist yet). Phase 1 (unit map) done directly by
 the orchestrating session; Phase 2 (4 batches, fanned out to `auditor`) all returned, finding 3 confirmed
-MUST-fix bugs. **Phase 3 (chain/integration audit) has NOT run yet** — user's explicit directive: build
-and verify TX-side tests first (see below), do not skip straight to it.
+MUST-fix bugs — **all 3 are now fixed, tested, code-reviewed, and ready to commit.** **Phase 3
+(chain/integration audit) has NOT run yet** — user's explicit directive: build and verify TX-side tests
+first, do not skip straight to it.
 
 **MUST fixes, all independently re-verified against legacy source by the orchestrating session (not
 just trusted from the auditor):**
@@ -34,19 +35,29 @@ just trusted from the auditor):**
    `InitializeSlant` return early for AVT (both trackers null), so the locked watermark never advanced
    for AVT's whole ~90s image. Fixed by conditionally excluding these two watermark terms only when
    their tracker is null, mirroring an already-established pre-lock pattern. Code-level review clean.
-2. **`TryNarrowFskScan` whole-buffer pre-pass — DONE, ready to commit.** On a bulk push with an earlier
-   non-narrow transmission followed by a later narrow one, the narrow scan could commit the later
+2. **`TryNarrowFskScan` whole-buffer pre-pass — DONE, committed (`cd9a05a`).** On a bulk push with an
+   earlier non-narrow transmission followed by a later narrow one, the narrow scan could commit the later
    transmission first, skipping the earlier one entirely — confirmed by reverting the fix and observing
    `ModeDetected` drop from 2 events to 1. Fixed by interleaving narrow-FSK's own scan per-sample with
    the sync-bypass/VIS-lock loop instead of letting it run to completion first. Code-level review found
    a real secondary risk (the fix newly activates a previously-accidentally-muted false-positive-restart
    exposure at a SEPARATE, lower-priority call site) — deliberately deferred, documented, guarded by a
    new `Assert.Equal(0, restartCount)` test assertion rather than silently absorbed.
-3. **Pixel-pitch trim accumulator drift — NOT YET FIXED, in progress.** Most multi-segment RX decoders
-   start each scan segment after the first slightly early (compounds up to ~4px by the last channel);
-   confirmed directly against `Main.cpp:4454-4503`. Affects `RgbSequentialScanlineDecoder`/
-   `RobotScanlineDecoder`/`YCbCrSequentialScanlineDecoder`/`YCbCrLinePairedScanlineDecoder` (not RM8/
-   RM12, single segment; not "group C" modes, trim=1.0).
+3. **Pixel-pitch trim accumulator drift — DONE, ready to commit.** The biggest of the three, touching 4
+   decoder files identically. Multi-segment RX decoders started each scan segment after the first
+   slightly early (measured, not assumed: a real 5px systematic shift on a synthetic step-edge test,
+   confirmed by reverting the fix); confirmed directly against `Main.cpp:4454-4503`. Fixed by tracking
+   each scan segment's own start position separately from its trimmed intra-segment pixel walk, then
+   advancing by the segment's FULL untrimmed duration afterward. `RgbSequentialScanlineDecoder`/
+   `RobotScanlineDecoder`/`YCbCrSequentialScanlineDecoder`/`YCbCrLinePairedScanlineDecoder` touched;
+   `MonoAveragedPairedScanlineDecoder` (RM8/RM12) correctly left alone (single scan segment, structurally
+   immune, confirmed by an unchanged golden-vector delta). Golden-vector re-measurement: most fixtures
+   improved (martin-m1 nearly 3x better), two (robot-36, robot-72) worsened slightly but stay
+   comfortably within their existing tolerances — an honestly-recorded, accepted tradeoff, not chased to
+   zero. Code-level review found 2 real secondary risks, both documented rather than silently absorbed:
+   a Robot-36 tone-selector read now sits right at a segment boundary (folded into the existing SHOULD
+   item 12), and a test-coverage gap for the two "worsened" families that investigation showed needs a
+   harder differential test design than initially assumed (tracked as a SHOULD-level follow-up).
 
 None of these three needed/need TX golden vectors or new fixtures to fix/verify.
 
@@ -57,8 +68,9 @@ in 3/5 RX decoders, Robot 36 tone-selector timing, 3 golden-vector coverage gaps
 plus ~13 COULD/NICE-TO-HAVE items. **Full findings list, all prioritized, all reasoning: `spec/14-roadmap.md`,
 search "Milestone audit, Phase 1+2"** — read that before doing any fix work, don't re-derive from scratch.
 
-**Next**: user is deciding how to sequence the 3 MUST items. No code changes from the audit itself —
-this round was pure investigation + documentation.
+**Next**: all 3 MUST fixes done. Remaining SHOULD/COULD/NICE-TO-HAVE items from the original Phase 2
+findings list are still open, plus 2 new deferred risks MUST fix 3's own code-level review surfaced
+(both documented, see above). None of these block anything.
 
 **Explicit user directive: before running Phase 3 (chain/integration audit), build TX-side verification
 tests and confirm them first** — do not skip straight to Phase 3 with TX's zero-legacy-decode-coverage
