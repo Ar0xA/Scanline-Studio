@@ -24,11 +24,16 @@ internal sealed class RgbSequentialScanlineEncoder : IScanlineEncoder
                         // Re-fetched per pixel (not hoisted) because ReadOnlySpan<T> can't be
                         // stored across a yield-return boundary in an iterator state machine.
                         var value = GetChannelValue(image.GetScanline(lineIndex)[x], scan.ChannelName);
-                        // Divisor is 256, not 255 -- matches legacy's ColorToFreq(int d) (ComLib.cpp)
-                        // and every other scanline codec family in this port.
-                        var frequencyHz = mode.LuminanceMinHz
-                            + value / 256.0 * (mode.LuminanceMaxHz - mode.LuminanceMinHz);
-                        yield return (frequencyHz, perPixelDurationMs);
+                        // SHOULD item 4 (spec/14-roadmap.md): value is already an integer RGB byte
+                        // (no GetRY step for this family, matching legacy's own ColorToFreq(cp->b.r)
+                        // etc. call sites, Main.cpp:6610-6629), so only YCbCr.ColorToFreq's own
+                        // internal integer-division truncation applies here, not FromRgb's.
+                        // Comprehensive-review addition: this family's own narrow half (MC110/140/180)
+                        // is `TMmsstv::LineMC` (Main.cpp:6827-6845), which uses `ColorToFreqNarrow`
+                        // (`Main.cpp:6837/6840/6843`) instead of plain `ColorToFreq` -- covered by
+                        // `YCbCr.ColorToFreq`'s own (min,max) generalization, not a separate call here
+                        // (the mode's own LuminanceMinHz/MaxHz select which band applies).
+                        yield return (YCbCr.ColorToFreq(value, mode.LuminanceMinHz, mode.LuminanceMaxHz), perPixelDurationMs);
                     }
 
                     break;

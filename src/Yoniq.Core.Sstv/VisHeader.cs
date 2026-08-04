@@ -141,6 +141,59 @@ internal static class VisHeader
     /// rather than computing parity, so this quirk stays correctly recognized end-to-end.</summary>
     public const int Rm12ForcedParityBit = 1;
 
+    // SHOULD item 5 (spec/14-roadmap.md): comprehensive-review correction -- this doc comment used to
+    // sit here, on OutHeadToneDurationMs, but it documents GenerateOutHeadSegments' own behavior; a
+    // sibling comment elsewhere referenced "GenerateOutHeadSegments' own doc comment" and found none
+    // there. Moved to sit on the method it actually describes; these three constants are its
+    // building blocks.
+    public const double OutHeadToneDurationMs = 100.0;
+    public const double OutHeadNarrowDurationMs = OutHeadToneDurationMs * 4; // 400ms
+    public const double OutHeadNormalDurationMs = OutHeadToneDurationMs * 8; // 800ms
+
+    /// <summary>
+    /// SHOULD item 5 (spec/14-roadmap.md): direct port of legacy's <c>TMmsstv::OutHEAD</c>
+    /// (`Main.cpp:7270-7292`), the pre-VIS leader-tone burst -- called UNCONDITIONALLY at the very
+    /// start of every real transmission (`Main.cpp:7393`, <c>OutHEAD()</c>, immediately before the
+    /// VIS/narrow-FSK header block at `:7395`), at legacy's shipped <c>sys.m_VOX==0</c> default (the
+    /// only branch this port can model -- no VOX/PTT layer exists yet, matching
+    /// <see cref="AnalogFmSstvEncoder.GenerateFooterSegments"/>'s own identical <c>m_VOX</c> scoping
+    /// note). This was a real missing TX segment before this fix -- no code comment, no
+    /// docs/removed-features.md entry, same class of gap S27's CQ100 omission was before it got
+    /// fixed. Not a decode blocker for a real legacy RX (it still locks on the VIS leader itself
+    /// regardless of what precedes it), but genuinely the FIRST audio any real transmission carries,
+    /// missing from this port's own TX output until now.
+    ///
+    /// Exact tone sequences, both 100ms/tone (`Main.cpp:7274-7292`, the <c>case 0:</c> arm of
+    /// <c>switch(sys.m_VOX)</c>):
+    /// <list type="bullet">
+    /// <item>Narrow: 1900, 2300, 1900, 2300 (400ms total)</item>
+    /// <item>Normal: 1900, 1500, 1900, 1500, 2300, 1500, 2300, 1500 (800ms total)</item>
+    /// </list>
+    /// </summary>
+    public static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateOutHeadSegments(bool narrow)
+    {
+        const double toneDurationMs = OutHeadToneDurationMs;
+
+        if (narrow)
+        {
+            yield return (1900, toneDurationMs);
+            yield return (2300, toneDurationMs);
+            yield return (1900, toneDurationMs);
+            yield return (2300, toneDurationMs);
+        }
+        else
+        {
+            yield return (1900, toneDurationMs);
+            yield return (1500, toneDurationMs);
+            yield return (1900, toneDurationMs);
+            yield return (1500, toneDurationMs);
+            yield return (2300, toneDurationMs);
+            yield return (1500, toneDurationMs);
+            yield return (2300, toneDurationMs);
+            yield return (1500, toneDurationMs);
+        }
+    }
+
     public static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateSegments(int visCode, int? forcedParityBit = null)
     {
         yield return (LeaderFrequencyHz, LeaderDurationMs);
@@ -303,12 +356,12 @@ internal static class VisHeader
     /// <summary>Duration of <see cref="ScottiePostVisPulseFrequencyHz"/>'s pulse, `Main.cpp:7577`.</summary>
     public const double ScottiePostVisPulseDurationMs = 9.0;
 
-    // --- AVT-specific header --- Main.cpp:7429 (`int e = (TxMode == smAVT) ? 3 : 1;`) repeats the
+    // --- AVT-specific header --- Main.cpp:7430 (`int e = (TxMode == smAVT) ? 3 : 1;`) repeats the
     // whole VIS block 3x for AVT only, then Main.cpp:7563-7575 appends a long sync/AFC training
     // sequence unique to this mode before any line data starts. Legacy's own RX budgets for exactly
     // this preamble length at sstv.cpp:2140 (9 + 910 + 910 + 5311.9424 + 0.30514375).
 
-    /// <summary>Number of times the VIS block itself is transmitted for AVT (`Main.cpp:7429`) — 3,
+    /// <summary>Number of times the VIS block itself is transmitted for AVT (`Main.cpp:7430`) — 3,
     /// vs. 1 for every other mode.</summary>
     public const int AvtVisRepeatCount = 3;
 
@@ -358,7 +411,7 @@ internal static class VisHeader
         (AvtVisRepeatCount - 1) * AvtVisBlockDurationMs + AvtTrainingSequenceDurationMs;
 
     /// <summary>AVT-specific header: the VIS block repeated <see cref="AvtVisRepeatCount"/> times
-    /// (`Main.cpp:7429`), then the training sequence (`Main.cpp:7563-7575`) — see this section's
+    /// (`Main.cpp:7430`), then the training sequence (`Main.cpp:7563-7575`) — see this section's
     /// constants for exact source citations. The training sequence's bit pattern is generated
     /// exactly as legacy does: a 16-bit shift register <c>sd</c> seeded at <c>0x5fa0</c>, whose top
     /// byte decrements and bottom byte increments by 1 each of the 32 blocks

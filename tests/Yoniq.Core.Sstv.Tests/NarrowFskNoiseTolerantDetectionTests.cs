@@ -98,10 +98,15 @@ public class NarrowFskNoiseTolerantDetectionTests
         Assert.Equal(mode.Id, detectedMode!.Id);
         Assert.NotNull(rawAnchor);
 
-        // Expected: silence + the packet's own fixed total duration (VisHeader.NarrowHeaderTotalDurationMs)
-        // -- exactly what the fixed-window path (TryDecodeNarrowModeHeader) would produce for a header
-        // starting at the same offset, and what the auditor plan-review's own derivation targets.
-        var expectedAnchor = silenceSampleCount + (int)Math.Round(VisHeader.NarrowHeaderTotalDurationMs / 1000.0 * SampleRate);
+        // Expected: silence + OutHEAD's own now-real leading burst (SHOULD item 5, spec/14-roadmap.md
+        // -- the encoder emits this unconditionally before the narrow FSK header itself, so it's part
+        // of the real offset the header starts at) + the packet's own fixed total duration
+        // (VisHeader.NarrowHeaderTotalDurationMs) -- exactly what the fixed-window path
+        // (TryDecodeNarrowModeHeader) would produce for a header starting at the same offset, and what
+        // the auditor plan-review's own derivation targets.
+        var expectedAnchor = silenceSampleCount
+            + (int)Math.Round(VisHeader.OutHeadNarrowDurationMs / 1000.0 * SampleRate)
+            + (int)Math.Round(VisHeader.NarrowHeaderTotalDurationMs / 1000.0 * SampleRate);
         var delta = rawAnchor!.Value - expectedAnchor;
 
         // Measured, not assumed (auditor plan-review's own explicit acceptance criterion for the
