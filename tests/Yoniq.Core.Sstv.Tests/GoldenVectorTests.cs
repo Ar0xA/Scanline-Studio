@@ -541,6 +541,51 @@ public class GoldenVectorTests
         // happening to pass -- and comfortably under the ~42.67 corruption floor documented on that
         // sibling test. Tolerances set to ~2x each measured value, same margin style used throughout
         // this file.
+        //
+        // Re-measured again after SHOULD item 4 (spec/14-roadmap.md, the TX color-to-frequency
+        // integer-truncation fix -- YCbCr.FromRgb/ColorToFreq now model legacy's real two-truncation
+        // chain): martin-m1 1.29 -> 1.34, robot-36 4.79 -> 4.16, scottie-s1 0.48 -> 0.37, robot-72
+        // 4.64 -> 4.13, pd90 1.58 -> 0.18, rm8 3.43 -> 3.80, mn110 1.10 -> 0.14, avt 9.65 -> 9.87.
+        // Mostly improved (this test compares THIS PORT'S OWN self-decode of its now-more-legacy-
+        // faithful TX output against a REAL legacy decode, so closer truncation fidelity plausibly
+        // improves agreement), a few worsened slightly (rm8, avt, martin-m1) -- same accepted-
+        // tradeoff category as every other fix's own cross-mode effects this session. Every value
+        // still comfortably inside its EXISTING tolerance below -- none needed to change. The sibling
+        // RX-only test (`Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource`) was also re-measured
+        // and found EXACTLY UNCHANGED -- expected, this fix touches only the encoder.
+        //
+        // Round-1-review correction: an earlier version of this comment also claimed
+        // `LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage` (the TX-direction real-legacy-
+        // decode test) was re-measured and found unchanged "because a sub-3Hz shift is below one
+        // quantization level" -- WRONG, caught by code-level review. That test reads two CHECKED-IN
+        // files from disk (the source bmp and the stored `*_TX_RX.bmp`) -- it never invokes the
+        // encoder at all, so it could not possibly have changed regardless of this fix; "unchanged"
+        // there is a tautology, not evidence. The `*_TX.mmv`/`*_TX_RX.bmp` fixtures
+        // (`Fixtures/GoldenVectors/TxCapture/`) were captured from the PRE-fix encoder and are now
+        // STALE with respect to this fix -- `TxCaptureFixturesTests.cs` decodes the same stale
+        // `.mmv` and doesn't cover it either. THIS test (`EncoderOutput_DecodesSimilarlyTo_
+        // RealLegacyAudioDecode`, the one whose numbers moved above) is the only test in this file
+        // that actually live-encodes with this port's own (now-fixed) encoder, so it's the only
+        // real evidence this fix has today. Real TX-vs-real-legacy validation of this specific fix
+        // does not yet exist -- needs a fresh `TxCapture/` re-capture (the user's own real legacy
+        // install, same process as the original TX-side golden-vector work), out of scope for this
+        // pass. Tracked as a real, open follow-up, not silently left unstated.
+        //
+        // Re-measured again after SHOULD item 5 (spec/14-roadmap.md, the OutHEAD pre-VIS leader-tone
+        // burst port): martin-m1 1.34 -> 0.35, robot-36 4.16 -> 4.13, scottie-s1 0.37 -> 0.24,
+        // robot-72 4.13 -> 4.11, pd90 0.18 -> 0.17, rm8 3.80 -> 3.72, mn110 0.14 -> 0.11, avt
+        // 9.87 -> 4.68 (avt's own improvement is the largest here, but round-1-review flagged the
+        // "AGC settling" explanation this comment used to give as weakly supported -- AVT already
+        // carries ~10s of its own preamble before line 0, so its AGC is long converged either way;
+        // see SstvRoundTripTests.cs's own AVT tolerance comment for the full correction and the
+        // (unconfirmed) alternative mechanism the review raised instead. The improvement itself is
+        // real and measured, just not confidently explained). Every value improved or held steady,
+        // none worsened; all comfortably inside existing tolerances, none
+        // needed to change. This is the same live-encoding test as the truncation fix's own
+        // re-measurement above, and the same caveat applies: `LegacyDecode_OfThisPortsEncoderOutput_
+        // MatchesSourceImage` (the TX-direction real-legacy-decode test) does not exercise this fix
+        // either, for the identical reason (stale checked-in fixtures, no live encode) -- same real,
+        // open follow-up, not re-stated a second time here.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 4.0,

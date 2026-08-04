@@ -26,7 +26,7 @@ internal sealed class RobotScanlineEncoder : IScanlineEncoder
         for (var x = 0; x < mode.ImageWidth; x++)
         {
             var (y, _, _) = YCbCr.FromRgb(image.GetScanline(lineIndex)[x].R, image.GetScanline(lineIndex)[x].G, image.GetScanline(lineIndex)[x].B);
-            yield return (ColorToFreq(y, mode), yPerPixelMs);
+            yield return (YCbCr.ColorToFreq(y, mode.LuminanceMinHz, mode.LuminanceMaxHz), yPerPixelMs);
         }
 
         yield return (isEvenLine ? selector.LowFrequencyHz : selector.HighFrequencyHz, selector.DurationMs);
@@ -37,12 +37,9 @@ internal sealed class RobotScanlineEncoder : IScanlineEncoder
         {
             var pixel = image.GetScanline(lineIndex)[x];
             var (_, rMinusY, bMinusY) = YCbCr.FromRgb(pixel.R, pixel.G, pixel.B);
-            yield return (ColorToFreq(isEvenLine ? rMinusY : bMinusY, mode), chromaPerPixelMs);
+            yield return (YCbCr.ColorToFreq(isEvenLine ? rMinusY : bMinusY, mode.LuminanceMinHz, mode.LuminanceMaxHz), chromaPerPixelMs);
         }
     }
-
-    private static double ColorToFreq(double byteValue, SstvModeDefinition mode) =>
-        mode.LuminanceMinHz + byteValue * (mode.LuminanceMaxHz - mode.LuminanceMinHz) / 256.0;
 
     private static (SyncSegment Sync, SyncSegment Porch, ScanSegment Y, ToneSelectorSegment Selector, SyncSegment Porch2, ScanSegment Chroma)
         GetSegments(SstvModeDefinition mode)

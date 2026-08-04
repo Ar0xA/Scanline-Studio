@@ -28,14 +28,15 @@ internal sealed class MonoAveragedPairedScanlineEncoder : IScanlineEncoder
                         var pixel2 = image.GetScanline(lineIndex + 1)[x];
                         var (y1, _, _) = YCbCr.FromRgb(pixel1.R, pixel1.G, pixel1.B);
                         var (y2, _, _) = YCbCr.FromRgb(pixel2.R, pixel2.G, pixel2.B);
-                        var averagedY = (y1 + y2) / 2.0;
-                        // Divisor is 256, not 255 -- matches YCbCrSequentialScanlineEncoder and
-                        // legacy's own ColorToFreq(Y): Y from GetRY/YCbCr.FromRgb already carries
-                        // its own +16 headroom offset and is treated as a raw byte-scale value,
-                        // not renormalized against an actual 0-255 range.
-                        var frequencyHz = mode.LuminanceMinHz
-                            + averagedY * (mode.LuminanceMaxHz - mode.LuminanceMinHz) / 256.0;
-                        yield return (frequencyHz, perPixelDurationMs);
+                        // SHOULD item 4 (spec/14-roadmap.md): legacy's real averaging (TMmsstv::LineRM,
+                        // Main.cpp:6796-6799: `YY = (YY + Y[x]) / 2;`) is INTEGER division, a THIRD
+                        // truncation specific to this family (beyond FromRgb's and ColorToFreq's own
+                        // two) -- found by reading LineRM directly, not assumed from the other
+                        // families' shape. y1/y2 are already truncated+clamped by FromRgb (always
+                        // non-negative), so Math.Floor reproduces C++'s truncate-toward-zero exactly
+                        // here too.
+                        var averagedY = Math.Floor((y1 + y2) / 2.0);
+                        yield return (YCbCr.ColorToFreq(averagedY, mode.LuminanceMinHz, mode.LuminanceMaxHz), perPixelDurationMs);
                     }
 
                     break;

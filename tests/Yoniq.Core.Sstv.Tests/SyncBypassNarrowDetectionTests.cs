@@ -43,7 +43,12 @@ public class SyncBypassNarrowDetectionTests
             samples.Add(sample);
         }
 
-        var headerSampleCount = (int)Math.Round(VisHeader.NarrowHeaderTotalDurationMs / 1000.0 * encoder.SampleRate);
+        // Round-1-review finding (auditor, SHOULD item 5's own review): missing
+        // VisHeader.OutHeadNarrowDurationMs -- see SyncBypassDetectionTests' own identical fix
+        // comment for the full explanation (narrow variant here, not normal, matching this family's
+        // own OutHEAD tone sequence).
+        var headerDurationMs = VisHeader.OutHeadNarrowDurationMs + VisHeader.NarrowHeaderTotalDurationMs;
+        var headerSampleCount = (int)Math.Round(headerDurationMs / 1000.0 * encoder.SampleRate);
         var bodySamples = samples.Skip(headerSampleCount).ToArray();
 
         var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
@@ -58,15 +63,25 @@ public class SyncBypassNarrowDetectionTests
         Assert.Equal(mode.Id, detectedMode!.Id);
         Assert.NotNull(decodedImage);
 
-        // Same reasoning and same order-of-magnitude tolerance as SyncBypassDetectionTests: the
-        // line-start anchor here is an observed, filter-smoothed sync-envelope peak plus the same
-        // documented midpoint approximation, not VIS decode's exact deterministic boundary. Mode
-        // identification is the behavior actually being proven; pixel alignment is a known,
-        // bounded, secondary cost of the approximation. Measured average deltas: MN73 24.27,
-        // MN110 21.17, MN140 19.62, MC110 16.38, MC140 14.29, MC180 11.42 -- real, bounded, and
-        // reproducible (rerunning does not change them), same 25.0 tolerance as m_sint2's own
-        // trusted-mode set gives comfortable headroom above the worst of these.
-        AssertImagesMatchWithinTolerance(sourceImage, decodedImage!, maxAveragePerChannelDelta: 25.0);
+        // Same reasoning as SyncBypassDetectionTests: the line-start anchor here is an observed,
+        // filter-smoothed sync-envelope peak plus the same documented midpoint approximation, not
+        // VIS decode's exact deterministic boundary. Mode identification is the behavior actually
+        // being proven; pixel alignment is a known, bounded, secondary cost of the approximation.
+        //
+        // Round-2-review correction (auditor, SHOULD item 5's own review): the previously-documented
+        // deltas (MN73 24.27, MN110 21.17, MN140 19.62, MC110 16.38, MC140 14.29, MC180 11.42) and
+        // the "same 25.0 tolerance as m_sint2's own trusted-mode set" cross-reference both predate
+        // the OutHEAD header-strip fix (see SyncBypassDetectionTests.cs's own identical fix comment)
+        // -- that sibling tolerance is now 14.0, not 25.0, so the cross-reference was already stale
+        // on its own terms. Pre-fix, this file's own strip (950ms against a real 1350ms header) left
+        // ~400ms of leftover FSK-packet tail as junk at buffer start rather than a clean VIS/narrow
+        // lock -- a different contamination shape than the normal-mode files' "locked via real VIS"
+        // bug, but real: the FSK decoder could not have completed a packet from a body starting
+        // ~128ms into the data bits. Freshly re-measured post-fix, with the header-strip offset now
+        // correct: MN73 13.76, MN110 13.20, MN140 13.04, MC110 9.19, MC140 8.84, MC180 8.29 -- all
+        // smaller than the old (contaminated) values, same direction as every other fixed file in
+        // this fix's own batch. 18.0 gives real headroom above the new worst case (13.76).
+        AssertImagesMatchWithinTolerance(sourceImage, decodedImage!, maxAveragePerChannelDelta: 18.0);
     }
 
     private static ArrayImageSource CreateGradientTestImage(int width, int height)

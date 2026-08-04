@@ -47,7 +47,17 @@ public class SyncBypassDetectionTests
         // plus Scottie's extra 9ms/1200Hz post-VIS pulse) -- leaving only the raw, periodic
         // sync+image-line data a real headerless transmission (or one with an unrecognized/
         // corrupted VIS code) would present to the decoder.
-        var headerDurationMs = VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs
+        //
+        // Round-1-review finding (auditor, SHOULD item 5's own review): missing
+        // VisHeader.OutHeadNormalDurationMs (the OutHEAD pre-VIS leader-tone burst, spec/14-
+        // roadmap.md) used to leave this skip 800ms short -- not enough to reach even the VIS
+        // leader's own break tone (VisLockStateMachine's real trigger point is leader*2+break =
+        // 610ms in, per that class's own doc comment), so this test was SILENTLY locking via the
+        // real VIS path instead of the sync-interval bypass path it exists to exercise, while every
+        // assertion still passed (a VIS lock is more accurate, not less -- the bug was invisible
+        // from the outside). All four modes here are non-narrow, so OutHeadNormalDurationMs is the
+        // right term for all of them.
+        var headerDurationMs = VisHeader.OutHeadNormalDurationMs + VisHeader.PrefixDurationMs + VisHeader.NormalTailDurationMs
             + (SstvModeRegistry.IsScottieFamily(mode) ? VisHeader.ScottiePostVisPulseDurationMs : 0.0);
         var headerSampleCount = (int)Math.Round(headerDurationMs / 1000.0 * encoder.SampleRate);
         var bodySamples = samples.Skip(headerSampleCount).ToArray();
@@ -78,23 +88,19 @@ public class SyncBypassDetectionTests
         // GetSyncSegmentMidpointOffsetMs's doc comment) finds the actual fine pixel alignment from
         // scratch.
         //
-        // Re-measured after piece 7b2 wired ApplySlantTracking's SyncEnvelopeDetector onto the
-        // shared AGC'd signal (LevelAgc): Scottie S1 19.01, Martin M1 12.65, Martin M2 25.13,
-        // SC2-180 13.85 -- up from a pre-7b2 baseline of 18.06/12.62/20.78/12.91 respectively. This
-        // is a real, legacy-faithful cost, not a regression to chase to zero: CLVL's AGC (correctly
-        // modeled as of piece 7a/7b/7b2) drives any full-amplitude tone like this test's straight to
-        // a hard ±16384 clip once it warms up (sstv.h's Fix(), `m_agc = 16384/m_CurMax`, then
-        // `d = ad*32` -- see LevelAgc's doc comment), turning what was a smooth sine-derived envelope
-        // into a near-square wave. That's genuinely how legacy's own Auto-Slant peak-position
-        // measurement has to cope with real signal too, not an artifact of this port -- it just makes
-        // the measured peak position noisier, unevenly across modes (Martin M2's jump is much larger
-        // than Martin M1's despite both using the same 1200Hz detector and family, most likely
-        // Auto Slant's per-mode threshold/deadband, SstvModeRegistry.GetAutoSlantThresholdPositions,
-        // sitting closer to this new noise floor for M2 than M1 -- not independently re-derived
-        // further here, flagged as the likely mechanism rather than proven). 29.0 gives headroom
-        // above the new worst case without masking an actual regression back toward "wrong mode"
-        // territory.
-        AssertImagesMatchWithinTolerance(sourceImage, decodedImage!, maxAveragePerChannelDelta: 29.0, label: mode.Id);
+        // Re-measured after the OutHEAD header-strip fix above (round-1-review, SHOULD item 5): the
+        // previously-documented values (19.01/12.65/25.13/13.85, from piece 7b2) turn out to have
+        // been measuring VIS-lock accuracy, not sync-bypass accuracy at all -- this test was silently
+        // locking via the real VIS path the whole time (see this fix's own comment above). With the
+        // header-strip offset now correct and the sync-bypass path genuinely engaged, freshly
+        // measured: Scottie S1 3.48, Martin M1 4.93, Martin M2 6.91, SC2-180 4.86 -- all noticeably
+        // SMALLER than the old (mis-measured) values, not larger, since the real sync-bypass anchor
+        // turns out to be more precise than the numbers previously attributed to it. Piece 7b2's own
+        // AGC-clipping explanation may still be a real contributing factor (not re-derived or
+        // disproven here), but the old numbers it was fit to were never actually testing what they
+        // claimed to, so treat this as a fresh baseline, not a "confirms 7b2" data point. 14.0 gives
+        // real headroom above the new measured max (6.91), not a loosened-until-it-passes bound.
+        AssertImagesMatchWithinTolerance(sourceImage, decodedImage!, maxAveragePerChannelDelta: 14.0, label: mode.Id);
     }
 
     private static ArrayImageSource CreateGradientTestImage(int width, int height)
