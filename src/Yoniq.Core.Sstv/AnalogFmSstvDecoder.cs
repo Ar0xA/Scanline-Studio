@@ -314,6 +314,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private int _visLockProcessedUpTo;
     private int _visLockOriginSample; // see EndOfImage -- 0 until the first image completes and this is Reset() past a dead zone
 
+    // S8 fix (spec/14-roadmap.md): mid-image/noise-tolerant narrow-mode (MN/MC) FSK-announce re-lock.
+    // sstv.cpp:1858's real DecodeFSK(int(d19), int(dsp)) call is UNCONDITIONAL every sample -- outside
+    // and before the `if(!m_Sync||m_SyncRestart||m_SyncAVT)` gate (sstv.cpp:1889) that DOES restrict
+    // m_sint1/m_sint2/m_sint3 and the VIS-decode switch. Confirmed directly against source (Stop(),
+    // sstv.cpp:1769-1791, and Start()/Start(int,int)) that legacy's own m_fsk* state is NEVER
+    // externally reset either -- only NarrowFskHeaderDecoder's own internal failure/success paths
+    // reset it, exactly matching this class's already-existing design. This makes
+    // _narrowFskDecoder/_narrowFskProcessedUpTo genuinely different from _visLockStateMachine/
+    // _visLockProcessedUpTo above: this pair is NEVER Reset() and NEVER re-anchored/jumped by
+    // EndOfImage or Commit (auditor plan-review finding: sharing the _syncBypassProcessedUpTo/
+    // _visLockProcessedUpTo lockstep loop, which DOES jump 500ms forward at every EndOfImage, would
+    // starve this decoder of exactly the post-image window a mode-change announce is most likely to
+    // arrive in -- see TryNarrowFskScan's own doc comment for the independent-cursor design this
+    // led to).
+    private readonly NarrowFskHeaderDecoder _narrowFskDecoder;
+    private int _narrowFskProcessedUpTo;
+
     // AVT training-sequence lock (sstv.cpp cases 4-7, see AvtTrainingLockStateMachine's own doc
     // comment) -- once TryDecodeVisHeader identifies AVT from its VIS byte, resolution moves into
     // this multi-call pending phase instead of committing atomically with a fixed-duration skip,
@@ -373,6 +390,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _syncBypassFskDetector = new SyncEnvelopeDetector(sampleRate, VisHeader.NarrowSpaceFrequencyHz);
         _syncBypassNarrowTracker = new SyncIntervalTracker(sampleRate, isNarrow: true, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _visLockStateMachine = new VisLockStateMachine(sampleRate, SLvl, SLvl2);
+        _narrowFskDecoder = new NarrowFskHeaderDecoder(sampleRate); // S8 fix -- constructed once, decoder-lifetime, never Reset()
         _levelAgc = new LevelAgc(sampleRate);
         // Band-2 item S5 -- params match TryDecodeVisDataBits' own previous cold-start construction
         // (sstv.cpp:1446-1449).
@@ -762,6 +780,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
             watermark = Math.Min(watermark, _syncBypassProcessedUpTo);
             watermark = Math.Min(watermark, _visLockProcessedUpTo);
+
+            // S8 fix: within a single pre-lock epoch this cursor is now bound-gated the same way
+            // _syncBypassProcessedUpTo/_visLockProcessedUpTo are (TryNarrowFskScan is called with
+            // scanBound, see that call site's own corrected doc comment) -- but ACROSS images it still
+            // differs: _syncBypassProcessedUpTo/_visLockProcessedUpTo get re-anchored/jumped by
+            // EndOfImage and Commit(), so they can never lag far behind, while _narrowFskProcessedUpTo
+            // is NEVER reset or jumped (see its own field doc comment), so over a multi-image stream it
+            // becomes the SLOWEST cursor in the system. Included explicitly anyway, not left to
+            // accident. Provably bounded, not permanently stallable: TryNarrowFskScan runs once per
+            // TryInterleavedHeaderScan call (i.e. once per PushSamples call, while _mode is null)
+            // EXCEPT during the up-to-~7.1s _avtTrainingPending window (TryDecodeHeader short-circuits
+            // past TryInterleavedHeaderScan entirely while pending, see that method's own doc comment)
+            // -- a temporary, bounded pause (this cursor resumes advancing the instant AVT training
+            // resolves), not the permanent stall BufferedSampleCount_StaysBounded_ForLongNeverLockingStream
+            // guards against.
+            watermark = Math.Min(watermark, _narrowFskProcessedUpTo);
+
             watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
             watermark = Math.Min(watermark, _bandpassFilteredProcessedUpTo);
 
@@ -794,6 +829,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // letting it advance as decoding progresses.
             watermark = Math.Min(_afcProcessedUpTo, _slantProcessedUpTo);
             watermark = Math.Min(watermark, _visLockProcessedUpTo);
+
+            // S8 fix: included here too, unlike _syncBypassProcessedUpTo above -- _narrowFskProcessedUpTo
+            // is NOT frozen while locked (TryVisLockStateMachine, this branch's own mid-reception
+            // caller, calls TryNarrowFskScan every time it runs, once per decoded line -- see that
+            // method's own doc comment), so it keeps advancing here the same way _visLockProcessedUpTo
+            // does, not the way the frozen _syncBypassProcessedUpTo does.
+            watermark = Math.Min(watermark, _narrowFskProcessedUpTo);
+
             watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
             watermark = Math.Min(watermark, _bandpassFilteredProcessedUpTo);
             watermark = Math.Min(watermark, _demodulatedFrequenciesProcessedUpTo); // Band-1 item 4a, see above
@@ -845,18 +888,28 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // Band-2 item S5 (extended by S14): D11At/D12At/D19At/FskSpaceAt's own cursors are deliberately
         // excluded from BOTH branches' watermark computation above, not just the pre-lock one -- unlike
         // _bandpassFilteredProcessedUpTo/_demodulatedFrequenciesProcessedUpTo (which get real, ongoing
-        // post-lock consumers), all four of these are read only by pre-lock-only callers: D11At/D12At by
-        // TryDecodeVisDataBits alone; D19At by BOTH TryDecodeVisDataBits and TryDecodeNarrowModeHeader
-        // (S14 -- legacy's shared m_iir19, sstv.cpp:1851/1858, read by both the VIS tone race and the
-        // narrow-mode FSK packet decode); FskSpaceAt by TryDecodeNarrowModeHeader alone. All of these
-        // callers are themselves only ever invoked pre-lock (via TryDecodeVisHeader/TryDecodeNarrowModeHeader/
-        // TryDecodeHeader). Once locked, all four simply freeze wherever they were at the moment of lock --
-        // the exact same "frozen once locked" shape _syncBypassProcessedUpTo's own doc comment above
-        // already describes for a different cursor, not a new pattern. Including them in the locked
-        // branch's Min() chain would pin the watermark at that frozen value for the whole image,
-        // blocking trimming during decode; including them in the pre-lock branch hits the exact
-        // permanently-pinned-near-0 failure shape _demodulatedFrequenciesProcessedUpTo's own comment
-        // documents. So: excluded from watermark in both branches, safety guaranteed purely by this
+        // post-lock consumers), D11At/D12At are read only by pre-lock-only TryDecodeVisDataBits, invoked
+        // only via TryDecodeVisHeader/TryDecodeHeader -- once locked, both simply freeze wherever they
+        // were at the moment of lock, the exact same "frozen once locked" shape _syncBypassProcessedUpTo's
+        // own doc comment above already describes for a different cursor, not a new pattern.
+        //
+        // S8 fix correction: D19At/FskSpaceAt are NO LONGER pre-lock-only as of this fix -- TryNarrowFskScan
+        // (called from TryVisLockStateMachine while LOCKED, via piece 6c's per-line mid-reception
+        // re-verification, not just pre-lock via TryDecodeNarrowModeHeader/TryDecodeHeader) reads both
+        // post-lock too. This doesn't change the exclusion decision itself, but the safety argument for
+        // it is NOT "_narrowFskProcessedUpTo is provably always <= _visDataD19ProcessedUpTo/
+        // _fskSpaceProcessedUpTo" -- code-level auditor review correction: Commit()'s own fast-forward
+        // (`_narrowFskProcessedUpTo = Math.Max(_narrowFskProcessedUpTo, _consumedSamples)`) can jump this
+        // cursor forward WITHOUT reading D19At/FskSpaceAt at all, so that ordering guarantee doesn't
+        // strictly hold. Still safe regardless: the SAME unconditional catch-up this section's own
+        // opening paragraph describes (`if (watermark > _visDataD19ProcessedUpTo) { D19At(watermark - 1); }`
+        // below) is what actually guarantees safety here, exactly as it already does for D11At/D12At --
+        // not this cursor-ordering argument. Kept out of the watermark chains anyway (the catch-up makes
+        // it unnecessary, not because it would be incorrect to include). The "once locked, all four
+        // simply freeze" claim an earlier version of this comment made is no longer accurate for D19At/
+        // FskSpaceAt specifically.
+        //
+        // For all four: excluded from watermark in both branches, safety guaranteed purely by this
         // catch-up instead -- same load-bearing invariant as DemodulatedFrequencyAt's own catch-up above
         // (watermark <= _levelAgcProcessedUpTo in BOTH branches, so AgcSampleAt(watermark-1) inside these
         // is always a pure cache read, never a new fill -- don't remove _levelAgcProcessedUpTo from
@@ -1211,6 +1264,91 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         return TryInterleavedHeaderScan();
     }
 
+    // S8 fix (spec/14-roadmap.md): shared by BOTH TryInterleavedHeaderScan (pre-lock) and
+    // TryVisLockStateMachine (mid-reception) -- legacy's real DecodeFSK call has no equivalent of
+    // either method's own gating (see _narrowFskDecoder's own field doc comment), so unlike
+    // VisLockStateMachine (which needs two separately-shaped call sites, one merged into the
+    // sync-bypass interleave, one standalone), one shared scan loop with a caller-supplied bound
+    // correctly covers both cases. Each caller passes its OWN already-correct bound
+    // (TryInterleavedHeaderScan passes scanBound, TryVisLockStateMachine passes its own
+    // upperBoundSample) -- this method does no bound computation of its own beyond clamping to
+    // TotalSamplesReceived as a final safety net.
+    //
+    // Round-1 code-level-review-caught regression, corrected here: an earlier draft had
+    // TryInterleavedHeaderScan call this with TotalSamplesReceived directly instead of scanBound,
+    // reasoning that this scan "has no fixed-window sibling to race/protect against." That reasoning
+    // addressed the wrong risk -- scanBound isn't ONLY about racing a fixed-window path, it's also
+    // what keeps ANY pre-lock detector from reading ahead into a SECOND, not-yet-legitimately-reached
+    // transmission on a bulk single-PushSamples call (the same "bulk vs. streaming ordering" class
+    // Band-1 items 2+3 and TryVisLockStateMachine's own doc comment already document elsewhere).
+    // Caught by LegacyDerivedSpansTests.FskSpaceCursor_NeverResets_AcrossBackToBackNarrowTransmissions
+    // (ModeDetected fired 4 times instead of 2 -- this scan discovered the SECOND transmission's real
+    // header while the first was still mid-decode) and BandpassCacheChunkInvarianceTests
+    // (chunk-size-dependent anchor drift on an unrelated fixture, same root cause) -- not anticipated
+    // by either plan-review round, found empirically by running the full suite as this project's own
+    // methodology requires before calling a piece done.
+    //
+    // _narrowFskProcessedUpTo is still never reset or jumped by EndOfImage/Commit (unlike
+    // _syncBypassProcessedUpTo/_visLockProcessedUpTo, which DO get fast-forwarded 500ms at every
+    // EndOfImage, see that method's own resumeFrom) -- that part of the original design goal is
+    // unaffected by this correction, and is still why this cursor needs its own separate loop here
+    // rather than sharing TryInterleavedHeaderScan's lockstep for-statement/entry-invariant outright.
+    // What changed is only the BOUND passed in, not this cursor's own advancement/reset semantics.
+    private bool TryNarrowFskScan(int upperBoundSample)
+    {
+        var bound = Math.Min(TotalSamplesReceived, upperBoundSample);
+        for (; _narrowFskProcessedUpTo < bound; _narrowFskProcessedUpTo++)
+        {
+            var sampleIndex = _narrowFskProcessedUpTo;
+            var m = (int)D19At(sampleIndex);
+            var s = (int)FskSpaceAt(sampleIndex);
+
+            var result = _narrowFskDecoder.ProcessSample(m, s);
+            if (result is null)
+            {
+                continue;
+            }
+
+            var mode = SstvModeRegistry.FindByNarrowCode(result.Value.ModeCode);
+            if (mode is null)
+            {
+                // Unregistered mode code -- legacy resumes scanning rather than giving up
+                // (sstv.cpp:2588-2597), and so does NarrowFskHeaderDecoder internally (it already
+                // reset its own _mode to 0 before returning here) -- keep scanning instead of
+                // aborting, matching this class's own always-resume behavior everywhere else.
+                continue;
+            }
+
+            // Anchor: see VisHeader.NarrowPostBitClockOriginDurationMs's own doc comment for the full
+            // derivation (auditor plan-review's corrected reference point, the mode-3->4 transition,
+            // not the mode-0 trigger). originSample is always strictly < sampleIndex (a lock needs at
+            // least 24 bits' worth of samples after the origin) -- code-level auditor review correction,
+            // an earlier version of this comment said "not necessarily <=", backwards. This cursor's own
+            // strictly-by-1 advancement (see this method's own doc comment) guarantees originSample is a
+            // real, already-fed absolute index either way; it's never used as a buffer index itself, so
+            // the exact relationship doesn't matter for correctness, only for understanding the formula.
+            var originSample = sampleIndex - result.Value.SamplesSinceBitClockOrigin;
+            var anchor = originSample + MsToSamples(VisHeader.NarrowPostBitClockOriginDurationMs);
+
+            // anchor can land AHEAD of TotalSamplesReceived when a match completes near the buffer's
+            // current tail (the 539ms remainder is added forward from a point already in the past,
+            // not measured from "now") -- auditor plan-review flagged this as an untested boundary.
+            // Checked, not guarded: Commit() itself does no upper clamp (only Math.Max(0, ...) against
+            // going negative), and TryProcessBuffer's own per-line loop already treats "not enough
+            // samples yet" (TotalSamplesReceived - _consumedSamples < lineSampleCount) as "wait for
+            // more data," which is exactly correct here too -- the same implicit handling every other
+            // commit path in this file already relies on when a match resolves close to the live edge.
+            //
+            // No manual _narrowFskProcessedUpTo++ here, matching every other detector's identical
+            // note in this file: Commit() itself fast-forwards this cursor (see its own body) via
+            // Math.Max, so incrementing afterward would desync it by exactly one sample.
+            Commit(mode, anchor);
+            return true;
+        }
+
+        return false;
+    }
+
     // m_sint1-decoder-ordering-fix: this method's only remaining caller is piece 6c's mid-reception
     // re-verification (below, called once per decoded line while already locked) -- the OTHER
     // caller this doc comment used to describe (TryDecodeHeader's own pre-lock fallback) was
@@ -1226,8 +1364,21 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // m_sint2/m_sint3 are gated behind `!m_Sync` (sstv.cpp:1899) and genuinely never run at all once
     // locked, which is why this call site is intentionally NOT merged with the sync-bypass step the
     // way TryInterleavedHeaderScan merges it pre-lock.
+    //
+    // S8 fix: TryNarrowFskScan is checked FIRST, matching legacy's own real per-sample order
+    // (DecodeFSK, sstv.cpp:1858, runs unconditionally BEFORE the `if(!m_Sync||...)` block this
+    // method's own VIS-lock scan corresponds to, sstv.cpp:1889) -- unlike VisLockStateMachine's own
+    // AVT exclusion here, a narrow-FSK match needs no special-casing: TryNarrowFskScan already calls
+    // the same Commit() this method's own VIS-lock branch does, which already performs the full
+    // in-progress-image teardown either match needs (confirmed directly: Commit()'s body has no
+    // AVT-specific or VIS-specific step, see its own doc comment).
     private bool TryVisLockStateMachine(int upperBoundSample)
     {
+        if (TryNarrowFskScan(upperBoundSample))
+        {
+            return true;
+        }
+
         var bound = Math.Min(TotalSamplesReceived, upperBoundSample);
         for (; _visLockProcessedUpTo < bound; _visLockProcessedUpTo++)
         {
@@ -1522,6 +1673,30 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         }
 
         var scanBound = _fixedWindowExhausted ? TotalSamplesReceived : _consumedSamples;
+
+        // S8 fix: TryNarrowFskScan is checked FIRST, matching legacy's real per-sample order
+        // (DecodeFSK, sstv.cpp:1858, unconditional, runs before the `if(!m_Sync||...)` block the
+        // sync-bypass/VIS-lock loop below corresponds to, sstv.cpp:1889). Deliberately NOT part of
+        // this method's own entry-invariant check or the loop's own shared cursor advancement -- see
+        // TryNarrowFskScan's and _narrowFskProcessedUpTo's own doc comments for why this cursor must
+        // stay fully independent of _syncBypassProcessedUpTo/_visLockProcessedUpTo.
+        //
+        // Bounded by scanBound here, NOT TotalSamplesReceived -- round-1 code-level review caught a
+        // real regression in an earlier draft that used TotalSamplesReceived directly: on a bulk
+        // single-PushSamples call containing TWO back-to-back real transmissions, TotalSamplesReceived
+        // already includes the SECOND transmission's own real header content from the very first call,
+        // letting this scan discover it (and Commit() a spurious restart) before the FIRST transmission
+        // had even been given a chance to lock -- the exact "bulk vs. streaming ordering" bug class
+        // Band-1 items 2+3 and TryVisLockStateMachine's own doc comment already warn about elsewhere in
+        // this file. scanBound already encodes the correct "how far is it legitimate to look right now"
+        // answer (pinned at _consumedSamples until _fixedWindowExhausted, exactly like
+        // _syncBypassProcessedUpTo/_visLockProcessedUpTo's own shared bound below), so reusing it here
+        // closes the gap without needing a fourth, independently-drifting bound.
+        if (TryNarrowFskScan(scanBound))
+        {
+            return true;
+        }
+
         for (; _syncBypassProcessedUpTo < scanBound; _syncBypassProcessedUpTo++, _visLockProcessedUpTo++)
         {
             if (TrySyncIntervalDetectionStep())
@@ -1664,6 +1839,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _visLockStateMachine.Reset();
         _visLockProcessedUpTo = Math.Max(_visLockProcessedUpTo, _consumedSamples);
         _visLockOriginSample = _visLockProcessedUpTo;
+
+        // S8 fix: _narrowFskProcessedUpTo needs the exact same fast-forward, for the exact same
+        // reason this paragraph's own comment above already explains for _visLockProcessedUpTo --
+        // regression caught by the full suite (LegacyDerivedSpansTests.FskSpaceCursor_NeverResets_
+        // AcrossBackToBackNarrowTransmissions: 4 ModeDetected events instead of 2). Root cause: the
+        // PERSISTENT _narrowFskDecoder had never actually been fed samples 0.._consumedSamples when
+        // the FIXED-WINDOW path (TryDecodeNarrowModeHeader, which uses its own separate, local,
+        // fresh decoder instance) is what found this match -- without this fast-forward,
+        // TryVisLockStateMachine's own mid-reception scan (TryNarrowFskScan) would start feeding the
+        // persistent instance from sample 0 the first time it runs, rediscovering the SAME real
+        // header a second time and firing a spurious restart into the transmission that just locked.
+        // Deliberately NOT the same fix as EndOfImage's own +0.5s jump (auditor plan-review's actual
+        // blocker was about THAT jump specifically starving this decoder of the post-image window) --
+        // this is the smaller, always-necessary "don't re-examine what was just committed" correction
+        // every other detector's own Commit()-side fast-forward already performs, regardless of which
+        // path found the match.
+        _narrowFskProcessedUpTo = Math.Max(_narrowFskProcessedUpTo, _consumedSamples);
 
         // Piece 8c: AVT has no equivalent of this mechanism at all -- legacy's SyncSSTV itself
         // early-outs for smAVT (Main.cpp:3754-3758: zeroes the offset, clears m_wBgn immediately,
@@ -1840,6 +2032,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _visLockProcessedUpTo = Math.Max(_visLockProcessedUpTo, _consumedSamples);
         _visLockOriginSample = _visLockProcessedUpTo;
 
+        // S8 fix: same re-fast-forward as above, same reason -- Commit()'s own provisional
+        // fast-forward for _narrowFskProcessedUpTo (see that method's own doc comment) needs
+        // reapplying here too if this correction moved _consumedSamples further forward.
+        _narrowFskProcessedUpTo = Math.Max(_narrowFskProcessedUpTo, _consumedSamples);
+
         return true;
     }
 
@@ -1894,13 +2091,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             var m = (int)D19At(sample);
             var s = (int)FskSpaceAt(sample);
 
-            var modeCode = fskDecoder.ProcessSample(m, s);
-            if (modeCode is null)
+            var result = fskDecoder.ProcessSample(m, s);
+            if (result is null)
             {
                 continue;
             }
 
-            var mode = SstvModeRegistry.FindByNarrowCode(modeCode.Value);
+            var mode = SstvModeRegistry.FindByNarrowCode(result.Value.ModeCode);
             if (mode is null)
             {
                 // Unregistered mode code -- legacy resumes scanning rather than giving up
