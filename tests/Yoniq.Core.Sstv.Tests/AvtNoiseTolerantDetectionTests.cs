@@ -270,6 +270,91 @@ public class AvtNoiseTolerantDetectionTests
     }
 
     [Fact]
+    public async Task LockedAvtImage_BuffersActuallyTrimMidDecode_NotJustAtTheVeryEnd()
+    {
+        // Milestone-audit MUST fix (spec/14-roadmap.md, "Milestone audit, Phase 1+2"): TrimBuffers'
+        // locked branch used to include _afcProcessedUpTo/_slantProcessedUpTo unconditionally, but AVT
+        // is the one mode where both trackers are permanently null (InitializeAfc/InitializeSlant both
+        // return early for AVT, matching legacy's own `mode != smAVT` guard on both features) -- so
+        // neither cursor ever advances again once frozen at commit time, pinning the whole image's
+        // buffer for its entire ~90s duration (240 lines x 375ms). The test above
+        // (ChunkedPush_StaysBounded) does NOT catch this: it only samples BufferedSampleCount at the
+        // very end of the push, after the image's own final EndOfImage has already reset everything --
+        // this test instead samples repeatedly DURING the locked AVT decode itself, well before the
+        // image completes, to prove active mid-image trimming is actually happening, not just a single
+        // cleanup once the whole image is done.
+        var avtMode = SstvModeRegistry.Avt;
+        var avtPixels = new Rgb24[avtMode.ImageWidth * avtMode.ImageHeight];
+        Array.Fill(avtPixels, new Rgb24(10, 20, 30));
+        var avtImage = new ArrayImageSource(avtMode.ImageWidth, avtMode.ImageHeight, avtPixels);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var avtSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(avtMode, avtImage))
+        {
+            avtSamples.Add(sample);
+        }
+
+        var samples = avtSamples.ToArray();
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        var locked = false;
+        decoder.ModeDetected += _ => locked = true;
+        IImageSource? decodedImage = null;
+        decoder.LineDecoded += update => decodedImage = update.Image;
+
+        var bufferedAfterLock = new List<int>();
+        const int chunkSize = 20000;
+        for (var offset = 0; offset < samples.Length; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            if (locked)
+            {
+                bufferedAfterLock.Add(decoder.BufferedSampleCount);
+            }
+        }
+
+        Assert.True(bufferedAfterLock.Count >= 10, $"Expected enough post-lock samples to compare growth over time, got {bufferedAfterLock.Count}.");
+
+        // Code-level review finding: a buffer-shrinks assertion alone doesn't prove decode is still
+        // CORRECT -- PixelSampleReader's index lambda clamps rather than throwing on an out-of-range
+        // read (AnalogFmSstvDecoder.cs:1102), so an over-aggressive watermark would silently corrupt
+        // pixels rather than crash, and this test would stay green without this check.
+        Assert.NotNull(decodedImage);
+        var delta = ComputeAveragePerChannelDelta(avtImage, decodedImage!);
+        Assert.True(delta <= 20.0, $"AVT decode average per-channel delta {delta:F2} exceeded tolerance -- mid-image trimming may have released data a live reader still needed.");
+
+        // With the bug: buffered count grows roughly proportionally to pushed content for the WHOLE
+        // image, since the locked watermark never advances past the lock anchor. With the fix: once
+        // enough content has accumulated past the trim threshold, it plateaus regardless of how much
+        // MORE content is pushed afterward. Compare the max seen in the first half of post-lock samples
+        // against the max in the second half -- unbounded growth would make the second half's peak
+        // dramatically larger (roughly double, since twice as much content has been pushed by then);
+        // bounded trimming keeps the two peaks in the same rough range.
+        //
+        // Code-level review finding: a relative ratio alone has a hole -- it would also pass a SLOWER,
+        // still-unbounded leak (anything growing less than 2x per half). Paired with an absolute
+        // ceiling (a generous multiple of one line's own worth of samples, well above the handful of
+        // samples any live AVT reader actually needs behind the lock anchor -- see the production
+        // comment's own reader trace) so the check is monotone, not just relative.
+        var half = bufferedAfterLock.Count / 2;
+        var firstHalfMax = bufferedAfterLock.Take(half).Max();
+        var secondHalfMax = bufferedAfterLock.Skip(half).Max();
+
+        Assert.True(
+            secondHalfMax < firstHalfMax * 1.5,
+            $"Expected buffered sample count to plateau (bounded mid-image trimming) rather than keep growing through the AVT image -- " +
+            $"first-half peak {firstHalfMax} samples, second-half peak {secondHalfMax} samples.");
+
+        var oneLineSamples = avtMode.LineDurationMs / 1000.0 * encoder.SampleRate;
+        var absoluteCeiling = (int)(oneLineSamples * 20); // generous: real margin needed is a handful of samples, not a whole line
+        Assert.True(
+            secondHalfMax < absoluteCeiling,
+            $"Expected buffered sample count to stay within a small, bounded multiple of one line's worth of samples ({absoluteCeiling}), " +
+            $"but saw {secondHalfMax} -- looks like unbounded (or just very slow) growth, not a true plateau.");
+    }
+
+    [Fact]
     public async Task ChunkedStreamingPush_DuringLongAvtTrainingWindow_DoesNotCrashTrimBuffers()
     {
         var mode = SstvModeRegistry.Avt;
