@@ -2,6 +2,39 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
+## Resume here (2026-08-04, latest) — SHOULD backlog fully closed, merged to master, pushed. DSP core stable.
+
+Both halves of the SHOULD backlog (RX cluster done directly in the main tree, TX cluster done in a
+parallel `fork` worktree) went through a SECOND round of scrutiny before merge: two independent, fresh
+(no shared context with each other or with either side's own prior per-item reviews) Opus `auditor`
+calls, each given the FULL accumulated diff for its side and told to re-verify code AND every
+comment/legacy-citation, not just re-run the original per-item checklist. Both came back with
+comment/citation-only findings — a stale caller count, a misleading past-tense claim, an off-by-one
+`Main.cpp` line citation propagated across 4 sites, a dangling doc-comment cross-reference, imprecise
+citation ranges, a rate-dependent bias figure stated as a single number, an unacknowledged Auto Slant
+interaction, a mode-scope note. Zero functional/behavioral findings on either side — real signal that
+the underlying fixes were sound, not just an absence of a third check.
+
+All findings fixed on both sides, both suites re-confirmed green (RX 521/521, TX 527/527), both
+committed, merged into `master` (one expected conflict in `spec/14-roadmap.md` — both branches had
+appended a new section at the same point; resolved by keeping both), full merged suite re-confirmed
+(528/528), pushed to `origin/master` (`03c004e`). Fork worktree removed, its branch deleted (fully
+merged, nothing lost).
+
+**Where this leaves the DSP core**: every MUST bug from the full 3-phase milestone audit (4 total, 3
+from Phase 1-2 + MUST 4 from Phase 3) is fixed. Every reachable SHOULD finding (11 of 13) is fixed or
+closed via documentation; the remaining 2 (items 6, 10) are deliberately deferred with real reasoning
+recorded (item 6 needs a filter-state-checkpoint architecture that doesn't exist yet; item 10 is a
+judgment call about changing a silent clamp to a loud throw, not a research gap) — same tier item as
+Band 5's "not worth it / correctly blocked" precedent, not something dropped. COULD items 14-16 and
+NICE-TO-HAVE items 17-26 (`spec/14-roadmap.md`, "Findings, prioritized") remain open but are, by their
+own original triage, low-urgency/cosmetic/bounded — none block Phase 2.
+
+**Next**: no DSP work is queued. Natural next step is Phase 2 (radio layer, `IRadioController` +
+`rigctld` client) per `spec/14-roadmap.md`'s own plan — see that file's "Other candidates" section. The
+Hamlib-alongside-rigctld architecture question raised earlier this session is still an open, unstarted
+conversation, not a decision — revisit before Phase 2 design work starts, don't assume rigctld-only.
+
 ## Resume here (2026-08-04) — TX-side SHOULD cluster DONE (items 4, 5). This is a fork worktree, NOT pushed/merged.
 
 This is an isolated git worktree the main session spun off to work SHOULD items 4 (TX frequency-
