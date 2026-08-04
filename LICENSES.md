@@ -48,6 +48,17 @@ covered by the same license-audit rule in `CLAUDE.md` — recorded here for the 
 |---|---|---|---|
 | `miniaudio.h` v0.11.25 | [github.com/mackron/miniaudio](https://github.com/mackron/miniaudio), pinned at tag `0.11.25`, vendored at `src/Yoniq.Core.Audio.MiniAudio/native/miniaudio.h` | Dual-licensed by the author (David Reid): Unlicense (public domain) **or** MIT-0 (MIT No Attribution), author's choice granted to users. Yoniq v2 elects **MIT-0** — a clearer, better-recognized statement of the same permissive terms than an unlicense/public-domain dedication, which doesn't hold the same legal weight in every jurisdiction. | Used as the native audio backend (device enumeration, capture, playback) behind a hand-written C shim (`native/yoniq_audio.c`/`.h`) — see [[spec/05-audio-engine]]'s Backend choice section for why PortAudio was rejected in favor of this. The single-header amalgamation also contains `dr_wav`/`dr_flac`/`dr_mp3` (same author, same dual license) — disclosed here even though this project compiles them out via `MA_NO_DECODING`/`MA_NO_ENCODING` (see the shim's own `#define`s), since their source text is still physically present in the vendored file. |
 
+## Runtime dependencies consumed but not bundled
+
+Distinct from the "bundled" table above: these are external libraries Yoniq v2 talks to at runtime
+(P/Invoke, subprocess, network) without ever including their source or a compiled binary in this repo
+or any Yoniq installer. Recorded here for the same provenance reason, even though no license text or
+code is actually being redistributed.
+
+| Dependency | Relationship | License | Notes |
+|---|---|---|---|
+| Hamlib (`libhamlib`) | `Yoniq.Core.Radio.Hamlib` P/Invokes against a **system-installed** copy the user's own OS/package manager provides — see [[spec/03-cat-layer]]'s "Linked Hamlib: bring-your-own-libhamlib." Yoniq never builds, forks, vendors, or ships Hamlib source/binaries. | LGPL-2.1-or-later | No header-derived data tables (e.g. `riglist.h` rig-model numbers) are copied in either — Yoniq has no `IRigRegistry` ([[spec/02-radio-layer]]). |
+
 ## Test fixtures captured by running the legacy binary
 
 Distinct from both audits above: these are neither excluded assets nor bundled third-party code —
