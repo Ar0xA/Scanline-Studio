@@ -3864,6 +3864,17 @@ comment cross-reference, imprecise citation ranges, a residual-bias figure that 
 unacknowledged Auto Slant interaction) -- no functional/behavioral findings on either side. All fixed;
 both suites re-confirmed green before merge (RX 521/521, TX 527/527).
 
+**Phase 1 status (2026-08-04): closed out, moving to Phase 2.** All 4 MUST bugs from the full 3-phase
+milestone audit fixed; 11 of 13 SHOULD findings fixed or closed via documentation (items 6, 10
+deliberately deferred, real reasoning recorded above); remaining COULD (14-16) and NICE-TO-HAVE (17-26)
+items are open but low-urgency/cosmetic by their own original triage, same tier as the already-accepted
+Band 5 precedent — none block moving on. Two independent, code-level comprehensive audits (RX diff, TX
+diff, fresh Opus context each) ran on the full accumulated SHOULD-fix work immediately before this
+close-out and found no functional issues. Before starting Phase 2 proper, one open architecture
+question is being worked first: whether `IRadioController`'s scope should stay rigctld-client-only (this
+phase's original plan) or also build in Hamlib directly, the way WSJT-X does — see the next entry once
+resolved.
+
 ## Phase 2 — Radio layer (no CAT rigs yet)
 
 - [[02-radio-layer]]: `IRadioController` reference implementation against a fake transport/protocol, "no radio" path fully supported.
