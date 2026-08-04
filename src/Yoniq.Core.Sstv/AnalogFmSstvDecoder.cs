@@ -190,6 +190,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     }
 
     private int _consumedSamples;
+
+    // Milestone-audit Phase 3 MUST 4 (spec/14-roadmap.md): the TRUE, unrounded line-start position,
+    // advanced by the unrounded _effectiveSamplesPerLine every decoded line -- legacy (Main.cpp:4133-
+    // 4148, DrawSSTVNormal) keeps ONE continuous integer sample counter for the whole transmission and
+    // derives every line boundary via unrounded `double` division against it (`y =
+    // int(double(n)/SSTVSET.m_TW)`), never by re-rounding a per-line step and accumulating the rounded
+    // result. An earlier version of the per-line loop below did exactly that
+    // (`_consumedSamples += (int)Math.Round(_effectiveSamplesPerLine)`), so line k started at
+    // k*round(E) instead of legacy's exact k*E -- a drift that compounds across the whole image
+    // (same trimmed-vs-full mismatch MUST fix 3 fixed within one scan segment, one level up: between
+    // lines instead of within a line). Code-level review note: the ROUNDED per-line cursor actually
+    // used to decode (_consumedSamples, below) still isn't bit-identical to legacy's own `int(n/m_TW)`
+    // (that's effectively a ceiling against m_TW, this port's is Math.Round's round-half-to-even) --
+    // a small, uniform, non-compounding (~0.1px) bias absorbed by SyncAnchorCorrector, unlike the
+    // compounding drift this fix removes. Invariant: kept exactly equal to _consumedSamples at every
+    // OTHER site that assigns _consumedSamples (Commit -- including via TryDecodeNarrowModeHeader's
+    // own assignment immediately followed by a Commit call, TryResolveSyncAnchorCorrection,
+    // EndOfImage's dead-time skip) -- it only diverges from the rounded _consumedSamples during the
+    // per-line loop's own fractional accumulation, never across an image boundary.
+    private double _idealLineStartSample;
+
     private SstvModeDefinition? _mode;
     private IScanlineDecoder? _lineDecoder;
     private Rgb24[]? _pixels;
@@ -1091,7 +1112,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // *and into the trailing footer tone*, corrupting the sync-position history with
                 // non-image content before the very first line was ever decoded. Caught by an end-to-end
                 // mistuned-rate test, not by any of the isolated or single-shot unit tests above.
-                var lineSampleCount = (int)Math.Round(_effectiveSamplesPerLine);
+                // MUST 4 (spec/14-roadmap.md, Phase 3): nextLineStartSample is derived from
+                // _idealLineStartSample's own running double total, not by rounding-then-accumulating
+                // _effectiveSamplesPerLine every line -- see _idealLineStartSample's own doc comment.
+                // lineSampleCount (this line's own sample span) is the DIFFERENCE between the two
+                // rounded cursors, matching legacy's own naturally-varying per-line span (each line's
+                // width, in samples, differs from its neighbors by up to 1 -- an artifact of `y =
+                // int(n/m_TW)` against a non-integer m_TW -- not a fixed per-line constant).
+                var nextLineStartSample = (int)Math.Round(_idealLineStartSample + _effectiveSamplesPerLine);
+                var lineSampleCount = nextLineStartSample - _consumedSamples;
                 if (TotalSamplesReceived - _consumedSamples < lineSampleCount)
                 {
                     return; // waiting for more samples to finish this image -- not done, don't reset
@@ -1107,7 +1136,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // whole image -- see ApplyAfcCorrections' own doc comment for why (mid-reception
                 // restart double-correction fix). Must run before DecodeLine, which reads the
                 // corrected frequencies via the reader constructed below.
-                ApplyAfcCorrections(_consumedSamples + lineSampleCount);
+                ApplyAfcCorrections(nextLineStartSample);
 
                 // Piece 10: PixelSampleReader is constructed fresh per line, not per mode/session --
                 // GetKsbSamples depends on effectiveSampleRate, which this port recomputes per line
@@ -1117,12 +1146,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 var reader = new PixelSampleReader(
                     index => DemodulatedFrequencyAt(Math.Clamp(index, _bufferBase, TotalSamplesReceived - 1)),
                     SstvModeRegistry.GetKsbSamples(mode, effectiveSampleRate),
-                    _consumedSamples + lineSampleCount,
+                    nextLineStartSample,
                     mode.LuminanceMinHz,
                     SstvModeRegistry.NeverPeakPicks(mode));
 
                 lineDecoder.DecodeLine(mode, effectiveSampleRate, _consumedSamples, _nextLine, reader, pixels);
-                _consumedSamples += lineSampleCount;
+                _idealLineStartSample += _effectiveSamplesPerLine;
+                _consumedSamples = nextLineStartSample;
 
                 LineDecoded?.Invoke(new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
                 _nextLine += lineDecoder.RowsPerTransmissionLine;
@@ -1241,6 +1271,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _visLockOriginSample = resumeFrom;
 
         _consumedSamples = resumeFrom;
+        _idealLineStartSample = resumeFrom; // MUST 4 -- see field's own doc comment
 
         _agcDeadZoneCatchUpTarget = resumeFrom;
     }
@@ -1976,6 +2007,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     {
         AbandonInProgressImage();
         _consumedSamples = Math.Max(0, lineStartSample);
+        _idealLineStartSample = _consumedSamples; // MUST 4 -- see field's own doc comment
         LockAnchorCommitted?.Invoke(_consumedSamples);
         _bandpassLockedFromSample = _consumedSamples; // Band-1 item 4b -- see field's own doc comment
         _mode = matched;
@@ -2230,6 +2262,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // samples for Robot 36, applied very early in a short buffer could clamp) but expected to be
         // rare in practice: real transmissions carry several seconds of lead-in before the image.
         _consumedSamples = Math.Max(0, origin + delta);
+        _idealLineStartSample = _consumedSamples; // MUST 4 -- see field's own doc comment
 
         // Round-1-Opus-review fix: Commit() already fast-forwarded _visLockProcessedUpTo/
         // _visLockOriginSample past the PROVISIONAL (pre-correction) _consumedSamples via its own
