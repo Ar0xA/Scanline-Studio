@@ -330,12 +330,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // externally reset either -- only NarrowFskHeaderDecoder's own internal failure/success paths
     // reset it, exactly matching this class's already-existing design. This makes
     // _narrowFskDecoder/_narrowFskProcessedUpTo genuinely different from _visLockStateMachine/
-    // _visLockProcessedUpTo above: this pair is NEVER Reset() and NEVER re-anchored/jumped by
-    // EndOfImage or Commit (auditor plan-review finding: sharing the _syncBypassProcessedUpTo/
+    // _visLockProcessedUpTo above: this pair is NEVER Reset() and NEVER jumped by EndOfImage
+    // specifically (auditor plan-review finding: sharing the _syncBypassProcessedUpTo/
     // _visLockProcessedUpTo lockstep loop, which DOES jump 500ms forward at every EndOfImage, would
     // starve this decoder of exactly the post-image window a mode-change announce is most likely to
     // arrive in -- see TryNarrowFskScan's own doc comment for the independent-cursor design this
-    // led to).
+    // led to). Milestone-audit stale-comment fix: an earlier version of this comment also claimed
+    // "never jumped by ... Commit," which is wrong and contradicted by Commit()'s own
+    // `_narrowFskProcessedUpTo = Math.Max(_narrowFskProcessedUpTo, _consumedSamples)` fast-forward
+    // (its own doc comment, "needs the exact same fast-forward, for the exact same reason" as every
+    // other detector's cursor) -- this cursor DOES get fast-forwarded whenever ANY other detector's
+    // match commits, it just isn't RESET/re-anchored to a fresh origin the way
+    // _syncBypassProcessedUpTo/_visLockProcessedUpTo are.
     private readonly NarrowFskHeaderDecoder _narrowFskDecoder;
     private int _narrowFskProcessedUpTo;
 
@@ -835,14 +841,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             watermark = Math.Min(watermark, _visLockProcessedUpTo);
 
             // S8 fix: within a single pre-lock epoch this cursor is now bound-gated the same way
-            // _syncBypassProcessedUpTo/_visLockProcessedUpTo are (TryNarrowFskScan is called with
-            // scanBound, see that call site's own corrected doc comment) -- but ACROSS images it still
+            // _syncBypassProcessedUpTo/_visLockProcessedUpTo are (TryNarrowFskScan is called with a
+            // bound that's always <= scanBound, see that call site's own corrected doc comment --
+            // milestone-audit MUST fix: now called once per iteration with a tight per-sample bound,
+            // not once with scanBound directly, but every bound passed is still <= scanBound, so this
+            // watermark term's own conclusion is unaffected) -- but ACROSS images it still
             // differs: _syncBypassProcessedUpTo/_visLockProcessedUpTo get re-anchored/jumped by
             // EndOfImage and Commit(), so they can never lag far behind, while _narrowFskProcessedUpTo
             // is NEVER reset or jumped (see its own field doc comment), so over a multi-image stream it
             // becomes the SLOWEST cursor in the system. Included explicitly anyway, not left to
-            // accident. Provably bounded, not permanently stallable: TryNarrowFskScan runs once per
-            // TryInterleavedHeaderScan call (i.e. once per PushSamples call, while _mode is null)
+            // accident. Provably bounded, not permanently stallable: TryNarrowFskScan is called at
+            // least once per TryInterleavedHeaderScan call (i.e. at least once per PushSamples call,
+            // while _mode is null -- now potentially many more times, once per interleaved-loop
+            // iteration, but never fewer)
             // EXCEPT during the up-to-~7.1s _avtTrainingPending window (TryDecodeHeader short-circuits
             // past TryInterleavedHeaderScan entirely while pending, see that method's own doc comment)
             // -- a temporary, bounded pause (this cursor resumes advancing the instant AVT training
@@ -1375,12 +1386,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // by either plan-review round, found empirically by running the full suite as this project's own
     // methodology requires before calling a piece done.
     //
-    // _narrowFskProcessedUpTo is still never reset or jumped by EndOfImage/Commit (unlike
+    // _narrowFskProcessedUpTo is still never RESET or jumped specifically by EndOfImage (unlike
     // _syncBypassProcessedUpTo/_visLockProcessedUpTo, which DO get fast-forwarded 500ms at every
     // EndOfImage, see that method's own resumeFrom) -- that part of the original design goal is
     // unaffected by this correction, and is still why this cursor needs its own separate loop here
     // rather than sharing TryInterleavedHeaderScan's lockstep for-statement/entry-invariant outright.
-    // What changed is only the BOUND passed in, not this cursor's own advancement/reset semantics.
+    // (It IS fast-forwarded by Commit()'s own Math.Max whenever any OTHER detector's match commits --
+    // see this field's own doc comment for the milestone-audit correction of an earlier, wrong version
+    // of this same claim -- just never RESET to a fresh origin the way the sync-bypass/VIS-lock pair
+    // is.) What changed by the MUST fix above is only the BOUND passed to each call, not this cursor's
+    // own advancement/reset semantics.
     private bool TryNarrowFskScan(int upperBoundSample)
     {
         var bound = Math.Min(TotalSamplesReceived, upperBoundSample);
@@ -1833,13 +1848,39 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // answer (pinned at _consumedSamples until _fixedWindowExhausted, exactly like
         // _syncBypassProcessedUpTo/_visLockProcessedUpTo's own shared bound below), so reusing it here
         // closes the gap without needing a fourth, independently-drifting bound.
-        if (TryNarrowFskScan(scanBound))
+        //
+        // Milestone-audit MUST fix: this call used to run to completion (match or exhaust scanBound)
+        // BEFORE the interleaved loop below ever took a single step -- on a bulk push spanning TWO
+        // back-to-back transmissions (e.g. an earlier non-narrow one followed later by a narrow one),
+        // this whole-buffer pre-pass could find and Commit() the LATER transmission before the loop
+        // below ever got a chance to examine the EARLIER one's own samples, re-introducing (for the
+        // narrow-FSK path specifically) the exact bug class the m_sint1 decoder-ordering fix (piece
+        // 7d) was written to eliminate. _narrowFskProcessedUpTo CAN legitimately lag behind
+        // _syncBypassProcessedUpTo across image boundaries (it's never reset/jumped by EndOfImage,
+        // unlike _syncBypassProcessedUpTo/_visLockProcessedUpTo -- see its own field doc comment), so
+        // this first call catches it up only to wherever _syncBypassProcessedUpTo ALREADY sits (never
+        // further -- Math.Min, not scanBound) in case this call's own loop below has no NEW
+        // sync-bypass work to do this time; the loop below then re-checks per iteration (see its own
+        // comment) so it never falls behind current again once the loop is running.
+        if (TryNarrowFskScan(Math.Min(scanBound, _syncBypassProcessedUpTo)))
         {
             return true;
         }
 
         for (; _syncBypassProcessedUpTo < scanBound; _syncBypassProcessedUpTo++, _visLockProcessedUpTo++)
         {
+            // Milestone-audit MUST fix (continued): catch _narrowFskProcessedUpTo up to THIS
+            // iteration's own sample -- in the common case (already caught up from the call above, or
+            // the previous iteration) this reduces to exactly one narrow-FSK sample per interleaved-
+            // loop sample, reproducing legacy's real per-sample order (DecodeFSK before the m_sint/VIS
+            // switch) for every sample actually in scanBound, not just the first one. Reuses
+            // TryNarrowFskScan unchanged -- only the bound passed to it is tighter here than the old
+            // whole-scanBound call was.
+            if (TryNarrowFskScan(_syncBypassProcessedUpTo + 1))
+            {
+                return true;
+            }
+
             // LOAD-BEARING ORDER, do not swap: TrySyncIntervalDetectionStep must run BEFORE
             // _visLockStateMachine.ProcessSample below for this same sample index. S12's own gating
             // (TrySyncIntervalDetectionStep's m_sint2/m_sint3 comments) reads _visLockStateMachine's
