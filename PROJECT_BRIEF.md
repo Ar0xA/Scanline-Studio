@@ -20,31 +20,35 @@ tonight was updated back to its normal push-after-each-item behavior. Re-enablin
 itself is still the user's own call — don't run `gh workflow enable CI` without checking with them first,
 since that's what actually costs Actions minutes again, not the pushes themselves.
 
-## Resume here (2026-08-04, latest) — Milestone audit Phase 1+2 done, 3 MUST bugs found, NOT YET FIXED
+## Resume here (2026-08-04, latest) — Milestone audit: MUST fixes 1-2 DONE, fix 3 in progress
 
 After Band 4 closed, ran the milestone-audit playbook (`docs/audit-playbook.md`), scoped to DSP core +
 TX/RX codec paths (radio/CAT/DI/localization/UI don't exist yet). Phase 1 (unit map) done directly by
-the orchestrating session; Phase 2 (4 batches, fanned out to `auditor`) all returned. **Phase 3
-(chain/integration audit) has NOT run yet.**
+the orchestrating session; Phase 2 (4 batches, fanned out to `auditor`) all returned, finding 3 confirmed
+MUST-fix bugs. **Phase 3 (chain/integration audit) has NOT run yet** — user's explicit directive: build
+and verify TX-side tests first (see below), do not skip straight to it.
 
-**3 confirmed MUST-fix bugs, all independently re-verified against legacy source by the orchestrating
-session (not just trusted from the auditor), NONE fixed yet:**
-1. **Pixel-pitch trim accumulator drift** — most multi-segment RX decoders start each scan segment
-   after the first slightly early (compounds up to ~4px by the last channel); confirmed directly
-   against `Main.cpp:4454-4503`. Affects `RgbSequentialScanlineDecoder`/`RobotScanlineDecoder`/
-   `YCbCrSequentialScanlineDecoder`/`YCbCrLinePairedScanlineDecoder` (not RM8/RM12, single segment; not
-   "group C" modes, trim=1.0).
-2. **`TryNarrowFskScan` whole-buffer pre-pass** (`AnalogFmSstvDecoder.cs:1352-1365`) — on a bulk push
-   with an earlier non-narrow transmission followed by a later narrow one, the narrow scan can commit
-   the later transmission first, skipping the earlier one. Re-introduces the exact bug class the
-   `m_sint1` decoder-ordering fix (piece 7d) was written to eliminate, just for narrow-FSK.
-3. **AVT images never trim their buffers** — `InitializeAfc`/`InitializeSlant` return early for AVT
-   (both trackers null), so the locked watermark never advances for AVT's whole ~90s image; ~56-225MB
-   retained per AVT image, same failure class Band-1 item S2 already fixed pre-lock.
+**MUST fixes, all independently re-verified against legacy source by the orchestrating session (not
+just trusted from the auditor):**
+1. **AVT images never trimmed their buffers — DONE, committed (`e35a648`).** `InitializeAfc`/
+   `InitializeSlant` return early for AVT (both trackers null), so the locked watermark never advanced
+   for AVT's whole ~90s image. Fixed by conditionally excluding these two watermark terms only when
+   their tracker is null, mirroring an already-established pre-lock pattern. Code-level review clean.
+2. **`TryNarrowFskScan` whole-buffer pre-pass — DONE, ready to commit.** On a bulk push with an earlier
+   non-narrow transmission followed by a later narrow one, the narrow scan could commit the later
+   transmission first, skipping the earlier one entirely — confirmed by reverting the fix and observing
+   `ModeDetected` drop from 2 events to 1. Fixed by interleaving narrow-FSK's own scan per-sample with
+   the sync-bypass/VIS-lock loop instead of letting it run to completion first. Code-level review found
+   a real secondary risk (the fix newly activates a previously-accidentally-muted false-positive-restart
+   exposure at a SEPARATE, lower-priority call site) — deliberately deferred, documented, guarded by a
+   new `Assert.Equal(0, restartCount)` test assertion rather than silently absorbed.
+3. **Pixel-pitch trim accumulator drift — NOT YET FIXED, in progress.** Most multi-segment RX decoders
+   start each scan segment after the first slightly early (compounds up to ~4px by the last channel);
+   confirmed directly against `Main.cpp:4454-4503`. Affects `RgbSequentialScanlineDecoder`/
+   `RobotScanlineDecoder`/`YCbCrSequentialScanlineDecoder`/`YCbCrLinePairedScanlineDecoder` (not RM8/
+   RM12, single segment; not "group C" modes, trim=1.0).
 
-None of these three need TX golden vectors or new fixtures to fix/verify — all independently testable
-now (pixel-pitch trim: existing RX golden vectors should improve; ordering bug: synthetic bulk-push
-test; AVT buffer growth: a buffered-sample-count probe mid-image).
+None of these three needed/need TX golden vectors or new fixtures to fix/verify.
 
 **Also documented, not yet actioned**: ~10 SHOULD items (TX frequency-truncation bias, missing
 `OutHEAD` TX segment + its `removed-features.md` entry, a mid-image narrow-restart 1-line stale-cache
