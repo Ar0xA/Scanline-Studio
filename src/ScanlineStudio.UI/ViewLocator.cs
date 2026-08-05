@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
-using Dock.Model.Core;
 using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.UI;
@@ -33,12 +32,6 @@ public class ViewLocator : IDataTemplate
 
     public bool Match(object? data)
     {
-        // IDockable (Dock's Tool/Document base) matches too: Dock's own default ToolControl/
-        // DocumentControl templates render the dockable itself via ambient DataTemplate lookup,
-        // not via any Context-forwarding of their own -- confirmed empirically during the Phase-3
-        // pre-build spike (a dockable holding a separate plain Context object rendered its tab
-        // header but a blank body) and against Dock's own DockMvvmSample, where every pane
-        // view-model derives from Tool/Document directly. See the Phase-3 plan's decision #8.
-        return data is ViewModelBase or IDockable;
+        return data is ViewModelBase;
     }
 }

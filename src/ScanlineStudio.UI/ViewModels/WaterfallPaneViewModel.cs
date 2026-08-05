@@ -1,20 +1,18 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
-using Dock.Model.Mvvm.Controls;
-using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 
 namespace ScanlineStudio.UI.ViewModels;
 
-/// <summary>Real pane #1 of 3 (Phase-3 plan decision #9) -- derives from <see cref="Tool"/> directly
-/// (the pane VM IS the dockable; see <see cref="SpikePaneViewModel"/>'s doc comment history for why).
+/// <summary>Live spectrum/waterfall pane, hosted in the fixed Receive tab's "Spectrum & waterfall"
+/// card (spec/09-ui.md).
 ///
 /// <b>Coalescing (Phase-3 plan finding #5)</b>: <see cref="IWaterfallSource.Frames"/> pushes
 /// synchronously from the audio drain thread and can arrive faster than the UI renders. At most one
 /// <c>Dispatcher.UIThread.Post</c> is ever in flight -- a frame arriving while one is already pending
 /// just replaces <see cref="_pendingFrame"/> (latest-wins), it never queues a second post.</summary>
-public sealed partial class WaterfallPaneViewModel : Tool
+public sealed partial class WaterfallPaneViewModel : ViewModelBase
 {
     private readonly object _gate = new();
     private WaterfallFrame? _pendingFrame;
@@ -23,12 +21,8 @@ public sealed partial class WaterfallPaneViewModel : Tool
     [ObservableProperty]
     private WaterfallFrame? _latestFrame;
 
-    public WaterfallPaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization)
+    public WaterfallPaneViewModel(ISstvSessionService sstvSession)
     {
-        Id = "Waterfall";
-        Title = localization.GetString("Panes.Waterfall.Title");
-        localization.CultureChanged += () => Title = localization.GetString("Panes.Waterfall.Title");
-
         sstvSession.Waterfall.Frames.Subscribe(OnFrame);
     }
 

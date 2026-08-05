@@ -19,7 +19,6 @@ using ScanlineStudio.Core.Radio.Rigctld;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI;
-using ScanlineStudio.UI.Docking;
 using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.ViewModels;
 
@@ -51,11 +50,17 @@ internal static class Program
         hostBuilder.Services.AddSingleton<ILocalizationService>(sp =>
             new JsonLocalizationService(localeDirectory, sp.GetRequiredService<ILogger<JsonLocalizationService>>()));
 
-        // AppDockFactory's constructor takes the real pane dependencies below, resolved
-        // automatically by DI (decision #7 -- this, not a static locator, is how a Dock-constructed
-        // pane gets real services).
-        hostBuilder.Services.AddSingleton<AppDockFactory>();
         hostBuilder.Services.AddSingleton<IFilePickerService, FilePickerService>();
+
+        // Fixed-shell pane view-models (spec/09-ui.md) -- singletons, one per app session, resolved
+        // automatically by DI straight into MainViewModel's constructor (replaces the former
+        // AppDockFactory, which built these same 4 instances by hand). TxImageEditorPaneViewModel is
+        // NOT registered here -- it's constructed dynamically per edit session (with runtime-only
+        // args: the picked image + target mode), same as before.
+        hostBuilder.Services.AddSingleton<WaterfallPaneViewModel>();
+        hostBuilder.Services.AddSingleton<RxImagePaneViewModel>();
+        hostBuilder.Services.AddSingleton<RxHistoryPaneViewModel>();
+        hostBuilder.Services.AddSingleton<TxControlsPaneViewModel>();
 
         // Piece Engine 6. Registered by type, not an eagerly-constructed instance (unlike
         // ISettingsStore above) -- MiniAudioEngine's constructor initializes the native miniaudio

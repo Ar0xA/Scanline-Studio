@@ -151,4 +151,104 @@ public sealed class RadioStatusViewModelTests
         Assert.Equal(1750, call.FrequencyHz);
         Assert.Equal(TimeSpan.FromSeconds(3), call.Duration);
     }
+
+    [AvaloniaFact]
+    public void Constructor_InitializesIsReceivingFromTheSessionsRealCaptureState()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsReceiving);
+    }
+
+    [AvaloniaFact]
+    public void CheckingIsReceiving_CallsStartReceivingOnTheSstvSession()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsReceiving = true;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(sstvSession.IsReceiving);
+    }
+
+    [AvaloniaFact]
+    public void UncheckingIsReceiving_CallsStopReceivingOnTheSstvSession()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsReceiving = false;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(sstvSession.IsReceiving);
+    }
+
+    [AvaloniaFact]
+    public void CheckingIsReceiving_SessionThrows_RevertsToggleAndSetsErrorMessageInsteadOfCrashing()
+    {
+        var sstvSession = new FakeSstvSessionService { ThrowOnStartReceiving = true };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsReceiving = true;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsReceiving);
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void HaltReceivingCommand_StopsReceivingAndUnchecksTheToggle()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsReceiving = true;
+        Dispatcher.UIThread.RunJobs();
+
+        vm.HaltReceivingCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsReceiving);
+        Assert.False(sstvSession.IsReceiving);
+    }
+
+    [AvaloniaFact]
+    public void CatLinked_TracksConnectionEvents_ConnectedTrueDisconnectedFalse()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.CatLinked);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CatLinked);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Disconnected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.CatLinked);
+    }
+
+    [AvaloniaFact]
+    public void CatLinked_IgnoresCommandFailed_ConnectionStaysHealthyPerThatStatesOwnContract()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CatLinked);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.CommandFailed, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.CatLinked);
+    }
 }

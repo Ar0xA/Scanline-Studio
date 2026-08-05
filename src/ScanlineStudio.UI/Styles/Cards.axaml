@@ -1,0 +1,366 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Flat WSJT-X/fldigi-utilitarian control chrome (spec/09-ui.md's current Aesthetic
+         Directive, superseding the old "raw SDR instrumentation, hardware-module border"
+         look): square corners, gray Win32/Qt control faces, sunken white monospace readout
+         fields, pressed-look toggles via border/background swap (no filled-color state).
+         Ported from mockups/MainWindow_mock2.axaml's own <Window.Styles> block; included
+         after Tokens.axaml in App.axaml so these selectors win on any overlapping property
+         (e.g. Button/TabItem padding/height) — Tokens.axaml's older per-control CornerRadius
+         setters are left in place since they're harmless (both resolve to 0). -->
+    <Styles.Resources>
+        <ResourceDictionary>
+            <Color x:Key="ScanlineStudioPanelBackgroundColor">#F0F0F0</Color>
+            <Color x:Key="ScanlineStudioCardBackgroundColor">#F0F0F0</Color>
+            <Color x:Key="ScanlineStudioCardBorderColor">#B9B9B9</Color>
+            <Color x:Key="ScanlineStudioControlFaceColor">#E9E9E9</Color>
+            <Color x:Key="ScanlineStudioControlBorderColor">#A0A0A0</Color>
+            <Color x:Key="ScanlineStudioControlHoverColor">#DCE9F5</Color>
+            <Color x:Key="ScanlineStudioControlHoverBorderColor">#7EB4EA</Color>
+            <Color x:Key="ScanlineStudioControlPressedColor">#C4DDF5</Color>
+            <Color x:Key="ScanlineStudioFieldBackgroundColor">#FFFFFF</Color>
+            <Color x:Key="ScanlineStudioCardLabelForegroundColor">#454545</Color>
+            <Color x:Key="ScanlineStudioAccentFillColor">#0F62A8</Color>
+            <Color x:Key="ScanlineStudioPlotBackgroundColor">#101010</Color>
+        </ResourceDictionary>
+    </Styles.Resources>
+
+    <!-- 11.5px base type / 17px control rows: noticeably denser than the mock2 draft's own
+         12px/19-24px, per direct user feedback after reviewing it. -->
+    <Style Selector="Window">
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioPanelBackgroundColor}" />
+    </Style>
+
+    <!-- Card grouping: background-filled bordered container, the new norm (supersedes the
+         old borderless ScanlineStudioModuleGroup look, which stays defined for anything not
+         yet ported to the new shell). -->
+    <Style Selector="Border.card">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioCardBackgroundColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioCardBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Padding" Value="8,6" />
+    </Style>
+    <Style Selector="Border.cardInner">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioCardBackgroundColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioCardBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="7,5" />
+    </Style>
+    <Style Selector="Border.plot">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioPlotBackgroundColor}" />
+        <Setter Property="BorderBrush" Value="#FF7A7A7A" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style Selector="TextBlock.cardHeader">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.cardHeaderSmall">
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.caption">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource ScanlineStudioCardLabelForegroundColor}" />
+    </Style>
+    <Style Selector="TextBlock.label">
+        <Setter Property="Foreground" Value="{DynamicResource ScanlineStudioCardLabelForegroundColor}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+    <!-- Every measured value is monospace and right-aligned; rows clip instead of overrunning. -->
+    <Style Selector="TextBlock.value">
+        <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+    <Style Selector="TextBlock.accentValue">
+        <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="Foreground" Value="{DynamicResource ScanlineStudioAccentFillColor}" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+    </Style>
+    <Style Selector="TextBlock.readout">
+        <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+        <Setter Property="FontSize" Value="11" />
+    </Style>
+    <Style Selector="TextBlock.readoutSmall">
+        <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+        <Setter Property="FontSize" Value="10.5" />
+        <Setter Property="Foreground" Value="#FF8A8A8A" />
+    </Style>
+    <Style Selector="Grid.kv">
+        <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+
+    <Style Selector="Button">
+        <Setter Property="Height" Value="17" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Button:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlHoverColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlHoverBorderColor}" />
+    </Style>
+    <Style Selector="Button:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlPressedColor}" />
+    </Style>
+    <!-- "accent" means the default action, not a filled blue pill. -->
+    <Style Selector="Button.accent">
+        <Setter Property="Background" Value="#FFD6E7F7" />
+        <Setter Property="BorderBrush" Value="#FF5A9AD4" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="#FF0B3E68" />
+    </Style>
+    <!-- Halt/Stop-style destructive action: red-tinted at rest, not just on press; a stop
+         action should read as such before the user's pointer ever touches it. -->
+    <Style Selector="Button.halt">
+        <Setter Property="Background" Value="#FFF5D6D6" />
+        <Setter Property="BorderBrush" Value="#FFB33A3A" />
+        <Setter Property="Foreground" Value="#FF6B0F0F" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.halt:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#FFF0C2C2" />
+        <Setter Property="BorderBrush" Value="#FF8F2626" />
+    </Style>
+    <Style Selector="Button.small, ToggleButton.small">
+        <Setter Property="Height" Value="14" />
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="FontSize" Value="10.5" />
+    </Style>
+
+    <Style Selector="ToggleButton">
+        <Setter Property="Height" Value="17" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="ToggleButton:checked /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlPressedColor}" />
+        <Setter Property="BorderBrush" Value="#FF5A9AD4" />
+    </Style>
+    <!-- Receiving/monitoring toggle: green when active, a state color rather than the generic
+         pressed-blue every other toggle uses, since "currently receiving" is a status worth
+         reading at a glance, not just a pressed key. -->
+    <Style Selector="ToggleButton.receiving:checked /template/ ContentPresenter">
+        <Setter Property="Background" Value="#FFC2E8C2" />
+        <Setter Property="BorderBrush" Value="#FF3F8F3F" />
+    </Style>
+
+    <!-- Segmented control = radio buttons drawn as pressed/unpressed keys. -->
+    <Style Selector="Border.segment">
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="RadioButton.seg">
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Name="face" Height="17" Padding="9,0" Margin="-1,0,0,0"
+                        Background="{DynamicResource ScanlineStudioControlFaceColor}"
+                        BorderBrush="{DynamicResource ScanlineStudioControlBorderColor}" BorderThickness="1" CornerRadius="0">
+                    <ContentPresenter Content="{TemplateBinding Content}" FontSize="11.5"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="RadioButton.seg:pointerover /template/ Border#face">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlHoverColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlHoverBorderColor}" />
+    </Style>
+    <Style Selector="RadioButton.seg:checked /template/ Border#face">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlPressedColor}" />
+        <Setter Property="BorderBrush" Value="#FF5A9AD4" />
+        <Setter Property="BoxShadow" Value="inset 0 1 2 #24000000" />
+    </Style>
+    <Style Selector="RadioButton.tool">
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Name="face" Height="17" Padding="8,0" Background="{DynamicResource ScanlineStudioControlFaceColor}"
+                        BorderBrush="{DynamicResource ScanlineStudioControlBorderColor}" BorderThickness="1">
+                    <ContentPresenter Content="{TemplateBinding Content}" FontSize="11" VerticalAlignment="Center" />
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="RadioButton.tool:checked /template/ Border#face">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlPressedColor}" />
+        <Setter Property="BorderBrush" Value="#FF5A9AD4" />
+    </Style>
+
+    <!-- Status fields: sunken white monospace boxes (fldigi style), not rounded colorful badges. -->
+    <Style Selector="Border.pill">
+        <Setter Property="Height" Value="17" />
+        <Setter Property="Padding" Value="6,0" />
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioFieldBackgroundColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Border.pill > TextBlock">
+        <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.accentPill">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioAccentFillColor}" />
+        <Setter Property="BorderBrush" Value="#FF0B4C83" />
+    </Style>
+    <Style Selector="Border.accentPill > TextBlock">
+        <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Border.softPill">
+        <Setter Property="Background" Value="#FFE7F0DA" />
+        <Setter Property="BorderBrush" Value="#FF8FAE6E" />
+    </Style>
+    <Style Selector="Border.softPill > TextBlock">
+        <Setter Property="Foreground" Value="#FF2C4715" />
+    </Style>
+
+    <Style Selector="TextBox, ComboBox, NumericUpDown">
+        <Setter Property="MinHeight" Value="17" />
+        <Setter Property="Height" Value="17" />
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioFieldBackgroundColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="NumericUpDown.tight">
+        <Setter Property="Width" Value="72" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+    </Style>
+
+    <!-- Rectangular Win32 slider thumb, sunken track. -->
+    <Style Selector="Slider">
+        <Setter Property="MinHeight" Value="18" />
+        <Setter Property="Foreground" Value="{DynamicResource ScanlineStudioAccentFillColor}" />
+    </Style>
+    <Style Selector="Slider /template/ Thumb">
+        <Setter Property="Width" Value="9" />
+        <Setter Property="Height" Value="15" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />
+        <Setter Property="BorderBrush" Value="#FF6E6E6E" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="ProgressBar">
+        <Setter Property="Height" Value="10" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioFieldBackgroundColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Foreground" Value="{DynamicResource ScanlineStudioAccentFillColor}" />
+    </Style>
+
+    <!-- Framed grid headers, monospace cells, no zebra gloss. -->
+    <Style Selector="DataGridColumnHeader">
+        <Setter Property="Background" Value="#FFE4E4E4" />
+        <Setter Property="BorderBrush" Value="#FFC8C8C8" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="6,3" />
+    </Style>
+    <Style Selector="DataGridCell">
+        <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Padding" Value="6,2" />
+    </Style>
+    <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
+        <Setter Property="Fill" Value="#FFCDE1F5" />
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+
+    <!-- Classic notebook tabs: the active tab merges into the page. -->
+    <Style Selector="TabItem">
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="MinHeight" Value="17" />
+        <Setter Property="Height" Value="17" />
+        <Setter Property="Padding" Value="14,0" />
+        <Setter Property="Margin" Value="0,0,2,-1" />
+        <Setter Property="Background" Value="#FFE4E4E4" />
+        <Setter Property="Foreground" Value="{DynamicResource ScanlineStudioCardLabelForegroundColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioCardBorderColor}" />
+        <Setter Property="BorderThickness" Value="1,1,1,0" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="TabItem:selected">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioPanelBackgroundColor}" />
+        <Setter Property="Foreground" Value="#FF101010" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TabItem:selected /template/ Border#PART_SelectedPipe">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+
+    <Style Selector="Border.thumb">
+        <Setter Property="Background" Value="White" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.canvas">
+        <Setter Property="Background" Value="White" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.safeArea">
+        <Setter Property="BorderBrush" Value="#FF7FB2E5" />
+        <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.plate">
+        <Setter Property="Background" Value="#E6FFFFFF" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioAccentFillColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="8,3" />
+    </Style>
+    <Style Selector="TextBlock.plateText">
+        <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+        <Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="Separator.vertical">
+        <Setter Property="Width" Value="1" />
+        <Setter Property="Height" Value="18" />
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioCardBorderColor}" />
+        <Setter Property="Margin" Value="4,0" />
+    </Style>
+    <Style Selector="Menu">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioPanelBackgroundColor}" />
+    </Style>
+
+    <!-- Status-bar LED indicator: gray/off by default, a usage site toggles Classes.active
+         (green) or Classes.alert (red) from real view-model state, e.g. RX capture running,
+         or a TX SWR-cutoff currently inhibiting transmit (Piece 3). -->
+    <Style Selector="Ellipse.led">
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Height" Value="8" />
+        <Setter Property="Stroke" Value="#FF6E6E6E" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Fill" Value="#FFB9B9B9" />
+    </Style>
+    <Style Selector="Ellipse.led.active">
+        <Setter Property="Fill" Value="#FF2FA02F" />
+        <Setter Property="Stroke" Value="#FF1F6E1F" />
+    </Style>
+    <Style Selector="Ellipse.led.alert">
+        <Setter Property="Fill" Value="#FFD03030" />
+        <Setter Property="Stroke" Value="#FF8F2626" />
+    </Style>
+    <Style Selector="Expander">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioCardBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+
+</Styles>

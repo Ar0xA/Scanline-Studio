@@ -3,9 +3,7 @@ using System.ComponentModel;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Dock.Model.Mvvm.Controls;
 using ScanlineStudio.Abstractions.Imaging;
-using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.UI.Imaging;
 
@@ -28,7 +26,7 @@ public enum NudgeDirection
 /// Pure, UI-technology-agnostic API: drag operations take already-normalized (0..1) deltas (the
 /// View converts real pointer/canvas pixels before calling in), so this class is fully testable
 /// headlessly without simulating real pointer events.</summary>
-public sealed partial class TxImageEditorPaneViewModel : Tool
+public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 {
     private const double MinNormalizedCropSize = 0.02;
 
@@ -41,7 +39,6 @@ public sealed partial class TxImageEditorPaneViewModel : Tool
     private readonly IImageSource _workingCopy;
     private readonly SstvModeDefinition _targetMode;
     private readonly ITransmitImagePreparer _preparer;
-    private readonly ILocalizationService _localization;
 
     [ObservableProperty]
     private NormalizedRect _cropRect = new(0, 0, 1, 1);
@@ -61,17 +58,11 @@ public sealed partial class TxImageEditorPaneViewModel : Tool
     public TxImageEditorPaneViewModel(
         IImageSource originalSource,
         SstvModeDefinition targetMode,
-        ITransmitImagePreparer preparer,
-        ILocalizationService localization)
+        ITransmitImagePreparer preparer)
     {
         _originalSource = originalSource;
         _targetMode = targetMode;
         _preparer = preparer;
-        _localization = localization;
-
-        Id = "TxImageEditor";
-        Title = localization.GetString("Panes.TxImageEditor.Title");
-        localization.CultureChanged += () => Title = localization.GetString("Panes.TxImageEditor.Title");
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
         WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);

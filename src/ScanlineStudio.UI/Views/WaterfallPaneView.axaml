@@ -5,7 +5,7 @@
              x:Class="ScanlineStudio.UI.Views.WaterfallPaneView"
              x:DataType="vm:WaterfallPaneViewModel">
 
-    <Border Classes="ScanlineStudioPanelBody">
+    <Border Classes="plot">
         <controls:WaterfallControl Frame="{Binding LatestFrame}" />
     </Border>
 

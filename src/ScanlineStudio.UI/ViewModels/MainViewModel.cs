@@ -1,38 +1,57 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Dock.Model.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Application;
-using ScanlineStudio.UI.Docking;
 
 namespace ScanlineStudio.UI.ViewModels;
 
+/// <summary>Root view-model for the fixed shell (Menu / header cards / Receive-Transmit-Gallery
+/// TabControl, spec/09-ui.md) -- replaces the former Dock.Avalonia-based layout entirely; the 5 pane
+/// view-models are now plain DI singletons (see ScanlineStudio.Host's Program.cs) rather than dockables
+/// built by a factory.</summary>
 public partial class MainViewModel : ViewModelBase
 {
     private readonly IServiceProvider _services;
 
     [ObservableProperty]
-    private IRootDock? _layout;
+    private TxImageEditorPaneViewModel? _activeEditor;
 
-    public MainViewModel(AppDockFactory dockFactory, IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, IServiceProvider services)
+    public MainViewModel(
+        WaterfallPaneViewModel waterfall,
+        RxImagePaneViewModel rxImage,
+        RxHistoryPaneViewModel rxHistory,
+        TxControlsPaneViewModel txControls,
+        IRadioSessionService radioSession,
+        ISstvSessionService sstvSession,
+        ILocalizationService localization,
+        IServiceProvider services)
     {
         _services = services;
 
-        var layout = dockFactory.CreateLayout();
-        dockFactory.InitLayout(layout);
-        Layout = layout;
-        DockFactory = dockFactory;
+        Waterfall = waterfall;
+        RxImage = rxImage;
+        RxHistory = rxHistory;
+        TxControls = txControls;
+
+        // Replaces AppDockFactory.OpenTxImageEditor/CloseTxImageEditor's AddDockable/CloseDockable
+        // pair -- a plain nullable property swapped via a ContentControl in the Transmit tab.
+        txControls.EditorOpened += editor => ActiveEditor = editor;
+        txControls.EditorClosed += () => ActiveEditor = null;
 
         RadioStatus = new RadioStatusViewModel(radioSession, sstvSession, localization);
     }
 
-    public RadioStatusViewModel RadioStatus { get; }
+    public WaterfallPaneViewModel Waterfall { get; }
 
-    /// <summary>Exposed for `MainWindow.axaml`'s View menu -- see AppDockFactory's own doc comment
-    /// for why pane reopen commands live there rather than being duplicated here.</summary>
-    public AppDockFactory DockFactory { get; }
+    public RxImagePaneViewModel RxImage { get; }
+
+    public RxHistoryPaneViewModel RxHistory { get; }
+
+    public TxControlsPaneViewModel TxControls { get; }
+
+    public RadioStatusViewModel RadioStatus { get; }
 
     /// <summary>Carries the freshly-DI-resolved <see cref="OptionsWindowViewModel"/> so
     /// `MainWindow`'s code-behind can construct/show the actual `Window` -- a view-model must never
