@@ -8,10 +8,17 @@
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.3" />
     <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.2.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.3" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <!-- Pinned to the 11.2.0.x line deliberately: its own Avalonia dependency floor is 11.2.0,
+         at or below this project's pinned 11.2.3, so NuGet resolves Avalonia to the higher existing
+         floor (11.2.3) instead of bumping it. Dock's 11.2.6+/11.3.x releases raise that floor above
+         11.2.3 and would silently upgrade Avalonia; confirmed via nuspec inspection, not assumed. -->
+    <PackageReference Include="Dock.Avalonia" Version="11.2.0.2" />
+    <PackageReference Include="Dock.Model.Mvvm" Version="11.2.0.2" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,0 +1,13 @@
+{
+  "MainWindow.Title": "Yoniq",
+  "RadioStatus.NoFrequency": "No frequency",
+  "Panes.Waterfall.Title": "Waterfall",
+  "Panes.RxImage.Title": "RX Image",
+  "Panes.RxImage.NoImageYet": "No image received yet",
+  "Panes.TxControls.Title": "TX Controls",
+  "Panes.TxControls.ModeLabel": "MODE",
+  "Panes.TxControls.SelectImage": "Select Image...",
+  "Panes.TxControls.Transmit": "Transmit",
+  "Panes.TxControls.Error.LoadFailed": "Could not load that image file.",
+  "Panes.TxControls.Error.TransmitFailed": "Transmission failed. Check your radio and audio device settings."
+}

@@ -2,10 +2,23 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Yoniq.Abstractions.Audio;
+using Yoniq.Abstractions.Imaging;
+using Yoniq.Abstractions.Localization;
+using Yoniq.Abstractions.Radio;
+using Yoniq.Abstractions.Sstv;
+using Yoniq.Application;
 using Yoniq.Core.Audio.MiniAudio;
+using Yoniq.Core.Imaging;
+using Yoniq.Core.Localization;
+using Yoniq.Core.Radio;
+using Yoniq.Core.Radio.Rigctld;
+using Yoniq.Core.Sstv;
 using Yoniq.Settings;
 using Yoniq.UI;
+using Yoniq.UI.Docking;
+using Yoniq.UI.Services;
 using Yoniq.UI.ViewModels;
 
 namespace Yoniq.Host;
@@ -24,6 +37,19 @@ internal static class Program
         hostBuilder.Services.AddSingleton<ISettingsStore>(new JsonSettingsStore());
         hostBuilder.Services.AddTransient<MainViewModel>();
 
+        // Locale files live alongside the built app -- see Yoniq.Host.csproj's asset-copy item.
+        // Always boots into English; restoring a persisted non-English culture is a separate,
+        // later step (once Yoniq.Settings has a culture section to restore from).
+        var localeDirectory = Path.Combine(AppContext.BaseDirectory, "assets", "locale");
+        hostBuilder.Services.AddSingleton<ILocalizationService>(sp =>
+            new JsonLocalizationService(localeDirectory, sp.GetRequiredService<ILogger<JsonLocalizationService>>()));
+
+        // AppDockFactory's constructor takes the real pane dependencies below, resolved
+        // automatically by DI (decision #7 -- this, not a static locator, is how a Dock-constructed
+        // pane gets real services).
+        hostBuilder.Services.AddSingleton<AppDockFactory>();
+        hostBuilder.Services.AddSingleton<IFilePickerService, FilePickerService>();
+
         // Piece Engine 6. Registered by type, not an eagerly-constructed instance (unlike
         // ISettingsStore above) -- MiniAudioEngine's constructor initializes the native miniaudio
         // context for real, which must not run at process start on a machine with no audio server.
@@ -36,8 +62,61 @@ internal static class Program
         hostBuilder.Services.AddSingleton<IAudioEngine, MiniAudioEngine>();
         hostBuilder.Services.AddSingleton<IAudioDeviceEnumerator, MiniAudioDeviceEnumerator>();
 
+        // SSTV DSP core -- one decoder/encoder/waterfall per app session (Phase 3 scope: a single
+        // concurrent session, matching the single IAudioEngine instance above).
+        hostBuilder.Services.AddSingleton<ISstvDecoder>(new AnalogFmSstvDecoder());
+        hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
+        hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));
+
+        // Image pipeline (step 5) -- ReceivedImageBuffer's constructor takes ISstvDecoder, resolved
+        // automatically from the registration above (it subscribes to LineDecoded/DecodeRestarted
+        // itself; see that class's own doc comment for why this is layering-legal).
+        hostBuilder.Services.AddSingleton<IImageFileLoader, ImageFileLoader>();
+        hostBuilder.Services.AddSingleton<IReceivedImageBuffer, ReceivedImageBuffer>();
+
+        // Radio layer -- RigctldProtocolFactory only (decision #12: the one backend wired for the
+        // Phase 3 demo; linked Hamlib is a one-line addition later, not blocking this phase).
+        // RadioController's constructor takes IEnumerable<IRadioProtocolFactory>, resolved
+        // automatically from every factory registered here -- exactly one today, by design.
+        hostBuilder.Services.AddSingleton<IRadioProtocolFactory, RigctldProtocolFactory>();
+        hostBuilder.Services.AddSingleton<IRadioController, RadioController>();
+
+        // Yoniq.Application services -- the only things Yoniq.UI is allowed to depend on
+        // (spec/01-architecture.md's layering rule); everything above is UI-invisible plumbing.
+        hostBuilder.Services.AddSingleton<IRadioSessionService, RadioSessionService>();
+        hostBuilder.Services.AddSingleton<ISstvSessionService, SstvSessionService>();
+
         var host = hostBuilder.Build();
         App.Services = host.Services;
+
+        // Auto-connect from persisted settings at startup -- the radio status strip (step 9) is a
+        // fixed, read-only label, not an interactive "Connect" button (Phase 3 plan decision), so
+        // this is the only place the initial connection attempt happens. A missing/unset radio
+        // section resolves to NoneConnectionSpec (a first-class, always-valid state,
+        // spec/02-radio-layer.md) -- swallowed here defensively so a real connect failure can never
+        // prevent the UI itself from starting; IRadioController's own reconnect/backoff machinery
+        // takes over from here via its ConnectionEvents/StateChanges streams.
+        try
+        {
+            host.Services.GetRequiredService<IRadioSessionService>().ConnectUsingSettingsAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
+
+        // Same reasoning as the radio auto-connect above: Phase 3 has no "Start Receiving" button
+        // anywhere in the UI (the walking skeleton's own demo target is a session that's simply
+        // listening once the app is up), so this is the only place capture starts. A missing/unset
+        // audio-device section throws InvalidOperationException from StartReceivingAsync -- swallowed
+        // here the same way, so a machine with no configured capture device still gets a working UI
+        // (waterfall/RX image just stay empty) instead of failing to start at all.
+        try
+        {
+            host.Services.GetRequiredService<ISstvSessionService>().StartReceivingAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
 
         var lifetime = new ClassicDesktopStyleApplicationLifetime { Args = args };
         BuildAvaloniaApp().SetupWithLifetime(lifetime);

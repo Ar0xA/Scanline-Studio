@@ -25,29 +25,48 @@ Per-OS conventional app-data directory, resolved via `Environment.GetFolderPath(
 
 ## Schema
 
-`settings.json` is strongly typed via a root `AppSettings` record deserialized with `System.Text.Json` source generators (`JsonSerializerContext`, avoids reflection-based (de)serialization and keeps startup fast and AOT-friendly):
+**Corrected during Phase 3 implementation** — an earlier draft of this section showed `AppSettings`
+directly typed with each module's own settings record (`AppSettings(AudioSettings Audio,
+RadioConnectionSettings Radio, ...)`). That shape cannot actually compile: [[01-architecture]]'s
+layering diagram puts `Yoniq.Settings` at the very *bottom*, below even `Yoniq.Abstractions`, so it
+can never reference a type defined in `Yoniq.Core.Radio` or any other module above it without
+inverting that layering — the two specs were never cross-checked against each other on this point.
+The real, buildable shape uses a named bag of raw `JsonElement` sections instead, with each module
+still owning its own typed section record (the *intent* of the original text is preserved) via a pair
+of generic extension methods that take the caller's own source-generated `JsonTypeInfo<T>`:
 
 ```csharp
 namespace Yoniq.Settings;
 
-public sealed record AppSettings(
-    AudioSettings Audio,
-    RadioConnectionSettings Radio,
-    SstvSettings Sstv,
-    LogbookSettings Logbook,
-    LocalizationSettings Localization,
-    RigctldServerSettings RigctldServer,
-    UiSettings Ui);
+public sealed record AppSettings
+{
+    public const int CurrentSchemaVersion = 1;
+    public int SchemaVersion { get; init; } = CurrentSchemaVersion;
+    public Dictionary<string, JsonElement> Sections { get; init; } = new();
+}
 
 public interface ISettingsStore
 {
-    Task<AppSettings> LoadAsync(CancellationToken ct);
-    Task SaveAsync(AppSettings settings, CancellationToken ct);
+    Task<AppSettings> LoadAsync(CancellationToken ct = default);
+    Task SaveAsync(AppSettings settings, CancellationToken ct = default);
     IObservable<AppSettings> Changes { get; }   // live-reload on external edit, e.g. hand-editing settings.json
+}
+
+public static class AppSettingsSectionExtensions
+{
+    public static T? GetSection<T>(this AppSettings settings, string key, JsonTypeInfo<T> typeInfo);
+    public static AppSettings WithSection<T>(this AppSettings settings, string key, T value, JsonTypeInfo<T> typeInfo);
 }
 ```
 
-Every module's typed settings section (`AudioSettings`, `RadioConnectionSettings`, etc.) is defined in that module's own `Yoniq.Core.*` project (not centralized in `Yoniq.Settings`, which only owns the load/save/versioning/migration machinery) — keeps each module's config schema next to the code it configures.
+Every module's typed settings section (`AudioDeviceSettings` in `Yoniq.Core.Audio`,
+`RadioConnectionSettings` in `Yoniq.Core.Radio`, `LocalizationSettings` in
+`Yoniq.Core.Localization`, etc.) is still defined in that module's own `Yoniq.Core.*` project (not
+centralized in `Yoniq.Settings`, which only owns the load/save/versioning/migration machinery plus
+the section bag itself) — keeps each module's config schema next to the code it configures, while
+`Yoniq.Settings` never needs to know any module-specific type. Sections not yet needed by the current
+phase (`SstvSettings`, `LogbookSettings`, `RigctldServerSettings`, `UiSettings`) are added the same way
+when those modules actually gain configuration needs, not speculatively now.
 
 ## Versioning and migration
 
