@@ -1,0 +1,86 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Needed for pointer-based ring buffer P/Invoke (MiniAudioRing): pinning a Span/array via
+         `fixed` and passing the raw pointer is the allocation-free path; marshaling a `float[]`
+         parameter on every call would allocate/copy on every single audio buffer, defeating the
+         entire point of piece Audio 3. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ScanlineStudio.Abstractions\ScanlineStudio.Abstractions.csproj" />
+  </ItemGroup>
+
+  <!--
+    Piece Audio 1b: one MSBuild target per OS in the CI matrix (.github/workflows/ci.yml:
+    windows-latest, ubuntu-latest, macos-latest), each building the native shim with that
+    platform's own toolchain, gated so it only runs on the matching OS. Link flags/compiler choice
+    per platform follow miniaudio's own documented build requirements (native/miniaudio.h,
+    "2.1 Windows" / "2.2 macOS and iOS" / "2.3 Linux" sections) directly, not guessed:
+      - Windows: "should compile cleanly on all popular compilers without the need to configure
+        any include paths nor link to any libraries": WASAPI/WinMM are loaded via LoadLibrary at
+        runtime, not linked at compile time. Uses cl.exe (present on windows-latest GitHub Actions
+        runners); redirects intermediate .obj/.exp/.lib into the output dir to avoid littering the
+        source tree. Symbol export: unlike ELF/Mach-O, MSVC exports nothing from a DLL by default,
+        so yoniq_audio.h's own YONIQ_AUDIO_API macro (opus-review fix) marks every function
+        __declspec(dllexport) on this platform: miniaudio's own docs quoted above are about
+        include paths/link libraries, not DLL symbol visibility, and don't cover this.
+      - macOS: "should compile cleanly without the need to download any dependencies nor link to
+        any libraries or frameworks" (command-line, non-notarized build; CoreAudio/AudioToolbox
+        are loaded at runtime, not link time, since MA_NO_RUNTIME_LINKING is not defined here),
+        but that same section's very next sentence says command-line compiling "requires linking
+        to -lpthread and -lm" (opus-review correction: an earlier revision of this target quoted
+        only the first sentence and omitted the second, then didn't link either). Both are
+        genuinely needed now regardless: the context-level mutex added to guard concurrent
+        PulseAudio-style mainloop access (see yoniq_audio.c's g_context_mutex) uses pthread_mutex_t
+        on non-Windows. Uses clang, producing a .dylib via -dynamiclib.
+      - Linux: unchanged from piece Audio 1: "only requires linking to -ldl, -lpthread and -lm."
+    The Windows and macOS targets are unverified in this project's own dev sandbox (Linux-only);
+    real verification is the CI matrix itself once these commits reach it. See [[05-audio-engine]]
+    and spec/14-roadmap.md's Audio 1b entry for the same caveat already recorded for Audio 9.
+
+    Each target declares Inputs/Outputs (opus-review fix) so MSBuild skips re-running it when the
+    native sources haven't changed, instead of recompiling the ~95k-line vendored miniaudio.h on
+    every single build. This project's own .csproj is included in Inputs too (second-opus-review
+    fix): without it, changing a compiler flag inside one of these targets would not itself
+    invalidate the target's cached output, silently leaving the old binary in place.
+  -->
+  <Target Name="BuildNativeShimLinux" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))"
+           Inputs="native/yoniq_audio.c;native/yoniq_audio.h;native/miniaudio.h;ScanlineStudio.Core.Audio.MiniAudio.csproj"
+           Outputs="$(OutDir)libyoniqaudio.so">
+    <PropertyGroup>
+      <NativeDir>$(MSBuildProjectDirectory)/native/</NativeDir>
+      <NativeObjPath>$(MSBuildProjectDirectory)/$(IntermediateOutputPath)yoniq_audio.o</NativeObjPath>
+      <NativeLibPath>$(MSBuildProjectDirectory)/$(OutDir)libyoniqaudio.so</NativeLibPath>
+    </PropertyGroup>
+    <Exec Command="gcc -c -O2 -fPIC &quot;$(NativeDir)yoniq_audio.c&quot; -o &quot;$(NativeObjPath)&quot;" />
+    <Exec Command="gcc -shared -o &quot;$(NativeLibPath)&quot; &quot;$(NativeObjPath)&quot; -ldl -lpthread -lm" />
+  </Target>
+
+  <Target Name="BuildNativeShimWindows" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))"
+           Inputs="native\yoniq_audio.c;native\yoniq_audio.h;native\miniaudio.h;ScanlineStudio.Core.Audio.MiniAudio.csproj"
+           Outputs="$(OutDir)yoniqaudio.dll">
+    <PropertyGroup>
+      <NativeDir>$(MSBuildProjectDirectory)\native\</NativeDir>
+      <NativeObjPath>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)yoniq_audio.obj</NativeObjPath>
+      <NativeLibPath>$(MSBuildProjectDirectory)\$(OutDir)yoniqaudio.dll</NativeLibPath>
+      <NativeImpLibPath>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)yoniqaudio.lib</NativeImpLibPath>
+      <NativeExpPath>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)yoniqaudio.exp</NativeExpPath>
+    </PropertyGroup>
+    <!-- Opus-review fix: /Fo:/Fe: (colon form) is not the traditional MSVC syntax and couldn't be
+         verified from anything in this repo; /Fo"path" and /Fe"path" (no colon) are the
+         long-established forms, used here instead. -->
+    <Exec Command="cl.exe /nologo /O2 /MD /LD /Fo&quot;$(NativeObjPath)&quot; /Fe&quot;$(NativeLibPath)&quot; &quot;$(NativeDir)yoniq_audio.c&quot; /link /IMPLIB:&quot;$(NativeImpLibPath)&quot;" />
+  </Target>
+
+  <Target Name="BuildNativeShimMacOS" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))"
+           Inputs="native/yoniq_audio.c;native/yoniq_audio.h;native/miniaudio.h;ScanlineStudio.Core.Audio.MiniAudio.csproj"
+           Outputs="$(OutDir)libyoniqaudio.dylib">
+    <PropertyGroup>
+      <NativeDir>$(MSBuildProjectDirectory)/native/</NativeDir>
+      <NativeObjPath>$(MSBuildProjectDirectory)/$(IntermediateOutputPath)yoniq_audio.o</NativeObjPath>
+      <NativeLibPath>$(MSBuildProjectDirectory)/$(OutDir)libyoniqaudio.dylib</NativeLibPath>
+    </PropertyGroup>
+    <Exec Command="clang -c -O2 -fPIC &quot;$(NativeDir)yoniq_audio.c&quot; -o &quot;$(NativeObjPath)&quot;" />
+    <Exec Command="clang -dynamiclib -o &quot;$(NativeLibPath)&quot; &quot;$(NativeObjPath)&quot; -lpthread -lm" />
+  </Target>
+</Project>

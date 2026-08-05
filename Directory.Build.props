@@ -3,7 +3,7 @@
   <!--
     Centralized settings for every project under src/, tests/, and tools/ — see spec/01-architecture.md.
     Individual .csproj files should not repeat TargetFramework/Nullable/etc.; override only what a
-    specific project genuinely needs to differ (e.g. OutputType for Yoniq.Host).
+    specific project genuinely needs to differ (e.g. OutputType for ScanlineStudio.Host).
   -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
