@@ -8,10 +8,21 @@
         x:Class="ScanlineStudio.UI.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="{loc:Translate MainWindow.Title}">
+        Title="{loc:Translate MainWindow.Title}"
+        Width="1600" Height="900"
+        MinWidth="1024" MinHeight="600"
+        WindowStartupLocation="CenterScreen">
 
     <!-- MainViewModel now requires AppDockFactory via DI, so no Design.DataContext previewer
          instance; see App.axaml.cs for how the real DataContext is resolved at runtime. -->
+
+    <!-- Default/minimum size: user requirement, direct quote: "renderable without issue on a
+         fullHD screen... keep in mind the taskbar at the bottom... that helps set the floor for
+         'it should run on a fullHD laptop'." 1600x900 leaves a real margin under 1920x1080 even
+         after a Windows taskbar (~40-48px), a GNOME top bar, or a macOS menu bar + dock, so the
+         window opens fully visible without the user needing to move/resize it. MinWidth/MinHeight
+         (1024x600) is a separate, lower floor: how small the window can be resized down to before
+         panes stop being usable, not the fullHD target itself. -->
 
     <Grid RowDefinitions="Auto,Auto,*">
         <!-- Minimal View menu (spec/09-ui.md's "Pane visibility" section): the only reopen path for
