@@ -4055,6 +4055,79 @@ dialogs, settings migration, localization completion) moved into Phase 4 above.
 **Demo:** a user can extend the app with a plugin (at minimum, an image filter loading through the same
 path a future `ITemplateItem` extension would use).
 
+## Phase 4+ backlog — legacy YONIQ/QSSTV feature inventory (2026-08-05)
+
+Four parallel research passes (logbook/QSO, TX macros + CW-ID, waterfall/color, RX/TX
+quality-of-life), each verifying claims directly against `yoniq-old/YONIQ-main/` source
+(QSSTV-main/` cross-checked only as secondary inspiration, never a port target) after the
+Settings/Options/radio-telemetry system (Pieces 1-6 above) shipped. Not yet scheduled into a
+phase or scoped into a build plan — a UI-design pass is happening first; this is a tracked
+candidate list to pull from once that's further along, not a commitment.
+
+**Logbook/QSO tracking** ([[08-logging]]'s plan already matches legacy reality on format/ADIF/
+QRZ.com/cty.dat scope — these are the deltas found):
+- QSL sent/received flags — legacy has them, `QsoRecord` doesn't. Trivial.
+- Maidenhead grid locator — missing from legacy AND the current plan, but standard in modern
+  ADIF and present in QSSTV's own field set. Trivial; matters for real ADIF interop with
+  third-party loggers.
+- Duplicate-QSO detection (by callsign, or callsign+band) — real legacy feature
+  (`LogSet.cpp`/`LogFile.h`'s `m_CheckBand`), not in the current plan. Small.
+- Contest serial-number exchange (STX/SRX) and 5 configurable contest run-macros — real legacy
+  features, likely low priority for an SSTV-first (not contest-first) audience; flag for an
+  explicit include/exclude decision rather than silently adding or dropping.
+
+**TX macros / CW-ID** (legacy's "macro" is a token-picker popup, not a saved template — shared
+across the overlay editor, CW-ID text, and repeater auto-answer via one substitution function,
+`MacroText`):
+- Token-picker UI + substitution service — low-medium complexity, but the real blocker is that
+  **no operator-callsign/profile setting exists yet** to substitute from (same root gap
+  [[07-image-pipeline]] already flags for why overlay text is plain free-typed today).
+- CW-ID (real, working legacy feature — not dead like Vari SSTV) — low-medium complexity, and
+  can reuse `SstvSessionService`'s existing `TuneAsync`/`GenerateTone`/`PlayWithPttAsync` (built
+  for the Tune button, Piece 5/6 above) rather than needing a new audio subsystem.
+- The two only intersect at token substitution; buildable independently.
+
+**Waterfall/color** (still plain grayscale — a prior, standing decision already deprioritized
+this; the items below are a complete inventory, not a priority push):
+- No color rendering at all vs. legacy's real 7-color palette (gradient low/high, FFT
+  background/trace/peak-hold, sync marker, freq marker — confirmed the exact list from
+  `Option.cpp`, NOT `ColorSet.cpp`/`ColorBar.cpp`, which are a different generic picker used by
+  the TX title bar/overlay tool/CItems plugins, not the waterfall). Low.
+- No separate FFT/scope trace view (legacy has one distinct from the waterfall image). Medium.
+- No peak-hold/persistence overlay, no sync/frequency marker lines. Low-medium each.
+- No zoom/bandwidth-range control (legacy: 3 discrete presets, no continuous zoom). Low-medium.
+- No interactive notch-filter marker (click/drag to set, right-click to toggle) — legacy's
+  version configures an audio notch filter, not RX retuning. Medium-high; depends on a notch
+  filter DSP block that doesn't exist yet in `ScanlineStudio.Core.Sstv` (unverified, flagged only).
+- No dedicated signal-strength meter, no legacy-style debug "digital scope" tool. Low-medium /
+  medium-high respectively — the debug scope is probably the lowest-value item in this list.
+- QSSTV does a nicer multi-hue heatmap gradient (vs. legacy's flat 2-color linear interpolation)
+  and an adjustable dB range — worth a look if/when color rendering is built, not a legacy port
+  requirement.
+
+**RX/TX quality-of-life** (excludes the already-deliberately-dropped DSP tunables — PLL VCO
+gain, zero-crossing params, RxBPF width, squelch level, calibration wizard, differentiator, LMS
+filter — those are a known exclusion, not rediscovered here):
+- Manual "ReSync" button — real, verified; applies an already-computed sync-skip correction, not
+  new DSP math. Small-medium.
+- AFC on/off toggle — real and genuinely distinct from the demodulator-type choice (PLL/
+  zero-crossing/Hilbert); AFC is currently hardcoded always-on in this port. Trivial-small.
+- RX history retention limit (legacy default 32), window position/size memory across restarts,
+  "jump to latest" history-browser nav button — all trivial.
+- RX buffer mode + "high-precision" slant/sync replay actions — medium, DSP-adjacent (a rolling
+  raw-audio buffer replayed through sync/slant correction); flag carefully, don't treat as a
+  plain UI toggle.
+- Auto-stop-at-end-of-signal / auto-resync toggles — group with the already-tracked
+  `m_SyncRestart`/abandoned-image-save gap (below, under "explicitly deferred") rather than file
+  as new items; all three are one legacy "Lock" toolbar button.
+- **Confirmed NOT a real feature — don't port**: "always on top" (`m_StayOnTop` is write-only in
+  legacy's own ini handling, never read back or wired to anything; vestigial/dead code there too).
+- **Confirmed NOT a gap**: auto-save-on-receive — legacy always auto-saves unconditionally too,
+  same as this port's current `ReceiveHistoryRecorder`.
+- VOX (a TX tone-burst preamble to trigger a rig's own VOX circuit, not audio-input-detected PTT,
+  and doesn't touch the CAT/PTT layer at all) — real but niche given this port already has real
+  CAT PTT; low priority.
+
 ## Explicitly deferred beyond v1
 
 - Perspective correction / webcam capture ([[07-image-pipeline]]).
