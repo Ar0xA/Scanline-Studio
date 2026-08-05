@@ -6,12 +6,21 @@
 
 ## Purpose
 
-`rigctld` is the Hamlib daemon that speaks a simple line-based TCP protocol to control a huge range of rigs via Hamlib's own backend drivers. Supporting it natively serves two distinct use cases, both in scope:
+`rigctld` is the Hamlib daemon that speaks a simple line-based TCP protocol to control a huge range of rigs via Hamlib's own backend drivers. Supporting it as a **client** serves the use case in scope:
 
-1. **Client mode** — YONIQ controls a rig indirectly through an already-running `rigctld` (or `rigctld`-compatible) process, instead of speaking CAT directly. This instantly extends rig support to everything Hamlib supports, without YONIQ implementing every protocol itself.
-2. **Server mode** — YONIQ exposes its own currently-connected radio (via [[03-cat-layer]] or client mode) as a `rigctld`-compatible TCP server, so third-party tools (loggers, digital-mode software, contest tools) already speaking Hamlib's protocol can read YONIQ's frequency/mode without a second serial connection to the rig.
+- **Client mode** — Scanline Studio controls a rig indirectly through an already-running `rigctld` (or `rigctld`-compatible) process, instead of speaking CAT directly. This instantly extends rig support to everything Hamlib supports, without this project implementing every protocol itself.
 
-Both modes reuse the `IRadioController`/`IRadioProtocol` contracts from [[02-radio-layer]] — rigctld is "just another `IRadioProtocol`" from the rest of the app's point of view.
+This reuses the `IRadioController`/`IRadioProtocol` contracts from [[02-radio-layer]] — rigctld is "just another `IRadioProtocol`" from the rest of the app's point of view.
+
+**Server mode is out of scope, dropped (not deferred) — direct user decision, 2026-08-05.** An earlier
+draft of this spec planned a `RigctldServer` exposing Scanline Studio's own currently-connected radio as
+a `rigctld`-compatible TCP server, for third-party tools to share the rig without a second serial
+connection. Explicit call: linked Hamlib ([[03-cat-layer]]) plus rigctld client-mode coverage is
+sufficient CAT surface for this project; a server role is a distinct, larger commitment (a listening
+network service, an "allow remote control" security posture, its own test/interop burden) not worth
+carrying for a use case with no expressed demand. See the "Server mode" section below for what was
+speced and dropped, and [docs/removed-features.md](../docs/removed-features.md)'s MMlink entry, which
+previously named this as a possible alternative and has been corrected.
 
 ## Client mode
 
@@ -74,20 +83,15 @@ Transport is a plain `TcpTransport : IRadioTransport` (host/port, default `local
 internally by `RigctldClientProtocol` (see [[02-radio-layer]] — `IRadioProtocol` no longer takes a
 transport parameter, each protocol owns its own).
 
-## Server mode
+## Server mode (dropped — kept here only as a record of what was speced)
 
-`ScanlineStudio.Core.Radio.Rigctld.RigctldServer` listens on a configurable TCP port (default `4532`, configurable to avoid clashing with a real `rigctld` also running — see [[12-settings]]) and answers the same command subset above by delegating to whatever `IRadioController` is currently active in the app (regardless of whether *that* controller is itself a CAT rig, a rigctld client, or "no radio," in which case the server reports "no rig" rather than refusing connections).
-
-```csharp
-public interface IRigctldServer
-{
-    Task StartAsync(int port, CancellationToken ct);
-    Task StopAsync();
-    bool IsRunning { get; }
-}
-```
-
-Server mode is opt-in (disabled by default) and read-mostly by default: frequency/mode/PTT *set* commands from remote clients are honored only if the user has explicitly enabled "allow remote control" in settings, to avoid a surprise where a third-party tool keys PTT on a user's rig without them expecting it.
+The dropped design: `ScanlineStudio.Core.Radio.Rigctld.RigctldServer` would have listened on a
+configurable TCP port (default `4532`) and answered the same command subset above by delegating to
+whatever `IRadioController` is currently active in the app. It would have been opt-in (disabled by
+default) and read-mostly by default: frequency/mode/PTT *set* commands from remote clients honored
+only if the user explicitly enabled "allow remote control," to avoid a surprise where a third-party
+tool keys PTT on a user's rig without them expecting it. None of this was implemented — see the
+"Purpose" section above for the drop decision.
 
 ## Discovery and capability negotiation
 
@@ -128,7 +132,6 @@ an architectural one.
 
 - Client mode: unit-tested against a fake TCP transport replaying scripted `rigctld` responses (same `FakeRadioTransport` pattern as [[03-cat-layer]]), covering both the value-response and `RPRT`-error-response shapes for every command.
 - Client mode, real interop (best-effort, upgraded from a manual checklist item): if Hamlib's own hardware-free "Dummy" rig backend is available (a local Hamlib reference clone plus a `rigctld` binary on PATH or built from it), an integration test runs a real `rigctld` against it and drives `RigctldClientProtocol` over a real loopback socket both directions — this is what actually retires the "unverified-grammar" caveat on the fixtures above, not just documentation. Gated to skip cleanly, not fail, when unavailable.
-- Server mode: integration-tested by running `RigctldServer` against an in-process fake `IRadioController` and asserting on raw socket responses; optionally cross-checked in CI against the real `rigctl` CLI if Hamlib is available in the build image (best-effort, not required for the test suite to pass).
 
 ## Definition of done
 
@@ -136,8 +139,6 @@ an architectural one.
       `RigctldClientProtocol`/`RigctldProtocolFactory` (`ScanlineStudio.Core.Radio.Rigctld`), 20 fixture tests in
       `RigctldClientProtocolTests`. `\chk_vfo`/VFO support is not implemented — not needed by
       `RadioState`'s current domain model, left for a future pass if a real need shows up.
-- [ ] Server mode implements the same subset, integration-tested via raw sockets. (Phase 4 — not started.)
-- [ ] Server mode is off by default and gated by a "read-only" vs "allow remote control" setting. (Phase 4.)
 - [x] Real interop verified against a real Hamlib `rigctld` build — automated via
       `RigctldDummyRigIntegrationTests` (4 tests, real `rigctld -m 1` against Hamlib's own hardware-free
       Dummy rig backend, best-effort/skips cleanly if `rigctld` isn't installed). Confirmed the exact

@@ -293,6 +293,6 @@ existing namespace check.
 
 ## Definition of done
 
-- [ ] `IImageSource`/`ITransmitImagePreparer` implemented on ImageSharp, unit-tested. `IImageSource` yes (`ArrayImageSource`); `ITransmitImagePreparer` (crop/resize/filter/overlay) is still Phase 4 — Phase 3 only built the minimal `IImageFileLoader` (load + fit-to-mode resize, no user-facing crop/resize tooling).
+- [x] `IImageSource`/`ITransmitImagePreparer` implemented on ImageSharp, unit-tested — `IImageSource` (`ArrayImageSource`) and `ITransmitImagePreparer` (`TransmitImagePreparer`: Crop/Resize/ApplyOverlay) both done, backing the TX image editor (`TxImageEditorPaneViewModel`/`TxImageEditorPaneView`). Filter/preset support (`ApplyFilter`/`IImageFilter`) is not part of this interface — deferred to the plugin system, [[11-plugin-system]].
 - [x] RX live-fill behavior verified end-to-end against a real [[06-sstv-dsp]] decode — not just a fixture waveform: Phase 3's demo used real `MiniAudioEngine` capture over a real virtual audio cable, real `AnalogFmSstvDecoder`, feeding `ReceivedImageBuffer` live.
 - [ ] RX history and stock library backed by SQLite index, migrated-from-legacy path documented in [[12-settings]] (best-effort import of existing `History.bin` if feasible, otherwise a clean start with the old folder left untouched).
