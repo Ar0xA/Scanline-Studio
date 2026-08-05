@@ -84,6 +84,11 @@ internal static class Program
         hostBuilder.Services.AddSingleton<IReceiveHistoryStore, SqliteReceiveHistoryStore>();
         hostBuilder.Services.AddSingleton<ReceiveHistoryRecorder>();
 
+        // TX image editor (spec/07-image-pipeline.md's "TX image editor" section) -- the
+        // Crop/Resize/ApplyOverlay pipeline both TxImageEditorPaneViewModel's live preview and
+        // TxControlsPaneViewModel's mode-change reflow run against.
+        hostBuilder.Services.AddSingleton<ITransmitImagePreparer, TransmitImagePreparer>();
+
         // Radio layer -- RigctldProtocolFactory only (decision #12: the one backend wired for the
         // Phase 3 demo; linked Hamlib is a one-line addition later, not blocking this phase).
         // RadioController's constructor takes IEnumerable<IRadioProtocolFactory>, resolved

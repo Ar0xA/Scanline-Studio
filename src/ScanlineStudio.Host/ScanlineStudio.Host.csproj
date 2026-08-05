@@ -33,6 +33,15 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Bundled overlay font (spec/07-image-pipeline.md's "TX image editor" section, LICENSES.md's
+       DejaVu Sans Mono entry): loaded explicitly into a SixLabors.Fonts.FontCollection, never
+       relying on SystemFonts enumeration (can be empty on a minimal Linux install). -->
+  <ItemGroup>
+    <None Include="..\..\assets\fonts\**"
+          Link="assets\fonts\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!--
     Piece Engine 6, same pattern and reasoning as
     ScanlineStudio.Core.Audio.MiniAudio.Tests.csproj's own CopyNativeShim* targets: .NET does not

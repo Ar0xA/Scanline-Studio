@@ -5,5 +5,9 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <!-- Text-rendering companion for ITransmitImagePreparer.ApplyOverlay: see LICENSES.md's
+         entry (same Six Labors Split License v1.0 as the base package, verified separately). -->
+    <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.7" />
+    <PackageReference Include="SixLabors.Fonts" Version="2.1.3" />
   </ItemGroup>
 </Project>

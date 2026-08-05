@@ -14,5 +14,13 @@
   "Panes.TxControls.StockLabel": "STOCK",
   "Panes.TxControls.Transmit": "Transmit",
   "Panes.TxControls.Error.LoadFailed": "Could not load that image file.",
-  "Panes.TxControls.Error.TransmitFailed": "Transmission failed. Check your radio and audio device settings."
+  "Panes.TxControls.Error.TransmitFailed": "Transmission failed. Check your radio and audio device settings.",
+  "Panes.TxImageEditor.Title": "TX Image Editor",
+  "Panes.TxImageEditor.PreserveAspect": "Preserve aspect (letterbox)",
+  "Panes.TxImageEditor.AddText": "Add Text",
+  "Panes.TxImageEditor.Remove": "Remove",
+  "Panes.TxImageEditor.Apply": "Apply",
+  "Panes.TxImageEditor.Cancel": "Cancel",
+  "Panes.TxImageEditor.PreviewLabel": "PREVIEW (mode-exact)",
+  "Panes.TxImageEditor.Caption": "Preview shows crop/scale/overlay placement only -- does not simulate per-mode color/chroma effects."
 }

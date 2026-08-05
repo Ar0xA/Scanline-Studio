@@ -38,7 +38,7 @@
                         </ListBox.ItemsPanel>
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:StockEntryViewModel">
-                                <Button Command="{Binding $parent[ListBox].((vm:TxControlsPaneViewModel)DataContext).SelectStockImageCommand}"
+                                <Button Command="{Binding SelectCommand}"
                                         CommandParameter="{Binding Entry}"
                                         ToolTip.Tip="{Binding Entry.FileName}">
                                     <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />

@@ -36,12 +36,14 @@ public sealed partial class AppDockFactory : Factory
     private readonly IImageFileLoader _imageFileLoader;
     private readonly IStockImageLibrary _stockLibrary;
     private readonly IReceiveHistoryStore _historyStore;
+    private readonly ITransmitImagePreparer _preparer;
     private readonly IFilePickerService _filePickerService;
     private readonly ILocalizationService _localization;
 
     private WaterfallPaneViewModel? _waterfall;
     private RxImagePaneViewModel? _rxImage;
     private RxHistoryPaneViewModel? _rxHistory;
+    private TxImageEditorPaneViewModel? _txImageEditor;
     private ToolDock? _waterfallToolDock;
     private ToolDock? _rxToolDock;
 
@@ -50,6 +52,7 @@ public sealed partial class AppDockFactory : Factory
         IImageFileLoader imageFileLoader,
         IStockImageLibrary stockLibrary,
         IReceiveHistoryStore historyStore,
+        ITransmitImagePreparer preparer,
         IFilePickerService filePickerService,
         ILocalizationService localization)
     {
@@ -57,6 +60,7 @@ public sealed partial class AppDockFactory : Factory
         _imageFileLoader = imageFileLoader;
         _stockLibrary = stockLibrary;
         _historyStore = historyStore;
+        _preparer = preparer;
         _filePickerService = filePickerService;
         _localization = localization;
     }
@@ -66,7 +70,9 @@ public sealed partial class AppDockFactory : Factory
         var waterfall = new WaterfallPaneViewModel(_sstvSession, _localization);
         var rxImage = new RxImagePaneViewModel(_sstvSession, _localization);
         var rxHistory = new RxHistoryPaneViewModel(_historyStore, _localization);
-        var txControls = new TxControlsPaneViewModel(_sstvSession, _imageFileLoader, _stockLibrary, _filePickerService, _localization);
+        var txControls = new TxControlsPaneViewModel(_sstvSession, _imageFileLoader, _stockLibrary, _preparer, _filePickerService, _localization);
+        txControls.EditorOpened += OpenTxImageEditor;
+        txControls.EditorClosed += CloseTxImageEditor;
 
         // Waterfall is a fixed strip above RX Image/RX History, not tab-grouped with them --
         // real user feedback after actually seeing it running: a tabbed waterfall took over the
@@ -134,6 +140,37 @@ public sealed partial class AppDockFactory : Factory
         rootDock.DefaultDockable = layout;
 
         return rootDock;
+    }
+
+    /// <summary>Shows the editor in <c>RxToolDock</c> -- the same region as RX Image/RX History, not
+    /// a separate window (spec/07-image-pipeline.md's "TX image editor" placement decision: the
+    /// TxToolDock's own 30%-width region is too narrow for freeform cropping a real photo).</summary>
+    private void OpenTxImageEditor(TxImageEditorPaneViewModel editor)
+    {
+        _txImageEditor = editor;
+        if (_rxToolDock is null)
+        {
+            return;
+        }
+
+        AddDockable(_rxToolDock, editor);
+        _rxToolDock.ActiveDockable = editor;
+    }
+
+    private void CloseTxImageEditor()
+    {
+        if (_txImageEditor is null)
+        {
+            return;
+        }
+
+        CloseDockable(_txImageEditor);
+        if (_rxToolDock is not null)
+        {
+            _rxToolDock.ActiveDockable = _rxImage;
+        }
+
+        _txImageEditor = null;
     }
 
     [RelayCommand]

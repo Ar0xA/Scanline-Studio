@@ -17,21 +17,33 @@ public sealed class ImageFileLoader : IImageFileLoader
     {
         using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgb24>(path, ct).ConfigureAwait(false);
         image.Mutate(x => x.Resize(targetWidth, targetHeight));
+        return CopyToImageSource(image);
+    }
 
-        var pixels = new Rgb24[targetWidth * targetHeight];
+    public async Task<IImageSource> LoadOriginalAsync(string path, CancellationToken ct = default)
+    {
+        using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgb24>(path, ct).ConfigureAwait(false);
+        return CopyToImageSource(image);
+    }
+
+    internal static ArrayImageSource CopyToImageSource(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image)
+    {
+        var width = image.Width;
+        var height = image.Height;
+        var pixels = new Rgb24[width * height];
         image.ProcessPixelRows(accessor =>
         {
-            for (var y = 0; y < targetHeight; y++)
+            for (var y = 0; y < height; y++)
             {
                 var row = accessor.GetRowSpan(y);
-                for (var x = 0; x < targetWidth; x++)
+                for (var x = 0; x < width; x++)
                 {
                     var source = row[x];
-                    pixels[(y * targetWidth) + x] = new Rgb24(source.R, source.G, source.B);
+                    pixels[(y * width) + x] = new Rgb24(source.R, source.G, source.B);
                 }
             }
         });
 
-        return new ArrayImageSource(targetWidth, targetHeight, pixels);
+        return new ArrayImageSource(width, height, pixels);
     }
 }
