@@ -1,0 +1,21 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ScanlineStudio.UI.App"
+             xmlns:local="using:ScanlineStudio.UI"
+             RequestedThemeVariant="Default">
+             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+
+    <Application.DataTemplates>
+        <local:ViewLocator />
+    </Application.DataTemplates>
+
+    <Application.Styles>
+        <FluentTheme />
+        <!-- Dock's Fluent theme pack, matching the pinned Dock.Avalonia line (see ScanlineStudio.UI.csproj's
+             version-pin comment); registers under Dock.Avalonia's own class, not a loose file, so
+             the avares:// path below is stable across the 11.2.0.x line. -->
+        <StyleInclude Source="avares://Dock.Avalonia/Themes/DockFluentTheme.axaml" />
+        <!-- Design-token layer (spec/09-ui.md): every panel draws from this, not one-off brushes. -->
+        <StyleInclude Source="avares://ScanlineStudio.UI/Styles/Tokens.axaml" />
+    </Application.Styles>
+</Application>

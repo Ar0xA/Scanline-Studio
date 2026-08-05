@@ -6,10 +6,10 @@
 
 ## Decision: no hand-written per-rig CAT protocols
 
-Yoniq does not implement per-rig CAT command sets in-house. Legacy `cradio.cpp` hand-wrote a
+Scanline Studio does not implement per-rig CAT command sets in-house. Legacy `cradio.cpp` hand-wrote a
 `Freq*` parser per rig family (Yaesu HF/VU/newer, Icom CI-V, Kenwood, Ten-Tec Omni VI, JRC JST-245) —
 maintaining an equivalent set for the full range of rigs hams actually use is a large, ongoing
-maintenance burden that existing external tools already carry. Instead, Yoniq is a **pure client of
+maintenance burden that existing external tools already carry. Instead, Scanline Studio is a **pure client of
 external CAT backends**, the same relationship WSJT-X has to Hamlib. See
 [docs/removed-features.md](../docs/removed-features.md) for the formal removal accounting.
 
@@ -19,9 +19,9 @@ hand-writing protocols anyway. It wasn't — the real alternative was never writ
 
 ## Backends, in priority order
 
-1. **Hamlib, linked in-process** (`Yoniq.Core.Radio.Hamlib`, P/Invoke against `libhamlib`) — broadest rig
+1. **Hamlib, linked in-process** (`ScanlineStudio.Core.Radio.Hamlib`, P/Invoke against `libhamlib`) — broadest rig
    coverage of any option, no separate daemon for the user to run. Isolated in its own optional project
-   per CLAUDE.md §4's Win32/COM/P-Invoke rule — never a dependency of `Yoniq.Core.*`/`Yoniq.UI`. Packaging
+   per CLAUDE.md §4's Win32/COM/P-Invoke rule — never a dependency of `ScanlineStudio.Core.*`/`ScanlineStudio.UI`. Packaging
    decision below ("Linked Hamlib: bring-your-own-libhamlib").
 2. **`rigctld` client** ([[04-rigctld]]) — talks to an already-running Hamlib daemon (local or
    networked) instead of linking Hamlib directly. Complementary to (1), not redundant: lets multiple
@@ -37,13 +37,13 @@ hand-writing protocols anyway. It wasn't — the real alternative was never writ
 **Maybe later, not committed** (see [[14-roadmap]]'s Phase 4 entry — revisit once Hamlib/rigctld
 coverage lands and there's real user demand, not a guess made now):
 
-4. **flrig client** (`Yoniq.Radio.Flrig`) — XML-RPC client against a running flrig instance. flrig has
+4. **flrig client** (`ScanlineStudio.Radio.Flrig`) — XML-RPC client against a running flrig instance. flrig has
    a real, still-actively-used user base distinct from plain Hamlib/rigctld users. Wire protocol not
    yet designed.
-5. **OmniRig client** (`Yoniq.Radio.OmniRig`, Windows-only optional module, COM) — talks to an
+5. **OmniRig client** (`ScanlineStudio.Radio.OmniRig`, Windows-only optional module, COM) — talks to an
    already-running OmniRig instance as a client, the same relationship as (2)/flrig above. This is
    distinct from legacy's own OmniRig integration (bundling OmniRig's OCX/TLB into the app itself,
-   rejected — see [docs/removed-features.md](../docs/removed-features.md)): here Yoniq is just another
+   rejected — see [docs/removed-features.md](../docs/removed-features.md)): here Scanline Studio is just another
    OmniRig client alongside a logger, which actually restores the rig-sharing arbitration that entry
    flagged as not-fully-replaced. Wire/COM interop not yet designed.
 
@@ -54,11 +54,11 @@ established for `RigctldClientProtocol`.
 
 ## Linked Hamlib: bring-your-own-libhamlib
 
-**Decision**: Yoniq never builds, forks, vendors, or ships any Hamlib source or binary. At runtime,
-`Yoniq.Core.Radio.Hamlib` P/Invokes against whatever Hamlib the user's own OS/package manager already
+**Decision**: Scanline Studio never builds, forks, vendors, or ships any Hamlib source or binary. At runtime,
+`ScanlineStudio.Core.Radio.Hamlib` P/Invokes against whatever Hamlib the user's own OS/package manager already
 has installed. This was chosen over WSJT-X's actual approach (a private Hamlib fork, statically linked
 via a "superbuild" CMake step — researched directly, not assumed) on cost/maintenance grounds specific to
-this project: WSJT-X pays that tax to carry patches upstream hasn't merged; Yoniq carries none, and a
+this project: WSJT-X pays that tax to carry patches upstream hasn't merged; Scanline Studio carries none, and a
 native compile step across a 3-OS CI matrix on a constrained Actions-minutes budget isn't worth it to
 replace a dependency `apt`/Homebrew/an existing Windows installer already satisfies. An
 Opus `auditor` review (2026-08-04) confirmed Hamlib's public API is reachable without declaring a single
@@ -132,7 +132,7 @@ hobby project with no Windows dev box is worst-positioned to catch.
 
 ### `IHamlibNative` seam
 
-`Yoniq.Core.Radio.Hamlib` never calls `DllImport`-style static P/Invoke directly from
+`ScanlineStudio.Core.Radio.Hamlib` never calls `DllImport`-style static P/Invoke directly from
 `HamlibRadioProtocol`. An internal `IHamlibNative` interface wraps the frozen surface above;
 `HamlibNative` is the real implementation (resolves the library per "Discovery order," caches delegates
 via `NativeLibrary.GetExport`); a `FakeHamlibNative` — the "fake native-call shim" [[03-cat-layer]]'s
@@ -154,9 +154,9 @@ transferable.
 
 ### License provenance
 
-Hamlib's library is LGPL-2.1-or-later — compatible with, but distinct from, Yoniq's own
+Hamlib's library is LGPL-2.1-or-later — compatible with, but distinct from, Scanline Studio's own
 LGPL-3.0-or-later. No Hamlib source, binary, or header-derived data table (e.g. `riglist.h` rig-model
-numbers — Yoniq has no `IRigRegistry`, so none is copied, per [[02-radio-layer]]'s "Rig identification")
+numbers — Scanline Studio has no `IRigRegistry`, so none is copied, per [[02-radio-layer]]'s "Rig identification")
 is bundled; `LICENSES.md` gets a runtime-dependency disclosure row, not a bundled-asset row.
 
 ## Transport implications
@@ -191,7 +191,7 @@ command set is the external backend's own responsibility, not this port's.
       plus real-interop-tested against Hamlib's own Dummy rig backend (4 tests).
 - [x] Hamlib packaging story designed — "bring-your-own-libhamlib" (above), decided 2026-08-04 after an
       Opus `auditor` review of 4 candidate approaches plus researched WSJT-X precedent.
-- [x] Linked Hamlib implemented (`Yoniq.Core.Radio.Hamlib`) — `HamlibRadioProtocol`/`IHamlibNative`/
+- [x] Linked Hamlib implemented (`ScanlineStudio.Core.Radio.Hamlib`) — `HamlibRadioProtocol`/`IHamlibNative`/
       `HamlibNative`/`HamlibLibraryLocator`/`HamlibVersionGate`/`HamlibRuntime`/`HamlibProtocolFactory`,
       2 rounds of `auditor` plan-review before any code (4 blockers found and resolved on paper each
       round — see the implementation plan, `/home/artien/.claude/plans/temporal-launching-valiant.md`),

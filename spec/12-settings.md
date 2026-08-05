@@ -2,7 +2,7 @@
 
 ## Related
 
-[[01-architecture]] (`Yoniq.Settings` project) · configuration consumed by every `Yoniq.Core.*` module · replaces `Mmsstv.ini`, `MmsstvV.ini`, `Config.cfg`, `Repeater.txt`, and INI sections scattered across `Option.cpp`/`RadioSet.cpp`/`LogSet.cpp`/`ColorSet.cpp`
+[[01-architecture]] (`ScanlineStudio.Settings` project) · configuration consumed by every `ScanlineStudio.Core.*` module · replaces `Mmsstv.ini`, `MmsstvV.ini`, `Config.cfg`, `Repeater.txt`, and INI sections scattered across `Option.cpp`/`RadioSet.cpp`/`LogSet.cpp`/`ColorSet.cpp`
 
 ## Purpose
 
@@ -10,10 +10,10 @@ A single, coherent, JSON-backed configuration system replacing the legacy scatte
 
 ## Storage location
 
-Per-OS conventional app-data directory, resolved via `Environment.GetFolderPath(SpecialFolder.ApplicationData)` (Windows: `%AppData%\Yoniq`; Linux: `~/.config/yoniq` via XDG conventions; macOS: `~/Library/Application Support/Yoniq`):
+Per-OS conventional app-data directory, resolved via `Environment.GetFolderPath(SpecialFolder.ApplicationData)` (Windows: `%AppData%\Scanline Studio`; Linux: `~/.config/yoniq` via XDG conventions; macOS: `~/Library/Application Support/Scanline Studio`):
 
 ```
-<app-data>/Yoniq/
+<app-data>/Scanline Studio/
   settings.json
   rigs.json              # user-added/edited rig definitions and template CAT protocols (03-cat-layer.md)
   macros.json
@@ -28,15 +28,15 @@ Per-OS conventional app-data directory, resolved via `Environment.GetFolderPath(
 **Corrected during Phase 3 implementation** — an earlier draft of this section showed `AppSettings`
 directly typed with each module's own settings record (`AppSettings(AudioSettings Audio,
 RadioConnectionSettings Radio, ...)`). That shape cannot actually compile: [[01-architecture]]'s
-layering diagram puts `Yoniq.Settings` at the very *bottom*, below even `Yoniq.Abstractions`, so it
-can never reference a type defined in `Yoniq.Core.Radio` or any other module above it without
+layering diagram puts `ScanlineStudio.Settings` at the very *bottom*, below even `ScanlineStudio.Abstractions`, so it
+can never reference a type defined in `ScanlineStudio.Core.Radio` or any other module above it without
 inverting that layering — the two specs were never cross-checked against each other on this point.
 The real, buildable shape uses a named bag of raw `JsonElement` sections instead, with each module
 still owning its own typed section record (the *intent* of the original text is preserved) via a pair
 of generic extension methods that take the caller's own source-generated `JsonTypeInfo<T>`:
 
 ```csharp
-namespace Yoniq.Settings;
+namespace ScanlineStudio.Settings;
 
 public sealed record AppSettings
 {
@@ -59,12 +59,12 @@ public static class AppSettingsSectionExtensions
 }
 ```
 
-Every module's typed settings section (`AudioDeviceSettings` in `Yoniq.Core.Audio`,
-`RadioConnectionSettings` in `Yoniq.Core.Radio`, `LocalizationSettings` in
-`Yoniq.Core.Localization`, etc.) is still defined in that module's own `Yoniq.Core.*` project (not
-centralized in `Yoniq.Settings`, which only owns the load/save/versioning/migration machinery plus
+Every module's typed settings section (`AudioDeviceSettings` in `ScanlineStudio.Core.Audio`,
+`RadioConnectionSettings` in `ScanlineStudio.Core.Radio`, `LocalizationSettings` in
+`ScanlineStudio.Core.Localization`, etc.) is still defined in that module's own `ScanlineStudio.Core.*` project (not
+centralized in `ScanlineStudio.Settings`, which only owns the load/save/versioning/migration machinery plus
 the section bag itself) — keeps each module's config schema next to the code it configures, while
-`Yoniq.Settings` never needs to know any module-specific type. Sections not yet needed by the current
+`ScanlineStudio.Settings` never needs to know any module-specific type. Sections not yet needed by the current
 phase (`SstvSettings`, `LogbookSettings`, `RigctldServerSettings`, `UiSettings`) are added the same way
 when those modules actually gain configuration needs, not speculatively now.
 
@@ -74,7 +74,7 @@ when those modules actually gain configuration needs, not speculatively now.
 
 ## Legacy INI import
 
-A one-shot importer (`tools/legacy-config-importer/`, a small console app, and/or a first-run wizard step in `Yoniq.UI`) reads the legacy `Mmsstv.ini` and produces a best-effort `settings.json` + `rigs.json`, using the `RADIO_POLL*` → `rigId` mapping table from [[02-radio-layer]] for rig settings specifically. Import is best-effort and additive — it never overwrites an existing `settings.json`, and any INI key with no modern equivalent is logged (app diagnostics logging, [[01-architecture]]) as skipped rather than silently dropped, so users can tell what didn't carry over.
+A one-shot importer (`tools/legacy-config-importer/`, a small console app, and/or a first-run wizard step in `ScanlineStudio.UI`) reads the legacy `Mmsstv.ini` and produces a best-effort `settings.json` + `rigs.json`, using the `RADIO_POLL*` → `rigId` mapping table from [[02-radio-layer]] for rig settings specifically. Import is best-effort and additive — it never overwrites an existing `settings.json`, and any INI key with no modern equivalent is logged (app diagnostics logging, [[01-architecture]]) as skipped rather than silently dropped, so users can tell what didn't carry over.
 
 ## Live settings changes
 

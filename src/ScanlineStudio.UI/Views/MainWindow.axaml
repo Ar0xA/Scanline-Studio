@@ -1,0 +1,30 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600"
+        x:Class="ScanlineStudio.UI.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="{loc:Translate MainWindow.Title}">
+
+    <!-- MainViewModel now requires AppDockFactory via DI, so no Design.DataContext previewer
+         instance; see App.axaml.cs for how the real DataContext is resolved at runtime. -->
+
+    <Grid RowDefinitions="Auto,*">
+        <!-- Fixed radio/frequency status strip: MainWindow chrome, not a dockable pane
+             (Phase-3 plan decision #9's scope trim). Read-only; connecting happens once at
+             ScanlineStudio.Host startup from persisted settings, not from this strip. -->
+        <Border Grid.Row="0" Classes="ScanlineStudioPanelHeader" DataContext="{Binding RadioStatus}">
+            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingLarge}">
+                <TextBlock Classes="ScanlineStudioReadout" Text="{Binding FrequencyDisplay}" />
+                <TextBlock Classes="ScanlineStudioReadout" Text="{Binding ModeDisplay}" />
+            </StackPanel>
+        </Border>
+
+        <DockControl Grid.Row="1" Layout="{Binding Layout}" />
+    </Grid>
+
+</Window>

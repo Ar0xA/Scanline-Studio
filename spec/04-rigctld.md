@@ -16,7 +16,7 @@ Both modes reuse the `IRadioController`/`IRadioProtocol` contracts from [[02-rad
 ## Client mode
 
 ```csharp
-namespace Yoniq.Core.Radio.Rigctld;
+namespace ScanlineStudio.Core.Radio.Rigctld;
 
 public sealed class RigctldClientProtocol : IRadioProtocol, IAsyncDisposable
 {
@@ -76,7 +76,7 @@ transport parameter, each protocol owns its own).
 
 ## Server mode
 
-`Yoniq.Core.Radio.Rigctld.RigctldServer` listens on a configurable TCP port (default `4532`, configurable to avoid clashing with a real `rigctld` also running — see [[12-settings]]) and answers the same command subset above by delegating to whatever `IRadioController` is currently active in the app (regardless of whether *that* controller is itself a CAT rig, a rigctld client, or "no radio," in which case the server reports "no rig" rather than refusing connections).
+`ScanlineStudio.Core.Radio.Rigctld.RigctldServer` listens on a configurable TCP port (default `4532`, configurable to avoid clashing with a real `rigctld` also running — see [[12-settings]]) and answers the same command subset above by delegating to whatever `IRadioController` is currently active in the app (regardless of whether *that* controller is itself a CAT rig, a rigctld client, or "no radio," in which case the server reports "no rig" rather than refusing connections).
 
 ```csharp
 public interface IRigctldServer
@@ -109,7 +109,7 @@ but is never load-bearing for `RadioCapabilities` or connection success.
 ## Relationship to linked Hamlib
 
 This document previously rejected bundling Hamlib directly, on the assumption that the alternative was
-hand-writing per-rig protocols — reversed, see [[03-cat-layer]]. Yoniq now also supports Hamlib linked
+hand-writing per-rig protocols — reversed, see [[03-cat-layer]]. Scanline Studio now also supports Hamlib linked
 in-process (P/Invoke against a system-installed `libhamlib` — "bring-your-own-libhamlib," **not**
 WSJT-X's actual approach of statically linking a private Hamlib fork, see [[03-cat-layer]]'s "Linked
 Hamlib" section for why that shape was rejected for this project) as a separate backend, **done** (see
@@ -133,7 +133,7 @@ an architectural one.
 ## Definition of done
 
 - [x] Client mode implements `f`/`F`/`m`/`M`/`t`/`T`, fixture-tested (both response shapes per command) —
-      `RigctldClientProtocol`/`RigctldProtocolFactory` (`Yoniq.Core.Radio.Rigctld`), 20 fixture tests in
+      `RigctldClientProtocol`/`RigctldProtocolFactory` (`ScanlineStudio.Core.Radio.Rigctld`), 20 fixture tests in
       `RigctldClientProtocolTests`. `\chk_vfo`/VFO support is not implemented — not needed by
       `RadioState`'s current domain model, left for a future pass if a real need shows up.
 - [ ] Server mode implements the same subset, integration-tested via raw sockets. (Phase 4 — not started.)

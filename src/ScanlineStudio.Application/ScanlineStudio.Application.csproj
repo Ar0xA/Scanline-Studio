@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\ScanlineStudio.Abstractions\ScanlineStudio.Abstractions.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Settings\ScanlineStudio.Settings.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Radio\ScanlineStudio.Core.Radio.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Radio.Cat\ScanlineStudio.Core.Radio.Cat.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Radio.Rigctld\ScanlineStudio.Core.Radio.Rigctld.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Audio\ScanlineStudio.Core.Audio.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Sstv\ScanlineStudio.Core.Sstv.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Imaging\ScanlineStudio.Core.Imaging.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Logbook\ScanlineStudio.Core.Logbook.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Localization\ScanlineStudio.Core.Localization.csproj" />
+  </ItemGroup>
+</Project>

@@ -28,73 +28,73 @@ Strict one-directional dependency flow. Each layer only depends on layers below 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Yoniq.UI               (Avalonia views, ViewModels)          │  see 09-ui.md
+│ ScanlineStudio.UI               (Avalonia views, ViewModels)          │  see 09-ui.md
 ├─────────────────────────────────────────────────────────────┤
-│ Yoniq.Plugins           (plugin host, extension points)      │  see 11-plugin-system.md
+│ ScanlineStudio.Plugins           (plugin host, extension points)      │  see 11-plugin-system.md
 ├─────────────────────────────────────────────────────────────┤
-│ Yoniq.Application       (use-case orchestration, services)   │
+│ ScanlineStudio.Application       (use-case orchestration, services)   │
 │  ├─ Sstv session orchestration                               │
 │  ├─ Radio session orchestration                              │
 │  └─ Logbook orchestration                                    │
 ├─────────────────────────────────────────────────────────────┤
-│ Yoniq.Core.Sstv    │ Yoniq.Core.Radio   │ Yoniq.Core.Logbook  │  see 06, 02/03/04, 08
-│ Yoniq.Core.Audio   │ Yoniq.Core.Imaging │ Yoniq.Core.Localization│ see 05, 07, 10
+│ ScanlineStudio.Core.Sstv    │ ScanlineStudio.Core.Radio   │ ScanlineStudio.Core.Logbook  │  see 06, 02/03/04, 08
+│ ScanlineStudio.Core.Audio   │ ScanlineStudio.Core.Imaging │ ScanlineStudio.Core.Localization│ see 05, 07, 10
 ├─────────────────────────────────────────────────────────────┤
-│ Yoniq.Abstractions       (interfaces + DTOs shared by all)   │
+│ ScanlineStudio.Abstractions       (interfaces + DTOs shared by all)   │
 ├─────────────────────────────────────────────────────────────┤
-│ Yoniq.Settings           (config load/save/migrate)          │  see 12-settings.md
+│ ScanlineStudio.Settings           (config load/save/migrate)          │  see 12-settings.md
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Rule: `Yoniq.UI` never references `System.IO.Ports`, rig-specific protocol types, or audio backend types directly — only `Yoniq.Application` service interfaces and view-model-friendly DTOs. This directly encodes the CLAUDE.md rule "UI must never directly communicate with radio drivers."
+Rule: `ScanlineStudio.UI` never references `System.IO.Ports`, rig-specific protocol types, or audio backend types directly — only `ScanlineStudio.Application` service interfaces and view-model-friendly DTOs. This directly encodes the CLAUDE.md rule "UI must never directly communicate with radio drivers."
 
 ## Solution structure
 
 ```
 /src
-  Yoniq.Abstractions/
-  Yoniq.Settings/
-  Yoniq.Core.Radio/
-  Yoniq.Core.Radio.Cat/            # per-rig protocol plugins (03)
-  Yoniq.Core.Radio.Rigctld/        # 04
-  Yoniq.Core.Audio/                # 05
-  Yoniq.Core.Sstv/                 # 06
-  Yoniq.Core.Imaging/              # 07
-  Yoniq.Core.Logbook/              # 08
-  Yoniq.Core.Localization/         # 10
-  Yoniq.Application/
-  Yoniq.Plugins/                   # 11
-  Yoniq.UI/                        # 09, Avalonia app + views + view-models
-  Yoniq.Host/                      # composition root: Program.cs, DI registration, hosting
+  ScanlineStudio.Abstractions/
+  ScanlineStudio.Settings/
+  ScanlineStudio.Core.Radio/
+  ScanlineStudio.Core.Radio.Cat/            # per-rig protocol plugins (03)
+  ScanlineStudio.Core.Radio.Rigctld/        # 04
+  ScanlineStudio.Core.Audio/                # 05
+  ScanlineStudio.Core.Sstv/                 # 06
+  ScanlineStudio.Core.Imaging/              # 07
+  ScanlineStudio.Core.Logbook/              # 08
+  ScanlineStudio.Core.Localization/         # 10
+  ScanlineStudio.Application/
+  ScanlineStudio.Plugins/                   # 11
+  ScanlineStudio.UI/                        # 09, Avalonia app + views + view-models
+  ScanlineStudio.Host/                      # composition root: Program.cs, DI registration, hosting
 /tests
-  Yoniq.Core.Radio.Tests/
-  Yoniq.Core.Sstv.Tests/
-  Yoniq.Core.Audio.Tests/
-  Yoniq.Core.Logbook.Tests/
-  Yoniq.Application.Tests/
-  Yoniq.UI.Tests/                  # view-model tests, headless Avalonia
+  ScanlineStudio.Core.Radio.Tests/
+  ScanlineStudio.Core.Sstv.Tests/
+  ScanlineStudio.Core.Audio.Tests/
+  ScanlineStudio.Core.Logbook.Tests/
+  ScanlineStudio.Application.Tests/
+  ScanlineStudio.UI.Tests/                  # view-model tests, headless Avalonia
 /spec
 /tools
   legacy-config-importer/          # one-shot INI → JSON migration CLI, see 12-settings.md
 ```
 
-Each `Yoniq.Core.*` project is a bounded module: it may be extracted to its own NuGet package later without touching other modules. This is what "composition over inheritance" and SOLID look like structurally — modules compose via interfaces registered in the DI container, not via shared base classes.
+Each `ScanlineStudio.Core.*` project is a bounded module: it may be extracted to its own NuGet package later without touching other modules. This is what "composition over inheritance" and SOLID look like structurally — modules compose via interfaces registered in the DI container, not via shared base classes.
 
 ## Composition root
 
-`Yoniq.Host/Program.cs` is the only place allowed to call `new` on concrete infrastructure types (transports, audio backends, protocol implementations) or to register services. Everything else receives dependencies through constructor injection. No static mutable state or singletons accessed via static properties anywhere in the codebase — "current radio," "current settings," etc. are always resolved through DI, never through a `Program.CurrentRadio`-style global (this replaces the legacy pattern of `extern CRADIOPARA RADIO;` global structs throughout `cradio.h`/`Option.h`).
+`ScanlineStudio.Host/Program.cs` is the only place allowed to call `new` on concrete infrastructure types (transports, audio backends, protocol implementations) or to register services. Everything else receives dependencies through constructor injection. No static mutable state or singletons accessed via static properties anywhere in the codebase — "current radio," "current settings," etc. are always resolved through DI, never through a `Program.CurrentRadio`-style global (this replaces the legacy pattern of `extern CRADIOPARA RADIO;` global structs throughout `cradio.h`/`Option.h`).
 
 ## Concurrency model
 
 - All hardware I/O (serial, TCP, audio callbacks) is asynchronous (`async`/`await`, `Task`-based), never blocking the UI thread. This directly satisfies the CLAUDE.md rule "All hardware communication must be asynchronous."
 - Audio callback threads (see [[05-audio-engine]]) are real-time-priority and must not allocate or call into `async` machinery; they hand samples off to lock-free ring buffers consumed by the DSP pipeline on a dedicated processing thread.
 - Radio polling loops (see [[02-radio-layer]]) run on a background `Task` per connected radio, publishing state changes via `IObservable<RadioState>` (System.Reactive — decided and implemented, `RadioController`'s `StateChanges`/`ConnectionEvents`), never via raw thread + Win32 message posting (replacing `PostMessage`/`WM_*` pattern in `cradio.cpp`).
-- UI updates marshal back to the UI thread via Avalonia's `Dispatcher`, applied only in the `Yoniq.UI` layer.
+- UI updates marshal back to the UI thread via Avalonia's `Dispatcher`, applied only in the `ScanlineStudio.UI` layer.
 
 ## Error handling
 
 - Infrastructure layers (radio, audio, serial) surface failures as typed results or exceptions specific to the operation (`RadioConnectException`, `AudioDeviceUnavailableException`), never silent failure or error codes returned as `int`.
-- The `Yoniq.Application` layer translates these into user-facing, localized notifications (see [[10-localization]]) — never a raw exception message shown to the user.
+- The `ScanlineStudio.Application` layer translates these into user-facing, localized notifications (see [[10-localization]]) — never a raw exception message shown to the user.
 - A disconnected or misbehaving radio must degrade gracefully: SSTV encode/decode and logging continue to function with radio control unavailable, mirroring "never remove existing radio support unless replaced" by never making radio control a hard dependency of the DSP/logging core.
 
 ## Nullable reference types & warnings
@@ -105,4 +105,4 @@ Each `Yoniq.Core.*` project is a bounded module: it may be extracted to its own 
 
 - [x] `Directory.Build.props` / `.editorconfig` created enforcing nullable + warnings-as-errors + analyzers.
 - [x] Empty solution scaffolded matching the project list above, each project building with zero warnings.
-- [x] `Yoniq.Host` boots, resolves a real (not empty) DI container, and shows a working Avalonia window — the walking-skeleton milestone from [[14-roadmap]] Phase 3, exceeded (real service graph, not a blank window).
+- [x] `ScanlineStudio.Host` boots, resolves a real (not empty) DI container, and shows a working Avalonia window — the walking-skeleton milestone from [[14-roadmap]] Phase 3, exceeded (real service graph, not a blank window).

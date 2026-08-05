@@ -1,9 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\Yoniq.Abstractions\Yoniq.Abstractions.csproj" />
-    <ProjectReference Include="..\Yoniq.Settings\Yoniq.Settings.csproj" />
-  </ItemGroup>
-</Project>

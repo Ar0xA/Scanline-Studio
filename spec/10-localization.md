@@ -25,7 +25,7 @@ Implement CLAUDE.md's "no hardcoded UI strings" / "every user-visible string mus
 Each file is a flat key → string map, keys namespaced by view (`"MainWindow.TxButton.Label"`, `"OptionsDialog.Tab.Audio"`), with ICU-style placeholders for interpolation (`"Logbook.ContactCount": "{count} contacts logged"`), covering plural forms via a small pluralization helper rather than hand-rolled `if (count == 1)` branches scattered through view-models.
 
 ```csharp
-namespace Yoniq.Abstractions.Localization;
+namespace ScanlineStudio.Abstractions.Localization;
 
 public interface ILocalizationService
 {

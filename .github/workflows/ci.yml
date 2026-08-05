@@ -23,7 +23,7 @@ jobs:
           dotnet-version: "8.0.x"
 
       # Piece Audio 1b: cl.exe is not on PATH by default on GitHub's windows-latest runners
-      # outside a Developer Command Prompt -- Yoniq.Core.Audio.MiniAudio's BuildNativeShimWindows
+      # outside a Developer Command Prompt -- ScanlineStudio.Core.Audio.MiniAudio's BuildNativeShimWindows
       # MSBuild target needs it. No equivalent step is needed for macOS (clang/Xcode command line
       # tools are already on PATH on macos-latest) or Linux (gcc likewise).
       - name: Set up MSVC dev environment (Windows only)
@@ -31,16 +31,16 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       # msvc-dev-cmd (above) exports Platform=x64 as a job-level env var so cl.exe's toolchain
-      # resolves correctly, but Yoniq.sln only defines "Any CPU" solution configurations -- MSBuild
+      # resolves correctly, but ScanlineStudio.sln only defines "Any CPU" solution configurations -- MSBuild
       # otherwise reads that ambient env var as a default property and fails restore with MSB4126
       # ("solution configuration Debug|x64 is invalid"). Override explicitly on every dotnet
       # invocation; cl.exe itself (BuildNativeShimWindows) is invoked via Exec, not MSBuild's
       # $(Platform), so it's unaffected.
       - name: Restore
-        run: dotnet restore Yoniq.sln /p:Platform="Any CPU"
+        run: dotnet restore ScanlineStudio.sln /p:Platform="Any CPU"
 
       - name: Build (warnings as errors)
-        run: dotnet build Yoniq.sln --no-restore --configuration Release /p:Platform="Any CPU"
+        run: dotnet build ScanlineStudio.sln --no-restore --configuration Release /p:Platform="Any CPU"
 
       - name: Test
-        run: dotnet test Yoniq.sln --no-build --configuration Release /p:Platform="Any CPU" --logger "console;verbosity=normal"
+        run: dotnet test ScanlineStudio.sln --no-build --configuration Release /p:Platform="Any CPU" --logger "console;verbosity=normal"

@@ -5,7 +5,7 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 ## Native per-rig CAT protocol implementations
 
 - **Legacy**: `cradio.cpp`'s `Freq*` methods (`FreqYaesuHF`, `FreqYaesuVU`, `FreqYaesu9K2K`, `FreqICOM`, `FreqKenwood`, `FreqJST245`, plus the generic poll table backing Ten-Tec Omni VI) and `cradio.h`'s `RADIO_POLL*` enum/`CmdInit`/`CmdRx`/`CmdTx` templates, `RadioSet.cpp`, `ExtCmd.cpp`.
-- **Replacement**: none in-house. Yoniq is a pure client of external CAT backends instead — Hamlib linked in-process, `rigctld`, flrig, or OmniRig-as-client (all [[spec/03-cat-layer]]), plus a user-editable `TemplateCatProtocol` escape hatch for anything none of them cover.
+- **Replacement**: none in-house. Scanline Studio is a pure client of external CAT backends instead — Hamlib linked in-process, `rigctld`, flrig, or OmniRig-as-client (all [[spec/03-cat-layer]]), plus a user-editable `TemplateCatProtocol` escape hatch for anything none of them cover.
 - **Why**: maintaining a hand-written parser per rig family duplicates work multiple existing, actively-maintained external projects already do; leaning on them (the same relationship WSJT-X has to Hamlib) trades a large ongoing in-house maintenance burden for a dependency on those projects' own coverage and correctness.
 - **Not fully replaced**: rig coverage now depends entirely on whichever external backend(s) actually ship, not on a list this project controls — a rig with no Hamlib/flrig/OmniRig support and no user-authored `TemplateCatProtocol` template has no path to CAT control at all. Unlike legacy, there is no standalone/offline CAT mode: every backend except the template fallback requires an external process, library, or driver to be present (a running `rigctld`/flrig instance, a linked Hamlib build for the user's OS/arch, or OmniRig installed on Windows).
 - **Impact**: users of rigs well-covered by Hamlib (the large majority) see no functional loss and gain the widest rig-support list of any option considered. Users on rigs Hamlib/flrig/OmniRig don't support, previously served by one of legacy's ~14 hand-written families, need a `TemplateCatProtocol` template (if the rig's command set is simple enough to hand-author) or lose CAT control until upstream Hamlib adds support.
@@ -13,15 +13,15 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 ## OmniRig ActiveX/COM integration
 
 - **Legacy**: `OmniRig_OCX.cpp`, `OmniRig_OCX.h`, `OmniRig_TLB.cpp`, `OmniRig_TLB.h`. User-facing toggle in `Config.cfg` (`omnirig=0`).
-- **Replacement**: `rigctld` client mode or linked Hamlib ([[spec/04-rigctld]], [[spec/03-cat-layer]]), or an OmniRig-as-*client* backend ([[spec/03-cat-layer]]) — Yoniq talking to an already-running OmniRig instance rather than bundling OmniRig's own OCX/TLB into itself.
+- **Replacement**: `rigctld` client mode or linked Hamlib ([[spec/04-rigctld]], [[spec/03-cat-layer]]), or an OmniRig-as-*client* backend ([[spec/03-cat-layer]]) — Scanline Studio talking to an already-running OmniRig instance rather than bundling OmniRig's own OCX/TLB into itself.
 - **Not fully replaced by rigctld/Hamlib alone**: OmniRig's core value was **rig-sharing arbitration** — letting multiple applications (e.g. YONIQ and a separate logger) share one serial-connected rig through a single OmniRig broker process. Linked Hamlib cannot replicate this at all (two processes cannot open the same serial port). `rigctld` replicates it only if every application on the machine is reconfigured to talk through the same `rigctld` instance instead of opening the port directly — a real migration step, not a transparent swap.
-- **Fully replaced if the OmniRig-as-client backend ships**: unlike the above two, this restores the original arbitration case directly — Yoniq becomes just another OmniRig-aware client alongside the user's existing logger, no migration to `rigctld` needed. This backend is speculative/not yet designed (see [[spec/03-cat-layer]]'s Definition of done), so treat this line as the target, not a shipped guarantee.
-- **Impact**: users with a single application controlling the rig are unaffected regardless of backend. Users sharing a rig across multiple OmniRig-aware applications should stay on OmniRig (with Yoniq as an OmniRig client, once built) or migrate everything to `rigctld`-mediated sharing.
+- **Fully replaced if the OmniRig-as-client backend ships**: unlike the above two, this restores the original arbitration case directly — Scanline Studio becomes just another OmniRig-aware client alongside the user's existing logger, no migration to `rigctld` needed. This backend is speculative/not yet designed (see [[spec/03-cat-layer]]'s Definition of done), so treat this line as the target, not a shipped guarantee.
+- **Impact**: users with a single application controlling the rig are unaffected regardless of backend. Users sharing a rig across multiple OmniRig-aware applications should stay on OmniRig (with Scanline Studio as an OmniRig client, once built) or migrate everything to `rigctld`-mediated sharing.
 
 ## CItems custom-item plugin ABI
 
 - **Legacy**: `CItems/` (PERIMG, QSLBox, TextArt, TEXTBOX subfolders), documented in `CItems/ECUSTOM.TXT` — a native Win32 DLL ABI that MMSSTV loads on-the-fly to extend the QSL/template designer.
-- **Replacement**: none directly. [[spec/11-plugin-system]] provides a managed, cross-platform plugin model (`AssemblyLoadContext`-isolated, `IYoniqPlugin`), but it is not binary-compatible with legacy CItems DLLs — those are native Win32 code built against a C++Builder-specific struct layout, incompatible with a cross-platform managed host by construction, not by choice.
+- **Replacement**: none directly. [[spec/11-plugin-system]] provides a managed, cross-platform plugin model (`AssemblyLoadContext`-isolated, `IScanline StudioPlugin`), but it is not binary-compatible with legacy CItems DLLs — those are native Win32 code built against a C++Builder-specific struct layout, incompatible with a cross-platform managed host by construction, not by choice.
 - **Not carried forward**: any third-party custom-item DLLs built against the legacy `ECUSTOM.TXT` ABI (unknown how many exist in the wild) stop working with no automatic migration path.
 - **Successor**: the concept — a loadable extension that draws into the QSL/template designer — is the intended scope of a future `ITemplateItem`-style extension point once [[spec/15-template-designer]] is implemented (currently deferred, see [[spec/14-roadmap]]). Until then this is a real capability gap, not a completed replacement.
 - **Impact**: any user of a third-party MMSSTV custom-item DLL loses that specific extension until the template designer and its plugin point ship.
@@ -36,13 +36,13 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 
 - **Legacy**: `Loglink.cpp` — live IPC (`WM_COPYDATA`) with Turbo HAMLOG, a separate third-party logging application (`m_hLog`, `m_hLogIn`, `m_fHLV5`).
 - **Replacement**: none live. [[spec/08-logging]]'s ADIF import/export is a **batch**, not live, integration path — the two logs stay independent, synced by explicit export/import rather than in real time.
-- **Impact**: users who used Turbo HAMLOG as their primary log with live sync from MMSSTV/YONIQ need to switch to periodic ADIF export/import, or use Yoniq's own built-in logbook ([[spec/08-logging]]) instead of a separate application.
+- **Impact**: users who used Turbo HAMLOG as their primary log with live sync from MMSSTV/YONIQ need to switch to periodic ADIF export/import, or use Scanline Studio's own built-in logbook ([[spec/08-logging]]) instead of a separate application.
 
 ## Contest logging (JASTA) and JARL area codes
 
 - **Legacy**: `yoniq-old/YONIQ-main/JASTA/` — a distinct bundled C++Builder application (`MMJASTA`) with its own logging/conversion/country-lookup code, plus `Mmcg.cpp`/`MmcgDlg.cpp`/`MMCG.DEF` (JARL contest area database) and `NVCG.txt` in the main tree.
-- **Replacement**: none. Out of scope for Yoniq v2 — this is a separate application bundled alongside MMSSTV/YONIQ historically, not a feature of YONIQ itself, and is not ported.
-- **Impact**: users relying on JASTA for contest logging need to continue using the legacy application, or a different contest logger, alongside Yoniq v2.
+- **Replacement**: none. Out of scope for Scanline Studio — this is a separate application bundled alongside MMSSTV/YONIQ historically, not a feature of YONIQ itself, and is not ported.
+- **Impact**: users relying on JASTA for contest logging need to continue using the legacy application, or a different contest logger, alongside Scanline Studio.
 
 ## Chilkat and FastReport VCL
 
@@ -53,7 +53,7 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 ## FSK callsign-ID packet (RX)
 
 - **Legacy**: `CSSTVDEM::DecodeFSK`'s modes 5–10 (`sstv.cpp:2465-2551`) — a distinct FSK-coded packet (STX `0x2a`, distinguishable from the mode-announce packet's `0x2d`) carrying a station callsign and optional numeric ID, decoded and surfaced via `m_fskcall`/`m_fskNRS` (referenced at `Main.cpp:3618`). TX side: `CSSTVMOD::OutputFSKID` (`Main.cpp:6904-6965`).
-- **Replacement**: none. `Yoniq.Core.Sstv.NarrowFskHeaderDecoder` (Piece 13, [[spec/14-roadmap]]) ports only modes 0–4/16/17/18 — the MN/MC narrow-mode-announce packet sharing the same guard-tone/start-bit/bit-sampling mechanism and mode-4 STX dispatch. A `0x2a` STX byte is treated identically to any other unrecognized value (reset, resume scanning) rather than routed to a callsign decode.
+- **Replacement**: none. `ScanlineStudio.Core.Sstv.NarrowFskHeaderDecoder` (Piece 13, [[spec/14-roadmap]]) ports only modes 0–4/16/17/18 — the MN/MC narrow-mode-announce packet sharing the same guard-tone/start-bit/bit-sampling mechanism and mode-4 STX dispatch. A `0x2a` STX byte is treated identically to any other unrecognized value (reset, resume scanning) rather than routed to a callsign decode.
 - **Impact**: no RX support for legacy's FSK callsign-ID feature. Structurally independent from the mode-announce packet (own leader/guard tone, own TX call sites) — not a partial replacement of a feature this port needs elsewhere, a standalone capability gap.
 
 ## CQ100 mode (`-i` command-line switch)

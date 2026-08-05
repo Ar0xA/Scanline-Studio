@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ScanlineStudio.UI\ScanlineStudio.UI.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Application\ScanlineStudio.Application.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Settings\ScanlineStudio.Settings.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Audio.MiniAudio\ScanlineStudio.Core.Audio.MiniAudio.csproj" />
+    <!-- Direct ref (not just transitive via ScanlineStudio.Application) because Program.cs `new`s
+         JsonLocalizationService directly; same rationale as the MiniAudio ref above. -->
+    <ProjectReference Include="..\ScanlineStudio.Core.Localization\ScanlineStudio.Core.Localization.csproj" />
+    <!-- Same rationale again: Program.cs directly registers AnalogFmSstvDecoder/Encoder,
+         ReceivedImageBuffer/ImageFileLoader, RadioController, and RigctldProtocolFactory. -->
+    <ProjectReference Include="..\ScanlineStudio.Core.Sstv\ScanlineStudio.Core.Sstv.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Imaging\ScanlineStudio.Core.Imaging.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Radio\ScanlineStudio.Core.Radio.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Radio.Rigctld\ScanlineStudio.Core.Radio.Rigctld.csproj" />
+  </ItemGroup>
+
+  <!-- Locale assets (spec/10-localization.md): repo-root assets/locale/**, copied alongside the
+       built app so JsonLocalizationService can find them at AppContext.BaseDirectory/assets/locale. -->
+  <ItemGroup>
+    <None Include="..\..\assets\locale\**"
+          Link="assets\locale\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    Piece Engine 6, same pattern and reasoning as
+    ScanlineStudio.Core.Audio.MiniAudio.Tests.csproj's own CopyNativeShim* targets: .NET does not
+    automatically propagate a ProjectReference's native build artifacts (confirmed directly in
+    this project during piece Audio 1), so the real IAudioEngine registration above would throw
+    DllNotFoundException on first resolve without an explicit copy here too.
+  -->
+  <Target Name="CopyNativeShimLinux" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.so" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+  <!-- Unverified in this project's own dev sandbox (Linux-only); see the referenced project's own
+       build target doc comment. -->
+  <Target Name="CopyNativeShimWindows" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)\..\ScanlineStudio.Core.Audio.MiniAudio\$(OutDir)yoniqaudio.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+  <Target Name="CopyNativeShimMacOS" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.dylib" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+</Project>

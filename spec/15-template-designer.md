@@ -38,14 +38,14 @@ Legacy templates persist as `.mtm` files (`def1.mtm`–`def5.mtm`, `t1.mtm`–`t
 
 ## CItems as this subsystem's plugin surface
 
-[[11-plugin-system]] originally and incorrectly claimed no legacy plugin precedent existed; `CItems/` (documented in `CItems/ECUSTOM.TXT`) is in fact a DLL-based extension mechanism, but it's scoped to *this* subsystem specifically — a CItems DLL is a loadable custom drawable that participates in the template designer's scene graph, not a general application plugin. The rewrite's successor extension point (a future `ITemplateItem` interface, following the same `IYoniqPlugin` pattern as every other extension point in [[11-plugin-system]]) belongs here, not in the general plugin document. Native CItems DLLs (Win32, C++Builder ABI) are not binary-portable to a cross-platform managed host regardless — see [docs/removed-features.md](../docs/removed-features.md).
+[[11-plugin-system]] originally and incorrectly claimed no legacy plugin precedent existed; `CItems/` (documented in `CItems/ECUSTOM.TXT`) is in fact a DLL-based extension mechanism, but it's scoped to *this* subsystem specifically — a CItems DLL is a loadable custom drawable that participates in the template designer's scene graph, not a general application plugin. The rewrite's successor extension point (a future `ITemplateItem` interface, following the same `IScanline StudioPlugin` pattern as every other extension point in [[11-plugin-system]]) belongs here, not in the general plugin document. Native CItems DLLs (Win32, C++Builder ABI) are not binary-portable to a cross-platform managed host regardless — see [docs/removed-features.md](../docs/removed-features.md).
 
 ## Proposed shape (once undeferred)
 
 Mirrors the legacy scene graph fairly directly, since there's no strong reason to redesign a working object model — the value here is in the persisted-format and rendering port, not a redesign:
 
 ```csharp
-namespace Yoniq.Abstractions.Templates;
+namespace ScanlineStudio.Abstractions.Templates;
 
 public interface ITemplateElement { Rectangle Bounds { get; } void Render(IDrawingContext ctx); }
 
