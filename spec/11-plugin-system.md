@@ -53,7 +53,7 @@ Each plugin loads into its own `System.Runtime.Loader.AssemblyLoadContext`, coll
 ```csharp
 namespace ScanlineStudio.Abstractions.Plugins;
 
-public interface IScanline StudioPlugin
+public interface IScanlineStudioPlugin
 {
     string Id { get; }
     void RegisterServices(IServiceCollection services);   // plugin registers its IRadioProtocol/IImageFilter/etc. implementations
