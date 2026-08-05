@@ -59,8 +59,8 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 ## MMlink inter-application broadcast
 
 - **Legacy**: `MMlink.cpp`/`mml.h`/`mmrp.h` — a DLL-based link protocol (`mmlOpen`, `mmlSetFreq`, `mmlSetPTT`, `mmlLog`, `mmlEventVFO`) plus `SendMessage(HWND_BROADCAST, m_PSKGNRId, …)` broadcast messages used by `cradio.cpp` to notify other MM-family applications (MMTTY, MMVARI, etc.) of frequency/PTT changes.
-- **Replacement**: none in v1. This is Windows-specific inter-process broadcast messaging with no cross-platform equivalent; [[spec/04-rigctld]]'s server mode covers the "another app wants to know the current frequency" use case for any Hamlib-aware client, but does not replicate MMlink's specific broadcast/PTT-coordination protocol.
-- **Impact**: users running YONIQ alongside other MM-family (Mori-authored) applications relying on live MMlink coordination lose that integration. rigctld server mode is the recommended alternative where the other application can speak it.
+- **Replacement**: none. This is Windows-specific inter-process broadcast messaging with no cross-platform equivalent. An earlier draft of this entry named [[spec/04-rigctld]]'s (then-planned) server mode as a possible alternative for the "another app wants to know the current frequency" use case; server mode itself was dropped before implementation (direct user decision, 2026-08-05 — built-in linked Hamlib plus rigctld client-mode coverage is sufficient CAT surface, a server role wasn't worth the added scope), so that alternative no longer exists either.
+- **Impact**: users running YONIQ alongside other MM-family (Mori-authored) applications relying on live MMlink coordination lose that integration, with no replacement path.
 
 ## Loglink / Turbo HAMLOG live integration
 

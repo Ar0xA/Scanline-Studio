@@ -4020,25 +4020,40 @@ library-override path (hard-coded as a constructor parameter for now).
 
 Full build log, real bugs caught along the way (a settings-schema layering bug, an RX-image row-copy bug, an e2e-demo design contradiction), and file-level detail: see the session's own `PROJECT_BRIEF.md` history and `/home/artien/.claude/plans/hidden-conjuring-curry.md`.
 
-## Phase 4 — CAT protocols, image tooling, logbook
+## Phase 4 — Making the program usable: settings, options, dialogs, logbook
+
+**Re-scoped 2026-08-05 (direct user decision)**: Phase 4's organizing theme is now "the program is
+actually usable day to day," not just "CAT protocols + image tooling." Two changes from the original
+plan: rigctld **server mode** is dropped outright (see [[04-rigctld]]'s "Purpose"/"Server mode" sections
+— built-in linked Hamlib plus rigctld client-mode coverage is enough CAT surface; a server role wasn't
+worth the added scope), and the settings/dialogs/localization-completion work originally bucketed under
+Phase 5 ("Extensibility and polish") moves up into Phase 4, since a usable program needs its settings
+UI and remaining dialogs before it needs a plugin system. Phase 5 is now just extensibility (see below).
 
 - [[03-cat-layer]]: linked Hamlib backend — **done early** (see "Linked Hamlib backend" section above,
   landed right after Phase 2 instead of waiting for Phase 4). `TemplateCatProtocol` fallback still here.
 - **Maybe later** (not committed, no code/design yet): flrig client backend — flrig has a real, still-actively-used user base distinct from plain Hamlib/rigctld users, worth adding if that demand shows up post-launch. OmniRig-as-client similarly deferred. Revisit once Hamlib/rigctld coverage is in and actual user requests make the priority call for real, rather than guessing now.
-- [[07-image-pipeline]]: full crop/resize/filter/overlay, stock library, RX history.
-- [[08-logging]]: logbook, ADIF import/export, offline callsign lookup; QRZ.com opt-in lookup can trail slightly if needed.
-- [[04-rigctld]]: server mode.
+- [[07-image-pipeline]]: full crop/resize/overlay, stock library, RX history — **done** (`ITransmitImagePreparer`, `TxImageEditorPaneViewModel`/`TxImageEditorPaneView`, `IStockImageLibrary`, `IReceiveHistoryStore`; filter/preset support deferred to [[11-plugin-system]], Phase 5, not part of this interface).
+- [[08-logging]]: logbook, ADIF import/export, offline callsign lookup; QRZ.com opt-in lookup can trail slightly if needed. Not started — the callsign/country lookup piece is additionally blocked on a human emailing Clublog for a `cty.dat` API key (see [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note); the logbook/ADIF core doesn't depend on that and can proceed first.
+- [[09-ui]]: remaining dialogs from the inventory table — `OptionsDialog` (tabbed general/TX/RX/audio settings), `RadioSettingsDialog`, `MacroKeyEditor`, `ColorSettingsDialog`, `LanguageSettingsDialog`. (Moved from Phase 5 — `PluginManagerDialog` stays in Phase 5, it has no purpose without the plugin host it's Phase 5's own primary deliverable.)
+- [[12-settings]]: legacy `.ini` importer, migration chain exercised by a real version bump. (Moved from Phase 5.)
+- [[10-localization]]: remaining views localized, community-translation-friendly locale-file workflow documented. (Moved from Phase 5.)
+- ~~[[04-rigctld]]: server mode~~ — **dropped**, not deferred. See the re-scoping note above.
 
-**Demo:** feature-complete for the "operate SSTV with a directly-connected rig and keep a proper log" use case — this is the point at which YONIQ v2 first matches legacy MMSSTV/YONIQ's core day-to-day workflow.
+**Demo:** the program is fully usable day to day — configure settings/rig/macros/colors/language through
+real dialogs, operate SSTV with a directly-connected rig, and keep a proper log. This is the point at
+which YONIQ v2 first matches legacy MMSSTV/YONIQ's core day-to-day workflow, plus a real settings/options
+experience legacy users would recognize.
 
-## Phase 5 — Extensibility and polish
+## Phase 5 — Extensibility
 
-- [[11-plugin-system]]: plugin host, at least one built-in extension point (`IImageFilter`) proven to load through the plugin path. If [[15-template-designer]] work has started by this point, its `ITemplateItem` extension point (the documented successor to the legacy CItems DLL ABI) is the higher-value target to prove the plugin path against, since it's the one with real legacy prior art and potential third-party demand.
-- [[09-ui]]: remaining dialogs from the inventory table (macro editor, color settings, etc.).
-- [[12-settings]]: legacy `.ini` importer, migration chain exercised by a real version bump.
-- [[10-localization]]: remaining views localized, community-translation-friendly locale-file workflow documented.
+**Trimmed 2026-08-05** to just the plugin system — everything else previously bucketed here (remaining
+dialogs, settings migration, localization completion) moved into Phase 4 above.
 
-**Demo:** a legacy user can import their old settings, pick up their macros/rig config, and optionally extend the app with a plugin.
+- [[11-plugin-system]]: plugin host, at least one built-in extension point (`IImageFilter`) proven to load through the plugin path, plus `PluginManagerDialog` ([[09-ui]]'s inventory table). If [[15-template-designer]] work has started by this point, its `ITemplateItem` extension point (the documented successor to the legacy CItems DLL ABI) is the higher-value target to prove the plugin path against, since it's the one with real legacy prior art and potential third-party demand.
+
+**Demo:** a user can extend the app with a plugin (at minimum, an image filter loading through the same
+path a future `ITemplateItem` extension would use).
 
 ## Explicitly deferred beyond v1
 
@@ -4059,6 +4074,5 @@ Before any tagged release: full [[13-testing]] manual hardware checklist (real r
 - ~~Project license~~ — **decided**: LGPL-3.0-or-later, matching upstream. See [LICENSES.md](../LICENSES.md). The remaining open sub-item is confirming the `Terms.txt` freeware-clause interpretation with the upstream author (JE3HHT) if the project ever moves toward commercial distribution — not a blocker for development.
 - [[08-logging]]: source and license-audit the callsign-prefix/country dataset before bundling (Phase 4) — `ARRL.DX` is already ruled out, see [LICENSES.md](../LICENSES.md). **Pre-audited 2026-08-02**: Clublog's `cty.dat` has no fee, but redistribution requires a human to email Clublog's helpdesk describing the proposed use and obtain an individual API key before the data can be downloaded/bundled — not a simple open-license drop-in. See [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note. Remaining before Phase 4: someone actually emails Clublog and gets the key (not agent-doable), then the real bundled-asset row gets added to LICENSES.md.
 - ~~[[05-audio-engine]]: confirm PortAudio latency is acceptable on Windows before committing to it as the sole backend, vs. adding a native WASAPI backend later~~ — **resolved, PortAudio rejected outright.** Two independent Opus consultations plus direct verification in this repo's own dev sandbox found PortAudio fails this spec's own requirements, not just a latency concern: no real device-change API in any released version, no PulseAudio/PipeWire host API on Linux (confirmed by creating a real virtual sink and showing a live PortAudio device probe couldn't see it at all — the exact virtual-cable workflow this spec requires, failing in practice), and no sample-rate conversion. Switched to `miniaudio`, whose WASAPI backend (`IAudioClient3` low-latency mode) *is* the native-WASAPI escape hatch this item used to hold open, without needing COM interop in `ScanlineStudio.Core.*`. See [[05-audio-engine]]'s Backend choice section for the full reasoning.
-- [[04-rigctld]]: decide default behavior for server-mode "allow remote control" — off by default is the current spec position; confirm before Phase 4 ships it.
 - [[15-template-designer]]: the `.mtm`/`PARALIST.BIN` binary format needs a proper reverse-engineering pass (cross-checked against `Draw.cpp`'s own `Load`/`Save` methods) before any implementation work on that subsystem can start — flagged as a prerequisite, not yet done.
 - [LICENSES.md](../LICENSES.md): confirm whether Chilkat or FastReport actually back a real feature by building and running the legacy binary directly (not verifiable from source alone) — currently assumed unused/orphaned based on a source-only search.

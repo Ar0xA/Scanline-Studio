@@ -2,7 +2,43 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-05, latest, ACTIVE) — TX image editor: Pieces 1-6 of the audited plan done, Piece 5c (the actual view) is next
+## Resume here (2026-08-05, latest, ACTIVE) — Roadmap re-scoped: rigctld server mode dropped, Phase 4/5 boundary moved
+
+Two direct user decisions, `spec/14-roadmap.md`/`spec/04-rigctld.md`/`docs/removed-features.md` updated
+to match (no code changes this pass — pure re-scoping):
+
+1. **rigctld server mode dropped, not deferred.** Built-in linked Hamlib + rigctld client-mode coverage
+   is enough CAT surface; a server role (listening network service, "allow remote control" security
+   posture, its own interop burden) wasn't worth carrying for a feature with no expressed demand.
+   `spec/04-rigctld.md`'s "Purpose" section now scopes only client mode; the old "Server mode" section
+   is kept as a one-paragraph record of what was speced, not deleted outright. Nothing was ever
+   implemented (`RigctldServer`/`IRigctldServer` never existed in code — confirmed via grep before
+   editing), so this was a pure spec/roadmap edit, no removed code. `docs/removed-features.md`'s MMlink
+   entry previously named rigctld server mode as a possible alternative for "another app wants to know
+   the current frequency" — corrected to say no alternative exists, since that dependency is now gone
+   too.
+2. **Phase 4/5 boundary moved — Phase 4 is now "make the program usable."** Everything from the old
+   Phase 5 ("Extensibility and polish") except the plugin system itself moved up into Phase 4: the
+   remaining dialogs (`OptionsDialog`, `RadioSettingsDialog`, `MacroKeyEditor`, `ColorSettingsDialog`,
+   `LanguageSettingsDialog`), the legacy `.ini` settings importer/migration chain, and remaining-views
+   localization. Phase 5 is now just the plugin system (`IImageFilter` extension point +
+   `PluginManagerDialog`) — it stays separate because a plugin-management dialog has no purpose without
+   the plugin host it depends on. `spec/07-image-pipeline.md`'s stale `ITransmitImagePreparer` DoD
+   checkbox also fixed while in there (it said "still Phase 4/not built" — actually done and shipped
+   last session as the TX image editor).
+
+**Phase 4 is now, in order of what's left**: logbook/ADIF (`08-logging`, blocked in part on a human
+emailing Clublog for a `cty.dat` API key — the logbook/ADIF core itself doesn't depend on that and can
+go first), then the settings/options/macro/color/language dialogs, then the `.ini` importer and
+remaining localization. TX image editor's own hands-on interactive verification (drag/nudge/apply/cancel
+in the real running app) is still outstanding too — deferred by the user ("verification will come later
+with more UI refinements and changes"), not forgotten.
+
+**Next**: pick a concrete starting point among the above — logbook core is probably the highest-value
+next chunk (bigger feature, mostly unblocked), but this hasn't been explicitly confirmed with the user
+yet this session.
+
+## Resume here (2026-08-05, superseded by the entry above) — TX image editor: Pieces 1-6 of the audited plan done, Piece 5c (the actual view) is next
 
 Spec (`spec/07-image-pipeline.md`'s "TX image editor" section) went through two auditor rounds,
 verdict "ready to build," before any code. Done so far, all with full-solution green runs after each:
