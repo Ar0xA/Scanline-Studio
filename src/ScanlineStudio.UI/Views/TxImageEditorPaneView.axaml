@@ -1,0 +1,134 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="using:ScanlineStudio.UI.Localization"
+             xmlns:conv="using:ScanlineStudio.UI.Converters"
+             xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+             x:Class="ScanlineStudio.UI.Views.TxImageEditorPaneView"
+             x:DataType="vm:TxImageEditorPaneViewModel">
+
+    <Border Classes="ScanlineStudioPanelBody">
+        <Grid ColumnDefinitions="2*,Auto" RowDefinitions="Auto,Auto,*">
+
+            <!-- Toolbar: aspect toggle + add-text + apply/cancel, all in one rigid module strip. -->
+            <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Classes="ScanlineStudioModuleGroup">
+                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
+                    <CheckBox Content="{loc:Translate Panes.TxImageEditor.PreserveAspect}"
+                              IsChecked="{Binding PreserveAspect}" />
+                    <Button Content="{loc:Translate Panes.TxImageEditor.AddText}"
+                            Command="{Binding AddOverlayElementCommand}" />
+                    <Button Content="{loc:Translate Panes.TxImageEditor.Apply}"
+                            Command="{Binding ApplyCommand}"
+                            HorizontalAlignment="Right" />
+                    <Button Content="{loc:Translate Panes.TxImageEditor.Cancel}"
+                            Command="{Binding CancelCommand}" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                       Classes="ScanlineStudioReadout"
+                       FontSize="10"
+                       TextWrapping="Wrap"
+                       Text="{loc:Translate Panes.TxImageEditor.Caption}" />
+
+            <!-- Interactive canvas: crop rectangle (drag body to move, drag the corner handle to
+                 resize; legacy's own real precedent has resize on the bottom-right corner only,
+                 see PicRect.cpp) and draggable overlay text, both drawn over the pre-downsampled
+                 working copy at native pixel size (Stretch="None") so on-screen pixels map directly
+                 to normalized crop/overlay coordinates with no scale-factor math needed. -->
+            <ScrollViewer Grid.Row="2" Grid.Column="0"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+                <Canvas x:Name="EditorCanvas"
+                        Width="{Binding WorkingCopyWidth}"
+                        Height="{Binding WorkingCopyHeight}"
+                        Focusable="True"
+                        Background="Transparent"
+                        KeyDown="OnCanvasKeyDown"
+                        PointerMoved="OnCanvasPointerMoved"
+                        PointerReleased="OnCanvasPointerReleased">
+
+                    <Image Source="{Binding WorkingCopyBitmap}" Stretch="None" />
+
+                    <Border Canvas.Left="{Binding CropLeftPixels}"
+                            Canvas.Top="{Binding CropTopPixels}"
+                            Width="{Binding CropWidthPixels}"
+                            Height="{Binding CropHeightPixels}"
+                            BorderBrush="{DynamicResource ScanlineStudioAccentColor}"
+                            BorderThickness="2"
+                            Background="#22FFFF00"
+                            PointerPressed="OnCropBodyPointerPressed" />
+
+                    <Border Canvas.Left="{Binding CropRightPixels}"
+                            Canvas.Top="{Binding CropBottomPixels}"
+                            RenderTransform="translate(-5,-5)"
+                            Width="10" Height="10"
+                            Background="{DynamicResource ScanlineStudioAccentColor}"
+                            PointerPressed="OnCropHandlePointerPressed" />
+
+                    <ItemsControl ItemsSource="{Binding OverlayElements}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <Canvas />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:OverlayElementViewModel">
+                                <TextBlock Text="{Binding Text}"
+                                           Foreground="White"
+                                           Background="#66000000"
+                                           Canvas.Left="{Binding LeftPixels}"
+                                           Canvas.Top="{Binding TopPixels}"
+                                           PointerPressed="OnOverlayElementPointerPressed">
+                                    <TextBlock.RenderTransform>
+                                        <TranslateTransform X="{Binding Bounds.Width, RelativeSource={RelativeSource Self}, Converter={x:Static conv:NegativeHalfConverter.Instance}}"
+                                                             Y="{Binding Bounds.Height, RelativeSource={RelativeSource Self}, Converter={x:Static conv:NegativeHalfConverter.Instance}}" />
+                                    </TextBlock.RenderTransform>
+                                </TextBlock>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                </Canvas>
+            </ScrollViewer>
+
+            <!-- Side panel: real pipeline preview (mode-exact pixels, nearest-neighbor upscaled for
+                 display so low-res SSTV fidelity is visible, not smoothed away) + the overlay
+                 element list with numeric X/Y fields (legacy's own real precedent for text
+                 placement precision, TextIn.h's SEX/SEY fields), alongside free drag. -->
+            <StackPanel Grid.Row="2" Grid.Column="1"
+                        Spacing="{DynamicResource ScanlineStudioSpacingMedium}"
+                        MinWidth="220">
+                <Border Classes="ScanlineStudioModuleGroup">
+                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                        <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Panes.TxImageEditor.PreviewLabel}" />
+                        <Image Source="{Binding PreviewImage}"
+                               Stretch="Uniform"
+                               MaxHeight="200"
+                               RenderOptions.BitmapInterpolationMode="None" />
+                    </StackPanel>
+                </Border>
+
+                <ItemsControl ItemsSource="{Binding OverlayElements}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:OverlayElementViewModel">
+                            <Border Classes="ScanlineStudioModuleGroup" Margin="0,0,0,4">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBox Text="{Binding Text}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBox Text="{Binding X}" Width="60" />
+                                        <TextBox Text="{Binding Y}" Width="60" />
+                                        <Button Content="{loc:Translate Panes.TxImageEditor.Remove}"
+                                                Command="{Binding $parent[ItemsControl].((vm:TxImageEditorPaneViewModel)DataContext).RemoveOverlayElementCommand}"
+                                                CommandParameter="{Binding}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+        </Grid>
+    </Border>
+
+</UserControl>

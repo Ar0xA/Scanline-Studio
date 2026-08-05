@@ -88,6 +88,28 @@ public sealed class StockImageLibraryTests
         }
     }
 
+    [Fact]
+    public async Task LoadOriginalAsync_PreservesTheFilesNativeResolution_NoResize()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "pic.png");
+            await WriteFixturePngAsync(path, width: 9, height: 4, new Rgb24(1, 2, 3));
+            var library = new StockImageLibrary(SettingsStoreWithDirectory(directory));
+            var entry = (await library.ListAsync()).Single();
+
+            var image = await library.LoadOriginalAsync(entry);
+
+            Assert.Equal(9, image.Width);
+            Assert.Equal(4, image.Height);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static FakeSettingsStore SettingsStoreWithDirectory(string directory)
     {
         var settings = new AppSettings().WithSection(

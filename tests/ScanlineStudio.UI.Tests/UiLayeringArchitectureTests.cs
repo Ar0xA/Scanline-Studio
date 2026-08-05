@@ -48,7 +48,16 @@ public sealed class UiLayeringArchitectureTests
     /// <c>PackageReference</c> to <c>Microsoft.Data.Sqlite</c> or <c>SixLabors.ImageSharp</c> from
     /// <c>ScanlineStudio.UI</c> would defeat <see cref="ScanlineStudio.Abstractions.Imaging.IStockImageLibrary"/>/
     /// <see cref="ScanlineStudio.Abstractions.Imaging.IReceiveHistoryStore"/>'s whole
-    /// <c>IImageSource</c>-only layering contract while passing both existing tests silently.</summary>
+    /// <c>IImageSource</c>-only layering contract while passing both existing tests silently.
+    ///
+    /// Prefix match, not exact match (a real gap the TX image editor design caught before it
+    /// shipped): the original exact-string check against <c>{"Microsoft.Data.Sqlite",
+    /// "SixLabors.ImageSharp"}</c> would NOT have caught a direct reference to
+    /// <c>SixLabors.ImageSharp.Drawing</c>/<c>SixLabors.Fonts</c> (needed for
+    /// <c>ITransmitImagePreparer.ApplyOverlay</c>'s text rendering) -- different package names,
+    /// same underlying layering violation. Same class of bug this project has already caught
+    /// twice elsewhere (Phase 3's <c>IImageFileLoader</c> move, Phase 4's
+    /// <c>Core.Logbook</c>-&gt;<c>Core.Imaging</c> edge).</summary>
     [Fact]
     public void ScanlineStudioUiCsproj_DeclaresNoPackageReferenceToSqliteOrImageSharp()
     {
@@ -56,10 +65,10 @@ public sealed class UiLayeringArchitectureTests
         var document = XDocument.Load(csprojPath);
         var ns = document.Root!.Name.Namespace;
 
-        var bannedPackages = new[] { "Microsoft.Data.Sqlite", "SixLabors.ImageSharp" };
+        var bannedPackagePrefixes = new[] { "Microsoft.Data.Sqlite", "SixLabors." };
         var violations = document.Descendants(ns + "PackageReference")
             .Select(e => e.Attribute("Include")?.Value ?? string.Empty)
-            .Where(include => bannedPackages.Contains(include, StringComparer.Ordinal))
+            .Where(include => bannedPackagePrefixes.Any(prefix => include.StartsWith(prefix, StringComparison.Ordinal)))
             .ToList();
 
         Assert.True(violations.Count == 0,

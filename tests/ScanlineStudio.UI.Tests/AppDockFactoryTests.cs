@@ -23,6 +23,7 @@ public sealed class AppDockFactoryTests
             new FakeImageFileLoader(),
             new FakeStockImageLibrary(),
             new FakeReceiveHistoryStore(),
+            new FakeTransmitImagePreparer(),
             new FakeFilePickerService(),
             new FakeLocalizationService());
 
@@ -49,6 +50,7 @@ public sealed class AppDockFactoryTests
             new FakeImageFileLoader(),
             new FakeStockImageLibrary(),
             new FakeReceiveHistoryStore(),
+            new FakeTransmitImagePreparer(),
             new FakeFilePickerService(),
             new FakeLocalizationService());
 
@@ -74,6 +76,7 @@ public sealed class AppDockFactoryTests
             new FakeImageFileLoader(),
             new FakeStockImageLibrary(),
             new FakeReceiveHistoryStore(),
+            new FakeTransmitImagePreparer(),
             new FakeFilePickerService(),
             new FakeLocalizationService());
 

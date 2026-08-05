@@ -50,6 +50,29 @@ public sealed class ImageFileLoaderTests
         }
     }
 
+    [Fact]
+    public async Task LoadOriginalAsync_PreservesTheFilesNativeResolution_NoResize()
+    {
+        var path = await WriteFixturePngAsync(7, 5, new Rgb24(1, 2, 3));
+        try
+        {
+            var loader = new ImageFileLoader();
+
+            var image = await loader.LoadOriginalAsync(path);
+
+            Assert.Equal(7, image.Width);
+            Assert.Equal(5, image.Height);
+            var pixel = image.GetScanline(0)[0];
+            Assert.Equal(1, pixel.R);
+            Assert.Equal(2, pixel.G);
+            Assert.Equal(3, pixel.B);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static async Task<string> WriteFixturePngAsync(int width, int height, Rgb24 fillColor)
     {
         using var image = new Image<Rgb24>(width, height);

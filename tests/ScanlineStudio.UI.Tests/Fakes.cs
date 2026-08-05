@@ -4,6 +4,7 @@ using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
+using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.UI.Services;
 
 namespace ScanlineStudio.UI.Tests;
@@ -116,20 +117,23 @@ internal sealed class FakeImageFileLoader : IImageFileLoader
 {
     public IImageSource? ResultToReturn { get; set; }
 
-    /// <summary>When true, <see cref="LoadAsync"/> doesn't resolve immediately -- it queues a
-    /// <see cref="TaskCompletionSource{TResult}"/> onto <see cref="PendingLoads"/> for the test to
-    /// complete manually, in whatever order it needs to provoke a specific interleaving (e.g.
-    /// TxControlsPaneViewModel's mode-change-during-reload race). Deliberately does NOT auto-cancel
-    /// when <c>ct</c> is cancelled -- letting a "stale" pending load still resolve *successfully*
-    /// after its caller's token was already cancelled is exactly the scenario
-    /// TxControlsPaneViewModel's own `cts.IsCancellationRequested` guard exists to catch; a fake that
-    /// auto-throws on cancellation would make that guard untestable (the exception path would mask
-    /// it every time).</summary>
+    /// <summary>When true, neither <see cref="LoadAsync"/> nor <see cref="LoadOriginalAsync"/>
+    /// resolves immediately -- each queues a <see cref="TaskCompletionSource{TResult}"/> onto
+    /// <see cref="PendingLoads"/> for the test to complete manually, in whatever order it needs to
+    /// provoke a specific interleaving (e.g. two overlapping picks racing). Deliberately does NOT
+    /// auto-cancel when <c>ct</c> is cancelled -- a fake that auto-throws on cancellation would mask
+    /// whatever cancellation-guard behavior the test is trying to exercise.</summary>
     public bool UseManualGating { get; set; }
 
     public List<TaskCompletionSource<IImageSource>> PendingLoads { get; } = [];
 
     public Task<IImageSource> LoadAsync(string path, int targetWidth, int targetHeight, CancellationToken ct = default)
+        => GatedOrImmediate();
+
+    public Task<IImageSource> LoadOriginalAsync(string path, CancellationToken ct = default)
+        => GatedOrImmediate();
+
+    private Task<IImageSource> GatedOrImmediate()
     {
         if (!UseManualGating)
         {
@@ -165,6 +169,50 @@ internal sealed class FakeStockImageLibrary : IStockImageLibrary
 
     public Task<IImageSource> LoadFullAsync(StockImageEntry entry, int targetWidth, int targetHeight, CancellationToken ct = default)
         => Task.FromResult(FullImageToReturn ?? throw new InvalidOperationException("No full image configured."));
+
+    public Task<IImageSource> LoadOriginalAsync(StockImageEntry entry, CancellationToken ct = default)
+        => Task.FromResult(FullImageToReturn ?? throw new InvalidOperationException("No full image configured."));
+}
+
+/// <summary>Records every call instead of doing real image work — <see cref="Crop"/>/
+/// <see cref="ApplyOverlay"/> return the input unchanged (identity) so callers can assert on
+/// exactly which <see cref="IImageSource"/> instance was passed in (e.g. working copy vs.
+/// original); <see cref="Resize"/> returns a genuinely new <see cref="ArrayImageSource"/> at the
+/// requested dimensions, since several call sites depend on the returned size being real.</summary>
+internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
+{
+    public int CropCallCount { get; private set; }
+
+    public int ResizeCallCount { get; private set; }
+
+    public int ApplyOverlayCallCount { get; private set; }
+
+    public List<IImageSource> CropSources { get; } = [];
+
+    public List<(int Width, int Height, bool PreserveAspect)> ResizeCalls { get; } = [];
+
+    public List<ImageOverlay> Overlays { get; } = [];
+
+    public IImageSource Crop(IImageSource source, NormalizedRect region)
+    {
+        CropCallCount++;
+        CropSources.Add(source);
+        return source;
+    }
+
+    public IImageSource Resize(IImageSource source, int width, int height, bool preserveAspect)
+    {
+        ResizeCallCount++;
+        ResizeCalls.Add((width, height, preserveAspect));
+        return new ArrayImageSource(width, height, new Rgb24[width * height]);
+    }
+
+    public IImageSource ApplyOverlay(IImageSource source, ImageOverlay overlay)
+    {
+        ApplyOverlayCallCount++;
+        Overlays.Add(overlay);
+        return source;
+    }
 }
 
 internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
