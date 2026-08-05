@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Core.Logbook;
 
@@ -16,9 +17,12 @@ namespace ScanlineStudio.Core.Logbook;
 public sealed class SqliteReceiveHistoryStore : IReceiveHistoryStore
 {
     private readonly string _connectionString;
+    private readonly ISettingsStore _settingsStore;
 
-    public SqliteReceiveHistoryStore(string? dbFilePath = null)
+    public SqliteReceiveHistoryStore(ISettingsStore settingsStore, string? dbFilePath = null)
     {
+        _settingsStore = settingsStore;
+
         var path = dbFilePath ?? GetDefaultDbFilePath();
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(directory))
@@ -114,6 +118,8 @@ public sealed class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
+
+    public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => ReceiveHistorySettings.ResolveDirectoryAsync(_settingsStore, ct);
 
     private void EnsureSchema()
     {

@@ -6,146 +6,133 @@
              x:Class="ScanlineStudio.UI.Views.TxControlsPaneView"
              x:DataType="vm:TxControlsPaneViewModel">
 
-    <Border Classes="ScanlineStudioPanelBody">
-        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
+    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
 
-            <!-- Rigid grouping (Aesthetic Directive): the mode selector reads as its own
-                 instrument module, not a loose control floating in the pane. -->
-            <Border Classes="ScanlineStudioModuleGroup">
-                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Panes.TxControls.ModeLabel}" />
-                    <ComboBox ItemsSource="{Binding AvailableModes}"
-                              SelectedItem="{Binding SelectedMode}"
-                              HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
-                            <DataTemplate x:DataType="sstv:SstvModeDefinition">
-                                <TextBlock Text="{Binding DisplayName}" />
-                            </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                    </ComboBox>
-                </StackPanel>
-            </Border>
-
-            <!-- Favorite-mode quick-select buttons: a shortcut onto SelectedMode alongside the
-                 dropdown above, not a replacement for it. Membership is user-configured via the
-                 "Edit favorites..." popup, backed by TxPaneUiSettings.FavoriteModeIds. -->
-            <Border Classes="ScanlineStudioModuleGroup">
-                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Panes.TxControls.FavoritesLabel}" />
-                    <ItemsControl ItemsSource="{Binding FavoriteModes}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:FavoriteModeButtonViewModel">
-                                <Button Content="{Binding Mode.DisplayName}"
-                                        Command="{Binding SelectCommand}"
-                                        CommandParameter="{Binding Mode}" />
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <Button Content="{loc:Translate Panes.TxControls.EditFavorites}" HorizontalAlignment="Left">
-                        <Button.Flyout>
-                            <Flyout>
-                                <ItemsControl ItemsSource="{Binding FavoriteModeOptions}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:FavoriteModeOptionViewModel">
-                                            <CheckBox Content="{Binding Mode.DisplayName}" IsChecked="{Binding IsSelected}" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </Flyout>
-                        </Button.Flyout>
-                    </Button>
-                </StackPanel>
-            </Border>
-
-            <Border Classes="ScanlineStudioModuleGroup">
-                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Panes.TxControls.StockLabel}" />
-                    <ListBox ItemsSource="{Binding StockEntries}"
-                             MaxHeight="120">
-                        <ListBox.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ListBox.ItemsPanel>
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:DataType="vm:StockEntryViewModel">
-                                <Button Command="{Binding SelectCommand}"
-                                        CommandParameter="{Binding Entry}"
-                                        ToolTip.Tip="{Binding Entry.FileName}">
-                                    <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />
-                                </Button>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <Button Content="{loc:Translate Panes.TxControls.SelectImage}"
-                            Command="{Binding SelectImageCommand}"
-                            HorizontalAlignment="Stretch" />
-                </StackPanel>
-            </Border>
-
-            <TextBlock Text="{Binding SelectedFileName}"
-                       IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
-
-            <Image Source="{Binding PreviewImage}"
-                   Stretch="Uniform"
-                   MaxHeight="200"
-                   IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
-
-            <TextBlock Text="{Binding ErrorMessage}"
-                       Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
-                       TextWrapping="Wrap"
-                       IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
-
-            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                <ToggleButton Content="{loc:Translate Panes.TxControls.Transmit}"
-                              Theme="{StaticResource ScanlineStudioTxToggleButtonTheme}"
-                              Command="{Binding TransmitCommand}"
-                              IsChecked="{Binding IsTransmitting, Mode=OneWay}"
-                              HorizontalAlignment="Stretch" />
-                <Button Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
+        <!-- TX mode card: mode selector + favorite-mode quick buttons. Membership is user-
+             configured via the "Edit favorites..." popup, backed by TxPaneUiSettings.FavoriteModeIds. -->
+        <Border Classes="card">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.ModeLabel}" />
+                <ComboBox ItemsSource="{Binding AvailableModes}"
+                          SelectedItem="{Binding SelectedMode}"
+                          HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="sstv:SstvModeDefinition">
+                            <TextBlock Text="{Binding DisplayName}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxControls.FavoritesLabel}" />
+                <ItemsControl ItemsSource="{Binding FavoriteModes}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:FavoriteModeButtonViewModel">
+                            <Button Content="{Binding Mode.DisplayName}"
+                                    Command="{Binding SelectCommand}"
+                                    CommandParameter="{Binding Mode}"
+                                    Margin="0,0,4,4" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Classes="small" Content="{loc:Translate Panes.TxControls.EditFavorites}" HorizontalAlignment="Left">
+                    <Button.Flyout>
+                        <Flyout>
+                            <ItemsControl ItemsSource="{Binding FavoriteModeOptions}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:FavoriteModeOptionViewModel">
+                                        <CheckBox Content="{Binding Mode.DisplayName}" IsChecked="{Binding IsSelected}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
+                <CheckBox Content="{loc:Translate Panes.TxControls.AutoFollowRxMode}" IsChecked="{Binding AutoFollowRxMode}" />
             </StackPanel>
+        </Border>
 
-            <!-- TX-only telemetry (design decision, spec/14-roadmap.md's Piece 6): each readout only
-                 renders when the connected rig/backend actually negotiated that meter capability;
-                 never a placeholder for an unsupported rig. -->
-            <Border Classes="ScanlineStudioModuleGroup" IsVisible="{Binding ShowPowerMeter}">
-                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Panes.TxControls.Telemetry.Power}" VerticalAlignment="Center" />
-                    <TextBlock Classes="ScanlineStudioReadout" Text="{Binding LivePowerPercent}" VerticalAlignment="Center" />
-                </StackPanel>
-            </Border>
-            <Border Classes="ScanlineStudioModuleGroup" IsVisible="{Binding ShowAlcMeter}">
-                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Panes.TxControls.Telemetry.Alc}" VerticalAlignment="Center" />
-                    <TextBlock Classes="ScanlineStudioReadout" Text="{Binding LiveAlcLevel}" VerticalAlignment="Center" />
-                </StackPanel>
-            </Border>
-            <Border Classes="ScanlineStudioModuleGroup" IsVisible="{Binding ShowSwrMeter}">
-                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Panes.TxControls.Telemetry.Swr}" VerticalAlignment="Center" />
-                    <TextBlock Classes="ScanlineStudioReadout" Text="{Binding LiveSwrRatio}" VerticalAlignment="Center" />
-                </StackPanel>
-            </Border>
-
-            <!-- SWR auto-cutoff: disabled/greyed out (not just unchecked) when the rig doesn't
-                 report SWR; a checked-but-non-functional toggle would be worse than no toggle. -->
-            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                <CheckBox Content="{loc:Translate Panes.TxControls.SwrCutoffEnabled}"
-                          IsChecked="{Binding SwrCutoffEnabled}"
-                          IsEnabled="{Binding ShowSwrMeter}"
-                          ToolTip.Tip="{loc:Translate Panes.TxControls.SwrCutoffEnabled.Help}" />
-                <TextBlock Classes="ScanlineStudioReadout" Text="{loc:Translate Panes.TxControls.SwrCutoffThresholdLabel}" VerticalAlignment="Center" />
-                <TextBox Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
+        <!-- Stock/browse image source. -->
+        <Border Classes="card">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.StockLabel}" />
+                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:StockEntryViewModel">
+                            <Button Command="{Binding SelectCommand}"
+                                    CommandParameter="{Binding Entry}"
+                                    ToolTip.Tip="{Binding Entry.FileName}">
+                                <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />
+                            </Button>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <Button Content="{loc:Translate Panes.TxControls.SelectImage}"
+                        Command="{Binding SelectImageCommand}"
+                        HorizontalAlignment="Stretch" />
+                <TextBlock Classes="caption" Text="{Binding SelectedFileName}"
+                           IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                <Image Source="{Binding PreviewImage}"
+                       Stretch="Uniform"
+                       MaxHeight="160"
+                       IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
             </StackPanel>
+        </Border>
 
-            <CheckBox Content="{loc:Translate Panes.TxControls.AutoFollowRxMode}" IsChecked="{Binding AutoFollowRxMode}" />
+        <TextBlock Text="{Binding ErrorMessage}"
+                   Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
+                   TextWrapping="Wrap"
+                   IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
+        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+            <ToggleButton Content="{loc:Translate Panes.TxControls.Transmit}"
+                          Theme="{StaticResource ScanlineStudioTxToggleButtonTheme}"
+                          Command="{Binding TransmitCommand}"
+                          IsChecked="{Binding IsTransmitting, Mode=OneWay}"
+                          HorizontalAlignment="Stretch" />
+            <Button Classes="halt" Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
         </StackPanel>
-    </Border>
+
+        <!-- Output telemetry: each readout only renders when the connected rig/backend actually
+             negotiated that meter capability; never a placeholder for an unsupported rig
+             (spec/14-roadmap.md's Piece 6 design decision). -->
+        <Border Classes="card">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.TelemetryLabel}" />
+                <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowPowerMeter}">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Power}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding LivePowerPercent}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowAlcMeter}">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Alc}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding LiveAlcLevel}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowSwrMeter}">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Swr}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding LiveSwrRatio}" />
+                </Grid>
+
+                <!-- SWR auto-cutoff: disabled/greyed out (not just unchecked) when the rig doesn't
+                     report SWR; a checked-but-non-functional toggle would be worse than no toggle. -->
+                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                    <CheckBox Content="{loc:Translate Panes.TxControls.SwrCutoffEnabled}"
+                              IsChecked="{Binding SwrCutoffEnabled}"
+                              IsEnabled="{Binding ShowSwrMeter}"
+                              ToolTip.Tip="{loc:Translate Panes.TxControls.SwrCutoffEnabled.Help}" />
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.SwrCutoffThresholdLabel}" VerticalAlignment="Center" />
+                    <TextBox Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+    </StackPanel>
 
 </UserControl>

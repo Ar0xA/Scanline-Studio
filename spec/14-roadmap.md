@@ -4128,6 +4128,73 @@ filter — those are a known exclusion, not rediscovered here):
   and doesn't touch the CAT/PTT layer at all) — real but niche given this port already has real
   CAT PTT; low priority.
 
+**New UI shell mock2 elements omitted for lack of real backing data** (found while building the
+fixed Menu/header/3-tab shell, see `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` —
+wired everything real, these had no real data behind them today):
+- Manual "lock to a specific mode" RX decode override + the mock2 Mode card's quick-mode-button
+  grid — `ISstvDecoder` always auto-detects via the VIS header; there is no force-a-mode decode
+  path to wire an "Auto/Locked" toggle to. Medium — would need a real decoder change, not just UI.
+- Live decode "Remaining time" / per-line progress readout — `IReceivedImageBuffer` only exposes
+  `Current`/`Updated`, no line-index or ETA. Medium (needs a new progress field threaded from
+  `ISstvDecoder.LineDecoded`).
+- RX frame actions (Abort/Re-decode/Copy-to-TX/Log QSO) and a completion progress bar — no
+  abandon-current-frame, re-decode, or QSO-log-linking primitive exists yet. Medium-large,
+  several independent features.
+- Sync/slant correction readouts and controls (ppm, offset px, ReSync/Reset, advanced timing) —
+  cross-reference the "Manual ReSync button"/"AFC toggle" items above; not re-filed as new.
+- RX input-chain telemetry (squelch, BPF, notch/AGC, buffer, clipping %, noise floor, L/R level
+  meters) — none of this is measured anywhere in `ScanlineStudio.Core.Audio`/`Sstv` today.
+  Medium-high, several DSP measurements needed.
+- Per-line SNR / luminance histogram / calibration-tone-offset readouts ("Signal quality" card)
+  — no per-line SNR or histogram computation exists in the decode pipeline. Medium.
+- Structured "Decode activity" log (freq/mode/callsign-OCR/grid/SNR/slant/lines/state per decode)
+  and its decoder-trace pane — no such structured event log exists; would need a new decode-
+  history recorder distinct from `ReceiveHistoryStore`. Medium-large.
+- Frame metadata card (callsign OCR, grid/QRZ, VIS/frequency stamp, OCR confidence, dropped
+  lines, file size, note, flag) — none of these fields exist on `ReceiveHistoryEntry` or
+  anywhere else; OCR/QRZ lookup is a wholly new feature. Large.
+- Unattended RX (scan/watch list, dwell time, alert-on-decode) — no scanning/watch feature
+  exists in `IRadioSessionService`/`ISstvSessionService`. Large.
+- "Decode rows colored by state" (yellow=decoding/green=saved+logged/red=partial) — the flat
+  WSJT-X-style chrome pass added the color classes and LED-indicator convention this would use,
+  but there's no decode-state field on any list row to drive it (same gap as the Decode-activity
+  log above). Flagged directly to the user mid-session; not yet resolved either way.
+- VOX tone-burst preamble row in the Transmit tab's TX-mode card — cross-reference the VOX
+  bullet above; no new note.
+- Whole Identification card (FSK ID/CW ID/Tail) — blocked on the already-tracked missing
+  operator-callsign/profile setting (cross-reference "TX macros / CW-ID" above); no new note.
+- TX output device name / TX sample-clock / occupied-bandwidth / monitor-audio-while-
+  transmitting readouts — none of these are exposed anywhere in `ScanlineStudio.Core.Audio`
+  today. Small-medium each.
+- Historical power/ALC-over-time TX meter plot — only instantaneous `SwrRatio`/`AlcLevel`/
+  `PowerPercent` are read per poll; no rolling sample history is kept. Small (a bounded ring
+  buffer, not new telemetry).
+- Whole Outgoing-metadata card (VIS code/FSK ID/CW ID/callsign/to-station/grid-beam/report/
+  freq-mode/date burned into the picture) — blocked on the same missing operator-profile
+  setting as Identification, plus a separate "to station"/report/QSO-context concept that
+  doesn't exist yet. Medium-large.
+- TX image editor: Move/Scale/Rotate/Box/Line/Mask/Pick tools, Undo/Redo, zoom/snap-grid,
+  brightness/contrast/saturation/gamma/sharpen/denoise adjustments — `ITransmitImagePreparer`
+  only implements Crop/Resize/ApplyOverlay; none of these operations exist in the pipeline.
+  Large, several independent features.
+- Insert-field token picker / saved templates in the overlay editor — blocked on the same
+  missing operator-profile setting as CW-ID, plus the separately-deferred template designer;
+  no new note.
+- TX queue (batch multiple images), persisted TX log, and "recently sent" reuse strip — no
+  queueing, no TX-history store distinct from RxHistory exists. Medium-large, three separate
+  features.
+- Gallery free-text search across callsign/grid/note and band filter — `ReceiveHistoryEntry`
+  has no callsign/grid/frequency fields at all; would need the RX logbook fields already
+  tracked under "Logbook/QSO tracking" above. Medium, blocked on that work.
+- Gallery Unlogged/Flagged filters and "Log entry"/"Open in log" actions — `LinkedQsoId` exists
+  on `ReceiveHistoryEntry` but nothing ever sets it to non-null; there is no logbook-linking
+  feature behind it yet, just an inert field. Medium, blocked on real QSO-log integration
+  ([[08-logging]]).
+- Gallery sort by callsign/SNR, and per-frame Export/Re-decode actions — no callsign/SNR data
+  exists on entries, and `IReceiveHistoryStore` has no export/re-decode operation. Small-medium.
+- Gallery Storage card's Sidecar-format and disk-free-space readouts — no JSON/EXIF sidecar is
+  written today, and no free-space query exists anywhere. Small each.
+
 ## Explicitly deferred beyond v1
 
 - Perspective correction / webcam capture ([[07-image-pipeline]]).

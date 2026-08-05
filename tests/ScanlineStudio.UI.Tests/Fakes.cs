@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reactive.Subjects;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Imaging;
@@ -105,11 +106,35 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public IReadOnlyList<SstvModeDefinition> AvailableModes { get; set; } = [];
 
+    public bool IsReceiving { get; set; }
+
+    public bool ThrowOnStartReceiving { get; set; }
+
+    public bool ThrowOnStopReceiving { get; set; }
+
     public event Action<SstvModeDefinition>? ModeDetected;
 
-    public Task StartReceivingAsync(CancellationToken ct = default) => Task.CompletedTask;
+    public Task StartReceivingAsync(CancellationToken ct = default)
+    {
+        if (ThrowOnStartReceiving)
+        {
+            throw new InvalidOperationException("no audio device configured");
+        }
 
-    public Task StopReceivingAsync() => Task.CompletedTask;
+        IsReceiving = true;
+        return Task.CompletedTask;
+    }
+
+    public Task StopReceivingAsync()
+    {
+        if (ThrowOnStopReceiving)
+        {
+            throw new InvalidOperationException("no audio device configured");
+        }
+
+        IsReceiving = false;
+        return Task.CompletedTask;
+    }
 
     /// <summary>When true, <see cref="TransmitAsync"/> doesn't return until <paramref name="ct"/> is
     /// cancelled (throwing <see cref="OperationCanceledException"/> then) -- lets a test simulate an
@@ -157,6 +182,7 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposable
 {
     private readonly Subject<RadioState> _stateChanges = new();
+    private readonly Subject<RadioConnectionEvent> _connectionEvents = new();
 
     public RadioState? LastKnownState { get; set; }
 
@@ -164,7 +190,7 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public IObservable<RadioState> StateChanges => _stateChanges;
 
-    public IObservable<RadioConnectionEvent> ConnectionEvents { get; } = new Subject<RadioConnectionEvent>();
+    public IObservable<RadioConnectionEvent> ConnectionEvents => _connectionEvents;
 
     public Task ConnectUsingSettingsAsync(CancellationToken ct = default) => Task.CompletedTask;
 
@@ -226,7 +252,13 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public void Push(RadioState state) => _stateChanges.OnNext(state);
 
-    public void Dispose() => _stateChanges.Dispose();
+    public void PushConnectionEvent(RadioConnectionEvent evt) => _connectionEvents.OnNext(evt);
+
+    public void Dispose()
+    {
+        _stateChanges.Dispose();
+        _connectionEvents.Dispose();
+    }
 }
 
 internal sealed class FakeImageFileLoader : IImageFileLoader
@@ -339,8 +371,33 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
     public List<ReceiveHistoryEntry> RecordedEntries { get; } = [];
 
+    public List<ReceiveHistoryFilter> QueryFilters { get; } = [];
+
+    public string ImagesDirectory { get; set; } = "/tmp/scanlinestudio-history";
+
+    /// <summary>Actually applies the filter (unlike a bare stub) so a test can verify the
+    /// Gallery tab's All/Today wiring, not just that some entries render.</summary>
     public Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<ReceiveHistoryEntry>>(EntriesToReturn);
+    {
+        QueryFilters.Add(filter);
+        IEnumerable<ReceiveHistoryEntry> results = EntriesToReturn;
+        if (filter.ModeId is not null)
+        {
+            results = results.Where(e => e.ModeId == filter.ModeId);
+        }
+
+        if (filter.From is not null)
+        {
+            results = results.Where(e => e.ReceivedAt >= filter.From.Value);
+        }
+
+        if (filter.To is not null)
+        {
+            results = results.Where(e => e.ReceivedAt <= filter.To.Value);
+        }
+
+        return Task.FromResult<IReadOnlyList<ReceiveHistoryEntry>>(results.ToList());
+    }
 
     public Task<IImageSource> LoadThumbnailAsync(ReceiveHistoryEntry entry, int maxDimension, CancellationToken ct = default)
         => Task.FromResult(ThumbnailToReturn ?? throw new InvalidOperationException("No thumbnail configured."));
@@ -350,4 +407,6 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
         RecordedEntries.Add(entry);
         return Task.CompletedTask;
     }
+
+    public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => Task.FromResult(ImagesDirectory);
 }

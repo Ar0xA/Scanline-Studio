@@ -26,6 +26,11 @@ public partial class TxImageEditorPaneView : UserControl
     public TxImageEditorPaneView()
     {
         InitializeComponent();
+
+        // Dock.Avalonia's ActiveDockable used to focus this pane for free when it opened; the fixed
+        // shell's plain ContentControl swap (MainViewModel.ActiveEditor) does not, so arrow-key crop
+        // nudge (OnCanvasKeyDown) would silently stop receiving key events without this.
+        AttachedToVisualTree += (_, _) => EditorCanvas.Focus();
     }
 
     private TxImageEditorPaneViewModel? ViewModel => DataContext as TxImageEditorPaneViewModel;

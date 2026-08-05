@@ -36,7 +36,7 @@ public sealed class PaneViewModelTests
     public void WaterfallPaneViewModel_PushedFrame_UpdatesLatestFrameOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(sstvSession);
         var frame = new WaterfallFrame([0f, 1f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
 
         ((FakeWaterfallSource)sstvSession.Waterfall).Emit(frame);
@@ -49,13 +49,52 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_UpdatedEvent_RefreshesImageOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new RxImagePaneViewModel(sstvSession);
 
         Assert.Null(vm.Image);
         ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseUpdated();
         Dispatcher.UIThread.RunJobs();
 
         Assert.NotNull(vm.Image);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_UpdatesModeCardTextsOnUiThread()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession);
+
+        Assert.Equal("—", vm.DetectedModeText);
+        Assert.Equal("—", vm.LineTimeText);
+        Assert.Equal("—", vm.LinesText);
+
+        var mode = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Scottie 1", vm.DetectedModeText);
+        Assert.Equal("138.2 ms", vm.LineTimeText);
+        Assert.Equal("256", vm.LinesText);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_ModeTimingRows_ComputedFromEachAvailableModesRealTiming()
+    {
+        var scottie1 = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [scottie1] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService());
+
+        var row = Assert.Single(vm.ModeTimingRows);
+        Assert.Equal("Scottie 1", row.ModeName);
+        Assert.Equal(256, row.Lines);
+        Assert.Equal(138.24, row.LineMs, precision: 2);
+        Assert.Equal(138.24 * 256 / 1000.0, row.FrameSeconds, precision: 2);
     }
 
     [AvaloniaFact]
@@ -235,7 +274,7 @@ public sealed class PaneViewModelTests
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
 
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService());
+        var vm = new RxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -258,7 +297,7 @@ public sealed class PaneViewModelTests
         // all (unlike RxImagePaneViewModel, which takes ISstvSessionService specifically for that
         // live binding) -- a live-buffer interaction is structurally impossible here, not just
         // unobserved, so there is nothing to fake/assert against for that half of the guarantee.
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService());
+        var vm = new RxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -267,5 +306,44 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.NotNull(vm.PreviewImage);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_DefaultsToTodayOnly_MatchingTheMock2DraftsOwnDefaultSelection()
+    {
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = new RxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.ShowTodayOnly);
+        var filter = Assert.Single(historyStore.QueryFilters);
+        Assert.NotNull(filter.From);
+        Assert.Null(filter.To);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_TogglingToAll_ReQueriesWithNoDateFilter()
+    {
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = new RxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.ShowTodayOnly = false;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, historyStore.QueryFilters.Count);
+        var lastFilter = historyStore.QueryFilters[^1];
+        Assert.Null(lastFilter.From);
+        Assert.Null(lastFilter.To);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_Constructed_LoadsImagesDirectory_ForTheGalleryTabsStorageCard()
+    {
+        var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "/tmp/scanlinestudio-history" };
+        var vm = new RxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("/tmp/scanlinestudio-history", vm.ImagesDirectory);
     }
 }

@@ -28,6 +28,13 @@ public interface ISstvSessionService : IAsyncDisposable
     /// rule, enforced by the architecture test).</summary>
     IReadOnlyList<SstvModeDefinition> AvailableModes { get; }
 
+    /// <summary>Whether capture is currently running -- reflects the same internal state
+    /// <see cref="StartReceivingAsync"/>/<see cref="StopReceivingAsync"/> already track, so it's
+    /// accurate for the header's Receiving/Halt toggle including the case where a startup
+    /// auto-start silently failed (no audio device) or <see cref="TransmitAsync"/> is transiently
+    /// pausing capture for the duration of a transmission.</summary>
+    bool IsReceiving { get; }
+
     event Action<SstvModeDefinition>? ModeDetected;
 
     Task StartReceivingAsync(CancellationToken ct = default);

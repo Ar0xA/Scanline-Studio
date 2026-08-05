@@ -77,6 +77,20 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public async Task IsReceiving_ReflectsStartAndStop_ForTheHeaderReceivingToggle()
+    {
+        var (service, _, _, _, _, _) = CreateService();
+
+        Assert.False(service.IsReceiving);
+
+        await service.StartReceivingAsync();
+        Assert.True(service.IsReceiving);
+
+        await service.StopReceivingAsync();
+        Assert.False(service.IsReceiving);
+    }
+
+    [Fact]
     public async Task PushSamples_DecoderThrows_WaterfallStillReceivesTheSamples()
     {
         var (service, audioEngine, decoder, waterfall, _, _) = CreateService();

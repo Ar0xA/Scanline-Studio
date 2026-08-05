@@ -13,18 +13,6 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.12" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
-    <!-- Updated from the 11.2.0.x line (which was deliberately pinned to keep Avalonia at 11.2.3,
-         see git history) to the latest 11.3.x line, requested directly. Its own Avalonia dependency
-         floor is 11.3.12 (confirmed via nuspec inspection, not assumed), so Avalonia above is bumped
-         to match exactly: still the 11.x major line, not the 12.x line (Dock.Avalonia 12.1.0 is
-         latest overall but requires Avalonia 12.1.0, a major-version framework jump well beyond what
-         a package update implies; not done without that being asked for explicitly). -->
-    <PackageReference Include="Dock.Avalonia" Version="11.3.12.1" />
-    <PackageReference Include="Dock.Model.Mvvm" Version="11.3.12.1" />
-    <!-- New as of this update: the Fluent theme split out of Dock.Avalonia itself into its own
-         package starting around the 11.3.2 line (confirmed via nuget.org search + package
-         inspection, not assumed); App.axaml's avares:// path changed to match. -->
-    <PackageReference Include="Dock.Avalonia.Themes.Fluent" Version="11.3.12.1" />
   </ItemGroup>
 
   <ItemGroup>

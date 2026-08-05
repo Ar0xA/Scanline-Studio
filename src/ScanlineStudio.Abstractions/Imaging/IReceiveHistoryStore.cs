@@ -21,4 +21,11 @@ public interface IReceiveHistoryStore
     /// <summary>Called by the same application-layer adapter that populates <see cref="IReceivedImageBuffer"/>,
     /// on decode completion.</summary>
     Task RecordAsync(ReceiveHistoryEntry entry, CancellationToken ct = default);
+
+    /// <summary>Resolved saved-image folder (never the raw, possibly-null setting) -- for the
+    /// Gallery tab's Storage card (spec/09-ui.md). UI-safe: the concrete `Core.Logbook`
+    /// implementation reads its own settings section internally, so `ScanlineStudio.UI` never
+    /// references `Core.Logbook.ReceiveHistorySettings` directly (`UiLayeringArchitectureTests`
+    /// forbids that).</summary>
+    Task<string> GetImagesDirectoryAsync(CancellationToken ct = default);
 }
