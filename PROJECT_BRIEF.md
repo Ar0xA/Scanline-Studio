@@ -2,7 +2,7 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-05, latest, ACTIVE) — Settings/Options system + TX quick-controls + radio telemetry: ALL 6 PIECES DONE. Next: design refinement + missing-functionality inventory against legacy YONIQ/QSSTV (not started)
+## Resume here (2026-08-05, latest, ACTIVE) — Settings/Options + TX quick-controls + radio telemetry: ALL 6 PIECES DONE + committed/pushed (`247fde7`). Legacy YONIQ/QSSTV inventory pass DONE, documented in spec/14-roadmap.md's new "Phase 4+ backlog" section. User is now working on a UI design pass themselves — no implementation work in progress; wait for direction before building any of the inventoried backlog items.
 
 Full plan at `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` (6 pieces) — approved after
 thorough research (legacy YONIQ settings inventory, current settings infra, current UI/dialog
@@ -362,13 +362,18 @@ UI tests (all still pass — pure XAML/style change, no ViewModel logic touched)
   actually negotiates the matching capability, no placeholders shown for an unsupported/
   not-yet-connected rig.
 
-**All 6 pieces of the Settings/Options plan are now done.** Nothing in this batch of work has been
-committed to git yet (Pieces 1-6 are all still uncommitted in the working tree) — confirm with the
-user before committing, per this project's standing rule.
+**All 6 pieces of the Settings/Options plan are now done, committed and pushed** (`247fde7`).
 
-**Next** (per direct user instruction, not started yet): a design-refinement + missing-functionality
-inventory pass, cross-checking Scanline Studio against legacy YONIQ and QSSTV to find gaps/improvement
-opportunities beyond what the Settings/Options plan covered.
+**Legacy inventory pass also done** (per direct user instruction, right after Piece 6): 4 parallel
+research agents cross-checked Scanline Studio against `yoniq-old/YONIQ-main/` (ground truth) and
+`QSSTV-main/` (inspiration only), one each for logbook/QSO tracking, TX macros + CW-ID,
+waterfall/color, and RX/TX quality-of-life. Findings written up as a tracked (not yet scheduled)
+backlog in `spec/14-roadmap.md`'s new "Phase 4+ backlog — legacy YONIQ/QSSTV feature inventory"
+section — read that section for the full gap list with complexity/risk notes per item, don't
+re-derive it from scratch.
+
+**Next**: the user is now working on a UI design pass themselves. No implementation work is
+in progress or requested — wait for direction before building any backlog item above.
 
 ## Resume here (2026-08-05, superseded by the entry above) — Roadmap re-scoped: rigctld server mode dropped, Phase 4/5 boundary moved
 
