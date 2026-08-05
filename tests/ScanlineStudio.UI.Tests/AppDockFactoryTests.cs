@@ -25,7 +25,8 @@ public sealed class AppDockFactoryTests
             new FakeReceiveHistoryStore(),
             new FakeTransmitImagePreparer(),
             new FakeFilePickerService(),
-            new FakeLocalizationService());
+            new FakeLocalizationService(),
+            new FakeSettingsStore(), new FakeRadioSessionService());
 
         var layout = factory.CreateLayout();
         factory.InitLayout(layout);
@@ -52,7 +53,8 @@ public sealed class AppDockFactoryTests
             new FakeReceiveHistoryStore(),
             new FakeTransmitImagePreparer(),
             new FakeFilePickerService(),
-            new FakeLocalizationService());
+            new FakeLocalizationService(),
+            new FakeSettingsStore(), new FakeRadioSessionService());
 
         var layout = factory.CreateLayout();
         factory.InitLayout(layout);
@@ -78,7 +80,8 @@ public sealed class AppDockFactoryTests
             new FakeReceiveHistoryStore(),
             new FakeTransmitImagePreparer(),
             new FakeFilePickerService(),
-            new FakeLocalizationService());
+            new FakeLocalizationService(),
+            new FakeSettingsStore(), new FakeRadioSessionService());
 
         var layout = factory.CreateLayout();
 

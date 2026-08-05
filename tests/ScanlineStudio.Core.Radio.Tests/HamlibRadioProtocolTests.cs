@@ -10,6 +10,11 @@ namespace ScanlineStudio.Core.Radio.Tests;
 /// (soft), -6 = <c>-RIG_EIO</c> (hard), -11 = <c>-RIG_ENAVAIL</c> (soft).</summary>
 public class HamlibRadioProtocolTests
 {
+    // RIG_LEVEL_SWR/ALC/RFPOWER_METER -- verified directly against rig.h (CONSTANT_64BIT_FLAG(28/29/32)).
+    private const ulong LevelSwr = 1UL << 28;
+    private const ulong LevelAlc = 1UL << 29;
+    private const ulong LevelRfPowerMeter = 1UL << 32;
+
     [Fact]
     public async Task PollAsync_FullCapabilities_ReturnsFullyPopulatedState()
     {
@@ -19,6 +24,9 @@ public class HamlibRadioProtocolTests
             Mode = 1UL << 2, // RIG_MODE_USB
             Ptt = 1,
         };
+        native.LevelValues[LevelSwr] = 1.2f;
+        native.LevelValues[LevelAlc] = 50f;
+        native.LevelValues[LevelRfPowerMeter] = 0.75f;
         var sut = new HamlibRadioProtocol(native, model: 1);
 
         var state = await sut.PollAsync(CancellationToken.None);
@@ -26,10 +34,78 @@ public class HamlibRadioProtocolTests
         Assert.Equal(14_074_000, state.FrequencyHz);
         Assert.Equal(RadioMode.Usb, state.Mode);
         Assert.True(state.IsTransmitting);
+        Assert.Equal(1.2f, state.SwrRatio);
+        Assert.Equal(50f, state.AlcLevel);
+        Assert.Equal(75f, state.PowerPercent); // 0.75 fraction -> 75%
         Assert.Equal(
             RadioCapabilities.ReadFrequency | RadioCapabilities.SetFrequency |
-            RadioCapabilities.ReadMode | RadioCapabilities.SetMode | RadioCapabilities.PttControl,
+            RadioCapabilities.ReadMode | RadioCapabilities.SetMode | RadioCapabilities.PttControl |
+            RadioCapabilities.SwrMeter | RadioCapabilities.AlcMeter | RadioCapabilities.PowerMeter,
             sut.Capabilities);
+    }
+
+    [Fact]
+    public async Task PollAsync_WhileNotTransmitting_NeverReadsMetersEvenIfCapable()
+    {
+        var native = new FakeHamlibNative { Ptt = 0 };
+        native.LevelValues[LevelSwr] = 1.2f;
+        var sut = new HamlibRadioProtocol(native, model: 1);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.False(state.IsTransmitting);
+        Assert.Null(state.SwrRatio);
+        Assert.Null(state.AlcLevel);
+        Assert.Null(state.PowerPercent);
+        // Exactly 3 -- the one-time connect probe (which runs regardless of TX state, to negotiate
+        // capabilities up front); the per-poll read itself must never fire while not transmitting.
+        Assert.Equal(3, native.CallLog.Count(c => c.StartsWith("rig_get_level:", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task PollAsync_SwrMeterUnavailable_MarksCapabilityAbsent_LeavesFieldNull()
+    {
+        var native = new FakeHamlibNative { Ptt = 1 };
+        native.LevelCodes[LevelSwr] = -11; // -RIG_ENAVAIL, soft -- probed as "not supported"
+        var sut = new HamlibRadioProtocol(native, model: 1);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.False(sut.Capabilities.HasFlag(RadioCapabilities.SwrMeter));
+        Assert.Null(state.SwrRatio);
+    }
+
+    [Fact]
+    public async Task PollAsync_MeterReadSoftErrorsMidSession_YieldsNullForThatMeterOnly_DoesNotThrow()
+    {
+        // A meter read failing intermittently must never abort the whole poll the way a freq/mode
+        // failure does -- meters are far more likely than freq/mode/ptt to soft-error transiently.
+        var native = new FakeHamlibNative { Ptt = 1 };
+        native.LevelValues[LevelSwr] = 1.2f;
+        native.LevelValues[LevelAlc] = 50f;
+        var sut = new HamlibRadioProtocol(native, model: 1);
+        await sut.PollAsync(CancellationToken.None); // connect + probe, all meters supported
+
+        native.LevelCodes[LevelSwr] = -11; // -RIG_ENAVAIL, soft -- this read now fails
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.Null(state.SwrRatio);
+        Assert.Equal(50f, state.AlcLevel);
+    }
+
+    [Fact]
+    public async Task PollAsync_MeterReadHardErrors_ThrowsPlainException_NotRadioProtocolException()
+    {
+        var native = new FakeHamlibNative { Ptt = 1 };
+        native.LevelValues[LevelSwr] = 1.2f;
+        var sut = new HamlibRadioProtocol(native, model: 1);
+        await sut.PollAsync(CancellationToken.None);
+
+        native.LevelCodes[LevelSwr] = -6; // -RIG_EIO, hard
+
+        var ex = await Assert.ThrowsAsync<IOException>(() => sut.PollAsync(CancellationToken.None));
+        Assert.IsNotType<RadioProtocolException>(ex);
     }
 
     [Fact]

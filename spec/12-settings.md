@@ -60,13 +60,17 @@ public static class AppSettingsSectionExtensions
 ```
 
 Every module's typed settings section (`AudioDeviceSettings` in `ScanlineStudio.Core.Audio`,
-`RadioConnectionSettings` in `ScanlineStudio.Core.Radio`, `LocalizationSettings` in
-`ScanlineStudio.Core.Localization`, etc.) is still defined in that module's own `ScanlineStudio.Core.*` project (not
-centralized in `ScanlineStudio.Settings`, which only owns the load/save/versioning/migration machinery plus
-the section bag itself) — keeps each module's config schema next to the code it configures, while
-`ScanlineStudio.Settings` never needs to know any module-specific type. Sections not yet needed by the current
-phase (`SstvSettings`, `LogbookSettings`, `RigctldServerSettings`, `UiSettings`) are added the same way
-when those modules actually gain configuration needs, not speculatively now.
+`RadioConnectionSettings`/`RadioSafetySettings`/`FrequencyPresetsSettings` in `ScanlineStudio.Core.Radio`,
+`LocalizationSettings` in `ScanlineStudio.Core.Localization`, `OperatorSettings` in `ScanlineStudio.Application`, etc.)
+is still defined in that module's own project (not centralized in `ScanlineStudio.Settings`, which only owns
+the load/save/versioning/migration machinery plus the section bag itself) — keeps each module's config
+schema next to the code it configures, while `ScanlineStudio.Settings` never needs to know any
+module-specific type. Phase 4's Settings/Options work (see [[14-roadmap]]) also established a new
+pattern: a section owned directly by `ScanlineStudio.UI` itself is layering-legal too (e.g.
+`TxPaneUiSettings` in a new `ScanlineStudio.UI.Settings` namespace), since `ScanlineStudio.Settings` is not a
+`ScanlineStudio.Core.*` project and carries no hardware/DSP/image-library access. Sections not yet needed
+(`SstvSettings`, `LogbookSettings`, `WaterfallPaletteSettings`) are added the same way when those modules
+actually gain configuration needs, not speculatively now.
 
 ## Versioning and migration
 

@@ -2,7 +2,375 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-05, latest, ACTIVE) — Roadmap re-scoped: rigctld server mode dropped, Phase 4/5 boundary moved
+## Resume here (2026-08-05, latest, ACTIVE) — Settings/Options system + TX quick-controls + radio telemetry: ALL 6 PIECES DONE. Next: design refinement + missing-functionality inventory against legacy YONIQ/QSSTV (not started)
+
+Full plan at `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` (6 pieces) — approved after
+thorough research (legacy YONIQ settings inventory, current settings infra, current UI/dialog
+patterns, radio telemetry feasibility — 4 parallel Explore agents) plus a round of live user
+steering mid-research (CAT backend config, WSJT-X-style TX volume slider, favorite-TX-mode
+buttons, RX-mode-follow toggle, frequency quick-control strip with memory presets, live
+PWR/ALC/SWR telemetry + SWR auto-cutoff, a Nexus ham-radio-app screenshot reviewed for
+information-density/grouping ideas only, not its visual skin).
+
+**Piece 1 done** (settings model groundwork):
+- `RadioConnectionSettings` (`ScanlineStudio.Core.Radio`) extended with Hamlib fields
+  (`HamlibModel`/`SerialPort`/`BaudRate`/`PttType`) and a `"hamlib"` case in `ToConnectionSpec()`
+  building `HamlibConnectionSpec` — mirrors that spec type's shape exactly.
+- New `RadioSafetySettings` (SWR auto-cutoff enable/threshold) and `FrequencyPresetsSettings`
+  (ordered `FrequencyPreset(Label, FrequencyHz, Mode)` list) in `ScanlineStudio.Core.Radio`.
+- New `TxPaneUiSettings` (favorite mode IDs, TX volume %, auto-follow-RX-mode toggle) in a
+  **new `ScanlineStudio.UI.Settings` namespace inside `ScanlineStudio.UI` itself** — first
+  settings section owned by the UI project directly (previous convention was always
+  `ScanlineStudio.Core.*`). Required adding a direct `ProjectReference` from
+  `ScanlineStudio.UI.csproj` to `ScanlineStudio.Settings.csproj` — confirmed layering-legal:
+  `UiLayeringArchitectureTests` only bans `ScanlineStudio.Core.*` project references and
+  `Microsoft.Data.Sqlite`/`SixLabors.*` package references, `ScanlineStudio.Settings` is neither.
+- New `OperatorSettings` (just `Callsign` for now) in `ScanlineStudio.Application` — no existing
+  module was a natural fit, so it lives in the orchestration layer that future TX-overlay-macro
+  and logbook features will read it from.
+- **Scope-trimmed during implementation, not per the original plan text**: dropped
+  `WaterfallPaletteSettings` entirely. Reading `WaterfallControl.cs` (required by the plan's own
+  "read that file first" note) found the waterfall is currently **plain grayscale with no color
+  rendering at all** (deliberate — see `feedback_ui_effort_allocation` memory, waterfall polish
+  is already deprioritized). A palette *setting* with no rendering path to consume it would be
+  exactly the "phantom setting"/"half-finished implementation" CLAUDE.md warns against — revisit
+  if/when the waterfall ever gets color rendering.
+- **Also trimmed**: CW-ID/VOX settings fields the plan's Piece 2 description mentioned in passing
+  were never actually built (neither feature has any encoder/audio-generation code in the app at
+  all yet) — same reasoning as the waterfall palette. Only `OperatorSettings.Callsign` shipped
+  from that area, since the Options dialog itself is the actual consumer being built (Piece 2),
+  unlike CW-ID/VOX which have no consumer of any kind yet.
+- `RadioConnectionSettingsTests` extended (hamlib-with-model success case, hamlib-missing-model
+  falls back to None, renamed the stale "unknown backend" test to use a genuinely unknown ID
+  now that `"hamlib"` is real) plus new round-trip serialization tests for all four new/changed
+  section types (`NewSettingsSectionsSerializationTests`, `OperatorSettingsTests`,
+  `TxPaneUiSettingsTests`) — `FrequencyPresetsSettings`' nested list-of-records shape was worth a
+  real smoke test against System.Text.Json source-gen, not assumed to just work.
+- Full solution build clean; full test suite green (778+ baseline, all new tests included).
+
+**Piece 2 done** (`OptionsWindow` — first `Window`/dialog in the app):
+- **Real layering mistake caught and fixed before it shipped**: first draft of
+  `OptionsWindowViewModel` referenced `AudioDeviceSettings`/`RadioConnectionSettings`/
+  `LocalizationSettings` directly (all concrete `ScanlineStudio.Core.*` types) — a real
+  `ScanlineStudio.UI` → `Core.*` layering violation, the exact bug class `UiLayeringArchitectureTests`
+  exists to catch, caught here by the build/test cycle itself (the test passed cleanly with the
+  fix in place, giving confidence it would have failed with the violation — not re-verified via
+  a deliberate revert this time given the mechanism is already well-established in this
+  project's history). Fixed with a new `OptionsSettingsService` (`ScanlineStudio.Application`) +
+  `OptionsSnapshot` plain DTO — same pattern as `ISstvSessionService`/`IRadioSessionService`
+  already used everywhere: UI depends only on the Application-layer facade, never the concrete
+  per-module settings-section types. `OptionsSettingsService.Defaults` derives "reset to
+  default" values from each real settings record's own defaults (`new AudioDeviceSettings()`
+  etc.) rather than duplicating them as magic literals that could silently drift.
+- `OptionsWindowViewModel`/`OptionsWindowView.axaml` (`: Window`, `ShowDialog`): four tabs
+  (General/language, Audio/device+sample-rate, Radio-CAT/backend+host+port, TX/callsign).
+  Radio/CAT only offers None/rigctld this pass — Hamlib isn't in DI yet (Piece 3).
+  Per-section "Reset to defaults" (single click, nothing persisted until Save) + a global
+  "Reset ALL" requiring an inline confirm step (the one genuinely destructive action).
+  New `ScanlineStudioHelpGlyph` style + `[?]` TextBlock/ToolTip.Tip convention for esoteric
+  fields (sample rate, radio backend, callsign) — first use of this pattern in the app.
+  Wired via a new "Options..." top-level `MenuItem` in `MainWindow.axaml` (plain action, not a
+  dropdown) — `MainViewModel` gained an injected `IServiceProvider` (new pattern: first
+  DI-container-as-view-factory use in this codebase) to resolve the transient
+  `OptionsWindowViewModel` on demand, raising an event `MainWindow.axaml.cs`'s code-behind
+  listens for to actually construct/show the `Window` (a view-model must never construct a View
+  itself; no `IDialogService` abstraction built for this, not worth it for a single caller yet).
+  `RadioButton` group backing needed plain computed bool properties
+  (`IsNoneBackendSelected`/`IsRigctldBackendSelected`) instead of a converter — Avalonia's
+  `StringConverters` has no "equals this parameter" converter (confirmed by inspecting the
+  actual referenced assembly's strings, not assumed).
+- 8 new headless tests (`OptionsWindowViewModelTests`) — construction loads every field from a
+  real `OptionsSettingsService` backed by a fake `ISettingsStore` (exercising the real
+  section-translation logic, not mocking it away), Save persists everything + fires
+  `RequestClose`, Cancel fires `RequestClose` without persisting anything, each per-section
+  reset, the RadioButton bool-pair toggle, and the confirm/cancel flow around "Reset ALL" — one
+  verified via the revert-fix-confirm-fail technique (temporarily broke `ResetRadioToDefault`,
+  confirmed the test failed exactly as expected, restored).
+- Also caught by the existing `NoHardcodedAxamlStringsTests` enforcement: the `[?]` help-glyph
+  literal itself needed a locale key (`Options.HelpGlyph`) like every other user-visible string —
+  no carve-out for "it's just a symbol."
+
+**Hands-on visual/interactive verification: done, and it worked this time** — unlike last
+session, synthetic XTEST clicks (stepped-motion approach, same script as before) were reliable
+against this window. Real app launched, Options dialog opened via the actual menu click, all
+four tabs clicked and screenshotted (General/Audio/Radio-CAT/TX all render correctly; Radio/CAT
+correctly loaded the real persisted rigctld connection from this machine's own `settings.json`
+— host `127.0.0.1`, port `4534`), the Reset-ALL confirm/cancel flow exercised end-to-end,
+dialog closed cleanly via Cancel with no crash.
+
+**Real (minor) bug found and fixed through this verification, not through review**: during the
+Reset-ALL confirm prompt, the outer dialog's own Cancel/Save buttons stayed visible alongside
+the confirm prompt's own "Cancel," producing two visible "Cancel" buttons at once — confusing,
+not destructive. Fixed by adding `IsVisible="{Binding !IsConfirmingResetAll}"` to the outer
+Cancel/Save buttons too. Re-verified visually after the fix (single Cancel button now). All 40
+UI tests still green after the fix (no test change needed — this was a pure-XAML visibility gap,
+not a ViewModel logic bug).
+
+**Piece 3 done** (CAT/Radio backend selection):
+- `Program.cs`: registered `NoneRadioProtocolFactory` and `HamlibProtocolFactory.Create()`
+  alongside the already-registered `RigctldProtocolFactory` — closes the real, previously
+  silently-swallowed gap (default `BackendId = "none"` had no matching factory at all; would
+  throw on connect, masked by the startup `try/catch`). Confirmed via `HamlibRuntime`'s own
+  source that `HamlibProtocolFactory.Create()` is safe to call unconditionally even without
+  libhamlib installed — its constructor catches discovery failure internally
+  (`IsAvailable=false`) rather than throwing; the throw only happens later, if a user actually
+  selects Hamlib and tries to connect. Added the missing `ScanlineStudio.Core.Radio.Hamlib`
+  `ProjectReference` to `ScanlineStudio.Host.csproj` (wasn't there before either).
+- `OptionsSnapshot`/`OptionsSettingsService`/`OptionsWindowViewModel` extended with
+  `HamlibModel`/`HamlibSerialPort`/`HamlibBaudRate`/`HamlibPttType`, a third `IsHamlibBackendSelected`
+  RadioButton-pair property, and an `IsHamlibSelected` visibility gate — same pattern as the
+  existing rigctld fields, no new architecture needed.
+- Options dialog's Radio/CAT tab now offers all three backends; Hamlib fields (`[?]` help glyphs
+  on Rig model/Serial port/PTT type, matching legacy-research-flagged esoteric fields) shown only
+  when selected.
+- 5 new headless tests (RadioButton 3-way toggle, Hamlib fields load/save/reset) — all pass;
+  `RadioConnectionSettingsTests` hamlib-mapping tests from Piece 1 already covered the underlying
+  `ToConnectionSpec()` logic.
+- **Hands-on verified**: launched the real app, confirmed no DI resolution error (previously the
+  real risk this piece fixes), opened Options → Radio/CAT, selected "Linked Hamlib," confirmed
+  all four fields render with correct help glyphs, closed cleanly.
+- **Known, accepted limitation**: no "is Hamlib actually available on this system" pre-check
+  surfaced in the UI — selecting it when libhamlib isn't installed will only fail when the app
+  actually tries to connect (via whatever error path `RadioSessionService.ConnectUsingSettingsAsync`
+  already has), not a validation error in the dialog itself. Deferred as a nicety, not blocking.
+- Full solution test suite confirmed green (778+ baseline plus all new tests) after this piece.
+
+**Real cosmetic bug found and fixed, flagged directly by the user after seeing a screenshot**:
+the Options dialog's tab headers ("General"/"Audio"/etc.) rendered "comically gigantic" —
+FluentTheme's default `TabItem` header uses a much larger type-ramp font size than every other
+control in the app, and `Tokens.axaml`'s existing `TabItem` style only set `CornerRadius`, never
+`FontSize`. Fixed with an explicit `FontSize="13"` (matching normal control text) added to that
+style. Re-verified visually (tabs now match the rest of the app's scale) and via the existing 43
+UI tests (all still pass — pure XAML/style change, no ViewModel logic touched).
+
+**Piece 4 done** (TX pane quick controls):
+- **Real mistake caught mid-implementation, before it shipped**: first draft of the favorite-mode
+  button row bound `Command="{Binding $parent[ItemsControl].((vm:TxControlsPaneViewModel)DataContext).SelectFavoriteModeCommand}"`
+  — the *exact* cross-DataTemplate type-cast pattern that already crashed this app at runtime
+  once this session (`StockEntryViewModel`'s own bug, see Phase-4-image-tooling history). Caught
+  by re-reading `StockEntryViewModel`'s own doc comment while writing the new XAML, before ever
+  building/running it. Fixed the same way: a new `FavoriteModeButtonViewModel(Mode, SelectCommand)`
+  record carries its own command reference, set once when `RebuildFavoriteModes()` constructs each
+  entry — no cross-template binding at all.
+- `TxControlsPaneViewModel` gained `ISettingsStore` (constructor-injected, threaded through
+  `AppDockFactory`'s own constructor — no `Program.cs` change needed, `ISettingsStore` was already
+  a registered singleton), `FavoriteModeOptions`/`FavoriteModes` collections, `AutoFollowRxMode`,
+  and an `ISstvSessionService.ModeDetected` subscription (marshaled via `Dispatcher.UIThread.Post`,
+  matching `RadioStatusViewModel`'s own established pattern for that event's documented
+  audio-thread-callback contract).
+- **Read-modify-write persistence, not a fresh write**: `PersistTxPaneUiSettingsAsync` always
+  loads the current `TxPaneUiSettings` section and `with`-updates only the two fields this
+  view-model owns (`FavoriteModeIds`/`AutoFollowRxMode`) — `TxVolumePercent` is a *different*
+  view-model's field in the *same* settings section (Piece 5, not built yet), and a from-scratch
+  write would have silently clobbered it. Verified via a dedicated test + the revert-fix-confirm-fail
+  technique (temporarily forced a fresh-instance write, confirmed the test failed exactly as
+  predicted, restored).
+- Favorite-mode buttons live in a new "FAVORITES" module group in `TxControlsPaneView.axaml`
+  (right under the mode dropdown), with an "Edit favorites..." button opening an Avalonia
+  `Flyout` of checkboxes (one per `AvailableModes` entry) — no new dialog/window needed.
+  Auto-follow toggle is a plain `CheckBox` near the Transmit button.
+- 6 new headless tests (`TxControlsFavoritesAndAutoFollowTests`) — load-from-settings, toggling
+  an option live-updates the button row + persists, clicking a favorite button sets
+  `SelectedMode`, `ModeDetected` updates `SelectedMode` only when the toggle is on (both branches
+  tested, not just the "on" case), and the TxVolumePercent-preservation test above. All pass;
+  existing 43 tests (now updated for the new constructor parameter across
+  `AppDockFactoryTests`/`PaneViewModelTests`) still green.
+- **Hands-on verified, fully interactively this time**: launched the real app, opened "Edit
+  favorites...", checked two modes, watched the button row update live, clicked a favorite
+  button and confirmed the Mode dropdown actually changed to match — the whole feature working
+  end-to-end by hand, not just headless-tested. Auto-follow checkbox confirmed rendered correctly
+  with the right label (a follow-up click to toggle it missed the target physically, not worth
+  chasing further given the behavior is already covered by passing headless tests).
+- Full solution test suite run after this piece to confirm no regressions.
+
+**Piece 5 done** (frequency + status strip expansion):
+- `IRadioSessionService` gained `GetFrequencyPresetsAsync`/`SaveFrequencyPresetsAsync` (returns
+  `Abstractions.Radio.FrequencyPreset`, not the `Core.Radio.FrequencyPresetsSettings` section
+  type). `ISstvSessionService` gained `GetTxVolumePercentAsync`/`SetTxVolumePercentAsync`/
+  `TuneAsync(frequencyHz, duration, ct)`. `SstvSessionService.TransmitAsync` and the new
+  `TuneAsync` were refactored to share one `PlayWithPttAsync` helper (pause-RX/key-PTT/play/
+  un-key-PTT/resume-RX, previously duplicated only in `TransmitAsync`) — `TuneAsync` plays a
+  generated sine tone (`GenerateTone`, an `IAsyncEnumerable<float>` iterator) through the same
+  path. TX volume is applied as a linear gain multiplier in `PumpToPlaybackAsync`, read fresh
+  each transmission.
+- **Two layering violations caught and fixed proactively, before any UI/interface code was
+  written** (not build-error-driven): `FrequencyPreset` moved from `Core.Radio` to
+  `Abstractions.Radio` (a method on `IRadioSessionService` returning a `Core.Radio` type would
+  have forced `ScanlineStudio.UI.dll` to reference `Core.Radio.dll` just to bind against the
+  return type — the same violation class as a direct field-type reference, just via a method
+  signature instead); `TxVolumePercent` moved from the UI-owned `TxPaneUiSettings` to
+  `Core.Audio.AudioDeviceSettings` (`SstvSessionService`, in `ScanlineStudio.Application`, needs to
+  read it directly and cannot reference a `ScanlineStudio.UI`-owned type).
+- **Real bug found via hands-on verification, not review**: TX volume slider showed 0 instead of
+  the intended 100 default on first launch against a pre-existing `settings.json`. Root cause,
+  confirmed via a throwaway deserialization test before touching any fix code: System.Text.Json
+  does not honor a C# property-initializer default (`{ get; init; } = 100`) for a property absent
+  from the JSON payload — it silently deserializes to the CLR default (`0`), not the declared
+  default, for *any* settings.json saved before that field existed. Fixed by making
+  `TxVolumePercent` nullable (`int?`) and applying the `?? 100` fallback at the one read site
+  (`SstvSessionService.GetTxVolumePercentAsync`) rather than relying on a property initializer
+  ever again for this field. Verified via revert-fix-confirm-fail (a new regression test,
+  `GetTxVolumePercentAsync_SectionPredatesTheField_DefaultsTo100NotZero`, fails with the old `?? 0`
+  and passes with `?? 100`). **This STJ behavior is a systemic risk for every other settings field
+  with a non-CLR-default value added to an already-shipped section** — flagged here as a one-line
+  note per the ADHD scope rule, not chased further across the rest of the settings surface this
+  session.
+- **Second real bug found via hands-on verification**: clicking a frequency preset button (or the
+  Tune button, or changing the mode combo) with no radio connected crashed the entire app —
+  `IRadioSessionService.SetFrequencyAsync`/`SetModeAsync` throw `InvalidOperationException` in
+  that case (a routine, common state, not an edge case), uncaught, propagating out of an
+  `AsyncRelayCommand`. Fixed with the same catch-and-report-locally pattern already established in
+  `TxControlsPaneViewModel` — new `RadioStatusViewModel.ErrorMessage` property, try/catch around
+  every command that touches `IRadioSessionService`/`ISstvSessionService.TuneAsync`, localized
+  error text, an `ErrorMessage` `TextBlock` added under the status strip in `MainWindow.axaml`.
+  Verified via revert-fix-confirm-fail with two new regression tests
+  (`ApplyPresetCommand_NoRadioConnected_SetsErrorMessageInsteadOfCrashing`,
+  `SetFrequencyCommand_NoRadioConnected_SetsErrorMessageInsteadOfCrashing`) plus a new
+  `FakeRadioSessionService.ThrowOnSetFrequencyOrMode` flag; re-confirmed by hand afterward
+  (clicking the same preset button and Tune button no longer crash the app, both now show a clean
+  inline error message).
+- `RadioStatusViewModel`/`MainWindow.axaml`: editable frequency field + Set button, mode
+  `ComboBox` (`SelectedRadioMode`, guarded against a feedback loop with incoming `StateChanges`
+  via a `_suppressModeCommand` flag, same shape as the existing `_suppressVolumePersist` guard),
+  a frequency-presets row (`FrequencyPresetButtonViewModel`, own-`SelectCommand`-per-item pattern,
+  same reason as `FavoriteModeButtonViewModel`/`StockEntryViewModel` — avoids the cross-
+  DataTemplate binding crash class already hit twice before this session) with an "Edit
+  presets..." `Flyout` (add/remove/reorder rows, `FrequencyPresetEditorRowViewModel`), a debounced
+  (400ms) TX volume `Slider`, and a Tune group (frequency/duration fields + button, `[?]` help
+  glyph). Caught by `NoHardcodedAxamlStringsTests` mid-implementation: the literal `"Hz"`/`"s"`
+  unit labels and the `"[?]"` glyph needed locale keys too (reused the existing shared
+  `Options.HelpGlyph` key for the glyph itself).
+- 8 new headless tests (`RadioStatusViewModelTests`) — persisted-presets/volume load, preset
+  click applies frequency+mode, frequency-field Set parses MHz→Hz, Save-presets persists edited
+  rows and rebuilds the button row, volume-change persists only after the debounce delay, Tune
+  keys the tone with the right frequency/duration, plus the two crash-regression tests above.
+- Full solution build clean; full solution test suite green (all pre-existing tests plus every
+  new one across `UI.Tests`/`Application.Tests`/`Core.Radio.Tests`).
+- **Adopted a new test-scoping convention this piece** (direct user feedback, see
+  `feedback_scope_test_runs_to_change` memory): during active edit-test cycles, run only the test
+  project(s) that actually own the changed code (`UI.Tests`/`Application.Tests`/`Core.Radio.Tests`
+  for this piece), not the full solution — `Core.Sstv.Tests` (548 DSP golden-vector tests) and
+  `Core.Audio.MiniAudio.Tests` are both unrelated to a settings/UI change and together account for
+  ~9 of the ~10 minutes a full run takes. Full-solution `dotnet test` still runs once per piece
+  before marking it done, just not after every edit within the piece.
+- Hands-on verified via the established XWD/XTEST screenshot+click workflow on the secondary
+  monitor: status strip renders all five module groups correctly, "Edit presets..." flyout
+  add/type/save round-trips through `settings.json` for real, the saved preset button appears and
+  (once the crash fix landed) applies correctly, Tune button behaves the same way.
+
+**Piece 6 done** (radio telemetry: PWR/ALC/SWR + SWR auto-cutoff + manual Stop TX):
+- **Got an `auditor` plan-review before writing any code** (CLAUDE.md §7 — the plan itself flagged
+  this piece as concurrency-risky). Verdict: architecturally sound but 6 concrete defects that
+  would ship as real bugs if built as originally designed, plus 2 policy gaps to decide first —
+  all resolved before implementation started, not discovered afterward:
+  1. Culture-sensitive `float.TryParse` (default overload) would parse `"1.5"` as `15` under a
+     culture where `.` is a thousands separator — every meter parse uses
+     `NumberStyles.Float, CultureInfo.InvariantCulture` explicitly.
+  2. A single failed meter read must not abort the whole `PollAsync` snapshot (meters fail far
+     more often than freq/mode/ptt) — both `RigctldClientProtocol`/`HamlibRadioProtocol` now
+     return `null` for just that field on a soft error, never throw.
+  3. `_cutoffTriggered` resets at `TransmitAsync`'s own entry, not only inside its
+     `catch (OperationCanceledException)` — otherwise a cutoff firing after the transmit loop had
+     already drained naturally (no exception at all) would misattribute the *next* manual Stop TX
+     to a stale cutoff.
+  4. Meter-visibility flags (`ShowSwrMeter` etc.) are stored `[ObservableProperty]`s explicitly
+     refreshed every `StateChanges` poll, not a one-time computed property — both backends connect
+     lazily, so `Capabilities` is `None` until the first successful poll; a computed property
+     evaluated once at bind time would never become visible.
+  5. `StopTransmitCommand.NotifyCanExecuteChanged()` added alongside the two sites where
+     `IsTransmitting` actually toggles (would otherwise stay permanently disabled — this codebase
+     notifies `CanExecute` manually, no `[NotifyCanExecuteChangedFor]` convention here).
+  6. `SstvSessionService.PlayWithPttAsync`'s cleanup (`StopPlaybackAsync` moved back into the
+     `finally`, since it was skipped entirely on cancellation before) uses a fresh, bounded-timeout
+     `CancellationTokenSource` for the PTT-off/resume-capture calls, each independently
+     try/caught — see the standalone finding below for why reusing the original token was a real,
+     newly-reachable bug.
+  Policy decisions locked in: the SWR-cutoff checkbox+threshold field are `IsEnabled` bound to
+  `ShowSwrMeter` (disabled, not just unchecked, when the rig doesn't report SWR — a
+  checked-but-non-functional toggle would be worse than no toggle); the cutoff requires 2
+  consecutive over-threshold polls (not a single reading) AND the rig's own PTT readback
+  (`state.IsTransmitting`), which also makes it self-disable correctly on VOX/DTR-keyed rigs with
+  no PTT-readback capability (no code path needed for that case specifically — `IsTransmitting`
+  is just always `false` there).
+- **A second real, pre-existing bug found and fixed while designing this piece** (not part of the
+  auditor's own list — found first, then included in the review payload for a second opinion,
+  which confirmed the diagnosis): `PlayWithPttAsync`'s `finally` block reused the same
+  (possibly-cancelled) token for its own PTT-off/resume-capture cleanup calls. Before this piece,
+  nothing ever cancelled that token in practice (every caller passed the implicit default) — Piece
+  6 is the first thing that actually cancels it (Stop TX / auto-cutoff), which would have made
+  `SetPttAsync(false, ct)` throw immediately from its own `WaitAsync(ct)` without ever sending the
+  PTT-off command, leaving the rig keyed indefinitely and RX capture stopped forever — the exact
+  opposite of what a safety cutoff exists to guarantee. Fixed with a fresh, non-linked,
+  5-second-bounded `CancellationTokenSource` for cleanup, each step independently try/caught.
+  Verified via revert-fix-confirm-fail with a new regression test
+  (`TuneAsync_TokenCancelledMidTone_StillUnkeysPttAndRestartsCapture`, using a 5-second generated
+  tone + a 10ms cancellation so the CPU-bound sample loop is still mid-generation when it fires) —
+  a `FakeRadioSessionService.SetPttAsync` that actually honors cancellation (matching the real
+  protocols' `WaitAsync(ct)` contract) was needed to make the fake discriminate old vs. fixed
+  behavior at all.
+- `RadioState` gained three trailing optional fields (`SwrRatio`/`AlcLevel`/`PowerPercent`, all
+  `float?`, all `null` unless populated this poll) — non-breaking, every existing construction
+  site keeps compiling unchanged. `RadioCapabilities` gained `SwrMeter`/`AlcMeter`/`PowerMeter`
+  flags.
+- `RigctldClientProtocol`: `ProbeCapabilitiesAsync` additionally probes `l SWR`/`l ALC`/
+  `l RFPOWER_METER` once at connect (verified directly against a local Hamlib clone's
+  `rigctl_parse.c` that these return a single `%g` line, same shape as `f`/`m`/`t`, reusing the
+  same helpers). `PollAsync` reads all three only when the same poll's own PTT readback shows
+  transmitting -- gates cost and matches "meters are TX-only" semantics in one move. SWR's
+  documented "0.0 ... infinite" range means a literal `"inf"` response parses as
+  `float.PositiveInfinity` (cutoff-worthy), not a parse failure.
+- `HamlibNative`/`IHamlibNative`: new `rig_get_level` P/Invoke binding. `setting_t` is
+  `typedef uint64_t setting_t` (verified directly against rig.h) — a plain `ulong`, **not**
+  `CLong` (unlike `pbwidth_t`/`hamlib_token_t`, which are genuinely platform-width-ambiguous C
+  `long`s — `setting_t` has no such ambiguity). `value_t` (a C union) marshaled as a
+  `[StructLayout(Explicit, Size=16)]` struct exposing only the `float` arm at offset 0 (every
+  level this project reads is documented "arg float"; Size=16 matches the union's largest member
+  so the native side never writes past the buffer regardless of which arm it touches).
+  `HamlibRadioProtocol` probes/reads the same way as rigctld, reusing the existing
+  soft/hard-error `TryProbe`/`ThrowIfError` machinery unchanged.
+- `spec/03-cat-layer.md` (frozen P/Invoke table) and `spec/04-rigctld.md` (new "Telemetry" section,
+  Non-goals amended -- extended-level commands were previously declared fully out of v1 scope)
+  both updated to match, not left to drift.
+- `IRadioSessionService` gained a `Capabilities` passthrough property and
+  `GetSafetySettingsAsync`/`SaveSafetySettingsAsync(RadioSafetySpec)` — new
+  `Abstractions.Radio.RadioSafetySpec` DTO mirroring `Core.Radio.RadioSafetySettings` (a section
+  that existed since Piece 1 but had no consumer until now), same reasoning as `FrequencyPreset`'s
+  own move to Abstractions.
+- `TxControlsPaneViewModel` gained a new constructor-injected `IRadioSessionService` (threaded
+  through `AppDockFactory`, no `Program.cs` change needed), live meter readouts gated on
+  "this pane AND the rig both agree transmission is in progress," the visibility/cutoff/Stop-TX
+  machinery described above, and `IDisposable` (cancels an in-flight `_transmitCts` if the pane is
+  torn down mid-transmit — the first `IDisposable` view-model in this codebase; needed to satisfy
+  CA1001 correctly rather than suppress it, since a pane holding a live
+  `CancellationTokenSource` genuinely should clean it up).
+- `TxControlsPaneView.axaml`: a Stop TX button next to Transmit, three telemetry module groups
+  (PWR/ALC/SWR, each `IsVisible` bound to its own `ShowXMeter` flag — never a placeholder for an
+  unsupported rig), and the SWR-cutoff checkbox+threshold field (`IsEnabled` bound to
+  `ShowSwrMeter`, per the policy decision above).
+- 7 new headless tests (`TxControlsTelemetryAndCutoffTests`) plus the 1 `SstvSessionServiceTests`
+  regression above — meter visibility refreshes live (not just at construction), live meters only
+  populate while actually transmitting, the 2-consecutive-sample cutoff debounce (including the
+  "single glitch doesn't trip" and "resets after a good reading" cases, each verified via
+  revert-fix-confirm-fail), the cutoff requires the rig's own PTT readback, Stop TX cancels with no
+  scary error message, and SWR-cutoff settings persist. 15 new/updated fixture tests in
+  `RigctldClientProtocolTests` (full-capability meter reads, RX-time gating, per-meter failure
+  isolation, infinity/invariant-culture parsing) and 5 in `HamlibRadioProtocolTests` (same
+  coverage against `FakeHamlibNative`, which gained a scriptable `RigGetLevel`).
+- Full solution build clean; full solution test suite green (817+ tests, all new ones included).
+- Hands-on verified: launched the real app, confirmed the fail-closed defaults render correctly —
+  Stop TX/telemetry module groups/SWR-cutoff checkbox all correctly absent or disabled until a rig
+  actually negotiates the matching capability, no placeholders shown for an unsupported/
+  not-yet-connected rig.
+
+**All 6 pieces of the Settings/Options plan are now done.** Nothing in this batch of work has been
+committed to git yet (Pieces 1-6 are all still uncommitted in the working tree) — confirm with the
+user before committing, per this project's standing rule.
+
+**Next** (per direct user instruction, not started yet): a design-refinement + missing-functionality
+inventory pass, cross-checking Scanline Studio against legacy YONIQ and QSSTV to find gaps/improvement
+opportunities beyond what the Settings/Options plan covered.
+
+## Resume here (2026-08-05, superseded by the entry above) — Roadmap re-scoped: rigctld server mode dropped, Phase 4/5 boundary moved
 
 Two direct user decisions, `spec/14-roadmap.md`/`spec/04-rigctld.md`/`docs/removed-features.md` updated
 to match (no code changes this pass — pure re-scoping):

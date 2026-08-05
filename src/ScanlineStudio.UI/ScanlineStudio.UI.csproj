@@ -29,6 +29,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ScanlineStudio.Application\ScanlineStudio.Application.csproj" />
+    <!-- Not a ScanlineStudio.Core.* project (below ScanlineStudio.Abstractions in the layering, see
+         spec/12-settings.md); allowed directly, per UiLayeringArchitectureTests's own ban list
+         (Core.* projects and Sqlite/ImageSharp packages only). Needed so ScanlineStudio.UI can own
+         its own UI-preference settings sections (TxPaneUiSettings etc.) via ISettingsStore. -->
+    <ProjectReference Include="..\ScanlineStudio.Settings\ScanlineStudio.Settings.csproj" />
   </ItemGroup>
 
 </Project>

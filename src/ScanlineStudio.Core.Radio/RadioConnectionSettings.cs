@@ -5,9 +5,8 @@ namespace ScanlineStudio.Core.Radio;
 /// <summary>The persisted, flat settings-section counterpart to <see cref="RadioConnectionSpec"/> —
 /// see that type's own doc comment for why persistence needs a separate DTO (the polymorphic
 /// <c>RadioConnectionSpec</c> hierarchy isn't JSON-source-gen-friendly across optional backend
-/// assemblies). Only <c>"none"</c>/<c>"rigctld"</c> are meaningful today — see spec/14-roadmap.md's
-/// Phase 3 scope (linked Hamlib is wired later; adding its own settings fields here is a small,
-/// additive change when that happens, not a redesign).</summary>
+/// assemblies). <c>"none"</c>/<c>"rigctld"</c>/<c>"hamlib"</c> are meaningful — the Hamlib fields
+/// mirror <see cref="HamlibConnectionSpec"/>'s own shape exactly.</summary>
 public sealed record RadioConnectionSettings
 {
     public const string SectionKey = "Radio";
@@ -17,6 +16,17 @@ public sealed record RadioConnectionSettings
     public string? Host { get; init; }
 
     public int? Port { get; init; }
+
+    /// <summary>Hamlib's own <c>rig_model_t</c> — see <see cref="HamlibConnectionSpec"/>'s doc
+    /// comment for why there is no ScanlineStudio-side rig registry to resolve this from a friendly
+    /// name instead.</summary>
+    public uint? HamlibModel { get; init; }
+
+    public string? SerialPort { get; init; }
+
+    public int? BaudRate { get; init; }
+
+    public string? PttType { get; init; }
 }
 
 public static class RadioConnectionSettingsExtensions
@@ -29,6 +39,13 @@ public static class RadioConnectionSettingsExtensions
         {
             "rigctld" when settings.Host is { Length: > 0 } host && settings.Port is int port
                 => new RigctldConnectionSpec(host, port),
+            "hamlib" when settings.HamlibModel is uint model
+                => new HamlibConnectionSpec(model)
+                {
+                    SerialPort = settings.SerialPort,
+                    BaudRate = settings.BaudRate,
+                    PttType = settings.PttType,
+                },
             _ => new NoneConnectionSpec(),
         };
 }

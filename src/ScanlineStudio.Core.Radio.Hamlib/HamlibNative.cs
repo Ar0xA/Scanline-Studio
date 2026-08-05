@@ -17,6 +17,19 @@ namespace ScanlineStudio.Core.Radio.Hamlib;
 /// </summary>
 internal sealed class HamlibNative : IHamlibNative
 {
+    /// <summary>Marshals Hamlib's <c>value_t</c> union (rig.h) -- a C union whose largest member is
+    /// the nested <c>{int l; unsigned char *d;}</c> struct (4-byte int + padding + 8-byte pointer =
+    /// 16 bytes on both LP64 and LLP64). <c>Size = 16</c> so the native side never writes past the
+    /// marshaled buffer regardless of which arm it actually touches, even though only
+    /// <see cref="FloatValue"/> (offset 0, matching the union's <c>float f</c> arm) is ever read --
+    /// every level this project queries (SWR/ALC/RFPOWER_METER) is documented "arg float."</summary>
+    [StructLayout(LayoutKind.Explicit, Size = 16)]
+    private struct HamlibValue
+    {
+        [FieldOffset(0)]
+        public float FloatValue;
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate nint RigInitDelegate(uint model);
 
@@ -50,6 +63,9 @@ internal sealed class HamlibNative : IHamlibNative
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate nint RigVersionDelegate();
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int RigGetLevelDelegate(nint rig, uint vfo, ulong level, out HamlibValue value);
+
     private readonly RigInitDelegate _rigInit;
     private readonly RigHandleOnlyDelegate _rigOpen;
     private readonly RigHandleOnlyDelegate _rigClose;
@@ -63,6 +79,7 @@ internal sealed class HamlibNative : IHamlibNative
     private readonly RigSetPttDelegate _rigSetPtt;
     private readonly RigGetPttDelegate _rigGetPtt;
     private readonly RigVersionDelegate _rigVersion;
+    private readonly RigGetLevelDelegate _rigGetLevel;
 
     public HamlibNative(INativeLibraryLoader loader, nint handle)
     {
@@ -81,6 +98,7 @@ internal sealed class HamlibNative : IHamlibNative
         // rig_version(), never hamlib_version2 -- that name is a data export, not a function
         // (spec/03-cat-layer.md's "Version gate"); P/Invoking it as a delegate would crash.
         _rigVersion = Resolve<RigVersionDelegate>(loader, handle, "rig_version");
+        _rigGetLevel = Resolve<RigGetLevelDelegate>(loader, handle, "rig_get_level");
     }
 
     public nint RigInit(uint model) => _rigInit(model);
@@ -108,6 +126,13 @@ internal sealed class HamlibNative : IHamlibNative
     {
         var ptr = _rigVersion();
         return ptr == nint.Zero ? null : Marshal.PtrToStringUTF8(ptr);
+    }
+
+    public int RigGetLevel(nint rig, uint vfo, ulong level, out float value)
+    {
+        var code = _rigGetLevel(rig, vfo, level, out var native);
+        value = native.FloatValue;
+        return code;
     }
 
     private static TDelegate Resolve<TDelegate>(INativeLibraryLoader loader, nint handle, string exportName)

@@ -14,6 +14,7 @@ using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Localization;
 using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Radio;
+using ScanlineStudio.Core.Radio.Hamlib;
 using ScanlineStudio.Core.Radio.Rigctld;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
@@ -37,6 +38,11 @@ internal static class Program
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(args);
         hostBuilder.Services.AddSingleton<ISettingsStore>(new JsonSettingsStore());
         hostBuilder.Services.AddTransient<MainViewModel>();
+
+        // Options dialog -- transient so each open/close cycle gets a fresh OptionsSettingsService
+        // (re-reads settings.json from disk each time, no stale in-memory copy carried over).
+        hostBuilder.Services.AddTransient<OptionsSettingsService>();
+        hostBuilder.Services.AddTransient<OptionsWindowViewModel>();
 
         // Locale files live alongside the built app -- see ScanlineStudio.Host.csproj's asset-copy item.
         // Always boots into English; restoring a persisted non-English culture is a separate,
@@ -89,11 +95,20 @@ internal static class Program
         // TxControlsPaneViewModel's mode-change reflow run against.
         hostBuilder.Services.AddSingleton<ITransmitImagePreparer, TransmitImagePreparer>();
 
-        // Radio layer -- RigctldProtocolFactory only (decision #12: the one backend wired for the
-        // Phase 3 demo; linked Hamlib is a one-line addition later, not blocking this phase).
-        // RadioController's constructor takes IEnumerable<IRadioProtocolFactory>, resolved
-        // automatically from every factory registered here -- exactly one today, by design.
+        // Radio layer -- all three backends now registered (Settings/Options Piece 3): None,
+        // rigctld, and linked Hamlib. RadioController's constructor takes
+        // IEnumerable<IRadioProtocolFactory>, resolved automatically from every factory registered
+        // here, and requires exactly one CanHandle match per connection attempt -- the real gap
+        // this closes is that NEITHER NoneRadioProtocolFactory nor HamlibProtocolFactory was
+        // registered before, so the default "none" BackendId (or a user picking Hamlib in Options)
+        // would throw InvalidOperationException on connect, silently masked by the bare try/catch
+        // below. HamlibProtocolFactory.Create() is safe to call unconditionally even when
+        // libhamlib isn't installed on this machine -- HamlibRuntime's constructor catches
+        // discovery failure internally (IsAvailable=false) rather than throwing; the throw only
+        // happens later, if the user actually selects Hamlib and tries to connect.
+        hostBuilder.Services.AddSingleton<IRadioProtocolFactory, NoneRadioProtocolFactory>();
         hostBuilder.Services.AddSingleton<IRadioProtocolFactory, RigctldProtocolFactory>();
+        hostBuilder.Services.AddSingleton<IRadioProtocolFactory>(_ => HamlibProtocolFactory.Create());
         hostBuilder.Services.AddSingleton<IRadioController, RadioController>();
 
         // ScanlineStudio.Application services -- the only things ScanlineStudio.UI is allowed to depend on
