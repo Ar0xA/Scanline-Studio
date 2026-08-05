@@ -35,16 +35,112 @@
                 <MenuItem Header="{loc:Translate Panes.RxImage.Title}" Command="{Binding DockFactory.ShowRxImageCommand}" />
                 <MenuItem Header="{loc:Translate Panes.RxHistory.Title}" Command="{Binding DockFactory.ShowRxHistoryCommand}" />
             </MenuItem>
+            <MenuItem Header="{loc:Translate MainWindow.OptionsMenuItem}" Command="{Binding OpenOptionsCommand}" />
         </Menu>
 
         <!-- Fixed radio/frequency status strip: MainWindow chrome, not a dockable pane
-             (Phase-3 plan decision #9's scope trim). Read-only; connecting happens once at
-             ScanlineStudio.Host startup from persisted settings, not from this strip. -->
+             (Phase-3 plan decision #9's scope trim). Connecting happens once at ScanlineStudio.Host
+             startup from persisted settings, not from this strip; frequency/mode/TX volume/
+             presets/Tune are all live controls here (Piece 5), always visible regardless of which
+             pane tab is active, matching where WSJT-X/Nexus both keep these controls (design
+             decision #4). -->
         <Border Grid.Row="1" Classes="ScanlineStudioPanelHeader" DataContext="{Binding RadioStatus}">
-            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingLarge}">
-                <TextBlock Classes="ScanlineStudioReadout" Text="{Binding FrequencyDisplay}" />
-                <TextBlock Classes="ScanlineStudioReadout" Text="{Binding ModeDisplay}" />
-            </StackPanel>
+          <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
+
+                    <!-- Frequency/mode readout + editable control, one module. -->
+                    <Border Classes="ScanlineStudioModuleGroup">
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" VerticalAlignment="Center">
+                            <TextBlock Classes="ScanlineStudioReadout" Text="{Binding FrequencyDisplay}" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding FrequencyInputMhz}"
+                                     Watermark="{loc:Translate RadioStatus.FrequencyPlaceholder}"
+                                     Width="90" VerticalAlignment="Center" />
+                            <Button Content="{loc:Translate RadioStatus.SetFrequency}" Command="{Binding SetFrequencyCommand}" VerticalAlignment="Center" />
+                            <ComboBox ItemsSource="{Binding AvailableModes}" SelectedItem="{Binding SelectedRadioMode}" Width="80" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Frequency memory presets: click applies both frequency+mode in one action
+                         (WSJT-X band-shortcut convention). Membership user-configured via the
+                         "Edit presets..." popup, backed by FrequencyPresetsSettings. -->
+                    <Border Classes="ScanlineStudioModuleGroup">
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" VerticalAlignment="Center">
+                            <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate RadioStatus.PresetsLabel}" VerticalAlignment="Center" />
+                            <ItemsControl ItemsSource="{Binding Presets}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:FrequencyPresetButtonViewModel">
+                                        <Button Content="{Binding Label}"
+                                                Command="{Binding SelectCommand}"
+                                                CommandParameter="{Binding Preset}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Button Content="{loc:Translate RadioStatus.EditPresets}" VerticalAlignment="Center">
+                                <Button.Flyout>
+                                    <Flyout>
+                                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}" MinWidth="320">
+                                            <ItemsControl ItemsSource="{Binding EditorRows}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:FrequencyPresetEditorRowViewModel">
+                                                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                                            <TextBox Text="{Binding Label}" Watermark="{loc:Translate RadioStatus.PresetLabelPlaceholder}" Width="110" />
+                                                            <TextBox Text="{Binding FrequencyMhzText}" Width="90" />
+                                                            <ComboBox ItemsSource="{Binding AvailableModes}" SelectedItem="{Binding SelectedMode}" Width="80" />
+                                                            <Button Content="{loc:Translate RadioStatus.RemovePreset}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                                <Button Content="{loc:Translate RadioStatus.AddPreset}" Command="{Binding AddPresetRowCommand}" />
+                                                <Button Content="{loc:Translate RadioStatus.SavePresets}" Command="{Binding SavePresetsCommand}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- TX output volume: a post-encode playback gain, not an encoder/DSP
+                         parameter (design decision #3); matches WSJT-X's own documented Pwr
+                         slider semantics ("adjust it down until the RF output just starts to
+                         fall"). Persists to AudioDeviceSettings.TxVolumePercent, debounced. -->
+                    <Border Classes="ScanlineStudioModuleGroup">
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" VerticalAlignment="Center">
+                            <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate RadioStatus.TxVolumeLabel}" VerticalAlignment="Center" />
+                            <Slider Value="{Binding TxVolumePercent}" Minimum="0" Maximum="100" Width="120" VerticalAlignment="Center" />
+                            <TextBlock Classes="ScanlineStudioReadout" Text="{Binding TxVolumePercent}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Tune: keys PTT and plays a steady test tone so the other station's
+                         AFC/tuning can lock on (legacy Option.cpp's TuneFreq, default 1750Hz).
+                         Frequency/duration are one-off per-use fields, not a persisted setting. -->
+                    <Border Classes="ScanlineStudioModuleGroup">
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" VerticalAlignment="Center">
+                            <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate RadioStatus.Tune.Help}" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding TuneFrequencyHz}" Width="60" VerticalAlignment="Center" />
+                            <TextBlock Classes="ScanlineStudioReadout" Text="{loc:Translate RadioStatus.Tune.HertzUnit}" VerticalAlignment="Center" />
+                            <TextBox Text="{Binding TuneDurationSeconds}" Width="50" VerticalAlignment="Center" />
+                            <TextBlock Classes="ScanlineStudioReadout" Text="{loc:Translate RadioStatus.Tune.SecondsUnit}" VerticalAlignment="Center" />
+                            <Button Content="{loc:Translate RadioStatus.Tune}" Command="{Binding TuneCommand}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+            <TextBlock Text="{Binding ErrorMessage}"
+                       Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          </StackPanel>
         </Border>
 
         <DockControl Grid.Row="2" Layout="{Binding Layout}" />

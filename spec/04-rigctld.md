@@ -124,9 +124,34 @@ works without a platform-specific linked-Hamlib build; linked Hamlib avoids requ
 separate daemon at all. Both remain in scope; which one a given user picks is a deployment choice, not
 an architectural one.
 
+## Telemetry (SWR/ALC/power meters)
+
+[[14-roadmap]]'s Piece 6 needed live PWR/ALC/SWR readout for a TX safety cutoff — the one deliberate
+exception to the extended-command Non-goal below. `ProbeCapabilitiesAsync` additionally probes `l
+SWR`/`l ALC`/`l RFPOWER_METER` once at connect, same RPRT-error-means-absent convention as `f`/`m`/`t`.
+Verified directly against a local Hamlib clone's `tests/rigctl_parse.c`
+(`declare_proto_rig(get_level)`): rigctld always runs with `interactive=1`/`prompt=0`, so a supported
+float-typed level (SWR/ALC/RFPOWER_METER are all in `RIG_LEVEL_FLOAT_LIST`, `rig.h`) responds with
+exactly one `%g` line — the same single-line shape as `f`/`m`/`t`, reusing the same read helpers.
+
+Meters are read only while the same poll's own `t` readback shows the rig transmitting (a real
+Hamlib meter reading is TX-only and meaningless at RX time; gating avoids doubling every poll's
+round-trip count for a reading nobody looks at outside an active transmit). A per-meter read failure
+(RPRT error, or an unparseable line) yields `null` for that field only — it must never abort the
+whole poll the way a bad `f` response does, since meters are far more likely than `f`/`m`/`t` to
+intermittently error. Meter values parse with `CultureInfo.InvariantCulture` (a real bug caught
+before shipping: the culture-sensitive default overload would parse "1.5" as 15 under a culture
+where '.' is a thousands separator, turning a normal SWR reading into an instant false cutoff trip).
+SWR's documented range is "0.0 ... infinite" (`rig.h`) — a literal `"inf"` response parses as
+`float.PositiveInfinity` (a real, cutoff-worthy value), not a parse failure; `"nan"` maps to `null`
+(not a known-bad direction).
+
+This is a convenience backstop riding the existing ~250ms poll cadence plus a PTT-off round trip —
+never a substitute for the rig's own hardware SWR protection.
+
 ## Non-goals
 
-- Full Hamlib protocol coverage (extended command set, all `rigctl` verbs) is not a v1 goal — only the subset needed for frequency/mode/PTT, matching what YONIQ's own domain model (`RadioState`) can represent.
+- Full Hamlib protocol coverage (extended command set, all `rigctl` verbs) beyond the `l SWR`/`l ALC`/`l RFPOWER_METER` telemetry probes above is not a v1 goal — only the subset needed for frequency/mode/PTT/telemetry, matching what Scanline Studio's own domain model (`RadioState`) can represent.
 
 ## Testing
 
@@ -136,8 +161,10 @@ an architectural one.
 ## Definition of done
 
 - [x] Client mode implements `f`/`F`/`m`/`M`/`t`/`T`, fixture-tested (both response shapes per command) —
-      `RigctldClientProtocol`/`RigctldProtocolFactory` (`ScanlineStudio.Core.Radio.Rigctld`), 20 fixture tests in
-      `RigctldClientProtocolTests`. `\chk_vfo`/VFO support is not implemented — not needed by
+      `RigctldClientProtocol`/`RigctldProtocolFactory` (`ScanlineStudio.Core.Radio.Rigctld`), 35 fixture tests in
+      `RigctldClientProtocolTests` (20 original + 15 covering the `l SWR`/`l ALC`/`l RFPOWER_METER`
+      telemetry probes: full-capability reads, RX-time gating, per-meter failure isolation,
+      infinity/invariant-culture parsing). `\chk_vfo`/VFO support is not implemented — not needed by
       `RadioState`'s current domain model, left for a future pass if a real need shows up.
 - [x] Real interop verified against a real Hamlib `rigctld` build — automated via
       `RigctldDummyRigIntegrationTests` (4 tests, real `rigctld -m 1` against Hamlib's own hardware-free

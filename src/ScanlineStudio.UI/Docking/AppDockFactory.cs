@@ -5,8 +5,10 @@ using Dock.Model.Mvvm;
 using Dock.Model.Mvvm.Controls;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
+using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.ViewModels;
 
@@ -39,6 +41,8 @@ public sealed partial class AppDockFactory : Factory
     private readonly ITransmitImagePreparer _preparer;
     private readonly IFilePickerService _filePickerService;
     private readonly ILocalizationService _localization;
+    private readonly ISettingsStore _settingsStore;
+    private readonly IRadioSessionService _radioSession;
 
     private WaterfallPaneViewModel? _waterfall;
     private RxImagePaneViewModel? _rxImage;
@@ -54,15 +58,19 @@ public sealed partial class AppDockFactory : Factory
         IReceiveHistoryStore historyStore,
         ITransmitImagePreparer preparer,
         IFilePickerService filePickerService,
-        ILocalizationService localization)
+        ILocalizationService localization,
+        ISettingsStore settingsStore,
+        IRadioSessionService radioSession)
     {
         _sstvSession = sstvSession;
         _imageFileLoader = imageFileLoader;
         _stockLibrary = stockLibrary;
         _historyStore = historyStore;
         _preparer = preparer;
+        _settingsStore = settingsStore;
         _filePickerService = filePickerService;
         _localization = localization;
+        _radioSession = radioSession;
     }
 
     public override IRootDock CreateLayout()
@@ -70,7 +78,7 @@ public sealed partial class AppDockFactory : Factory
         var waterfall = new WaterfallPaneViewModel(_sstvSession, _localization);
         var rxImage = new RxImagePaneViewModel(_sstvSession, _localization);
         var rxHistory = new RxHistoryPaneViewModel(_historyStore, _localization);
-        var txControls = new TxControlsPaneViewModel(_sstvSession, _imageFileLoader, _stockLibrary, _preparer, _filePickerService, _localization);
+        var txControls = new TxControlsPaneViewModel(_sstvSession, _imageFileLoader, _stockLibrary, _preparer, _filePickerService, _localization, _settingsStore, _radioSession);
         txControls.EditorOpened += OpenTxImageEditor;
         txControls.EditorClosed += CloseTxImageEditor;
 

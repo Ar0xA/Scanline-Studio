@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using ScanlineStudio.Abstractions.Radio;
 
@@ -110,7 +111,31 @@ public sealed class RigctldClientProtocol : IRadioProtocol
                 isTransmitting = int.TryParse(pttLine, out var pttValue) && pttValue != 0;
             }
 
-            return new RadioState(hz, mode, isTransmitting, SignalStrengthDb: null, DateTimeOffset.UtcNow);
+            // Meters are TX-only readings on a real rig -- gated on the PTT readback already
+            // obtained above (not a separate always-on probe) both because an RX-time read is
+            // meaningless and because it would double this poll's round-trip count on every cycle
+            // for a reading nobody looks at outside an active transmit.
+            float? swr = null, alc = null, powerPercent = null;
+            if (isTransmitting)
+            {
+                if (Capabilities.HasFlag(RadioCapabilities.SwrMeter))
+                {
+                    swr = await TryGetMeterAsync("l SWR", ct).ConfigureAwait(false);
+                }
+
+                if (Capabilities.HasFlag(RadioCapabilities.AlcMeter))
+                {
+                    alc = await TryGetMeterAsync("l ALC", ct).ConfigureAwait(false);
+                }
+
+                if (Capabilities.HasFlag(RadioCapabilities.PowerMeter))
+                {
+                    var fraction = await TryGetMeterAsync("l RFPOWER_METER", ct).ConfigureAwait(false);
+                    powerPercent = fraction * 100f;
+                }
+            }
+
+            return new RadioState(hz, mode, isTransmitting, SignalStrengthDb: null, DateTimeOffset.UtcNow, swr, alc, powerPercent);
         }
         finally
         {
@@ -225,9 +250,69 @@ public sealed class RigctldClientProtocol : IRadioProtocol
             caps |= RadioCapabilities.PttControl;
         }
 
-        // rigctld's backward-compatible "easy" command set has no signal-strength query -- that's an
-        // extended-level command, explicitly out of v1 scope (spec/04-rigctld.md's Non-goals).
+        // Extended-level `l <LEVEL>` probes (spec/04-rigctld.md's telemetry section -- supersedes
+        // that doc's earlier "extended-level commands are out of v1 scope" Non-goals entry, updated
+        // alongside this). Verified directly against a local Hamlib clone's rigctl_parse.c
+        // (declare_proto_rig(get_level)): rigctld runs with interactive=1/prompt=0, so a supported
+        // float level (SWR/ALC/RFPOWER_METER all are, per RIG_LEVEL_FLOAT_LIST in rig.h) responds
+        // with exactly one `%g` line -- same shape as f/m/t above, same RPRT-error-means-absent
+        // capability-negotiation convention.
+        await WriteCommandAsync("l SWR", ct).ConfigureAwait(false);
+        if (!IsErrorLine(await ReadLineAsync(ct).ConfigureAwait(false)))
+        {
+            caps |= RadioCapabilities.SwrMeter;
+        }
+
+        await WriteCommandAsync("l ALC", ct).ConfigureAwait(false);
+        if (!IsErrorLine(await ReadLineAsync(ct).ConfigureAwait(false)))
+        {
+            caps |= RadioCapabilities.AlcMeter;
+        }
+
+        await WriteCommandAsync("l RFPOWER_METER", ct).ConfigureAwait(false);
+        if (!IsErrorLine(await ReadLineAsync(ct).ConfigureAwait(false)))
+        {
+            caps |= RadioCapabilities.PowerMeter;
+        }
+
         return caps;
+    }
+
+    /// <summary>Reads one `l &lt;LEVEL&gt;` meter value -- unlike <see cref="GetSingleLineOrThrowAsync"/>,
+    /// a failure (RPRT error, or an unparseable line) returns <see langword="null"/> instead of
+    /// throwing: meters are far more likely than f/m/t to intermittently error (e.g. a rig that
+    /// reports ENAVAIL for SWR while not actually keyed, a transient read glitch), and letting that
+    /// abort the entire <see cref="PollAsync"/> snapshot would freeze the whole frequency/mode strip
+    /// for as long as the condition lasts -- a per-meter <see langword="null"/> is the correct
+    /// "unknown this poll" outcome, not a poll-level failure.</summary>
+    private async Task<float?> TryGetMeterAsync(string command, CancellationToken ct)
+    {
+        await WriteCommandAsync(command, ct).ConfigureAwait(false);
+        var line = await ReadLineAsync(ct).ConfigureAwait(false);
+        return IsErrorLine(line) ? null : ParseMeterFloat(line);
+    }
+
+    /// <summary>Culture-invariant on purpose (a real bug caught before shipping: the default
+    /// <see cref="float.TryParse(string, out float)"/> overload uses the current culture, where e.g.
+    /// nl-NL/de-DE treat '.' as a *thousands* separator -- "1.5" would parse as 15, turning a normal
+    /// SWR reading into an instant false cutoff trip). SWR's documented range is "0.0 ... infinite"
+    /// (rig.h) -- Hamlib's own `%g` printf can legitimately emit "inf"; treated as
+    /// <see cref="float.PositiveInfinity"/> (a real, cutoff-worthy value) rather than a parse failure,
+    /// with "-inf"/"nan" handled the same way ("nan" maps to <see langword="null"/> -- not a known-bad
+    /// direction, so it must not silently arm a cutoff).</summary>
+    private static float? ParseMeterFloat(string line)
+    {
+        if (float.TryParse(line, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            return value;
+        }
+
+        return line.Trim().ToLowerInvariant() switch
+        {
+            "inf" or "+inf" or "infinity" => float.PositiveInfinity,
+            "-inf" or "-infinity" => float.NegativeInfinity,
+            _ => null,
+        };
     }
 
     private async Task<RadioMode> GetModeAsync(CancellationToken ct)
