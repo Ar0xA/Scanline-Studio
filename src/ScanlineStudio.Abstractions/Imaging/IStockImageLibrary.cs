@@ -19,4 +19,8 @@ public interface IStockImageLibrary
     /// <summary>Mirrors <see cref="IImageFileLoader.LoadAsync"/>'s fit-to-mode contract, so
     /// `TxControlsPaneViewModel` can treat a stock pick and a browsed file identically once loaded.</summary>
     Task<IImageSource> LoadFullAsync(StockImageEntry entry, int targetWidth, int targetHeight, CancellationToken ct = default);
+
+    /// <summary>Mirrors <see cref="IImageFileLoader.LoadOriginalAsync"/> — loads at the source
+    /// file's own native resolution, no resize at all, for the TX image editor's entry point.</summary>
+    Task<IImageSource> LoadOriginalAsync(StockImageEntry entry, CancellationToken ct = default);
 }

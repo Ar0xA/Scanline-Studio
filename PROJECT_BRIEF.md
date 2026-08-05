@@ -2,7 +2,96 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-05, latest, ACTIVE) — Phase 4 image-tooling UI: all 9 pieces DONE, plus real hands-on layout/theme corrections and a Dock.Avalonia/Avalonia package update
+## Resume here (2026-08-05, latest, ACTIVE) — TX image editor: Pieces 1-6 of the audited plan done, Piece 5c (the actual view) is next
+
+Spec (`spec/07-image-pipeline.md`'s "TX image editor" section) went through two auditor rounds,
+verdict "ready to build," before any code. Done so far, all with full-solution green runs after each:
+
+- **Pieces 1-4**: `NormalizedRect`/`ImageOverlayElement`/`ImageOverlay`/`ITransmitImagePreparer`
+  abstractions; bundled `DejaVuSansMono.ttf` (+ `LICENSES.md` entries for it and
+  `SixLabors.ImageSharp.Drawing`/`SixLabors.Fonts`); `TransmitImagePreparer` (ImageSharp-backed
+  Crop/Resize/ApplyOverlay, explicit pixel-copy helpers, never `MemoryMarshal.Cast`);
+  `UiLayeringArchitectureTests` switched to prefix-matching `SixLabors.` (exact-name matching would
+  have silently let `SixLabors.ImageSharp.Drawing`/`SixLabors.Fonts` slip into `ScanlineStudio.UI` —
+  the same bug class this project has caught twice before).
+- **Piece 5a**: `LoadOriginalAsync` added to `IImageFileLoader`/`IStockImageLibrary` (native
+  resolution, no resize) — the picked-image flow now needs the untouched original, not just the
+  mode-fitted one.
+- **Piece 5b**: `TxImageEditorPaneViewModel` — pure, UI-tech-agnostic (drag ops take already-normalized
+  deltas), covers crop/resize/stretch + overlay elements, keyboard nudge (1px plain arrow / 16px
+  Ctrl-arrow / Shift-arrow resize-and-auto-stretch, verified against `yoniq-old/YONIQ-main/PicRect.cpp:925-1001`),
+  realtime preview against a pre-downsampled working copy, Apply/Cancel events. 10 headless tests,
+  each non-discriminating one caught by the revert-fix-confirm-fail technique (notably: Apply must run
+  against the ORIGINAL, not the working copy — reverting that swap made the test fail exactly as
+  expected).
+- **Piece 6**: Wired into `TxControlsPaneViewModel` + `AppDockFactory`. Real design decision made
+  during this piece, not pre-planned: picking a source (file browse or stock thumbnail) now always
+  opens the editor (matches the audited spec's step 2 — native-res load, then edit — rather than a
+  separate manual "Edit" command). `TxControlsPaneViewModel` retains an `EditState` (original image +
+  crop/preserveAspect/overlay) so a later mode change re-runs Crop→Resize→ApplyOverlay against the
+  cached original at the new mode's dimensions — **and this made the old Piece 7 mode-change
+  `CancellationTokenSource` race-guard machinery genuinely unnecessary**: that machinery existed to
+  guard an async I/O reload race; the new reflow is synchronous CPU work against an already-in-memory
+  original, so there's no race left to guard against. Removed it rather than keeping it "just in
+  case" (matches this project's own "if a fix's complexity doesn't earn its keep, revert to the
+  simpler alternative" working-methodology line). `AppDockFactory` owns turning the VM's
+  `EditorOpened`/`EditorClosed` events into an actual `RxToolDock` pane add/remove — `TxControlsPaneViewModel`
+  itself never touches Dock. `_isEditorOpen` is a simple bool backstop against overlapping picks
+  (deliberately not another `CancellationTokenSource` — a single short-lived user-driven sequence
+  doesn't need one). Two old Piece-7 tests (the async mode-change-race ones) were deleted as
+  genuinely obsolete, not just stale; six new tests added/rewritten around the editor hand-off,
+  cancel-leaves-prior-state-untouched, the overlapping-pick guard, and the mode-change reflow —
+  again each verified via revert-fix-confirm-fail. **Full solution: 778/778 tests green** (12+31+99+1+51+548+4+7+17+8
+  across all ten test projects, checked individually after the aggregate run's output was truncated
+  in the terminal capture).
+- **Not yet committed** — all TX editor work (Pieces 1-6) is still uncommitted in the working tree;
+  standing rule is to confirm before commit/push rather than assume "keep going" covers it.
+
+**Piece 5c done** (`TxImageEditorPaneView.axaml` + code-behind): interactive canvas showing the
+working copy at native pixel size (`Stretch="None"`, so on-screen pixels map 1:1 to normalized
+crop/overlay coordinates, no scale-factor math needed) with a draggable crop rectangle (body = move,
+bottom-right corner handle = resize, matching legacy's own real single-corner precedent), draggable
+overlay text (center-anchored via a `TranslateTransform` + `NegativeHalfConverter`, new small
+`Converters/` folder), numeric X/Y fields alongside per legacy `TextIn.h`'s real precedent, keyboard
+nudge (Up/Down/Left/Right, Ctrl=16px, Shift=resize) wired to the already-tested VM methods, aspect-lock
+checkbox, Apply/Cancel, a localized fidelity caption, real pipeline preview with nearest-neighbor
+display upscaling. `TxImageEditorPaneViewModel` gained plain computed pixel-space properties
+(`WorkingCopyWidth/Height`, `CropLeftPixels`/`TopPixels`/`WidthPixels`/`HeightPixels`/`RightPixels`/`BottomPixels`)
+so the View stays a plain binding consumer, no converter/multibinding gymnastics for the geometry math.
+
+**Real pre-existing bug found and fixed during this piece's own hands-on verification** (not part of
+its original scope, but blocking it): launching the real app for the first time with a NON-empty stock
+image library crashed on `System.ArgumentException: Unable to resolve type vm:TxControlsPaneViewModel`
+— the Phase-4 stock-picker XAML's `Command="{Binding $parent[ListBox].((vm:TxControlsPaneViewModel)DataContext).SelectStockImageCommand}"`
+pattern compiled fine but fails at runtime (Avalonia falls back to a reflection-mode binding for this
+path shape inside a deferred `ItemsControl` template, and that resolver can't find the type). This had
+never actually been exercised at runtime before — Phase 4's own verification pass evidently never had
+a populated stock library when it screenshotted. Fixed by giving `StockEntryViewModel` its own
+`SelectCommand` (set once at construction to the parent's `SelectStockImageCommand`) instead of reaching
+across the DataTemplate boundary with a type-cast path — trivial, no cross-template binding needed at
+all. All 31 UI tests + full 778-test solution still green after the fix.
+
+**Hands-on interactive verification of Piece 5c could NOT be completed this pass**: the app launches
+cleanly and renders correctly (confirmed via the XWD-screenshot pipeline, on the secondary HDMI-1
+monitor per the standing instruction) — Mode/Stock/Browse/Transmit all visible and correctly laid out.
+But every synthetic XTEST click attempted (the stock thumbnail, the Browse button, the View menu,
+the Mode combo box — a deliberate escalating sanity-check ladder from most- to least-specific control)
+produced zero visible effect, despite the window holding `_NET_ACTIVE_WINDOW` focus and multiple
+click techniques tried (instant warp+click, stepped-motion approach+click). This is a WORSE version of
+the already-documented Dock-tab-strip XTEST unreliability from the Phase-4 pass (that pass's Menu
+clicks reportedly DID work) — something about this specific window/session now blocks synthetic input
+entirely, cause not identified. **Drag/nudge/apply/cancel interaction in `TxImageEditorPaneView` is
+therefore unverified by hand** — the VM-side logic it calls into (10 tests) and the hand-off/reflow
+logic around it (6 tests) are the only real verification this pass got. A synthetic test image
+(`~/Pictures/ScanlineStudio/Stock/test-pattern.png`) was created for this attempt and removed again
+afterward.
+
+**Next**: either get a human to hands-on-verify Piece 5c in a real session (drag crop/overlay, nudge,
+apply/cancel), or investigate the synthetic-input regression separately before trusting further
+automated UI verification in this sandbox. Not yet committed — all TX editor work (Pieces 1-6, plus
+Piece 5c and the stock-picker crash fix) is still uncommitted in the working tree.
+
+## Resume here (2026-08-05, superseded by the entry above) — Phase 4 image-tooling UI: all 9 pieces DONE, plus real hands-on layout/theme corrections and a Dock.Avalonia/Avalonia package update
 
 All 9 pieces of `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` are complete: Abstractions
 interfaces, `IStockImageLibrary`/`IReceiveHistoryStore` implementations, auto-record-on-completion,

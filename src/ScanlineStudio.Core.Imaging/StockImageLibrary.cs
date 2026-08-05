@@ -49,6 +49,12 @@ public sealed class StockImageLibrary : IStockImageLibrary
         return CopyToImageSource(image, targetWidth, targetHeight);
     }
 
+    public async Task<IImageSource> LoadOriginalAsync(StockImageEntry entry, CancellationToken ct = default)
+    {
+        using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgb24>(entry.FilePath, ct).ConfigureAwait(false);
+        return CopyToImageSource(image, image.Width, image.Height);
+    }
+
     private async Task<string> ResolveDirectoryAsync(CancellationToken ct)
     {
         var settings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);

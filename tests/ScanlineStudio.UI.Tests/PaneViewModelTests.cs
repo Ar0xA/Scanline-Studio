@@ -64,11 +64,12 @@ public sealed class PaneViewModelTests
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
         var filePicker = new FakeFilePickerService();
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), filePicker, new FakeLocalizationService());
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService());
 
         Assert.False(vm.TransmitCommand.CanExecute(null));
 
-        await vm.SelectImageCommand.ExecuteAsync(null);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.TransmitCommand.CanExecute(null));
@@ -83,7 +84,7 @@ public sealed class PaneViewModelTests
     public void TxControlsPaneViewModel_SelectingANewMode_ClearsAlreadyLoadedImage()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeFilePickerService(), new FakeLocalizationService());
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService());
 
         vm.SelectedMode = TestMode with { Id = "other" };
 
@@ -101,9 +102,10 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [stockEntry],
             FullImageToReturn = new ArrayImageSource(1, 1, [new Rgb24(4, 5, 6)]),
         };
-        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), stockLibrary, new FakeFilePickerService(), new FakeLocalizationService());
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), stockLibrary, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService());
 
-        await vm.SelectStockImageCommand.ExecuteAsync(stockEntry);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectStockImageCommand.ExecuteAsync(stockEntry));
+        editor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.TransmitCommand.CanExecute(null));
@@ -114,94 +116,110 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_ModeChangeWithAnAlreadyLoadedSource_RetainsAndReloadsIt()
+    public async Task TxControlsPaneViewModel_PickingASource_OpensTheEditorInsteadOfLoadingDirectly()
+    {
+        // The pre-TX-editor behavior auto-resized straight to mode dimensions with no edit step;
+        // this pass's real behavior change is that picking a source loads it at native resolution
+        // and hands it to an editor instead -- CanTransmit must NOT flip true until Apply happens.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService());
+
+        await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+
+        // Opening the editor must not, by itself, make the old flat-load path's image transmittable
+        // -- only Apply does that now.
+        Assert.False(vm.TransmitCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CancellingTheEditor_LeavesAnyPreviouslyAppliedImageUntouched()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService());
+
+        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        firstEditor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.TransmitCommand.CanExecute(null));
+        var loadedAfterFirstApply = ExtractLoadedImage(vm);
+
+        filePicker.PathToReturn = "/tmp/b.png";
+        var secondEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        secondEditor.CancelCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.TransmitCommand.CanExecute(null));
+        Assert.Same(loadedAfterFirstApply, ExtractLoadedImage(vm));
+        Assert.Equal("a.png", vm.SelectedFileName);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectingASourceWhileAnEditorIsAlreadyOpen_IsIgnored()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { UseManualGating = true };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService());
+        var editorOpenedCount = 0;
+        vm.EditorOpened += _ => editorOpenedCount++;
+
+        var firstPick = vm.SelectImageCommand.ExecuteAsync(null); // original load in flight, not resolved yet
+        Dispatcher.UIThread.RunJobs();
+        var secondPick = vm.SelectImageCommand.ExecuteAsync(null); // must be a no-op -- an editor is already "opening"
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(imageFileLoader.PendingLoads);
+        imageFileLoader.PendingLoads[0].SetResult(new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]));
+        Dispatcher.UIThread.RunJobs();
+        await firstPick;
+        await secondPick;
+
+        Assert.Equal(1, editorOpenedCount);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ModeChangeWithAnAppliedEdit_ReRunsThePipelineAtTheNewModesDimensions()
     {
         var modeA = TestMode;
         var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
         var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
         var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), filePicker, new FakeLocalizationService());
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService());
 
-        await vm.SelectImageCommand.ExecuteAsync(null);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.TransmitCommand.CanExecute(null));
 
-        imageFileLoader.ResultToReturn = new ArrayImageSource(2, 2, [new Rgb24(9, 9, 9), new Rgb24(9, 9, 9), new Rgb24(9, 9, 9), new Rgb24(9, 9, 9)]);
         vm.SelectedMode = modeB;
-        Dispatcher.UIThread.RunJobs();
 
-        // Retained and successfully reloaded at the new mode's dimensions -- NOT nulled out the way
-        // the pre-Phase-4 behavior did.
+        // Retained and successfully re-flowed at the new mode's dimensions -- NOT nulled out the
+        // way the pre-Phase-4 behavior did, and re-derived from the cached ORIGINAL (never
+        // re-reads the file), per spec/07-image-pipeline.md's "Mode-change interaction" note.
         Assert.Equal("a.png", vm.SelectedFileName);
         Assert.NotNull(vm.PreviewImage);
         Assert.True(vm.TransmitCommand.CanExecute(null));
+        Assert.Equal((modeB.ImageWidth, modeB.ImageHeight), (ExtractLoadedImage(vm)!.Width, ExtractLoadedImage(vm)!.Height));
     }
 
-    [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_ModeChangeReload_DisablesTransmitForTheWholeInFlightWindow()
+    /// <summary>Drives a pick command to the point where <see cref="TxControlsPaneViewModel.EditorOpened"/>
+    /// fires, then returns the editor instance -- every "pick a source" test needs this same
+    /// choreography now that picking opens an editor instead of loading directly.</summary>
+    private static async Task<TxImageEditorPaneViewModel> OpenEditorAsync(TxControlsPaneViewModel vm, Func<Task> pick)
     {
-        var modeA = TestMode;
-        var modeB = TestMode with { Id = "other" };
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
-        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), filePicker, new FakeLocalizationService());
+        TxImageEditorPaneViewModel? opened = null;
+        vm.EditorOpened += editor => opened = editor;
 
-        await vm.SelectImageCommand.ExecuteAsync(null);
-        Dispatcher.UIThread.RunJobs();
-        Assert.True(vm.TransmitCommand.CanExecute(null));
-
-        imageFileLoader.UseManualGating = true;
-        vm.SelectedMode = modeB;
+        await pick();
         Dispatcher.UIThread.RunJobs();
 
-        // The reload hasn't resolved yet -- must stay disabled for the whole window, not just the
-        // instant the mode change was triggered.
-        Assert.False(vm.TransmitCommand.CanExecute(null));
-
-        imageFileLoader.PendingLoads[0].SetResult(new ArrayImageSource(1, 1, [new Rgb24(7, 7, 7)]));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.True(vm.TransmitCommand.CanExecute(null));
-    }
-
-    [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_RapidModeChanges_AStaleReloadCompletingLateNeverOverwritesTheNewerOne()
-    {
-        var modeA = TestMode;
-        var modeB = TestMode with { Id = "b" };
-        var modeC = TestMode with { Id = "c" };
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB, modeC] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
-        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), filePicker, new FakeLocalizationService());
-
-        await vm.SelectImageCommand.ExecuteAsync(null);
-        Dispatcher.UIThread.RunJobs();
-
-        imageFileLoader.UseManualGating = true;
-        vm.SelectedMode = modeB; // reload #1 (for modeB) queued, not yet resolved
-        Dispatcher.UIThread.RunJobs();
-        vm.SelectedMode = modeC; // cancels reload #1's token, queues reload #2 (for modeC)
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal(2, imageFileLoader.PendingLoads.Count);
-
-        var newerResult = new ArrayImageSource(1, 1, [new Rgb24(42, 42, 42)]);
-        imageFileLoader.PendingLoads[1].SetResult(newerResult); // the CURRENT (modeC) reload finishes first
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.True(vm.TransmitCommand.CanExecute(null));
-        Assert.Same(newerResult, ExtractLoadedImage(vm));
-
-        // The stale (modeB) reload finally completes late -- must not clobber modeC's already-applied result.
-        var staleResult = new ArrayImageSource(1, 1, [new Rgb24(1, 1, 1)]);
-        imageFileLoader.PendingLoads[0].TrySetResult(staleResult);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.True(vm.TransmitCommand.CanExecute(null));
-        Assert.Same(newerResult, ExtractLoadedImage(vm));
+        Assert.NotNull(opened);
+        return opened!;
     }
 
     private static IImageSource? ExtractLoadedImage(TxControlsPaneViewModel vm)

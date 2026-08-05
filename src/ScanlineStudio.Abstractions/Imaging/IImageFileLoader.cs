@@ -12,7 +12,13 @@ public interface IImageFileLoader
     /// <summary>Resizes to exactly <paramref name="targetWidth"/>/<paramref name="targetHeight"/> —
     /// <see cref="ISstvEncoder.EncodeAsync"/> throws on any dimension mismatch, so a picked file
     /// must already be the mode's exact size by the time it gets there. This is a plain fit-to-mode
-    /// resize, not the Phase-4 crop/resize/filter tooling (`ITransmitImagePreparer`,
+    /// resize, not the TX image editor's crop/resize/overlay tooling (`ITransmitImagePreparer`,
     /// spec/07-image-pipeline.md) — no user-chosen crop region, just "make it transmittable."</summary>
     Task<IImageSource> LoadAsync(string path, int targetWidth, int targetHeight, CancellationToken ct = default);
+
+    /// <summary>Loads at the file's own native resolution, no resize at all — the TX image
+    /// editor's entry point (spec/07-image-pipeline.md's "TX image editor" section): the editor's
+    /// own `ITransmitImagePreparer` pipeline owns fitting the image to a target mode, not this
+    /// loader.</summary>
+    Task<IImageSource> LoadOriginalAsync(string path, CancellationToken ct = default);
 }
