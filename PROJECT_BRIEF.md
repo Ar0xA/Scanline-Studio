@@ -2,7 +2,157 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-05, latest, ACTIVE) — Full rename: Yoniq → Scanline Studio
+## Resume here (2026-08-05, latest, ACTIVE) — Phase 4 image-tooling UI: all 9 pieces DONE, plus real hands-on layout/theme corrections and a Dock.Avalonia/Avalonia package update
+
+All 9 pieces of `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` are complete: Abstractions
+interfaces, `IStockImageLibrary`/`IReceiveHistoryStore` implementations, auto-record-on-completion,
+strengthened `UiLayeringArchitectureTests`, `RxHistoryPaneViewModel`, TX stock picker + mode-change
+race fix, minimal View menu, and DI wiring — full detail in the superseded entry below (pieces 1-4)
+and this entry's own history. **Full solution: 761/761 tests green, 0 build warnings/errors.**
+
+**Pieces 5-9, done after the backend/persistence checkpoint below:**
+- **Piece 5**: `UiLayeringArchitectureTests` gained a `PackageReference` check (`Microsoft.Data.Sqlite`/`SixLabors.ImageSharp`
+  must never appear in `ScanlineStudio.UI.csproj`) — the existing checks only ever caught `ProjectReference`/assembly-name
+  violations, a real gap the audit flagged.
+- **Piece 6**: `RxHistoryPaneViewModel` + view — thumbnail grid from `IReceiveHistoryStore`, selecting
+  an entry loads a **separate** read-only preview, never touching `RxImagePaneViewModel`'s live binding
+  (structurally guaranteed — the constructor doesn't even take `IReceivedImageBuffer`).
+- **Piece 7**: TX stock picker (inline thumbnail strip in `TxControlsPaneViewModel`, backed by
+  `IStockImageLibrary`) + the audited mode-change retention fix. **Two real bugs caught by the test
+  suite itself, not review**: (1) the View's `<Image>` binding had nothing to bind to — `StockImageEntry`
+  carries no thumbnail, needed a `StockEntryViewModel` wrapper mirroring `RxHistoryEntryViewModel`,
+  caught before ever building since I was writing the XAML by hand. (2) The race-condition test for
+  "a stale reload must never overwrite a newer one" **passed even with the actual fix removed** on
+  first attempt — the fake `IImageFileLoader`'s own cancellation-token wiring was masking the code
+  path the test was supposed to exercise (the stale call threw via cancellation before ever reaching
+  the guard). Fixed the fake (stopped auto-cancelling) and reconfirmed: fails without the fix, passes
+  with it.
+- **Piece 8**: Minimal View menu. Used .NET reflection against the actual installed `Dock.Model.dll`
+  before writing code (per the plan's own flagged uncertainty) — confirmed `IFactory` has no
+  `RestoreDockable` at all (that name only exists on the unrelated `IDockState.Restore`
+  save/load-layout-to-disk mechanism); the real reopen path is `Factory.AddDockable`. Verified via a
+  headless Avalonia test driving the real `AppDockFactory` API (close → reopen → same instance,
+  correct `ActiveDockable`) rather than synthetic X11 clicks — a real attempt at XTEST-driven clicks
+  on the Dock tab strip proved unreliable in this sandbox (see below), but native `Menu`/`MenuItem`
+  controls turned out to work fine for a real screenshot-verified open (see next).
+- **Piece 9**: DI wiring in `ScanlineStudio.Host` — `IStockImageLibrary`, `IReceiveHistoryStore`,
+  `ReceiveHistoryRecorder` (eagerly resolved once so its constructor's event subscriptions actually
+  fire, same reasoning as why nothing else in the DI graph would trigger it automatically).
+
+**Real screenshot verification, not just claimed** — genuinely launched the app (`dotnet run`) under
+this machine's live X11 display and screenshotted it. Real friction hit and solved: `gnome-screenshot`/
+`flameshot`/`xwd` all returned only the desktop wallpaper for this specific window despite `xwininfo`
+confirming `Map State: IsViewable` — root cause never fully identified (GPU/compositor-related most
+likely), worked around by parsing the raw XWD pixel dump manually with `struct`/`numpy`/`PIL` (no
+`ImageMagick`/`netpbm` available, no sudo). That manual parse **did** show the real running app
+correctly. Synthetic XTEST clicks landed fine on the native `Menu` (View dropdown opened for real,
+screenshotted) but not reliably on Dock.Avalonia's own tab strip (a coordinate-scaling mistake on my
+first attempts, then still imprecise after correcting it) — the close/reopen *interaction* itself is
+verified by the headless test instead, which is both more reliable and matches how every other pane
+in this codebase is already tested.
+
+**Two real user corrections, made directly after seeing the running app (not held for a future pass)**:
+1. **Waterfall was "way too big"** — it was tab-grouped with RX Image/RX History, so it took over the
+   whole region when active. Restructured `AppDockFactory.CreateLayout()`: the waterfall now lives in
+   its own fixed-proportion `WaterfallToolDock` (~20% height) above a `RxToolDock` (RX Image/RX History
+   tab-grouped, ~80%), inside a vertical `ProportionalDock` — matching every real SDR-instrument
+   reference the Aesthetic Directive itself cites (SDR++/cuSDR64/Perseus keep the waterfall as a
+   persistent strip, never a tab). `ShowPane`/View-menu commands updated to target the right home dock
+   per pane. `spec/09-ui.md`'s Aesthetic Directive and "Main window layout" sections, and
+   `spec/07-image-pipeline.md`'s cross-references, updated to match — this was a real correction to
+   already-written spec text, not just code.
+2. **Default theme changed from OS-follow to explicit Light** — `App.axaml`'s
+   `RequestedThemeVariant` was `"Default"` (follows system theme); on this machine's dark-OS-theme
+   setup that meant the app defaulted to dark, which the user didn't want. Changed to `"Light"`
+   explicitly; `spec/09-ui.md`'s Theming section updated to match (still user-overridable in principle,
+   but no settings UI exists yet to actually change it at runtime).
+
+Both changes verified visually via the same real-screenshot pipeline, not assumed.
+
+**Dock.Avalonia/Avalonia package update, requested directly ("update docks")**: bumped
+`Dock.Avalonia`/`Dock.Model.Mvvm` from the deliberately-pinned `11.2.0.2` line (see the old pin
+comment's own history — it existed specifically to keep Avalonia at `11.2.3`) to the latest `11.x`
+line, `11.3.12.1` — **not** the actual latest overall (`12.1.0`), since that requires Avalonia
+`12.1.0`, a major-version framework jump well beyond what a routine package update implies; confirmed
+via nuspec inspection before choosing, not assumed either way. `Avalonia`/`Avalonia.Desktop`/
+`Avalonia.Diagnostics`/`Avalonia.Themes.Fluent`/`Avalonia.Fonts.Inter`/`Avalonia.Headless`/
+`Avalonia.Headless.XUnit` all bumped to the matching `11.3.12` floor. **Real breaking change hit and
+fixed**: Dock's Fluent theme moved out of `Dock.Avalonia` itself into a new
+`Dock.Avalonia.Themes.Fluent` package starting around the `11.3.2` line (confirmed by searching
+nuget.org and inspecting the actual package contents, not guessed) — `App.axaml`'s `avares://` path
+updated to match (`avares://Dock.Avalonia.Themes.Fluent/DockFluentTheme.axaml`, root path not the old
+`/Themes/` subfolder). Full solution re-verified: 761/761 tests green (one `Core.Radio.Tests` failure
+under the full parallel run was the already-documented pre-existing flake, confirmed passing 99/99 in
+isolation — unrelated to this change, not chased). Real app re-launched and screenshotted again after
+the bump: renders identically, no visual regression.
+
+**Explicitly out of scope this pass** (unchanged from the original plan): `ITransmitImagePreparer`
+(crop/resize/filter, the `ImageRectDialog` live-preview editor — real "editing" the user's second
+message flagged as part of "images, receiving, editing, tx-ing," genuinely not built yet, next
+candidate), full logbook/QSO linking, dock layout persistence across restarts (View menu covers
+reopen only).
+
+**Next**: `ITransmitImagePreparer` (crop/resize/filter/overlay) is the natural next piece given the
+user's own stated priority ("images, receiving, editing, tx-ing") and the standing
+`feedback_ui_effort_allocation` memory (image RX/TX/templating richness over further polish
+elsewhere) — not started, no design work done yet.
+
+## Resume here (2026-08-05, superseded by the entry above) — Phase 4 image-tooling UI: pieces 1-4 of 9 done (backend/persistence layer)
+
+Implementing the audited design (`spec/07-image-pipeline.md`/`spec/09-ui.md`/`docs/removed-features.md`,
+both rounds passed) from `/home/artien/.claude/plans/wondrous-crafting-ladybug.md`. Building piece by
+piece, each tested before the next.
+
+**Done so far:**
+1. **Abstractions interfaces** — `IStockImageLibrary`/`StockImageEntry`,
+   `IReceiveHistoryStore`/`ReceiveHistoryEntry`/`ReceiveHistoryFilter` added to
+   `ScanlineStudio.Abstractions.Imaging`. **Real bug caught during implementation, not by either
+   audit round**: `ReceiveHistoryFilter` had a `Callsign` field with nothing on `ReceiveHistoryEntry`
+   to filter against (no QSO-linking UI exists to populate it) — removed, spec updated to match.
+2. **`IStockImageLibrary`** — `StockImageLibrary` (`ScanlineStudio.Core.Imaging`), folder-scan +
+   ImageSharp thumbnail/full-load, `ImageLibrarySettings` section (`StockDirectory`, defaults under
+   `MyPictures/ScanlineStudio/Stock`). 4 new tests, pixel-exact.
+3. **`IReceiveHistoryStore`** — `SqliteReceiveHistoryStore` (`ScanlineStudio.Core.Logbook`, this
+   project's first real content beyond a template stub). One table, `Microsoft.Data.Sqlite`. **Real
+   layering bug caught and fixed before it shipped**: first draft referenced
+   `ScanlineStudio.Core.Imaging`'s `ArrayImageSource` for thumbnail decode — a Core-to-Core edge,
+   exactly what `ReceivedImageBuffer`'s own doc comment (in `Core.Imaging`) says must never happen,
+   just the mirrored direction. Fixed with a small local `IImageSource` holder instead of sharing
+   code across sibling Core projects. 5 new tests.
+4. **Auto-record RX history on decode completion** — `ReceiveHistoryRecorder`
+   (`ScanlineStudio.Core.Logbook`). **Real gap found during planning** (not caught by either audit
+   round): `ISstvDecoder` has no "decode completed" event, only per-scanline-group `LineDecoded` —
+   completion is *learned* by tracking the delta between successive `Line` values (constant per
+   image, reveals the scanline-group size for paired-line families like PD/MP/RM8/RM12 without
+   needing a new decoder event). **A real bug in the first implementation, caught by the test suite
+   itself, not review**: the fallback for "step not yet learned" defaulted to `mode.ImageHeight`,
+   which made the check `Line(0) + ImageHeight >= ImageHeight` trivially true — every image would
+   have "completed" after just its first line, every time. Two of the three original tests didn't
+   catch this because their early assertions raced the fire-and-forget completion `Task.Run` and
+   happened to pass by timing luck; the third test (`DecodeRestarted_BeforeCompletion_...`) exposed
+   it reliably. Fixed by deferring any completion check until the step is actually learned (2nd+
+   event) — safe because no real `SstvModeDefinition` has an `ImageHeight` anywhere near 1-2 rows.
+   4 new tests, confirmed stable across repeated runs.
+
+Fire-and-forget I/O (file save + SQLite insert) from the recorder is isolated in a `try`/`catch`
+`Task.Run`, matching `SstvSessionService`'s already-established fan-out-handler pattern — must not
+block the audio drain thread `LineDecoded` fires from.
+
+Full solution builds clean, 0 warnings/errors, throughout (Debug analyzers already caught one real
+issue independent of the above: `DateTimeOffset.Parse(string)` without `CultureInfo.InvariantCulture`
+in the SQLite reader, CA1305 — fixed).
+
+**Remaining (pieces 5-9 of 9)**: strengthen `UiLayeringArchitectureTests` with a `PackageReference`
+check (Microsoft.Data.Sqlite/SixLabors.ImageSharp must never appear in `ScanlineStudio.UI.csproj`);
+`RxHistoryPaneViewModel`+view (dockable, tab-grouped with RX Image, never touches
+`RxImagePaneViewModel`'s live binding); TX stock picker + the mode-change retention/race fix in
+`TxControlsPaneViewModel` (audited finding: must disable transmit for the whole in-flight reload
+window, not just at the start, and cancel-and-replace on rapid mode changes); minimal View menu
+(Dock's real `RestoreDockable` reopen semantics not yet confirmed by actually running the app — flagged
+in the plan as needing hands-on verification, not assumed); DI wiring in `ScanlineStudio.Host`. Final
+step: full suite + `run` skill hands-on verification per the plan's own closing section.
+
+## Resume here (2026-08-05, superseded by the entries above) — Full rename: Yoniq → Scanline Studio
 
 Whole-application rebrand, requested by the user, done in one pass right after Phase 3 (minimal UI)
 closed out. Two commits: the Phase 3 work itself landed first under the old name (it was built as

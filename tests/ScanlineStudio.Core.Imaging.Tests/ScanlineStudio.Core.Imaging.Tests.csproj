@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ScanlineStudio.Core.Imaging\ScanlineStudio.Core.Imaging.csproj" />
+    <ProjectReference Include="..\..\src\ScanlineStudio.Settings\ScanlineStudio.Settings.csproj" />
   </ItemGroup>
 
 </Project>

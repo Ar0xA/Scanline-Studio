@@ -116,8 +116,30 @@ internal sealed class FakeImageFileLoader : IImageFileLoader
 {
     public IImageSource? ResultToReturn { get; set; }
 
+    /// <summary>When true, <see cref="LoadAsync"/> doesn't resolve immediately -- it queues a
+    /// <see cref="TaskCompletionSource{TResult}"/> onto <see cref="PendingLoads"/> for the test to
+    /// complete manually, in whatever order it needs to provoke a specific interleaving (e.g.
+    /// TxControlsPaneViewModel's mode-change-during-reload race). Deliberately does NOT auto-cancel
+    /// when <c>ct</c> is cancelled -- letting a "stale" pending load still resolve *successfully*
+    /// after its caller's token was already cancelled is exactly the scenario
+    /// TxControlsPaneViewModel's own `cts.IsCancellationRequested` guard exists to catch; a fake that
+    /// auto-throws on cancellation would make that guard untestable (the exception path would mask
+    /// it every time).</summary>
+    public bool UseManualGating { get; set; }
+
+    public List<TaskCompletionSource<IImageSource>> PendingLoads { get; } = [];
+
     public Task<IImageSource> LoadAsync(string path, int targetWidth, int targetHeight, CancellationToken ct = default)
-        => Task.FromResult(ResultToReturn ?? throw new InvalidOperationException("No result configured."));
+    {
+        if (!UseManualGating)
+        {
+            return Task.FromResult(ResultToReturn ?? throw new InvalidOperationException("No result configured."));
+        }
+
+        var tcs = new TaskCompletionSource<IImageSource>(TaskCreationOptions.RunContinuationsAsynchronously);
+        PendingLoads.Add(tcs);
+        return tcs.Task;
+    }
 }
 
 internal sealed class FakeFilePickerService : IFilePickerService
@@ -125,4 +147,43 @@ internal sealed class FakeFilePickerService : IFilePickerService
     public string? PathToReturn { get; set; } = "/tmp/fake.png";
 
     public Task<string?> PickImageFileAsync() => Task.FromResult(PathToReturn);
+}
+
+internal sealed class FakeStockImageLibrary : IStockImageLibrary
+{
+    public List<StockImageEntry> EntriesToReturn { get; set; } = [];
+
+    public IImageSource? ThumbnailToReturn { get; set; }
+
+    public IImageSource? FullImageToReturn { get; set; }
+
+    public Task<IReadOnlyList<StockImageEntry>> ListAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<StockImageEntry>>(EntriesToReturn);
+
+    public Task<IImageSource> LoadThumbnailAsync(StockImageEntry entry, int maxDimension, CancellationToken ct = default)
+        => Task.FromResult(ThumbnailToReturn ?? throw new InvalidOperationException("No thumbnail configured."));
+
+    public Task<IImageSource> LoadFullAsync(StockImageEntry entry, int targetWidth, int targetHeight, CancellationToken ct = default)
+        => Task.FromResult(FullImageToReturn ?? throw new InvalidOperationException("No full image configured."));
+}
+
+internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
+{
+    public List<ReceiveHistoryEntry> EntriesToReturn { get; set; } = [];
+
+    public IImageSource? ThumbnailToReturn { get; set; }
+
+    public List<ReceiveHistoryEntry> RecordedEntries { get; } = [];
+
+    public Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<ReceiveHistoryEntry>>(EntriesToReturn);
+
+    public Task<IImageSource> LoadThumbnailAsync(ReceiveHistoryEntry entry, int maxDimension, CancellationToken ct = default)
+        => Task.FromResult(ThumbnailToReturn ?? throw new InvalidOperationException("No thumbnail configured."));
+
+    public Task RecordAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
+    {
+        RecordedEntries.Add(entry);
+        return Task.CompletedTask;
+    }
 }

@@ -26,9 +26,31 @@
                 </StackPanel>
             </Border>
 
-            <Button Content="{loc:Translate Panes.TxControls.SelectImage}"
-                    Command="{Binding SelectImageCommand}"
-                    HorizontalAlignment="Stretch" />
+            <Border Classes="ScanlineStudioModuleGroup">
+                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Panes.TxControls.StockLabel}" />
+                    <ListBox ItemsSource="{Binding StockEntries}"
+                             MaxHeight="120">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:StockEntryViewModel">
+                                <Button Command="{Binding $parent[ListBox].((vm:TxControlsPaneViewModel)DataContext).SelectStockImageCommand}"
+                                        CommandParameter="{Binding Entry}"
+                                        ToolTip.Tip="{Binding Entry.FileName}">
+                                    <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />
+                                </Button>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <Button Content="{loc:Translate Panes.TxControls.SelectImage}"
+                            Command="{Binding SelectImageCommand}"
+                            HorizontalAlignment="Stretch" />
+                </StackPanel>
+            </Border>
 
             <TextBlock Text="{Binding SelectedFileName}"
                        IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />

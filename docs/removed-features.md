@@ -18,6 +18,36 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 - **Fully replaced if the OmniRig-as-client backend ships**: unlike the above two, this restores the original arbitration case directly — Scanline Studio becomes just another OmniRig-aware client alongside the user's existing logger, no migration to `rigctld` needed. This backend is speculative/not yet designed (see [[spec/03-cat-layer]]'s Definition of done), so treat this line as the target, not a shipped guarantee.
 - **Impact**: users with a single application controlling the rig are unaffected regardless of backend. Users sharing a rig across multiple OmniRig-aware applications should stay on OmniRig (with Scanline Studio as an OmniRig client, once built) or migrate everything to `rigctld`-mediated sharing.
 
+## Legacy History-tab navigation affordances (step nav, history→template drag-in, clipboard)
+
+- **Legacy**: `Main.h`'s `TabHist` page controls — `UDHist` (a `TUpDown` spinner for step
+  prev/next through history), `SBLatest` ("jump to most recent" speed button), `HistStat` (a status
+  label). `HistView.cpp`'s `THistViewDlg::PBMouseMove` calls `BeginDrag(TRUE,0)` on a history
+  thumbnail; `Main.cpp`'s `TabTemp`/`TabTX` drag-accept handlers check
+  `pHistView->IsPBox(Source) >= 0` and, on drop, insert a `CDrawPic` item into the template
+  composition (`AdjustTempView`/`AdjustPage(pgTemp)`) — **this is drag-*in*, compositing a history
+  image directly into the TX template, not drag-out to another application.** Separately, `SBCopy`
+  (`SBCopyClick` → `CopyBitmap(pBitmapHist)`) copies the *selected history image* to the clipboard;
+  `SBPaste` (`SBPasteClick` → `PasteBitmap(pBitmapTXM,...)`, then `AdjustPage(pgTX)`) pastes clipboard
+  content *into* the TX slot — an asymmetric pair, not a matched copy/paste-to-TX pair.
+- **Replacement**: partial. [[spec/07-image-pipeline]]'s new `RxHistoryPane` (a dockable, always-
+  visible thumbnail grid, not a modal dialog or a page you must switch to) covers click-to-view
+  browsing; the TX Controls pane's inline stock/template picker plus its existing file-browse flow
+  cover picking a TX source image.
+- **Not carried forward this pass — the real gap**: there is no history→TX/template compositing path
+  at all in the new design — selecting a `RxHistoryPane` entry only loads a read-only preview
+  ([[spec/07-image-pipeline]]), it cannot be dragged into a template or the TX slot the way legacy's
+  drag-in could. Also dropped: direct step-through navigation (`UDHist`-style), one-click
+  jump-to-latest, and both clipboard buttons (copying a history image out, pasting into TX). Clipboard
+  paste as *file-picker-adjacent* TX input is separately named as in-scope in
+  [[spec/07-image-pipeline]]'s TX flow step 1 ("file, clipboard paste, or webcam/screen-capture
+  frame") but has no clipboard-specific UI affordance built yet — same underlying gap either way.
+- **Impact**: users who relied on rapid keyboard/spinner-driven step-through of RX history, or on
+  dragging a history thumbnail directly into a TX template to compose it, or on OS clipboard
+  copy-from-history/paste-to-TX, need to use file-based load/save instead for now (save the history
+  image to a file, then load it via the TX picker). Revisit if this turns out to matter in practice —
+  logged here rather than silently dropped per CLAUDE.md's removal rule.
+
 ## CItems custom-item plugin ABI
 
 - **Legacy**: `CItems/` (PERIMG, QSLBox, TextArt, TEXTBOX subfolders), documented in `CItems/ECUSTOM.TXT` — a native Win32 DLL ABI that MMSSTV loads on-the-fly to extend the QSL/template designer.

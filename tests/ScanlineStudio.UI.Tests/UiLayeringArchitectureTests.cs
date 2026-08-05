@@ -43,6 +43,29 @@ public sealed class UiLayeringArchitectureTests
             $"ScanlineStudio.UI.csproj declares a ProjectReference to a ScanlineStudio.Core.* project: {string.Join(", ", violations)}");
     }
 
+    /// <summary>Closes spec/07-image-pipeline.md's own flagged gap: the two checks above only ever
+    /// caught a <c>ScanlineStudio.Core.*</c> project/assembly reference -- a direct
+    /// <c>PackageReference</c> to <c>Microsoft.Data.Sqlite</c> or <c>SixLabors.ImageSharp</c> from
+    /// <c>ScanlineStudio.UI</c> would defeat <see cref="ScanlineStudio.Abstractions.Imaging.IStockImageLibrary"/>/
+    /// <see cref="ScanlineStudio.Abstractions.Imaging.IReceiveHistoryStore"/>'s whole
+    /// <c>IImageSource</c>-only layering contract while passing both existing tests silently.</summary>
+    [Fact]
+    public void ScanlineStudioUiCsproj_DeclaresNoPackageReferenceToSqliteOrImageSharp()
+    {
+        var csprojPath = FindScanlineStudioUiCsproj();
+        var document = XDocument.Load(csprojPath);
+        var ns = document.Root!.Name.Namespace;
+
+        var bannedPackages = new[] { "Microsoft.Data.Sqlite", "SixLabors.ImageSharp" };
+        var violations = document.Descendants(ns + "PackageReference")
+            .Select(e => e.Attribute("Include")?.Value ?? string.Empty)
+            .Where(include => bannedPackages.Contains(include, StringComparer.Ordinal))
+            .ToList();
+
+        Assert.True(violations.Count == 0,
+            $"ScanlineStudio.UI.csproj declares a PackageReference that should stay behind an Abstractions interface: {string.Join(", ", violations)}");
+    }
+
     private static string FindScanlineStudioUiCsproj()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

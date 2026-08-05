@@ -17,9 +17,14 @@ public partial class MainViewModel : ViewModelBase
         var layout = dockFactory.CreateLayout();
         dockFactory.InitLayout(layout);
         Layout = layout;
+        DockFactory = dockFactory;
 
         RadioStatus = new RadioStatusViewModel(radioSession, localization);
     }
 
     public RadioStatusViewModel RadioStatus { get; }
+
+    /// <summary>Exposed for `MainWindow.axaml`'s View menu -- see AppDockFactory's own doc comment
+    /// for why pane reopen commands live there rather than being duplicated here.</summary>
+    public AppDockFactory DockFactory { get; }
 }

@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.Input;
 using Dock.Model.Controls;
 using Dock.Model.Core;
 using Dock.Model.Mvvm;
@@ -20,22 +21,42 @@ namespace ScanlineStudio.UI.Docking;
 /// Registered in DI (decision #7 — this, not a static locator, is how a Dock-constructed pane gets
 /// its real dependencies: constructor-injected into THIS factory, and <see cref="CreateLayout"/>
 /// passes them straight into each pane view-model's own constructor). Three real panes (decision #9's
-/// scope trim — the radio/frequency readout is `MainWindow` chrome, not a 4th dockable pane).</summary>
-public sealed class AppDockFactory : Factory
+/// scope trim — the radio/frequency readout is `MainWindow` chrome, not a 4th dockable pane).
+///
+/// Phase 4 added the minimal View menu (spec/09-ui.md's "Pane visibility" section): closing a
+/// dockable `Tool` has no built-in reopen path, so this factory keeps a reference to each closable
+/// pane instance and its home `ToolDock` after <see cref="CreateLayout"/> builds them, re-adding via
+/// <see cref="Factory.AddDockable"/> (confirmed via reflection against the installed `Dock.Model`
+/// package -- there is no `RestoreDockable` on `IFactory` itself, only `IDockState.Restore`, which is
+/// a different save/restore-layout-to-disk mechanism this pass doesn't use) rather than the same VM
+/// instance being destroyed and recreated.</summary>
+public sealed partial class AppDockFactory : Factory
 {
     private readonly ISstvSessionService _sstvSession;
     private readonly IImageFileLoader _imageFileLoader;
+    private readonly IStockImageLibrary _stockLibrary;
+    private readonly IReceiveHistoryStore _historyStore;
     private readonly IFilePickerService _filePickerService;
     private readonly ILocalizationService _localization;
+
+    private WaterfallPaneViewModel? _waterfall;
+    private RxImagePaneViewModel? _rxImage;
+    private RxHistoryPaneViewModel? _rxHistory;
+    private ToolDock? _waterfallToolDock;
+    private ToolDock? _rxToolDock;
 
     public AppDockFactory(
         ISstvSessionService sstvSession,
         IImageFileLoader imageFileLoader,
+        IStockImageLibrary stockLibrary,
+        IReceiveHistoryStore historyStore,
         IFilePickerService filePickerService,
         ILocalizationService localization)
     {
         _sstvSession = sstvSession;
         _imageFileLoader = imageFileLoader;
+        _stockLibrary = stockLibrary;
+        _historyStore = historyStore;
         _filePickerService = filePickerService;
         _localization = localization;
     }
@@ -44,15 +65,48 @@ public sealed class AppDockFactory : Factory
     {
         var waterfall = new WaterfallPaneViewModel(_sstvSession, _localization);
         var rxImage = new RxImagePaneViewModel(_sstvSession, _localization);
-        var txControls = new TxControlsPaneViewModel(_sstvSession, _imageFileLoader, _filePickerService, _localization);
+        var rxHistory = new RxHistoryPaneViewModel(_historyStore, _localization);
+        var txControls = new TxControlsPaneViewModel(_sstvSession, _imageFileLoader, _stockLibrary, _filePickerService, _localization);
 
-        var mainToolDock = new ToolDock
+        // Waterfall is a fixed strip above RX Image/RX History, not tab-grouped with them --
+        // real user feedback after actually seeing it running: a tabbed waterfall took over the
+        // whole region when active (a spectrum/waterfall visualization doesn't need that much
+        // space), and every real SDR-instrument reference this project's own Aesthetic Directive
+        // cites (SDR++/cuSDR64/Perseus) keeps the waterfall as a persistent strip, never a tab a
+        // user must switch away from RX to see. Supersedes spec/09-ui.md's earlier "reserve massive
+        // grid cells for the waterfall" framing -- see that doc's updated "Main window layout"
+        // section.
+        var waterfallToolDock = new ToolDock
         {
-            Id = "MainToolDock",
-            Title = "MainToolDock",
-            VisibleDockables = CreateList<IDockable>(waterfall, rxImage),
+            Id = "WaterfallToolDock",
+            Title = "WaterfallToolDock",
+            VisibleDockables = CreateList<IDockable>(waterfall),
             ActiveDockable = waterfall,
         };
+
+        var rxToolDock = new ToolDock
+        {
+            Id = "RxToolDock",
+            Title = "RxToolDock",
+            VisibleDockables = CreateList<IDockable>(rxImage, rxHistory),
+            ActiveDockable = rxImage,
+        };
+
+        _waterfall = waterfall;
+        _rxImage = rxImage;
+        _rxHistory = rxHistory;
+        _waterfallToolDock = waterfallToolDock;
+        _rxToolDock = rxToolDock;
+
+        var leftStack = new ProportionalDock
+        {
+            Id = "LeftStack",
+            Title = "LeftStack",
+            Orientation = Orientation.Vertical,
+            VisibleDockables = CreateList<IDockable>(waterfallToolDock, rxToolDock),
+        };
+        waterfallToolDock.Proportion = 0.2;
+        rxToolDock.Proportion = 0.8;
 
         var txToolDock = new ToolDock
         {
@@ -67,9 +121,9 @@ public sealed class AppDockFactory : Factory
             Id = "MainLayout",
             Title = "MainLayout",
             Orientation = Orientation.Horizontal,
-            VisibleDockables = CreateList<IDockable>(mainToolDock, txToolDock),
+            VisibleDockables = CreateList<IDockable>(leftStack, txToolDock),
         };
-        mainToolDock.Proportion = 0.7;
+        leftStack.Proportion = 0.7;
         txToolDock.Proportion = 0.3;
 
         var rootDock = CreateRootDock();
@@ -80,5 +134,36 @@ public sealed class AppDockFactory : Factory
         rootDock.DefaultDockable = layout;
 
         return rootDock;
+    }
+
+    [RelayCommand]
+    private void ShowWaterfall() => ShowPane(_waterfall, _waterfallToolDock);
+
+    [RelayCommand]
+    private void ShowRxImage() => ShowPane(_rxImage, _rxToolDock);
+
+    [RelayCommand]
+    private void ShowRxHistory() => ShowPane(_rxHistory, _rxToolDock);
+
+    /// <summary>No-op if <paramref name="pane"/> is already visible in <paramref name="homeDock"/> --
+    /// <see cref="Factory.AddDockable"/> doesn't itself guard against double-adding the same instance,
+    /// and a menu item has no other way to know whether the pane is currently open (no per-pane
+    /// `IsClosable`-visibility binding wired yet; this pass is "always offer to reopen," not a
+    /// checked/toggleable menu state).</summary>
+    private void ShowPane(IDockable? pane, IToolDock? homeDock)
+    {
+        if (pane is null || homeDock is null)
+        {
+            return;
+        }
+
+        if (homeDock.VisibleDockables?.Contains(pane) == true)
+        {
+            homeDock.ActiveDockable = pane;
+            return;
+        }
+
+        AddDockable(homeDock, pane);
+        homeDock.ActiveDockable = pane;
     }
 }
