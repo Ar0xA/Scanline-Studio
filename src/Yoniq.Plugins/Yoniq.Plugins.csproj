@@ -1,6 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <ItemGroup>
-    <ProjectReference Include="..\Yoniq.Abstractions\Yoniq.Abstractions.csproj" />
-    <ProjectReference Include="..\Yoniq.Application\Yoniq.Application.csproj" />
-  </ItemGroup>
-</Project>

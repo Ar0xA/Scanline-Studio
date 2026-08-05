@@ -2,7 +2,44 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-05, latest, ACTIVE) — Phase 3 (minimal UI) FULLY DONE, all 13 tasks, real e2e RX/TX proven over real hardware
+## Resume here (2026-08-05, latest, ACTIVE) — Full rename: Yoniq → Scanline Studio
+
+Whole-application rebrand, requested by the user, done in one pass right after Phase 3 (minimal UI)
+closed out. Two commits: the Phase 3 work itself landed first under the old name (it was built as
+Yoniq), then the rename as its own commit on top — kept separate since squashing them together would
+have conflated two unrelated diffs.
+
+**What changed**: every `Yoniq.*` namespace/project/folder/assembly → `ScanlineStudio.*` (code
+identifiers, single PascalCase word); every prose mention of the product → "Scanline Studio" (two
+words); solution file `Yoniq.sln` → `ScanlineStudio.sln`; the app-data settings folder
+`~/.config/Yoniq/` → `~/.config/ScanlineStudio/` (moved, not recreated, so the existing
+`settings.json` content survived); GitHub repo `Ar0xA/Yoniq-reborn` → `Ar0xA/Scanline-Studio`
+(renamed via `gh repo rename`, local `origin` remote updated to match, GitHub auto-redirects the old
+URL). Full history in this file was rewritten too, not just this entry, so the whole journal reads
+consistently under the new name.
+
+**Explicitly untouched, on purpose**: this project's *own* old name was "Yoniq" — what it's a rewrite
+*of* is the actual legacy upstream project, always spelled `YONIQ` (all caps) or referenced via the
+gitignored local clone `yoniq-old/YONIQ-main/` (`https://github.com/w0eeemst/YONIQ`). Those are a real
+external project's name, not this one's, and the case-sensitive distinction (`Yoniq` vs `YONIQ` vs
+`yoniq-old`) is exactly what made a scripted rename safe — neither was touched. Same for `QSSTV-main/`
+and `hamlib/` (external reference clones, gitignored). Also left alone: the local working directory
+name itself (`/home/artien/code/Yoniq-reborn` on disk) — renaming the live folder a running session is
+executing from was judged unnecessary risk and unrelated to the GitHub repo rename (a git remote's
+name doesn't need to match the local clone folder name); left for the user to rename at their own
+convenience.
+
+**Verified, not just assumed**: full solution build clean (0 warnings/errors) and full test suite
+740/740 green post-rename — exact match to the pre-rename baseline, confirming this was purely
+mechanical with no behavioral change. `grep -rn "Yoniq"` across every tracked/untracked
+non-gitignored file returned zero hits (one `app.manifest` file needed a manual follow-up fix — its
+`.manifest` extension wasn't in the original sed sweep's file-extension allowlist).
+
+**Next**: same as before this rename — Phase 4 (full image tooling: crop/resize/filter/overlay, stock
+library, RX history; logbook), with image RX/TX/templating richness prioritized over further
+waterfall polish per memory `feedback_ui_effort_allocation`.
+
+## Resume here (2026-08-05, superseded by the entry above) — Phase 3 (minimal UI) FULLY DONE, all 13 tasks, real e2e RX/TX proven over real hardware
 
 **Plan file**: `/home/artien/.claude/plans/hidden-conjuring-curry.md` (all 13 tasks complete). Full solution
 test suite: **740/740 green**.
@@ -19,7 +56,7 @@ SaaS: no rounded corners, no gradients/shadows, 2-4px padding max, monospace for
 bordered "module group" containers). Recorded verbatim in `spec/09-ui.md`'s "Visual design direction"
 section (supersedes the earlier softer SDR++ paragraph). Applied immediately: `CornerRadius="0"`
 globally on Button/ToggleButton/ComboBox/TextBox/CheckBox, spacing tokens shrunk from 8/16px to 2/4/6px,
-a `YoniqMonospaceFontFamily` resource + `TextBlock.YoniqReadout` class, a `Border.YoniqModuleGroup`
+a `Scanline StudioMonospaceFontFamily` resource + `TextBlock.Scanline StudioReadout` class, a `Border.Scanline StudioModuleGroup`
 style (Avalonia has no native GroupBox). **User also explicitly deprioritized the waterfall's visual
 polish** relative to RX/TX image handling and templating (saved as memory
 `feedback_ui_effort_allocation` — read that before sinking more effort into waterfall visuals in a
@@ -30,9 +67,9 @@ consistent application of the design philosophy mattered more than polishing any
 just by review — by re-reading the actual shipped code): (1) the original e2e-demo plan was
 self-contradicting — `TransmitAsync` deliberately pauses capture during TX, so a *single* process
 structurally cannot self-decode its own transmission; fixed by using two independent session instances
-(mirrors two real `Yoniq.Host` processes) sharing one real virtual audio cable. (2) `TxControlsPaneViewModel`
-would have pulled a `Yoniq.Core.Imaging` concrete reference into `Yoniq.UI` (failing the architecture
-test) had `IImageFileLoader` not been moved to `Yoniq.Abstractions.Imaging` first. (3) `ReceivedImageBuffer`
+(mirrors two real `ScanlineStudio.Host` processes) sharing one real virtual audio cable. (2) `TxControlsPaneViewModel`
+would have pulled a `ScanlineStudio.Core.Imaging` concrete reference into `ScanlineStudio.UI` (failing the architecture
+test) had `IImageFileLoader` not been moved to `ScanlineStudio.Abstractions.Imaging` first. (3) `ReceivedImageBuffer`
 copying only the *reported* row instead of the whole live canvas would have silently left every other
 row blank for paired-line modes (PD/MP/RM8/RM12, `RowsPerTransmissionLine=2`) — caught before any code
 shipped. (4) `AnalogFmSstvEncoder` throwing on any TX image size mismatch meant `ImageFileLoader` needed
@@ -53,14 +90,14 @@ separately by `TxControlsPaneViewModelTests`'s unit test with a fake session ser
 the two halves (UI-to-service wiring, service-to-hardware DSP round trip) rather than mocking either one.
 
 **Also found and fixed along the way**: Phase 3 had no "Start Receiving" trigger anywhere in the UI —
-added an auto-start-receiving call at `Yoniq.Host` startup (same pattern/graceful-degradation as the
+added an auto-start-receiving call at `ScanlineStudio.Host` startup (same pattern/graceful-degradation as the
 existing radio auto-connect), discovered only because the actual e2e demo attempt surfaced it.
 
-**Cleanup after the demo**: virtual cable module unloaded, `rigctld`/demo `Yoniq.Host` processes killed.
-One thing NOT cleaned up: `~/.config/Yoniq/settings.json` still has the demo's radio/audio device config
+**Cleanup after the demo**: virtual cable module unloaded, `rigctld`/demo `ScanlineStudio.Host` processes killed.
+One thing NOT cleaned up: `~/.config/Scanline Studio/settings.json` still has the demo's radio/audio device config
 (pointing at a now-unloaded virtual cable and a `rigctld` port that's no longer running) — harmless
 (everything that reads it degrades gracefully via try/catch) but worth knowing if a next session runs
-the real `Yoniq.Host` and wonders why RX/radio silently don't start.
+the real `ScanlineStudio.Host` and wonders why RX/radio silently don't start.
 
 **Next**: Phase 3 is done. Per `spec/14-roadmap.md`, Phase 4 is next (CAT protocols already partly
 done early/Hamlib; full image tooling — crop/resize/filter/overlay, stock library, RX history; logbook).
@@ -88,34 +125,34 @@ standing rule):**
    (screenshot, real window, real localized/token-styled content rendering).
 2. **Localization core** — `ILocalizationService`/`JsonLocalizationService` (JSON-file-backed, always
    boots into English, `assets/locale/en.json`+`locales.json`), the CI-style hardcoded-string grep test
-   (`Yoniq.UI.Tests`) and locale-key-subset-of-English test (`Yoniq.Core.Localization.Tests`) both wired
+   (`ScanlineStudio.UI.Tests`) and locale-key-subset-of-English test (`ScanlineStudio.Core.Localization.Tests`) both wired
    in now, not deferred.
 3. **Settings schema** — **real spec bug found and fixed**: `spec/12-settings.md`'s own code sample
    (`AppSettings(AudioSettings Audio, RadioConnectionSettings Radio, ...)`) can never compile —
-   `Yoniq.Settings` sits at the bottom of the layering diagram, below `Yoniq.Abstractions`, so it can
-   never reference a type from `Yoniq.Core.Radio` etc. without inverting that layering. Fixed with a
+   `ScanlineStudio.Settings` sits at the bottom of the layering diagram, below `ScanlineStudio.Abstractions`, so it can
+   never reference a type from `ScanlineStudio.Core.Radio` etc. without inverting that layering. Fixed with a
    named `Dictionary<string, JsonElement>` section bag + generic `GetSection<T>`/`WithSection<T>`
    extensions (caller supplies its own source-generated `JsonTypeInfo<T>`) — spec updated to match.
-   Added `RadioConnectionSettings` (`Yoniq.Core.Radio`), `AudioDeviceSettings` (`Yoniq.Core.Audio`),
-   `LocalizationSettings` (`Yoniq.Core.Localization`) — only the 3 sections Phase 3 actually needs, not
+   Added `RadioConnectionSettings` (`ScanlineStudio.Core.Radio`), `AudioDeviceSettings` (`ScanlineStudio.Core.Audio`),
+   `LocalizationSettings` (`ScanlineStudio.Core.Localization`) — only the 3 sections Phase 3 actually needs, not
    all 7 from the spec's full v1 list.
 4. **`IWaterfallSource`** — new (didn't exist before; legacy `Fft.cpp` was never ported, only the PLL
-   demodulator path was). New standard radix-2 Cooley-Tukey FFT + Hann window (`Yoniq.Core.Sstv`) — a
+   demodulator path was). New standard radix-2 Cooley-Tukey FFT + Hann window (`ScanlineStudio.Core.Sstv`) — a
    deliberate non-port, since CLAUDE.md's port-first rule is scoped to decode-affecting DSP math, not a
    visualization feature. Shaped like `ISstvDecoder.PushSamples` (a plain push method), not a direct
    `IAudioEngine.SamplesCaptured` subscription — keeps the DSP layer's existing "no hardware knowledge"
    purity and structurally guarantees decode/waterfall independence. Threading contract mirrors
    `IRadioController.StateChanges`'s already-established pattern (push synchronously, subscriber
    marshals itself) rather than inventing new scheduling machinery.
-5. **`Yoniq.Application` services** — `IRadioSessionService`/`RadioSessionService` (thin facade +
+5. **`ScanlineStudio.Application` services** — `IRadioSessionService`/`RadioSessionService` (thin facade +
    settings-driven connect) and `ISstvSessionService`/`SstvSessionService` (owns the isolated
    decoder/waterfall fan-out that actually fixes the original spike-era bug, plus the TX/RX interlock —
    capture pauses during TX, PTT keyed around playback, restored afterward only if RX was running
-   before). `IReceivedImageBuffer` interface added to `Yoniq.Abstractions.Imaging` (concrete impl is
-   task 6, next). **Another real bug found by the build, not by review**: giving `Yoniq.Application` real
-   content for the first time made `Yoniq.UI/App.axaml.cs`'s bare `Application` base-class reference
-   ambiguous with the new `Yoniq.Application` namespace (both reachable as `Application` from a sibling
-   namespace under the shared `Yoniq` root) — fixed by fully-qualifying `Avalonia.Application`.
+   before). `IReceivedImageBuffer` interface added to `ScanlineStudio.Abstractions.Imaging` (concrete impl is
+   task 6, next). **Another real bug found by the build, not by review**: giving `ScanlineStudio.Application` real
+   content for the first time made `ScanlineStudio.UI/App.axaml.cs`'s bare `Application` base-class reference
+   ambiguous with the new `ScanlineStudio.Application` namespace (both reachable as `Application` from a sibling
+   namespace under the shared `Scanline Studio` root) — fixed by fully-qualifying `Avalonia.Application`.
 
 **Test status**: full solution green, 724/724 (up from 685 at Phase-3 start) — Sstv 548, Radio 99,
 MiniAudio 51, Application 12 (new), Localization 7 (new), Settings 4 (new), UI 1 (new), Audio/Logbook 1
@@ -124,8 +161,8 @@ each (still template stubs, untouched, not this phase's concern).
 **Next (task 6 of 13)**: `SixLabors.ImageSharp` license check (Six Labors Split License, not plain
 MIT/Apache — must actually read it and record a `LICENSES.md` determination before adding the package,
 unlike Dock which needed no entry) — then real `IReceivedImageBuffer` (snapshot-on-read contract) + a
-basic TX image file selector. Then task 7 (DI wiring in `Yoniq.Host`), task 8 (architecture test — must
-land before any view exists, since `Yoniq.Application` transitively drags in every `Core.*` concrete),
+basic TX image file selector. Then task 7 (DI wiring in `ScanlineStudio.Host`), task 8 (architecture test — must
+land before any view exists, since `ScanlineStudio.Application` transitively drags in every `Core.*` concrete),
 then the actual UI shell (tokens, Dock panes, waterfall control, localize-as-built, end-to-end demo).
 
 ## Resume here (2026-08-04, superseded by the entry above) — Starting Phase 3 (minimal UI), nothing built yet
@@ -139,7 +176,7 @@ straight into it.
 
 **What Phase 3 is** (`spec/14-roadmap.md`, "Phase 3 — Minimal UI, first end-to-end path"):
 - [[09-ui]]: `MainWindow` walking skeleton — waterfall, RX image panel, basic TX button — wired to
-  Phase 1/2 services through `Yoniq.Application`.
+  Phase 1/2 services through `ScanlineStudio.Application`.
 - [[10-localization]]: `ILocalizationService` + `Translate` extension in place from the start
   (retrofitting localization onto an already-built UI is far more expensive than building it in from
   the first window — CLAUDE.md's own no-hardcoded-UI-strings rule).
@@ -151,27 +188,27 @@ UI, with a rig's frequency shown live via rigctld (or now, linked Hamlib).
 
 **Starting-point state, checked directly (not assumed) so the next session doesn't have to rediscover
 it**:
-- `Yoniq.UI` already has real Avalonia MVVM scaffolding: `ViewLocator.cs`, `App.axaml.cs`,
+- `ScanlineStudio.UI` already has real Avalonia MVVM scaffolding: `ViewLocator.cs`, `App.axaml.cs`,
   `ViewModels/MainViewModel.cs`, `ViewModels/ViewModelBase.cs`, `Views/MainWindow.axaml.cs` — likely
   from the original `dotnet new avalonia.mvvm` template. **Not yet inspected for how much is real vs.
   default template boilerplate** — read these fresh before assuming any of it is load-bearing.
-- `Yoniq.Application` is **completely empty** — no `.cs` files at all, just a `.csproj` referencing
-  `Yoniq.Abstractions`/`Yoniq.Settings`/`Yoniq.Core.Radio`/`Yoniq.Core.Radio.Cat`/
-  `Yoniq.Core.Radio.Rigctld`/`Yoniq.Core.Audio`/`Yoniq.Core.Sstv`/`Yoniq.Core.Imaging`/
-  `Yoniq.Core.Logbook`/`Yoniq.Core.Localization`. **Does not yet reference `Yoniq.Core.Radio.Hamlib`** —
+- `ScanlineStudio.Application` is **completely empty** — no `.cs` files at all, just a `.csproj` referencing
+  `ScanlineStudio.Abstractions`/`ScanlineStudio.Settings`/`ScanlineStudio.Core.Radio`/`ScanlineStudio.Core.Radio.Cat`/
+  `ScanlineStudio.Core.Radio.Rigctld`/`ScanlineStudio.Core.Audio`/`ScanlineStudio.Core.Sstv`/`ScanlineStudio.Core.Imaging`/
+  `ScanlineStudio.Core.Logbook`/`ScanlineStudio.Core.Localization`. **Does not yet reference `ScanlineStudio.Core.Radio.Hamlib`** —
   will need adding when the UI actually wires up a radio backend. This project is where
   `IRadioController`/`IAudioEngine`/etc. orchestration for the UI is supposed to live per
   `spec/01-architecture.md`'s layering — currently 100% unbuilt, this is most of Phase 3's real work.
-- `Yoniq.Host` has a real `Program.cs`, references `Yoniq.UI`/`Yoniq.Application`/`Yoniq.Settings`/
-  `Yoniq.Core.Audio.MiniAudio`, and already has per-OS `CopyNativeShim*` MSBuild targets (Linux verified,
+- `ScanlineStudio.Host` has a real `Program.cs`, references `ScanlineStudio.UI`/`ScanlineStudio.Application`/`ScanlineStudio.Settings`/
+  `ScanlineStudio.Core.Audio.MiniAudio`, and already has per-OS `CopyNativeShim*` MSBuild targets (Linux verified,
   Windows/macOS unverified from this sandbox) that copy MiniAudio's native shim into the output dir —
   **Hamlib needs no equivalent target**, since it's discovered/loaded dynamically at runtime rather than
   built/copied at compile time (the whole point of "bring-your-own-libhamlib").
 - No DI container wiring exists anywhere yet — `RigctldProtocolFactory`/`HamlibProtocolFactory` are
-  still only ever constructed directly in tests, never registered in `Yoniq.Host`. Phase 3 is likely
+  still only ever constructed directly in tests, never registered in `ScanlineStudio.Host`. Phase 3 is likely
   where this actually needs to happen for the first time.
 
-**Before writing code**: this is new architecture (UI/Avalonia, first real `Yoniq.Application` content),
+**Before writing code**: this is new architecture (UI/Avalonia, first real `ScanlineStudio.Application` content),
 not a port — same discipline as Phase 2's radio layer and the Hamlib backend both got: design first,
 `auditor` plan-review pass before implementation, restate the ADHD/scope rule in every subagent prompt
 (CLAUDE.md §1/§7). Read `spec/09-ui.md`, `spec/01-architecture.md`, `spec/10-localization.md`, and
@@ -184,8 +221,8 @@ re-read this session, only referenced from the roadmap summary above.
 in-process. Investigated for real rather than assuming: researched WSJT-X's actual approach (they
 maintain a private Hamlib fork, statically link it via a "superbuild" CMake step — one static binary,
 no runtime swap) and ran it past an `/adhd` ideation pass (5 cognitive frames, 30 ideas) plus two rounds
-of Opus `auditor` review. Landed on **"bring-your-own-libhamlib"**: Yoniq never builds/forks/vendors
-Hamlib at all — `Yoniq.Core.Radio.Hamlib` P/Invokes whatever `libhamlib` the user's OS/package manager
+of Opus `auditor` review. Landed on **"bring-your-own-libhamlib"**: Scanline Studio never builds/forks/vendors
+Hamlib at all — `ScanlineStudio.Core.Radio.Hamlib` P/Invokes whatever `libhamlib` the user's OS/package manager
 already has installed, discovered at runtime, version-gated to major-4, falling back to the
 already-working `rigctld` client on failure. Rejected the WSJT-X-style static approach specifically
 because this is a solo hobby project with a constrained CI-minutes budget and no unmerged Hamlib
@@ -193,7 +230,7 @@ patches to justify carrying a fork. Full reasoning: `spec/03-cat-layer.md`'s "Li
 bring-your-own-libhamlib" section.
 
 **Built and tested, this session:**
-- `Yoniq.Core.Radio.Hamlib` (new project): `INativeLibraryLoader`/`NativeLibraryLoader` (seam around
+- `ScanlineStudio.Core.Radio.Hamlib` (new project): `INativeLibraryLoader`/`NativeLibraryLoader` (seam around
   `NativeLibrary.TryLoad`/`GetExport`), `HamlibLibraryLocator` (3-tier discovery — user override tried
   *exclusively* when set, else bare-soname-then-known-extra-dirs), `IHamlibNative`/`HamlibNative` (the
   frozen P/Invoke surface — `rig_init`/`open`/`close`/`cleanup`, `token_lookup`/`set_conf`,
@@ -202,7 +239,7 @@ bring-your-own-libhamlib" section.
   discovery+version-gate **eagerly in the constructor**, not lazily — matters because a lazy-on-first-
   query shape would put blocking native I/O on whatever thread first calls `ConnectAsync`, e.g. a future
   UI click handler), `HamlibRadioProtocol` (the actual `IRadioProtocol`), `HamlibProtocolFactory`.
-  `HamlibConnectionSpec` added to `Yoniq.Abstractions`. 40 new tests in `Yoniq.Core.Radio.Tests`
+  `HamlibConnectionSpec` added to `ScanlineStudio.Abstractions`. 40 new tests in `ScanlineStudio.Core.Radio.Tests`
   (fixture/fake-driven unit tests + 4 real-interop tests against this machine's actual installed
   `libhamlib.so.4` 4.5.5 driving Hamlib's own hardware-free Dummy rig backend — confirmed genuinely
   running, not skipping, via real ~120-165ms durations).
@@ -228,11 +265,11 @@ bring-your-own-libhamlib" section.
 
 **Explicitly deferred, not built this pass** (see the plan's "Explicitly out of scope" section):
 cross-backend auto-demotion to rigctld (no home for that policy yet — `IRadioController` has no "try the
-next backend" concept, needs the `Yoniq.Application`/settings layer, which doesn't exist), and the
+next backend" concept, needs the `ScanlineStudio.Application`/settings layer, which doesn't exist), and the
 Settings UI for the manual library-override path (hard-coded as a constructor parameter for now).
 
-**Test results**: full solution 678/678 (`Yoniq.Core.Radio.Tests` 95/95 including the 40 new Hamlib
-tests; `Yoniq.Core.Sstv.Tests` 528/528 unchanged, confirming no DSP regression; everything else
+**Test results**: full solution 678/678 (`ScanlineStudio.Core.Radio.Tests` 95/95 including the 40 new Hamlib
+tests; `ScanlineStudio.Core.Sstv.Tests` 528/528 unchanged, confirming no DSP regression; everything else
 unchanged). One pre-existing flake noted, not chased (off-scope per the ADHD rule):
 `RigctldDummyRigIntegrationTests.Capabilities_PttUnsupportedOnTheDummyRig_IsProbedCorrectly`
 intermittently fails only under the full parallel test run (a subprocess-connection-wait timing race,
@@ -253,8 +290,8 @@ same "don't default silently" rule as usual.
 ## Resume here (2026-08-04, superseded by the entry above) — Phase 2 (radio layer) DONE, committed and pushed
 
 **Done, tested, committed (`cb84f9b`), pushed to `origin/master`.** Built the first radio-layer code in the project:
-`Yoniq.Abstractions.Radio` interfaces, `RadioController` (`Yoniq.Core.Radio`), and
-`RigctldClientProtocol`/`RigctldProtocolFactory` (`Yoniq.Core.Radio.Rigctld`). Full solution
+`ScanlineStudio.Abstractions.Radio` interfaces, `RadioController` (`ScanlineStudio.Core.Radio`), and
+`RigctldClientProtocol`/`RigctldProtocolFactory` (`ScanlineStudio.Core.Radio.Rigctld`). Full solution
 639/639 tests pass (528 pre-existing DSP, untouched — confirmed via `git status`; 111 new/other).
 Plan file: `/home/artien/.claude/plans/starry-whistling-pearl.md`. Full narrative:
 `spec/14-roadmap.md`, search "Phase 2 — Radio layer (no CAT rigs yet) — DONE".
@@ -281,7 +318,7 @@ Plan file: `/home/artien/.claude/plans/starry-whistling-pearl.md`. Full narrativ
   (Definition-of-done checkboxes reflect what's actually built now).
 
 **Not started / explicitly out of scope this pass**: `RigctldServer` (server mode), linked Hamlib,
-flrig/OmniRig-as-client backends, `TemplateCatProtocol`, and all `Yoniq.Application`/UI/settings-
+flrig/OmniRig-as-client backends, `TemplateCatProtocol`, and all `ScanlineStudio.Application`/UI/settings-
 persistence wiring — all Phase 3/4 per `spec/14-roadmap.md`.
 
 **Next — live open question, not yet decided**: user wants to talk through, next session, whether to do
@@ -301,7 +338,7 @@ clarified their actual position: they don't want **any** hand-written transceive
 project, full stop — "other people already doing that work." Not an `/adhd` run in the end; the user's
 own clarification made the direction unambiguous before that was needed.
 
-**New decision**: Yoniq is a pure client of external CAT backends, never a per-rig protocol
+**New decision**: Scanline Studio is a pure client of external CAT backends, never a per-rig protocol
 implementer. Backend priority order: Hamlib linked in-process (P/Invoke, WSJT-X style) → `rigctld`
 client → flrig client → OmniRig-as-client (Windows COM, talking to an already-running instance, not
 bundling its OCX) → `TemplateCatProtocol` user-authored hex-template fallback for anything none of the
@@ -317,7 +354,7 @@ above cover.
   CAT correctness).
 - `spec/02-radio-layer.md` — dropped `IRigRegistry`/`RigDefinition`/the native `RADIO_POLL*`→`rigId`
   migration table (nothing to register, no protocol chosen per rig); `RadioConnectionSpec` subtypes now
-  one per backend; PTT section reframed (Hamlib owns its own PTT-type config, Yoniq doesn't implement
+  one per backend; PTT section reframed (Hamlib owns its own PTT-type config, Scanline Studio doesn't implement
   RTS/DTR itself); OmniRig paragraph corrected — OmniRig-as-*client* (new) actually restores rig-sharing
   arbitration that native CAT never could, unlike what the pre-edit text implied.
 - `spec/04-rigctld.md` — old "Non-goals" line rejecting Hamlib bundling removed/reversed; new section
@@ -340,7 +377,7 @@ client first per the roadmap's own priority order.
 
 ## Resume here (2026-08-04, superseded by the entry above) — Original framing of the Hamlib question
 
-Original framing was narrower than the eventual decision: "should Yoniq bundle Hamlib directly
+Original framing was narrower than the eventual decision: "should Scanline Studio bundle Hamlib directly
 (alongside rigctld), not just talk to rigctld" — i.e. Hamlib as an *addition* to the already-planned
 hand-written per-rig `IRadioProtocol`s. The user's follow-up clarified they didn't want the hand-written
 protocols at all, which is the actual decision recorded above. Kept here only for the historical
@@ -414,7 +451,7 @@ section.
 user/orchestrating session.** Do not delete this worktree until that happens.
 
 ## What this repo is
-Yoniq v2: cross-platform (.NET 8 + Avalonia) rewrite of YONIQ (MMSSTV fork). Specs in `spec/00`-`spec/15`.
+Scanline Studio: cross-platform (.NET 8 + Avalonia) rewrite of YONIQ (MMSSTV fork). Specs in `spec/00`-`spec/15`.
 Legacy source lives locally (gitignored) at `yoniq-old/YONIQ-main/` — read it directly, don't infer from memory.
 Secondary reference QSSTV lives locally (gitignored) at `QSSTV-main/` — inspiration/cross-check only, never authoritative.
 Full rules: `CLAUDE.md` (short, read it). Key ones: port legacy DSP exactly (no invention), golden-vector/round-trip
@@ -575,7 +612,7 @@ All 11 `<mode-id>_TX_RX.bmp` files came back from the user's real legacy install
 (user played each `TxCapture/<mode-id>_TX.mmv` via `File → Play` with legacy's sample rate set to
 11025Hz, per `TxCapture/README.md`). Wired into a new theory test,
 `LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage` in
-`tests/Yoniq.Core.Sstv.Tests/GoldenVectorTests.cs` (11 cases) — compares each source `.bmp` against a
+`tests/ScanlineStudio.Core.Sstv.Tests/GoldenVectorTests.cs` (11 cases) — compares each source `.bmp` against a
 REAL legacy decode of THIS PORT'S OWN encoder output. This is the actual "TX-side verification tests,
 built and confirmed" gate spec/14-roadmap.md's "Explicit prerequisite before Phase 3" note required
 (see that file's own "TX-side golden-vector tests wired in" entry for full detail) — closes the gap
@@ -668,7 +705,7 @@ a float→double→short cast that doesn't saturate at the final narrowing step;
 generated file with impulse noise ~every 75 samples). Fixed, covered by 14 new round-trip tests
 (confirmed to discriminate the original bug by reverting it). Generated all 11 TX `.mmv` files (8
 existing RX-fixture modes + Scottie DX/MR73/R24, the 3 modes the audit flagged as having zero coverage
-anywhere) into `tests/Yoniq.Core.Sstv.Tests/Fixtures/GoldenVectors/TxCapture/`. **Then the user asked a
+anywhere) into `tests/ScanlineStudio.Core.Sstv.Tests/Fixtures/GoldenVectors/TxCapture/`. **Then the user asked a
 follow-up that caught a real gap**: file-format round-trip tests don't prove the actual files are valid
 decodable transmissions — added `TxCaptureFixturesTests.cs` (11 tests, kept permanently) that reads
 each real file back and self-decodes it with this port's own decoder; all 11 pass (correct mode, zero
@@ -734,7 +771,7 @@ nits found and fixed directly). `avt.mmv` now decodes cleanly (delta 5.80, resta
 first-try) — comfortably in the same healthy range as the other five Task #7 fixtures.
 
 **Uncommitted as of this writing** — nothing from this session has been committed yet (`git status`:
-`spec/14-roadmap.md`, `src/Yoniq.Core.Sstv/AnalogFmSstvDecoder.cs`, `src/Yoniq.Core.Sstv/VisLockStateMachine.cs`,
+`spec/14-roadmap.md`, `src/ScanlineStudio.Core.Sstv/AnalogFmSstvDecoder.cs`, `src/ScanlineStudio.Core.Sstv/VisLockStateMachine.cs`,
 fixtures `README.md`, `GoldenVectorTests.cs` modified; new `AvtNoiseTolerantDetectionTests.cs`). Full
 suite confirmed green (458/458, solution-wide) before this brief was written. Ask the user before
 committing, per standing rule.
@@ -832,7 +869,7 @@ mid-stream (see below) — **don't assume similarly-shaped items share a fix, ve
   file for the full reasoning. Its one real remaining gap is the already-tracked Band-3 item S8, not a
   new item.
 
-**Test count**: 423/423 `Yoniq.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
+**Test count**: 423/423 `ScanlineStudio.Core.Sstv.Tests`, solution-wide build clean, golden-vector tests
 unaffected throughout, noise-robustness tests unaffected (existing tolerance).
 
 Full per-item plan-review + implementation + code-review detail: `spec/14-roadmap.md`, search
@@ -896,7 +933,7 @@ comment flagged.
 Measured noise-floor improvement: martin-m1 9.0dB→3.0dB, robot-36 16.0dB→9.0dB.
 
 **Windows CI fixed** (2026-08-01, commit `8be35b7`): `ilammy/msvc-dev-cmd@v1` was setting `Platform=x64`
-as a job-level env var, and `Yoniq.sln` only has "Any CPU" configs — fixed with explicit
+as a job-level env var, and `ScanlineStudio.sln` only has "Any CPU" configs — fixed with explicit
 `/p:Platform="Any CPU"` on the dotnet steps. All three CI legs green on `master`.
 
 ## Working methodology (established across this project)
@@ -938,7 +975,7 @@ as a job-level env var, and `Yoniq.sln` only has "Any CPU" configs — fixed wit
 
 ## Build/test commands
 ```
-dotnet build src/Yoniq.Core.Sstv -c Debug
-dotnet test tests/Yoniq.Core.Sstv.Tests -c Debug
-dotnet test tests/Yoniq.Core.Sstv.Tests -c Debug --filter "FullyQualifiedName~<substring>"
+dotnet build src/ScanlineStudio.Core.Sstv -c Debug
+dotnet test tests/ScanlineStudio.Core.Sstv.Tests -c Debug
+dotnet test tests/ScanlineStudio.Core.Sstv.Tests -c Debug --filter "FullyQualifiedName~<substring>"
 ```

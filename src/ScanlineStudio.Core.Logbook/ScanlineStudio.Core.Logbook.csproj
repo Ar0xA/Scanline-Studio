@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\ScanlineStudio.Abstractions\ScanlineStudio.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

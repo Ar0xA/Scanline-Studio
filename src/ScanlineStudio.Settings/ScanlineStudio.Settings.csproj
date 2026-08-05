@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="System.Reactive" Version="6.0.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ScanlineStudio.Abstractions\ScanlineStudio.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

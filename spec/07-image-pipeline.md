@@ -11,7 +11,7 @@ Everything image-related that sits between the DSP core and the screen/disk: rec
 ## Core abstractions
 
 ```csharp
-namespace Yoniq.Abstractions.Imaging;
+namespace ScanlineStudio.Abstractions.Imaging;
 
 public interface IImageSource
 {

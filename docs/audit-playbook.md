@@ -53,7 +53,7 @@ PHASE 3 — CHAIN / INTEGRATION AUDIT
   chain and matches LEGACY-captured output within the stated tolerance — NOT an
   internal round-trip (encoder+decoder can agree while both are wrong; see the Scottie
   incident). Audit the seams: cross-module contracts, data/encoding handoffs, scheduler
-  behavior across the whole signal path, and the Yoniq.Application boundary.
+  behavior across the whole signal path, and the ScanlineStudio.Application boundary.
 - Report any gap where per-unit passes but the chain diverges.
 
 Lead each phase with the verdict. Keep off-scope findings to one line each.

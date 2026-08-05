@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\ScanlineStudio.Core.Radio\ScanlineStudio.Core.Radio.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Abstractions\ScanlineStudio.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

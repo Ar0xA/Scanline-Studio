@@ -1,4 +1,4 @@
-# Yoniq v2
+# Scanline Studio
 
 A ground-up rewrite of [YONIQ](https://github.com/w0eeemst/YONIQ) (a fork of MMSSTV) into a modern,
 cross-platform amateur radio SSTV application — .NET 8 + Avalonia UI, targeting Windows, Linux, and macOS.
@@ -10,7 +10,7 @@ giant undifferentiated effort.
 ## Status
 
 **Phase 0 — walking skeleton.** The solution scaffold builds cleanly (0 warnings, `TreatWarningsAsErrors`
-enabled) and `Yoniq.Host` boots a DI container and shows a blank Avalonia window. See
+enabled) and `ScanlineStudio.Host` boots a DI container and shows a blank Avalonia window. See
 [spec/14-roadmap.md](spec/14-roadmap.md) for what's next (Phase 1: audio capture/playback and the SSTV
 encode/decode round-trip).
 
@@ -30,9 +30,9 @@ encode/decode round-trip).
 Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
 
 ```bash
-dotnet build Yoniq.sln
-dotnet test Yoniq.sln
-dotnet run --project src/Yoniq.Host
+dotnet build ScanlineStudio.sln
+dotnet test ScanlineStudio.sln
+dotnet run --project src/ScanlineStudio.Host
 ```
 
 ## Legacy source

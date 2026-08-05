@@ -1,11 +1,11 @@
-# CLAUDE.md — Yoniq v2 (YONIQ/MMSSTV → .NET 8 + Avalonia)
+# CLAUDE.md — Scanline Studio (YONIQ/MMSSTV → .NET 8 + Avalonia)
 
 > Standing instructions, loaded every session. Detailed specs live in `spec/` and
 > `docs/`, not here. Keep it tight: if removing a line wouldn't cause a mistake, cut it.
 > **Restate the Collaboration rule (§1) explicitly in every Opus/subagent prompt —
 > subagents run in isolated context and do NOT read this file.**
 
-Yoniq v2: cross-platform (.NET 8 + Avalonia) rewrite of YONIQ (MMSSTV fork), planned in `spec/00-spec/15`.
+Scanline Studio: cross-platform (.NET 8 + Avalonia) rewrite of YONIQ (MMSSTV fork), planned in `spec/00-spec/15`.
 Legacy source: https://github.com/w0eeemst/YONIQ (not in this repo). Specs reference legacy files
 assuming a local clone at `yoniq-old/YONIQ-main/` (gitignored, **never committed**) — clone it
 separately to inspect.
@@ -46,7 +46,7 @@ codebase once built, not to the initial port.
   structure/discriminator/constants), don't invent-and-tune. This does **not** extend to
   the surrounding GUI/architecture — that is intentionally being modernized.
 - **CAT/rig control is explicitly NOT ported.** No hand-written per-rig protocol code (legacy
-  `cradio.cpp`'s `Freq*` methods) exists or is planned — Yoniq is a pure client of external CAT
+  `cradio.cpp`'s `Freq*` methods) exists or is planned — Scanline Studio is a pure client of external CAT
   backends (Hamlib linked in-process, `rigctld`, flrig, OmniRig-as-client). See `spec/03-cat-layer.md`.
   `cradio.cpp` is a removed-feature reference only, never a port target.
 - **Removal rule:** dropping a capability instead of porting it needs a
@@ -69,7 +69,7 @@ codebase once built, not to the initial port.
 - Write tests for all new functionality.
 - Dependency injection everywhere; avoid static mutable state.
 - All hardware communication must be async.
-- UI never talks to radio/audio/DSP directly — only via `Yoniq.Application` service interfaces
+- UI never talks to radio/audio/DSP directly — only via `ScanlineStudio.Application` service interfaces
   (`spec/01-architecture.md`).
 - No hardcoded UI strings — localize everything (`spec/10-localization.md`; the legacy language `.ini`
   files are **not** a string table).
@@ -108,7 +108,7 @@ C++Builder/VCL conventions that **silently produce wrong results** if ported nai
   and its slow-subscriber behavior (buffer/drop/block). Legacy's `PostMessage` never blocked the
   producer; a naive `Subject` replacement can — a real regression on hot paths like radio polling.
 - **No Win32/COM outside an explicit optional module:** no `System.Drawing`, P/Invoke, or COM interop in
-  `Yoniq.Core.*`/`Yoniq.UI`. A Windows-only integration gets its own optional project, never a hard
+  `ScanlineStudio.Core.*`/`ScanlineStudio.UI`. A Windows-only integration gets its own optional project, never a hard
   dependency of cross-platform code.
 
 ---
@@ -128,9 +128,9 @@ find an unambiguously licensed alternative.
 
 > Fill with the exact CLI invocations — Claude re-guesses these every session otherwise.
 
-- Build: dotnet build src/Yoniq.Core.Sstv -c Debug
-- Run tests: dotnet test tests/Yoniq.Core.Sstv.Tests -c Debug --filter "FullyQualifiedName~<TestName>"
-- Run single test / filtered subset (substring match on fully-qualified name):  dotnet test tests/Yoniq.Core.Sstv.Tests -c Debug --filter "FullyQualifiedName~EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance"
+- Build: dotnet build src/ScanlineStudio.Core.Sstv -c Debug
+- Run tests: dotnet test tests/ScanlineStudio.Core.Sstv.Tests -c Debug --filter "FullyQualifiedName~<TestName>"
+- Run single test / filtered subset (substring match on fully-qualified name):  dotnet test tests/ScanlineStudio.Core.Sstv.Tests -c Debug --filter "FullyQualifiedName~EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance"
 
 ---
 

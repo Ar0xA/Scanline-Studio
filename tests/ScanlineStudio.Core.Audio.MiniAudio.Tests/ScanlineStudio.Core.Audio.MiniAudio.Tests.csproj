@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <!-- Piece Engine 6 only: MiniAudioEngineDiRegistrationTests exercises the same real
+         Microsoft.Extensions.DependencyInjection ServiceProvider ScanlineStudio.Host/Program.cs uses,
+         proving the IAsyncDisposable-only singleton disposal path actually works at runtime, not
+         just that it compiles. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ScanlineStudio.Core.Audio.MiniAudio\ScanlineStudio.Core.Audio.MiniAudio.csproj" />
+    <!-- Audio 6b only: the resampler-quality round trip reuses the SSTV encoder/decoder as its
+         real-world signal source. No other test in this project needs these. -->
+    <ProjectReference Include="..\..\src\ScanlineStudio.Core.Sstv\ScanlineStudio.Core.Sstv.csproj" />
+    <ProjectReference Include="..\..\src\ScanlineStudio.Core.Imaging\ScanlineStudio.Core.Imaging.csproj" />
+    <ProjectReference Include="..\..\src\ScanlineStudio.Core.Audio\ScanlineStudio.Core.Audio.csproj" />
+  </ItemGroup>
+
+  <!--
+    Piece Audio 1b: one copy target per OS, mirroring the referenced project's own per-OS build
+    targets: a plain copy so this test's own output directory has the native library P/Invoke
+    needs to find at runtime. .NET does not automatically propagate a ProjectReference's native
+    build artifacts (confirmed directly in this project during piece Audio 1: a
+    None+CopyToOutputDirectory item alone was not sufficient), hence the explicit per-OS copy
+    rather than relying on implicit SDK behavior. The real, robust cross-platform packaging
+    (runtimes/<rid>/native/ layout matching NuGet's native-asset convention) would only matter if
+    this project were ever actually packed/published as a redistributable package, which it isn't,
+    so that's out of scope here, not deferred.
+  -->
+  <Target Name="CopyNativeShimLinux" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)/../../src/ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.so" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+  <!-- Unverified in this project's own dev sandbox (Linux-only); see the build target's own
+       doc comment in the referenced project's csproj. -->
+  <Target Name="CopyNativeShimWindows" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)\..\..\src\ScanlineStudio.Core.Audio.MiniAudio\$(OutDir)yoniqaudio.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+  <Target Name="CopyNativeShimMacOS" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <ItemGroup>
+      <NativeShim Include="$(MSBuildProjectDirectory)/../../src/ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.dylib" />
+    </ItemGroup>
+    <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+</Project>

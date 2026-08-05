@@ -6,7 +6,7 @@
 
 ## Purpose
 
-Provide a stable, versioned extension surface so functionality (rig protocols, image filters, macro actions, log export formats) can be added without forking or modifying `Yoniq.Core.*`, satisfying the "Plugin architecture" design goal in [[00-project-overview]].
+Provide a stable, versioned extension surface so functionality (rig protocols, image filters, macro actions, log export formats) can be added without forking or modifying `ScanlineStudio.Core.*`, satisfying the "Plugin architecture" design goal in [[00-project-overview]].
 
 ## Extension points (v1 scope)
 
@@ -17,7 +17,7 @@ Provide a stable, versioned extension surface so functionality (rig protocols, i
 | Log export format | `ILogExporter` | [[08-logging]] |
 | Macro action | `IMacroAction` | [[09-ui]] |
 
-Each extension point is simply a `Yoniq.Abstractions` interface already defined by its owning spec — plugins do not get a separate, parallel API; they implement the same interfaces the built-in implementations do, discovered and registered the same way. This keeps "plugin" and "built-in" symmetric rather than second-class.
+Each extension point is simply a `ScanlineStudio.Abstractions` interface already defined by its owning spec — plugins do not get a separate, parallel API; they implement the same interfaces the built-in implementations do, discovered and registered the same way. This keeps "plugin" and "built-in" symmetric rather than second-class.
 
 ## Why the legacy CItems ABI isn't ported directly
 
@@ -44,16 +44,16 @@ A plugin is a directory containing a manifest and one or more assemblies:
 }
 ```
 
-`yoniqApiVersion` is checked against the host's `Yoniq.Abstractions` semantic version at load time; a plugin declaring an incompatible major version is refused with a clear error rather than loaded and risking a runtime crash — `Yoniq.Abstractions` itself follows semver strictly for this reason.
+`yoniqApiVersion` is checked against the host's `ScanlineStudio.Abstractions` semantic version at load time; a plugin declaring an incompatible major version is refused with a clear error rather than loaded and risking a runtime crash — `ScanlineStudio.Abstractions` itself follows semver strictly for this reason.
 
 ## Isolation and loading
 
-Each plugin loads into its own `System.Runtime.Loader.AssemblyLoadContext`, collectible, so a plugin can be unloaded/reloaded without restarting the host — this also contains a misbehaving plugin's dependency versions from colliding with the host's or another plugin's. Plugins only receive references to `Yoniq.Abstractions` (interfaces/DTOs) at load time, never to `Yoniq.Core.*` or `Yoniq.UI` concrete assemblies, enforced the same way as the [[09-ui]] layering rule (an architecture test asserting the plugin host only exposes `Yoniq.Abstractions` types across the load-context boundary).
+Each plugin loads into its own `System.Runtime.Loader.AssemblyLoadContext`, collectible, so a plugin can be unloaded/reloaded without restarting the host — this also contains a misbehaving plugin's dependency versions from colliding with the host's or another plugin's. Plugins only receive references to `ScanlineStudio.Abstractions` (interfaces/DTOs) at load time, never to `ScanlineStudio.Core.*` or `ScanlineStudio.UI` concrete assemblies, enforced the same way as the [[09-ui]] layering rule (an architecture test asserting the plugin host only exposes `ScanlineStudio.Abstractions` types across the load-context boundary).
 
 ```csharp
-namespace Yoniq.Abstractions.Plugins;
+namespace ScanlineStudio.Abstractions.Plugins;
 
-public interface IYoniqPlugin
+public interface IScanline StudioPlugin
 {
     string Id { get; }
     void RegisterServices(IServiceCollection services);   // plugin registers its IRadioProtocol/IImageFilter/etc. implementations
@@ -86,4 +86,4 @@ Plugins run with the same process privileges as the host (no sandboxing/capabili
 - [ ] `IPluginHost` implemented with collectible `AssemblyLoadContext` isolation, load/unload verified not to leak.
 - [ ] At least one built-in extension point (recommend: `IImageFilter`, lowest-risk) refactored to load through the same plugin registration path as third-party plugins, proving the symmetry claim above.
 - [ ] `PluginManagerDialog` implemented with explicit enable/disable and manifest info display.
-- [ ] Architecture test enforcing plugins only see `Yoniq.Abstractions` types.
+- [ ] Architecture test enforcing plugins only see `ScanlineStudio.Abstractions` types.

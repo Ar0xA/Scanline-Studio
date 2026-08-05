@@ -46,7 +46,7 @@ The application shall preserve all current functionality while introducing a cle
 
 ## License
 
-Yoniq v2 is **LGPL-3.0-or-later**, matching upstream YONIQ/MMSSTV's own stated license (`yoniq-old/YONIQ-main/README.md`: *"MMSSTV LGPL source repository"*, and per-file LGPL-3-or-later headers throughout the legacy source). See [LICENSES.md](../LICENSES.md) for the full reasoning, including why the legacy `Terms.txt` freeware/no-charge clause is treated as superseded rather than controlling, and which legacy assets (ARRL.DX, MMCG.DEF, Chilkat, FastReport) are explicitly excluded from the port.
+Scanline Studio is **LGPL-3.0-or-later**, matching upstream YONIQ/MMSSTV's own stated license (`yoniq-old/YONIQ-main/README.md`: *"MMSSTV LGPL source repository"*, and per-file LGPL-3-or-later headers throughout the legacy source). See [LICENSES.md](../LICENSES.md) for the full reasoning, including why the legacy `Terms.txt` freeware/no-charge clause is treated as superseded rather than controlling, and which legacy assets (ARRL.DX, MMCG.DEF, Chilkat, FastReport) are explicitly excluded from the port.
 
 ---
 

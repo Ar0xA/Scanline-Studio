@@ -15,7 +15,7 @@ Record contacts, import/export in industry-standard formats, and provide callsig
 QSO records are stored in SQLite (`Microsoft.Data.Sqlite`), the same embedded-database choice as [[07-image-pipeline]]'s RX history (and in fact the same database file, so a QSO row can foreign-key to a received-image row directly). This replaces the legacy proprietary `.MDT`/log binary formats (`TEMP.MDT`, `TEMP_BAK.MDT`) with something any external tool can also read via standard SQL, while ADIF remains the interchange format for other logging software.
 
 ```csharp
-namespace Yoniq.Abstractions.Logbook;
+namespace ScanlineStudio.Abstractions.Logbook;
 
 public sealed record QsoRecord(
     Guid Id,
@@ -47,7 +47,7 @@ public interface ILogbookRepository
 
 ## Loglink (Turbo HAMLOG live IPC) — dropped, not replaced
 
-`Loglink.cpp` is **not** superseded by the SQLite logbook above, and an earlier draft of this document incorrectly implied it was. Loglink is live inter-process communication (`WM_COPYDATA`) with Turbo HAMLOG, a separate third-party Windows application — a different feature from *having* a logbook: it's about keeping someone else's already-running logbook synced in real time. The rewrite's ADIF import/export is a **batch** integration, not a live one; there is no v1 plan to replicate `WM_COPYDATA`-style live sync with a third-party logger, and it wouldn't be cross-platform even if there were. See [docs/removed-features.md](../docs/removed-features.md) for the full accounting and the recommended path for affected users (switch to Yoniq's own logbook, or periodic ADIF export/import instead of live sync).
+`Loglink.cpp` is **not** superseded by the SQLite logbook above, and an earlier draft of this document incorrectly implied it was. Loglink is live inter-process communication (`WM_COPYDATA`) with Turbo HAMLOG, a separate third-party Windows application — a different feature from *having* a logbook: it's about keeping someone else's already-running logbook synced in real time. The rewrite's ADIF import/export is a **batch** integration, not a live one; there is no v1 plan to replicate `WM_COPYDATA`-style live sync with a third-party logger, and it wouldn't be cross-platform even if there were. See [docs/removed-features.md](../docs/removed-features.md) for the full accounting and the recommended path for affected users (switch to Scanline Studio's own logbook, or periodic ADIF export/import instead of live sync).
 
 ## Callsign / country lookup
 
