@@ -1,0 +1,56 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="using:ScanlineStudio.UI.Localization"
+             xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+             x:Class="ScanlineStudio.UI.Views.RxHistoryPaneView"
+             x:DataType="vm:RxHistoryPaneViewModel">
+
+    <Border Classes="ScanlineStudioPanelBody">
+        <Grid RowDefinitions="Auto,2*,Auto,1*">
+
+            <Button Grid.Row="0"
+                    Content="{loc:Translate Panes.RxHistory.Refresh}"
+                    Command="{Binding RefreshCommand}"
+                    HorizontalAlignment="Stretch" />
+
+            <TextBlock Grid.Row="1"
+                       Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
+                       IsVisible="{Binding !Entries.Count}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center" />
+
+            <ListBox Grid.Row="1"
+                     ItemsSource="{Binding Entries}"
+                     SelectedItem="{Binding SelectedEntry}"
+                     IsVisible="{Binding Entries.Count}">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:RxHistoryEntryViewModel">
+                        <Image Source="{Binding Thumbnail}"
+                               Width="96"
+                               Height="96"
+                               Stretch="Uniform"
+                               ToolTip.Tip="{Binding Entry.ModeId}" />
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <TextBlock Grid.Row="2"
+                       Classes="ScanlineStudioReadout"
+                       FontSize="10"
+                       Text="{Binding SelectedEntry.Entry.ModeId}"
+                       IsVisible="{Binding SelectedEntry, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+            <Image Grid.Row="3"
+                   Source="{Binding PreviewImage}"
+                   Stretch="Uniform"
+                   IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        </Grid>
+    </Border>
+
+</UserControl>

@@ -12,6 +12,7 @@ using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio.MiniAudio;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Localization;
+using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Radio;
 using ScanlineStudio.Core.Radio.Rigctld;
 using ScanlineStudio.Core.Sstv;
@@ -74,6 +75,15 @@ internal static class Program
         hostBuilder.Services.AddSingleton<IImageFileLoader, ImageFileLoader>();
         hostBuilder.Services.AddSingleton<IReceivedImageBuffer, ReceivedImageBuffer>();
 
+        // Phase 4 image-tooling UI -- spec/07-image-pipeline.md's "Stock image library"/"RX history"
+        // sections. ReceiveHistoryRecorder is resolved once, explicitly, below (nothing else in the
+        // DI graph depends on it as a constructor parameter the way ReceivedImageBuffer's ISstvDecoder
+        // subscription gets triggered automatically -- its own event subscriptions only happen once
+        // something actually asks the container to build one).
+        hostBuilder.Services.AddSingleton<IStockImageLibrary, StockImageLibrary>();
+        hostBuilder.Services.AddSingleton<IReceiveHistoryStore, SqliteReceiveHistoryStore>();
+        hostBuilder.Services.AddSingleton<ReceiveHistoryRecorder>();
+
         // Radio layer -- RigctldProtocolFactory only (decision #12: the one backend wired for the
         // Phase 3 demo; linked Hamlib is a one-line addition later, not blocking this phase).
         // RadioController's constructor takes IEnumerable<IRadioProtocolFactory>, resolved
@@ -88,6 +98,11 @@ internal static class Program
 
         var host = hostBuilder.Build();
         App.Services = host.Services;
+
+        // Eagerly resolved so its constructor's ISstvDecoder event subscriptions actually happen --
+        // see the registration comment above for why this can't just rely on being a constructor
+        // dependency somewhere else the way ReceivedImageBuffer's own subscription does.
+        host.Services.GetRequiredService<ReceiveHistoryRecorder>();
 
         // Auto-connect from persisted settings at startup -- the radio status strip (step 9) is a
         // fixed, read-only label, not an interactive "Connect" button (Phase 3 plan decision), so
