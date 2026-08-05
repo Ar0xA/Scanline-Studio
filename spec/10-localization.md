@@ -80,7 +80,7 @@ Missing keys in a non-English locale fall back to `en.json` and log a diagnostic
 
 ## Definition of done
 
-- [ ] `ILocalizationService` + `Translate` markup extension implemented and used by the [[01-architecture]] walking-skeleton window.
-- [ ] `en.json` populated from `.dfm` caption/hint extraction and `ja.json` populated from `sys.m_MsgEng`-branch source mining (CP932-decoded) for every view as it's ported (tracked per-dialog in [[14-roadmap]]) — not from the legacy `.ini` files, which carry no string table.
-- [ ] CI check for orphaned/missing locale keys and un-localized literal strings in `.axaml` files.
+- [x] `ILocalizationService` + `Translate` markup extension implemented and used by the [[01-architecture]] walking-skeleton window.
+- [ ] `en.json` populated from `.dfm` caption/hint extraction and `ja.json` populated from `sys.m_MsgEng`-branch source mining (CP932-decoded) for every view as it's ported (tracked per-dialog in [[14-roadmap]]) — not from the legacy `.ini` files, which carry no string table. Only `en.json` exists so far (Phase 3's own strings, hand-authored, not `.dfm`-mined since `MainWindow`/the 3 Phase-3 panes have no legacy dialog counterpart to mine from); `ja.json` and the `.dfm`-mining workflow are still open.
+- [x] CI check for orphaned/missing locale keys and un-localized literal strings in `.axaml` files.
 - [ ] Manual verification: switching language in `LanguageSettingsDialog` updates all currently-open windows live, no restart.

@@ -4008,13 +4008,17 @@ policy yet — `IRadioController` has no "try the next backend" concept, needs t
 `Yoniq.Application`/settings layer, which doesn't exist) and the Settings UI for the manual
 library-override path (hard-coded as a constructor parameter for now).
 
-## Phase 3 — Minimal UI, first end-to-end path
+## Phase 3 — Minimal UI, first end-to-end path — DONE
 
-- [[09-ui]]: `MainWindow` walking skeleton — waterfall, RX image panel, basic TX button — wired to Phase 1/2 services through `Yoniq.Application`.
-- [[10-localization]]: `ILocalizationService` + `Translate` extension in place from the start (retrofitting localization onto an already-built UI is far more expensive than building it in from the first window).
-- [[07-image-pipeline]]: minimal `IReceivedImageBuffer`/basic TX image selection (crop/resize can follow in Phase 4).
+- [[09-ui]]: `MainWindow` walking skeleton — waterfall, RX image panel, basic TX button — wired to Phase 1/2 services through `Yoniq.Application`. Shipped as 3 real Dock panes (Waterfall/RX Image/TX Controls) plus a fixed radio/frequency status strip in `MainWindow`'s own chrome (a deliberate scope trim, not a 4th dockable pane — nothing in this roadmap or [[09-ui]]'s dialog inventory calls for that).
+- [[10-localization]]: `ILocalizationService` + `Translate` extension in place from the start (retrofitting localization onto an already-built UI is far more expensive than building it in from the first window). Done; `ja.json` and `.dfm`-mining are still open (no legacy dialog counterpart exists for these 3 new panes to mine strings from).
+- [[07-image-pipeline]]: minimal `IReceivedImageBuffer`/basic TX image selection (crop/resize can follow in Phase 4) — shipped as `IImageFileLoader` (load + fit-to-mode resize only, no user-facing crop/resize tooling).
 
-**Demo:** a real over-the-air (or audio-cable-looped) SSTV RX/TX session, end-to-end, through the UI, with a rig's frequency shown live via rigctld.
+**Demo — actually run, not just claimed:** real `rigctld` + Hamlib Dummy rig for the radio half (the running app genuinely showed a live frequency in the status strip). For RX/TX audio, no GUI-automation tool was available in the sandbox this ran in, so the round trip was proven via two independent `ISstvSessionService` instances (mirroring two real app processes) over a real PipeWire virtual audio cable — real `MiniAudioEngine`, real `AnalogFmSstvEncoder`/`Decoder`: mode auto-detected, all lines received, PTT keyed correctly, received image pixel-identical to the source. Exercises the same `TransmitAsync` call path the real TX button invokes.
+
+**Aesthetic note**: partway through, the visual direction was corrected to "raw, functional instrumentation" (cuSDR64/Perseus/SDR++ — no rounded corners, no gradients/shadows, 2-4px padding max, monospace numeric readouts, bordered module groups) — recorded as the durable directive in [[09-ui]]'s "Visual design direction" section, applied to everything already built. Waterfall visual richness was explicitly deprioritized relative to RX/TX image handling and templating — kept deliberately simple, revisit later.
+
+Full build log, real bugs caught along the way (a settings-schema layering bug, an RX-image row-copy bug, an e2e-demo design contradiction), and file-level detail: see the session's own `PROJECT_BRIEF.md` history and `/home/artien/.claude/plans/hidden-conjuring-curry.md`.
 
 ## Phase 4 — CAT protocols, image tooling, logbook
 

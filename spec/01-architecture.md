@@ -103,6 +103,6 @@ Each `Yoniq.Core.*` project is a bounded module: it may be extracted to its own 
 
 ## Definition of done for this document
 
-- [ ] `Directory.Build.props` / `.editorconfig` created enforcing nullable + warnings-as-errors + analyzers.
-- [ ] Empty solution scaffolded matching the project list above, each project building with zero warnings.
-- [ ] `Yoniq.Host` boots, resolves an empty DI container, and shows a blank Avalonia window — the walking skeleton milestone referenced in [[14-roadmap]].
+- [x] `Directory.Build.props` / `.editorconfig` created enforcing nullable + warnings-as-errors + analyzers.
+- [x] Empty solution scaffolded matching the project list above, each project building with zero warnings.
+- [x] `Yoniq.Host` boots, resolves a real (not empty) DI container, and shows a working Avalonia window — the walking-skeleton milestone from [[14-roadmap]] Phase 3, exceeded (real service graph, not a blank window).
