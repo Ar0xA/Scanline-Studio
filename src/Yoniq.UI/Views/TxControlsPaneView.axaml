@@ -1,0 +1,55 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="using:Yoniq.UI.Localization"
+             xmlns:vm="using:Yoniq.UI.ViewModels"
+             xmlns:sstv="using:Yoniq.Abstractions.Sstv"
+             x:Class="Yoniq.UI.Views.TxControlsPaneView"
+             x:DataType="vm:TxControlsPaneViewModel">
+
+    <Border Classes="YoniqPanelBody">
+        <StackPanel Spacing="{DynamicResource YoniqSpacingMedium}">
+
+            <!-- Rigid grouping (Aesthetic Directive): the mode selector reads as its own
+                 instrument module, not a loose control floating in the pane. -->
+            <Border Classes="YoniqModuleGroup">
+                <StackPanel Spacing="{DynamicResource YoniqSpacingSmall}">
+                    <TextBlock Classes="YoniqReadout" FontSize="10" Text="{loc:Translate Panes.TxControls.ModeLabel}" />
+                    <ComboBox ItemsSource="{Binding AvailableModes}"
+                              SelectedItem="{Binding SelectedMode}"
+                              HorizontalAlignment="Stretch">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="sstv:SstvModeDefinition">
+                                <TextBlock Text="{Binding DisplayName}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+            </Border>
+
+            <Button Content="{loc:Translate Panes.TxControls.SelectImage}"
+                    Command="{Binding SelectImageCommand}"
+                    HorizontalAlignment="Stretch" />
+
+            <TextBlock Text="{Binding SelectedFileName}"
+                       IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+            <Image Source="{Binding PreviewImage}"
+                   Stretch="Uniform"
+                   MaxHeight="200"
+                   IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+            <TextBlock Text="{Binding ErrorMessage}"
+                       Foreground="{DynamicResource YoniqTxActiveColor}"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+            <ToggleButton Content="{loc:Translate Panes.TxControls.Transmit}"
+                          Theme="{StaticResource YoniqTxToggleButtonTheme}"
+                          Command="{Binding TransmitCommand}"
+                          IsChecked="{Binding IsTransmitting, Mode=OneWay}"
+                          HorizontalAlignment="Stretch" />
+
+        </StackPanel>
+    </Border>
+
+</UserControl>

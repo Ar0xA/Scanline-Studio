@@ -1,22 +1,30 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Yoniq.UI.ViewModels"
+        xmlns:loc="using:Yoniq.UI.Localization"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600"
         x:Class="Yoniq.UI.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="Yoniq.UI">
+        Title="{loc:Translate MainWindow.Title}">
 
-    <Design.DataContext>
-        <!-- This only sets the DataContext for the previewer in an IDE,
-             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
-        <vm:MainViewModel />
-    </Design.DataContext>
+    <!-- MainViewModel now requires AppDockFactory via DI, so no Design.DataContext previewer
+         instance; see App.axaml.cs for how the real DataContext is resolved at runtime. -->
 
-    <TextBox Text="{Binding Greeting}"
-             HorizontalAlignment="Center"
-             VerticalAlignment="Center" />
+    <Grid RowDefinitions="Auto,*">
+        <!-- Fixed radio/frequency status strip: MainWindow chrome, not a dockable pane
+             (Phase-3 plan decision #9's scope trim). Read-only; connecting happens once at
+             Yoniq.Host startup from persisted settings, not from this strip. -->
+        <Border Grid.Row="0" Classes="YoniqPanelHeader" DataContext="{Binding RadioStatus}">
+            <StackPanel Orientation="Horizontal" Spacing="{DynamicResource YoniqSpacingLarge}">
+                <TextBlock Classes="YoniqReadout" Text="{Binding FrequencyDisplay}" />
+                <TextBlock Classes="YoniqReadout" Text="{Binding ModeDisplay}" />
+            </StackPanel>
+        </Border>
+
+        <DockControl Grid.Row="1" Layout="{Binding Layout}" />
+    </Grid>
 
 </Window>

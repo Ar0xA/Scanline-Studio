@@ -14,6 +14,23 @@
     <ProjectReference Include="..\Yoniq.Application\Yoniq.Application.csproj" />
     <ProjectReference Include="..\Yoniq.Settings\Yoniq.Settings.csproj" />
     <ProjectReference Include="..\Yoniq.Core.Audio.MiniAudio\Yoniq.Core.Audio.MiniAudio.csproj" />
+    <!-- Direct ref (not just transitive via Yoniq.Application) because Program.cs `new`s
+         JsonLocalizationService directly; same rationale as the MiniAudio ref above. -->
+    <ProjectReference Include="..\Yoniq.Core.Localization\Yoniq.Core.Localization.csproj" />
+    <!-- Same rationale again: Program.cs directly registers AnalogFmSstvDecoder/Encoder,
+         ReceivedImageBuffer/ImageFileLoader, RadioController, and RigctldProtocolFactory. -->
+    <ProjectReference Include="..\Yoniq.Core.Sstv\Yoniq.Core.Sstv.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Imaging\Yoniq.Core.Imaging.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Radio\Yoniq.Core.Radio.csproj" />
+    <ProjectReference Include="..\Yoniq.Core.Radio.Rigctld\Yoniq.Core.Radio.Rigctld.csproj" />
+  </ItemGroup>
+
+  <!-- Locale assets (spec/10-localization.md): repo-root assets/locale/**, copied alongside the
+       built app so JsonLocalizationService can find them at AppContext.BaseDirectory/assets/locale. -->
+  <ItemGroup>
+    <None Include="..\..\assets\locale\**"
+          Link="assets\locale\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!--
