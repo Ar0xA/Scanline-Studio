@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
@@ -150,5 +151,76 @@ public sealed class SstvSessionServiceTests
         await service.TransmitAsync(TestMode, TestImage);
 
         Assert.False(audioEngine.IsCapturing);
+    }
+
+    [Fact]
+    public async Task TuneAsync_TokenCancelledMidTone_StillUnkeysPttAndRestartsCapture()
+    {
+        // Regression test for a real bug found while designing Piece 6 (SWR auto-cutoff / Stop TX):
+        // PlayWithPttAsync's cleanup previously reused the same (now-cancelled) token that triggered
+        // the cancellation for its own PTT-off/resume-capture calls -- both would immediately throw
+        // OperationCanceledException from their own WaitAsync(ct) on a real protocol, before ever
+        // sending the PTT-off command, leaving the rig keyed and RX capture stopped indefinitely (the
+        // exact opposite of what a safety cutoff exists to guarantee). FakeRadioSessionService.SetPttAsync
+        // was made to actually honor cancellation (see its own doc comment) specifically so this test
+        // can tell the fixed behavior (a fresh, non-cancelled cleanup token) apart from the bug.
+        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        await service.StartReceivingAsync();
+
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(10));
+
+        // 5 seconds of generated tone at 48kHz (TuneAsync's fixed sample rate) gives the CPU-bound
+        // sample loop -- with its periodic `await Task.Yield()` every 4096 samples -- ample real
+        // wall-clock time to still be mid-generation when the 10ms cancellation fires; TransmitAsync's
+        // own tiny 3-sample fixture completes too fast for this to land reliably, which is why this
+        // regression uses TuneAsync instead.
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), cts.Token));
+
+        Assert.Equal(PttOnThenOff, radioSession.PttCalls);
+        Assert.True(audioEngine.IsCapturing, "capture should have been restarted after a cancelled Tune");
+    }
+
+    [Fact]
+    public async Task GetTxVolumePercentAsync_SectionPredatesTheField_DefaultsTo100NotZero()
+    {
+        // Regression test for a real, confirmed bug: System.Text.Json does not honor an init-only
+        // property's C# initializer default when that property is absent from the JSON payload --
+        // it silently deserializes to the CLR default (0 for int), not the field's declared default.
+        // A settings.json saved before TxVolumePercent existed (exactly this raw JSON shape) must
+        // still resolve to the intended 100% default, not a silently muted 0%.
+        var legacyAudioSection = JsonDocument.Parse(
+            """{"CaptureDeviceId":"capture-1","PlaybackDeviceId":"playback-1","SampleRate":8000}""").RootElement;
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings { Sections = new() { [AudioDeviceSettings.SectionKey] = legacyAudioSection } },
+        };
+        var audioEngine = new FakeAudioEngine();
+        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
+            OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [8000])],
+        };
+        var service = new SstvSessionService(
+            audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(),
+            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService());
+
+        var percent = await service.GetTxVolumePercentAsync();
+
+        Assert.Equal(100, percent);
+    }
+
+    [Fact]
+    public async Task TransmitAsync_AppliesTxVolumeAsALinearGainOnEncodedSamples()
+    {
+        var (service, audioEngine, _, _, _, settingsStore) = CreateService();
+        var current = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)!;
+        settingsStore.Settings = settingsStore.Settings.WithSection(
+            AudioDeviceSettings.SectionKey, current with { TxVolumePercent = 50 }, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.Equal(ExpectedPlaybackSamples.Select(s => s * 0.5f), audioEngine.PlaybackSamples);
     }
 }

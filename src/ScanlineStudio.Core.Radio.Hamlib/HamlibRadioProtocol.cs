@@ -25,8 +25,9 @@ namespace ScanlineStudio.Core.Radio.Hamlib;
 /// <c>RIG *</c> with a "cancelled" caller's replacement would race it. Accepted tradeoff: with a
 /// (approximately) FIFO semaphore, <see cref="SetPttAsync"/> (the SSTV TX-keying hot path) can queue
 /// behind an in-flight poll -- the real bound is the duration of whatever's currently in the critical
-/// section (up to 3 blocking native calls, or a full connect+probe sequence on the very first poll),
-/// not just the poll cadence.
+/// section (up to 3 blocking native calls while receiving, up to 6 while transmitting once the
+/// SWR/ALC/RFPOWER_METER meter reads are gated in -- see <see cref="PollAsync"/> -- or a full
+/// connect+probe sequence on the very first poll), not just the poll cadence.
 /// </summary>
 public sealed class HamlibRadioProtocol : IRadioProtocol
 {
@@ -107,6 +108,14 @@ public sealed class HamlibRadioProtocol : IRadioProtocol
     private const int PttOn = 1;                // RIG_PTT_ON
     private const int PttOff = 0;               // RIG_PTT_OFF
 
+    // RIG_LEVEL_* bit-flag values (hamlib/include/hamlib/rig.h, CONSTANT_64BIT_FLAG(n) = 1ull << n) --
+    // verified directly against rig.h, not assumed. setting_t (the rig_get_level level parameter's
+    // type) is `typedef uint64_t setting_t` -- a plain ulong, unlike pbwidth_t/hamlib_token_t (which
+    // are CLong-marshaled C `long`s elsewhere in this file/IHamlibNative).
+    private const ulong LevelSwr = 1UL << 28;
+    private const ulong LevelAlc = 1UL << 29;
+    private const ulong LevelRfPowerMeter = 1UL << 32;
+
     private readonly IHamlibNative _native;
     private readonly uint _model;
     private readonly string? _serialPort;
@@ -180,7 +189,32 @@ public sealed class HamlibRadioProtocol : IRadioProtocol
                 }).ConfigureAwait(false);
             }
 
-            return new RadioState(hz, mode, isTransmitting, SignalStrengthDb: null, DateTimeOffset.UtcNow);
+            // Meters are TX-only readings on a real rig -- gated on the PTT readback just obtained
+            // above (not a separate always-on probe), both because an RX-time read is meaningless
+            // and to avoid doubling this poll's native-call count (already documented above as the
+            // real latency bound on this hot path) for a reading nobody looks at outside an active
+            // transmit.
+            float? swr = null, alc = null, powerPercent = null;
+            if (isTransmitting)
+            {
+                if (Capabilities.HasFlag(RadioCapabilities.SwrMeter))
+                {
+                    swr = await TryReadMeterAsync(LevelSwr).ConfigureAwait(false);
+                }
+
+                if (Capabilities.HasFlag(RadioCapabilities.AlcMeter))
+                {
+                    alc = await TryReadMeterAsync(LevelAlc).ConfigureAwait(false);
+                }
+
+                if (Capabilities.HasFlag(RadioCapabilities.PowerMeter))
+                {
+                    var fraction = await TryReadMeterAsync(LevelRfPowerMeter).ConfigureAwait(false);
+                    powerPercent = fraction * 100f;
+                }
+            }
+
+            return new RadioState(hz, mode, isTransmitting, SignalStrengthDb: null, DateTimeOffset.UtcNow, swr, alc, powerPercent);
         }
         finally
         {
@@ -324,7 +358,49 @@ public sealed class HamlibRadioProtocol : IRadioProtocol
             caps |= RadioCapabilities.PttControl;
         }
 
+        if (TryProbe(() => _native.RigGetLevel(_rig, VfoCurrent, LevelSwr, out _)))
+        {
+            caps |= RadioCapabilities.SwrMeter;
+        }
+
+        if (TryProbe(() => _native.RigGetLevel(_rig, VfoCurrent, LevelAlc, out _)))
+        {
+            caps |= RadioCapabilities.AlcMeter;
+        }
+
+        if (TryProbe(() => _native.RigGetLevel(_rig, VfoCurrent, LevelRfPowerMeter, out _)))
+        {
+            caps |= RadioCapabilities.PowerMeter;
+        }
+
         return caps;
+    }
+
+    /// <summary>Reads one meter level -- unlike the freq/mode/ptt reads above (which always
+    /// <see cref="ThrowIfError"/> unconditionally), a *soft* error here yields <see langword="null"/>
+    /// instead of throwing: meters are far more likely than freq/mode/ptt to intermittently soft-error
+    /// (e.g. ENAVAIL for SWR while not actually keyed), and letting that abort the whole
+    /// <see cref="PollAsync"/> snapshot would freeze the entire frequency/mode strip for as long as
+    /// the condition lasts. A *hard* error still surfaces (via <see cref="ThrowIfError"/>) -- that
+    /// indicates a genuinely broken transport, the same as every other read in this method.</summary>
+    private async Task<float?> TryReadMeterAsync(ulong level)
+    {
+        return await CallAsync(() =>
+        {
+            var code = _native.RigGetLevel(_rig, VfoCurrent, level, out var value);
+            if (code == 0)
+            {
+                return (float?)value;
+            }
+
+            if (IsSoftError(code))
+            {
+                return null;
+            }
+
+            ThrowIfError(code); // hard error -- surface it, don't silently return null
+            return null;        // unreachable -- ThrowIfError always throws for a nonzero hard code
+        }).ConfigureAwait(false);
     }
 
     private static bool TryProbe(Func<int> call)

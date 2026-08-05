@@ -15,4 +15,7 @@ public enum RadioCapabilities
     SetMode       = 1 << 3,
     PttControl    = 1 << 4,
     SignalMeter   = 1 << 5,
+    SwrMeter      = 1 << 6,
+    AlcMeter      = 1 << 7,
+    PowerMeter    = 1 << 8,
 }

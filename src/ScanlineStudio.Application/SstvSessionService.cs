@@ -109,7 +109,39 @@ public sealed class SstvSessionService : ISstvSessionService
         _isReceiving = false;
     }
 
-    public async Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
+    public Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
+        => PlayWithPttAsync(_encoder.EncodeAsync(mode, image, ct), _encoder.SampleRate, ct);
+
+    public Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default)
+    {
+        const int sampleRate = 48_000;
+        return PlayWithPttAsync(GenerateTone(frequencyHz, duration, sampleRate, ct), sampleRate, ct);
+    }
+
+    public async Task<int> GetTxVolumePercentAsync(CancellationToken ct = default)
+    {
+        var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
+        return settings.TxVolumePercent ?? 100;
+    }
+
+    public async Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
+    {
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
+            ?? new AudioDeviceSettings();
+        var updated = appSettings.WithSection(
+            AudioDeviceSettings.SectionKey,
+            current with { TxVolumePercent = percent },
+            AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Shared PTT-guarantee shape for both <see cref="TransmitAsync"/> and <see cref="TuneAsync"/>:
+    /// pauses capture (resumed afterward only if RX was already running), keys PTT, plays
+    /// <paramref name="samples"/>, then un-keys PTT in a <c>finally</c> no matter how playback ends.</summary>
+    private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
+
+    private async Task PlayWithPttAsync(IAsyncEnumerable<float> samples, int sampleRate, CancellationToken ct)
     {
         var wasReceiving = _isReceiving;
         if (wasReceiving)
@@ -118,20 +150,62 @@ public sealed class SstvSessionService : ISstvSessionService
         }
 
         var device = await ResolveDeviceAsync(forCapture: false, ct).ConfigureAwait(false);
+        var gain = (await GetTxVolumePercentAsync(ct).ConfigureAwait(false)) / 100f;
 
         await _radioSession.SetPttAsync(true, ct).ConfigureAwait(false);
         try
         {
-            await _audioEngine.StartPlaybackAsync(device, _encoder.SampleRate, ct).ConfigureAwait(false);
-            await PumpToPlaybackAsync(_encoder.EncodeAsync(mode, image, ct), ct).ConfigureAwait(false);
-            await _audioEngine.StopPlaybackAsync().ConfigureAwait(false);
+            await _audioEngine.StartPlaybackAsync(device, sampleRate, ct).ConfigureAwait(false);
+            await PumpToPlaybackAsync(samples, gain, ct).ConfigureAwait(false);
         }
         finally
         {
-            await _radioSession.SetPttAsync(false, ct).ConfigureAwait(false);
+            // Cleanup must never be defeated by the very cancellation (Stop TX / SWR auto-cutoff,
+            // spec/14-roadmap.md's Piece 6) that triggered it -- reusing the possibly-cancelled `ct`
+            // here (the original shape) left the rig keyed indefinitely and RX capture permanently
+            // stopped, since SetPttAsync/StartReceivingAsync both wait on an already-cancelled token
+            // before ever sending anything. A fresh, non-linked, bounded-timeout token instead:
+            // uncancellable-in-practice for Hamlib's native calls, but still gives up eventually if a
+            // wedged rigctld TCP read would otherwise hang this cleanup forever. StopPlaybackAsync
+            // moved in here too (previously inside the try, so it was skipped entirely on
+            // cancellation, leaving the output stream open with buffered audio still draining). Each
+            // step is independently guarded so one failure can never mask the original exception or
+            // prevent a sibling cleanup step from running.
+            using var cleanupCts = new CancellationTokenSource(CleanupTimeout);
+            await TryCleanupAsync(() => _audioEngine.StopPlaybackAsync()).ConfigureAwait(false);
+            await TryCleanupAsync(() => _radioSession.SetPttAsync(false, cleanupCts.Token)).ConfigureAwait(false);
             if (wasReceiving)
             {
-                await StartReceivingAsync(ct).ConfigureAwait(false);
+                await TryCleanupAsync(() => StartReceivingAsync(cleanupCts.Token)).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task TryCleanupAsync(Func<Task> step)
+    {
+        try
+        {
+            await step().ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort cleanup step -- see PlayWithPttAsync's own doc comment for why a failure
+            // here must never mask the original exception or block a sibling cleanup step.
+        }
+    }
+
+    private static async IAsyncEnumerable<float> GenerateTone(
+        double frequencyHz, TimeSpan duration, int sampleRate, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var totalSamples = (long)(duration.TotalSeconds * sampleRate);
+        var angularStep = 2.0 * Math.PI * frequencyHz / sampleRate;
+        for (var i = 0L; i < totalSamples; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            yield return (float)Math.Sin(angularStep * i);
+            if (i % 4096 == 0)
+            {
+                await Task.Yield();
             }
         }
     }
@@ -145,7 +219,7 @@ public sealed class SstvSessionService : ISstvSessionService
         }
     }
 
-    private async Task PumpToPlaybackAsync(IAsyncEnumerable<float> samples, CancellationToken ct)
+    private async Task PumpToPlaybackAsync(IAsyncEnumerable<float> samples, float gain, CancellationToken ct)
     {
         const int chunkSize = 4096;
         var buffer = new float[chunkSize];
@@ -153,7 +227,7 @@ public sealed class SstvSessionService : ISstvSessionService
 
         await foreach (var sample in samples.WithCancellation(ct).ConfigureAwait(false))
         {
-            buffer[count++] = sample;
+            buffer[count++] = sample * gain;
             if (count == chunkSize)
             {
                 await EnqueueAllAsync(buffer.AsMemory(0, count), ct).ConfigureAwait(false);

@@ -10,9 +10,19 @@ namespace ScanlineStudio.Abstractions.Radio;
 /// dropping one is lossy), each <see cref="RadioState"/> is a complete, self-sufficient snapshot, so
 /// publishing every poll is lossless and a subscriber that wants to filter should compare the specific
 /// fields it cares about, not rely on record equality.</summary>
+/// <summary><see cref="SwrRatio"/>/<see cref="AlcLevel"/>/<see cref="PowerPercent"/> (trailing,
+/// optional -- every existing positional construction site keeps compiling unchanged) are only ever
+/// populated while <see cref="IsTransmitting"/> is true (meters are TX-only on real rigs; reading
+/// them during RX both wastes a poll cycle and risks a stale/meaningless value -- see
+/// <c>RigctldClientProtocol.PollAsync</c>/<c>HamlibRadioProtocol.PollAsync</c>). <see langword="null"/>
+/// means "not read this poll" (RX, capability absent, or the read itself failed) -- never a
+/// meaningful zero.</summary>
 public readonly record struct RadioState(
     long FrequencyHz,
     RadioMode Mode,
     bool IsTransmitting,
     int? SignalStrengthDb,
-    DateTimeOffset ObservedAt);
+    DateTimeOffset ObservedAt,
+    float? SwrRatio = null,
+    float? AlcLevel = null,
+    float? PowerPercent = null);

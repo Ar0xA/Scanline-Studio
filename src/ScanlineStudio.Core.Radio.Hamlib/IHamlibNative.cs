@@ -37,6 +37,17 @@ internal interface IHamlibNative
     int RigSetPtt(nint rig, uint vfo, int ptt);
     int RigGetPtt(nint rig, uint vfo, out int ptt);
 
+    /// <summary><c>int rig_get_level(RIG *, vfo_t, setting_t, value_t *)</c>. <paramref name="level"/>
+    /// is one of the <c>RIG_LEVEL_*</c> bit flags (e.g. <c>RIG_LEVEL_SWR</c>) -- <c>setting_t</c> is
+    /// <c>typedef uint64_t setting_t</c> (verified directly against rig.h), a plain fixed-width
+    /// <see langword="ulong"/>, NOT the <see cref="CLong"/> marshaling this interface uses for
+    /// <c>pbwidth_t</c>/<c>hamlib_token_t</c> (those are C <c>long</c>, genuinely 32-bit on Windows/LLP64
+    /// vs 64-bit on Linux/macOS/LP64 -- <c>setting_t</c> has no such platform-width ambiguity to guard
+    /// against). Only the float arm of the <c>value_t</c> union is exposed here -- every level this
+    /// project reads (SWR/ALC/RFPOWER_METER) is documented in rig.h as "arg float"; the union-vs-struct
+    /// marshaling detail lives in <see cref="HamlibNative"/>, not this seam.</summary>
+    int RigGetLevel(nint rig, uint vfo, ulong level, out float value);
+
     /// <summary><c>const char *rig_version(void)</c> -- <b>not</b> <c>hamlib_version2</c>, which is a
     /// data export, not a function (see spec/03-cat-layer.md's "Version gate"). Already decoded;
     /// <see langword="null"/> if the native call returned a null pointer.</summary>

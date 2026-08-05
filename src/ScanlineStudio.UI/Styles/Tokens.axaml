@@ -85,6 +85,16 @@
     <Style Selector="CheckBox">
         <Setter Property="CornerRadius" Value="0" />
     </Style>
+    <!-- FluentTheme's default TabItem header uses a much larger type-ramp size than every other
+         control in this app (confirmed by actually running it: "General"/"Audio" etc. rendered
+         comically oversized next to normal-sized buttons/labels right next to them); pinned down
+         to a normal control-text size here, matching the Aesthetic Directive's "minimal padding,
+         nothing oversized" rule. -->
+    <Style Selector="TabItem">
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Padding" Value="{DynamicResource ScanlineStudioPaddingMedium}" />
+    </Style>
 
     <Style Selector="Border.ScanlineStudioPanelHeader">
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioPanelHeaderBackgroundColor}" />
@@ -114,6 +124,16 @@
          frequency/signal-meter/rapid-update numeric value. -->
     <Style Selector="TextBlock.ScanlineStudioReadout">
         <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+    </Style>
+
+    <!-- Help glyph: a small "[?]" placed next to an esoteric setting's label, its own ToolTip.Tip
+         carrying the actual explanation (see the Options window). Muted so it reads as secondary
+         chrome, not a real button; opt-in via Classes="ScanlineStudioHelpGlyph" on a TextBlock. -->
+    <Style Selector="TextBlock.ScanlineStudioHelpGlyph">
+        <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="Opacity" Value="0.6" />
+        <Setter Property="Cursor" Value="Help" />
     </Style>
 
 </Styles>

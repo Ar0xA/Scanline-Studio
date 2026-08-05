@@ -1,0 +1,166 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        xmlns:sys="using:System.Globalization"
+        x:Class="ScanlineStudio.UI.Views.OptionsWindowView"
+        x:DataType="vm:OptionsWindowViewModel"
+        Title="{loc:Translate Options.Title}"
+        Width="640" Height="520"
+        MinWidth="480" MinHeight="360"
+        WindowStartupLocation="CenterOwner">
+
+    <Border Classes="ScanlineStudioPanelBody">
+        <Grid RowDefinitions="*,Auto">
+
+            <TabControl Grid.Row="0">
+
+                <TabItem Header="{loc:Translate Options.General.Tab}">
+                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                        <Border Classes="ScanlineStudioModuleGroup">
+                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.General.Language}" />
+                                <ComboBox ItemsSource="{Binding AvailableCultures}"
+                                          SelectedItem="{Binding SelectedCulture}"
+                                          HorizontalAlignment="Stretch">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="sys:CultureInfo">
+                                            <TextBlock Text="{Binding DisplayName}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </StackPanel>
+                        </Border>
+                        <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetGeneralToDefaultCommand}" />
+                    </StackPanel>
+                </TabItem>
+
+                <TabItem Header="{loc:Translate Options.Audio.Tab}">
+                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                        <Border Classes="ScanlineStudioModuleGroup">
+                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Audio.CaptureDevice}" />
+                                <ComboBox ItemsSource="{Binding CaptureDevices}"
+                                          SelectedItem="{Binding SelectedCaptureDevice}"
+                                          HorizontalAlignment="Stretch">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Name}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+
+                                <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Audio.PlaybackDevice}" />
+                                <ComboBox ItemsSource="{Binding PlaybackDevices}"
+                                          SelectedItem="{Binding SelectedPlaybackDevice}"
+                                          HorizontalAlignment="Stretch">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Name}" />
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+
+                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.SampleRate}" />
+                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.SampleRate.Help}" />
+                                </StackPanel>
+                                <TextBox Text="{Binding SampleRate}" Width="120" HorizontalAlignment="Left" />
+                            </StackPanel>
+                        </Border>
+                        <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetAudioToDefaultCommand}" />
+                    </StackPanel>
+                </TabItem>
+
+                <TabItem Header="{loc:Translate Options.Radio.Tab}">
+                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                        <Border Classes="ScanlineStudioModuleGroup">
+                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Backend}" />
+                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Backend.Help}" />
+                                </StackPanel>
+                                <RadioButton GroupName="RadioBackend"
+                                             Content="{loc:Translate Options.Radio.Backend.None}"
+                                             IsChecked="{Binding IsNoneBackendSelected}" />
+                                <RadioButton GroupName="RadioBackend"
+                                             Content="{loc:Translate Options.Radio.Backend.Rigctld}"
+                                             IsChecked="{Binding IsRigctldBackendSelected}" />
+                                <RadioButton GroupName="RadioBackend"
+                                             Content="{loc:Translate Options.Radio.Backend.Hamlib}"
+                                             IsChecked="{Binding IsHamlibBackendSelected}" />
+
+                                <StackPanel IsVisible="{Binding IsRigctldSelected}" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Radio.Host}" />
+                                    <TextBox Text="{Binding RigctldHost}" />
+                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Radio.Port}" />
+                                    <TextBox Text="{Binding RigctldPort}" Width="120" HorizontalAlignment="Left" />
+                                </StackPanel>
+
+                                <StackPanel IsVisible="{Binding IsHamlibSelected}" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.Model}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.Model.Help}" />
+                                    </StackPanel>
+                                    <TextBox Text="{Binding HamlibModel}" Width="120" HorizontalAlignment="Left" />
+
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.SerialPort}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.SerialPort.Help}" />
+                                    </StackPanel>
+                                    <TextBox Text="{Binding HamlibSerialPort}" />
+
+                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Radio.Hamlib.BaudRate}" />
+                                    <TextBox Text="{Binding HamlibBaudRate}" Width="120" HorizontalAlignment="Left" />
+
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.PttType}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.PttType.Help}" />
+                                    </StackPanel>
+                                    <TextBox Text="{Binding HamlibPttType}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetRadioToDefaultCommand}" />
+                    </StackPanel>
+                </TabItem>
+
+                <TabItem Header="{loc:Translate Options.Tx.Tab}">
+                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                        <Border Classes="ScanlineStudioModuleGroup">
+                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.Callsign}" />
+                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.Callsign.Help}" />
+                                </StackPanel>
+                                <TextBox Text="{Binding Callsign}" Width="200" HorizontalAlignment="Left" />
+                            </StackPanel>
+                        </Border>
+                        <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetTxToDefaultCommand}" />
+                    </StackPanel>
+                </TabItem>
+
+            </TabControl>
+
+            <!-- Bottom bar: destructive "Reset ALL" on the left with its own inline confirm step
+                 (IsConfirmingResetAll), Cancel/Save on the right. Per-section resets above are a
+                 single click each since nothing is persisted until Save. -->
+            <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                <Button Grid.Column="0"
+                        Content="{loc:Translate Options.ResetAll}"
+                        Command="{Binding RequestResetAllCommand}"
+                        IsVisible="{Binding !IsConfirmingResetAll}" />
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsVisible="{Binding IsConfirmingResetAll}">
+                    <TextBlock Text="{loc:Translate Options.ResetAll.ConfirmPrompt}" TextWrapping="Wrap" MaxWidth="260" VerticalAlignment="Center" />
+                    <Button Content="{loc:Translate Options.ResetAll.ConfirmYes}" Command="{Binding ConfirmResetAllCommand}" />
+                    <Button Content="{loc:Translate Options.ResetAll.ConfirmNo}" Command="{Binding CancelResetAllCommand}" />
+                </StackPanel>
+
+                <Button Grid.Column="2" Content="{loc:Translate Options.Cancel}" Command="{Binding CancelCommand}" Margin="0,0,4,0" IsVisible="{Binding !IsConfirmingResetAll}" />
+                <Button Grid.Column="3" Content="{loc:Translate Options.Save}" Command="{Binding SaveCommand}" IsVisible="{Binding !IsConfirmingResetAll}" />
+            </Grid>
+
+        </Grid>
+    </Border>
+
+</Window>

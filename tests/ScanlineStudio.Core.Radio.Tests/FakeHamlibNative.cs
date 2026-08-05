@@ -45,6 +45,9 @@ internal sealed class FakeHamlibNative : IHamlibNative
     public int Ptt { get; set; }
     public string? Version { get; set; } = "Hamlib 4.5.5 2024-01-01T00:00:00Z x86_64-pc-linux-gnu";
 
+    public Dictionary<ulong, int> LevelCodes { get; } = new();
+    public Dictionary<ulong, float> LevelValues { get; } = new();
+
     public nint RigInit(uint model) => Enter(() =>
     {
         CallLog.Add("rig_init");
@@ -141,6 +144,17 @@ internal sealed class FakeHamlibNative : IHamlibNative
         CallLog.Add("rig_version");
         return Version;
     });
+
+    public int RigGetLevel(nint rig, uint vfo, ulong level, out float value)
+    {
+        var code = Enter(() =>
+        {
+            CallLog.Add($"rig_get_level:{level}");
+            return LevelCodes.GetValueOrDefault(level, 0);
+        });
+        value = LevelValues.GetValueOrDefault(level, 0f);
+        return code;
+    }
 
     private T Enter<T>(Func<T> body)
     {

@@ -38,4 +38,15 @@ public interface ISstvSessionService : IAsyncDisposable
     /// capture/decode for the duration (restored afterward only if RX was already running) and keys
     /// PTT via the injected <c>IRadioSessionService</c> around playback.</summary>
     Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default);
+
+    /// <summary>Keys PTT, plays a steady sine tone at <paramref name="frequencyHz"/> for
+    /// <paramref name="duration"/> (WSJT-X/legacy-Tune-style AFC-lock aid), then un-keys PTT --
+    /// same pause-RX/key-PTT/resume-RX guarantee shape as <see cref="TransmitAsync"/>.</summary>
+    Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default);
+
+    /// <summary>Current post-encode playback gain (0-100), read fresh from
+    /// <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent</c>.</summary>
+    Task<int> GetTxVolumePercentAsync(CancellationToken ct = default);
+
+    Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default);
 }
