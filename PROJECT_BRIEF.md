@@ -56,7 +56,7 @@ SaaS: no rounded corners, no gradients/shadows, 2-4px padding max, monospace for
 bordered "module group" containers). Recorded verbatim in `spec/09-ui.md`'s "Visual design direction"
 section (supersedes the earlier softer SDR++ paragraph). Applied immediately: `CornerRadius="0"`
 globally on Button/ToggleButton/ComboBox/TextBox/CheckBox, spacing tokens shrunk from 8/16px to 2/4/6px,
-a `Scanline StudioMonospaceFontFamily` resource + `TextBlock.Scanline StudioReadout` class, a `Border.Scanline StudioModuleGroup`
+a `ScanlineStudioMonospaceFontFamily` resource + `TextBlock.ScanlineStudioReadout` class, a `Border.ScanlineStudioModuleGroup`
 style (Avalonia has no native GroupBox). **User also explicitly deprioritized the waterfall's visual
 polish** relative to RX/TX image handling and templating (saved as memory
 `feedback_ui_effort_allocation` — read that before sinking more effort into waterfall visuals in a
