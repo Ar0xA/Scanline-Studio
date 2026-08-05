@@ -74,6 +74,8 @@ public sealed class SstvSessionService : ISstvSessionService
 
     public IReadOnlyList<SstvModeDefinition> AvailableModes => SstvModeRegistry.All;
 
+    public bool IsReceiving => _isReceiving;
+
     public event Action<SstvModeDefinition>? ModeDetected
     {
         add => _decoder.ModeDetected += value;

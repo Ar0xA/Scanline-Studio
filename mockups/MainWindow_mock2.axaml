@@ -1,0 +1,1148 @@
+<!--
+  SSTV Console — Avalonia UI 11, FluentTheme (Light), restyled flat
+  Utilitarian WSJT-X / fldigi chrome: square corners, gray control faces,
+  sunken monospace readouts, pressed-look toggles, classic notebook tabs.
+  Layout matches the mockup: menu, VFO + favourites + transceiver header,
+  TabControl (Receive / Transmit / Gallery), status bar.
+
+  App.axaml must contain:
+      <Application.Styles>
+        <FluentTheme />
+        <StyleInclude Source="avares://SstvConsole/Styles/Console.axaml" />
+      </Application.Styles>
+
+  PlotView is a placeholder for whatever draws each measurement surface (a
+  WriteableBitmap control, SkiaSharp canvas, chart library — the choice is open).
+  Kind says what the surface shows; Source is the pixel/sample buffer behind it:
+
+    Kind="Spectrum"  live FFT of the receive audio, roughly 1000–2600 Hz across the
+                     width, amplitude up. Marks the 1200 Hz sync tone and the
+                     1500–2300 Hz video band; peak frequency and level read out on top.
+    Kind="Waterfall" the same FFT plotted over time — one row per analysis frame,
+                     newest at the top, intensity mapped to colour. Clicking a
+                     column retunes the rig to that audio frequency.
+    Kind="Frame"     the picture currently being decoded, painted line by line as
+                     scan lines arrive; the region below the current line is
+                     undecoded noise with a cursor at the write position. Held at
+                     5:4 (320×256) so a Scottie/Martin frame fills it exactly.
+    Kind="LineSnr"   signal-to-noise measured per scan line for the frame in
+                     progress — shows where fading or QSB damaged the picture.
+    Kind="Histogram" luminance distribution of the decoded pixels, for spotting
+                     clipped blacks and whites.
+    Kind="TxMeter"   forward power and ALC over the course of the current
+                     transmission, read from the rig over CAT.
+
+  The bindings below name the data each panel needs (frame metadata, decode log,
+  favourites, templates); any view-model shape that exposes those names will do.
+-->
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:SstvConsole.Controls"
+        xmlns:vm="using:SstvConsole.ViewModels"
+        x:Class="SstvConsole.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="SSTV Console" Width="1920" Height="1080"
+        MinWidth="1440" MinHeight="900"
+        Background="{DynamicResource SolidBackgroundFillColorBase}"
+        FontFamily="Segoe UI" FontSize="13">
+
+  <Window.Resources>
+    <!-- Local semantics on top of the Fluent palette -->
+    <!-- utilitarian palette: Win32/Qt control gray, sunken white readouts,
+         no gloss, no accent fills except state and progress -->
+    <SolidColorBrush x:Key="PanelBackground" Color="#FFF0F0F0" />
+    <SolidColorBrush x:Key="CardBackground" Color="#FFF0F0F0" />
+    <SolidColorBrush x:Key="CardBorder" Color="#FFB9B9B9" />
+    <SolidColorBrush x:Key="ControlFace" Color="#FFE9E9E9" />
+    <SolidColorBrush x:Key="ControlBorder" Color="#FFA0A0A0" />
+    <SolidColorBrush x:Key="ControlHover" Color="#FFDCE9F5" />
+    <SolidColorBrush x:Key="ControlHoverBorder" Color="#FF7EB4EA" />
+    <SolidColorBrush x:Key="ControlPressed" Color="#FFC4DDF5" />
+    <SolidColorBrush x:Key="FieldBackground" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="PlotBackground" Color="#FF101010" />
+    <SolidColorBrush x:Key="LabelForeground" Color="#FF454545" />
+    <SolidColorBrush x:Key="AccentFill" Color="#FF0F62A8" />
+    <FontFamily x:Key="ReadoutFont">Cascadia Mono,Consolas,monospace</FontFamily>
+    <Thickness x:Key="CardPadding">9,6</Thickness>
+    <!-- square-cornered variant of FluentTheme -->
+    <CornerRadius x:Key="ControlCornerRadius">0</CornerRadius>
+    <CornerRadius x:Key="OverlayCornerRadius">0</CornerRadius>
+    <CornerRadius x:Key="ButtonCornerRadius">0</CornerRadius>
+  </Window.Resources>
+
+  <!-- ══ flat instrument chrome on top of FluentTheme ═══════════════════
+       Buttons are gray control faces with a 1px border and no gradient;
+       anything that shows a measured value is a sunken white monospace
+       field; toggles look pressed rather than accent-filled. -->
+  <Window.Styles>
+    <Style Selector="Window">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Background" Value="{DynamicResource PanelBackground}" />
+    </Style>
+
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="{DynamicResource CardBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource CardBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="Padding" Value="8,6" />
+    </Style>
+    <Style Selector="Border.cardInner">
+      <Setter Property="Background" Value="{DynamicResource CardBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource CardBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="7,5" />
+    </Style>
+    <Style Selector="Border.plot">
+      <Setter Property="Background" Value="{DynamicResource PlotBackground}" />
+      <Setter Property="BorderBrush" Value="#FF7A7A7A" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style Selector="TextBlock.cardHeader">
+      <Setter Property="FontSize" Value="12" /><Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.cardHeaderSmall">
+      <Setter Property="FontSize" Value="11.5" /><Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.caption">
+      <Setter Property="FontSize" Value="11" /><Setter Property="Foreground" Value="{DynamicResource LabelForeground}" />
+    </Style>
+    <Style Selector="TextBlock.label">
+      <Setter Property="Foreground" Value="{DynamicResource LabelForeground}" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+    <!-- every measured value is monospace and right-aligned, and never
+         pushes past its card: rows clip instead of overrunning -->
+    <Style Selector="TextBlock.value">
+      <Setter Property="FontFamily" Value="{DynamicResource ReadoutFont}" />
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="HorizontalAlignment" Value="Right" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+    <Style Selector="TextBlock.accentValue">
+      <Setter Property="FontFamily" Value="{DynamicResource ReadoutFont}" />
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentFill}" />
+      <Setter Property="HorizontalAlignment" Value="Right" />
+    </Style>
+    <Style Selector="TextBlock.readout">
+      <Setter Property="FontFamily" Value="{DynamicResource ReadoutFont}" /><Setter Property="FontSize" Value="11" />
+    </Style>
+    <Style Selector="TextBlock.readoutSmall">
+      <Setter Property="FontFamily" Value="{DynamicResource ReadoutFont}" /><Setter Property="FontSize" Value="10.5" />
+      <Setter Property="Foreground" Value="#FF8A8A8A" />
+    </Style>
+    <Style Selector="Grid.kv"><Setter Property="ClipToBounds" Value="True" /></Style>
+
+    <Style Selector="Button">
+      <Setter Property="Height" Value="24" />
+      <Setter Property="Padding" Value="10,0" />
+      <Setter Property="FontWeight" Value="Normal" />
+      <Setter Property="Background" Value="{DynamicResource ControlFace}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Button:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource ControlHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlHoverBorder}" />
+    </Style>
+    <Style Selector="Button:pressed /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource ControlPressed}" />
+    </Style>
+    <!-- "accent" here means the default action, not a filled blue pill -->
+    <Style Selector="Button.accent">
+      <Setter Property="Background" Value="#FFD6E7F7" />
+      <Setter Property="BorderBrush" Value="#FF5A9AD4" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="#FF0B3E68" />
+    </Style>
+    <Style Selector="Button.small, ToggleButton.small">
+      <Setter Property="Height" Value="21" /><Setter Property="Padding" Value="8,0" /><Setter Property="FontSize" Value="11" />
+    </Style>
+
+    <Style Selector="ToggleButton">
+      <Setter Property="Height" Value="24" /><Setter Property="Padding" Value="10,0" />
+      <Setter Property="Background" Value="{DynamicResource ControlFace}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlBorder}" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="ToggleButton:checked /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource ControlPressed}" />
+      <Setter Property="BorderBrush" Value="#FF5A9AD4" />
+    </Style>
+
+    <!-- segmented control = radio buttons drawn as pressed/unpressed keys -->
+    <Style Selector="Border.segment">
+      <Setter Property="BorderThickness" Value="0" /><Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="RadioButton.seg">
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="face" Height="22" Padding="9,0" Margin="-1,0,0,0"
+                  Background="{DynamicResource ControlFace}"
+                  BorderBrush="{DynamicResource ControlBorder}" BorderThickness="1" CornerRadius="0">
+            <ContentPresenter Content="{TemplateBinding Content}" FontSize="11.5"
+                              HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="RadioButton.seg:pointerover /template/ Border#face">
+      <Setter Property="Background" Value="{DynamicResource ControlHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlHoverBorder}" />
+    </Style>
+    <Style Selector="RadioButton.seg:checked /template/ Border#face">
+      <Setter Property="Background" Value="{DynamicResource ControlPressed}" />
+      <Setter Property="BorderBrush" Value="#FF5A9AD4" />
+      <Setter Property="BoxShadow" Value="inset 0 1 2 #24000000" />
+    </Style>
+    <Style Selector="RadioButton.tool">
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Name="face" Height="21" Padding="8,0" Background="{DynamicResource ControlFace}"
+                  BorderBrush="{DynamicResource ControlBorder}" BorderThickness="1">
+            <ContentPresenter Content="{TemplateBinding Content}" FontSize="11" VerticalAlignment="Center" />
+          </Border>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+    <Style Selector="RadioButton.tool:checked /template/ Border#face">
+      <Setter Property="Background" Value="{DynamicResource ControlPressed}" />
+      <Setter Property="BorderBrush" Value="#FF5A9AD4" />
+    </Style>
+
+    <!-- status fields: sunken white monospace boxes (fldigi style) -->
+    <Style Selector="Border.pill">
+      <Setter Property="Height" Value="19" /><Setter Property="Padding" Value="6,0" />
+      <Setter Property="Background" Value="{DynamicResource FieldBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlBorder}" />
+      <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Border.pill > TextBlock">
+      <Setter Property="FontFamily" Value="{DynamicResource ReadoutFont}" /><Setter Property="FontSize" Value="11" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Border.accentPill">
+      <Setter Property="Background" Value="{DynamicResource AccentFill}" />
+      <Setter Property="BorderBrush" Value="#FF0B4C83" />
+    </Style>
+    <Style Selector="Border.accentPill > TextBlock"><Setter Property="Foreground" Value="White" /></Style>
+    <Style Selector="Border.softPill">
+      <Setter Property="Background" Value="#FFE7F0DA" /><Setter Property="BorderBrush" Value="#FF8FAE6E" />
+    </Style>
+    <Style Selector="Border.softPill > TextBlock"><Setter Property="Foreground" Value="#FF2C4715" /></Style>
+
+    <Style Selector="TextBox, ComboBox, NumericUpDown">
+      <Setter Property="MinHeight" Value="21" /><Setter Property="Height" Value="21" />
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="Background" Value="{DynamicResource FieldBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlBorder}" />
+      <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="NumericUpDown.tight"><Setter Property="Width" Value="72" /><Setter Property="HorizontalAlignment" Value="Right" /></Style>
+
+    <!-- rectangular Win32 slider thumb, sunken track -->
+    <Style Selector="Slider">
+      <Setter Property="MinHeight" Value="18" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentFill}" />
+    </Style>
+    <Style Selector="Slider /template/ Thumb">
+      <Setter Property="Width" Value="9" /><Setter Property="Height" Value="15" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="Background" Value="{DynamicResource ControlFace}" />
+      <Setter Property="BorderBrush" Value="#FF6E6E6E" /><Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="ProgressBar">
+      <Setter Property="Height" Value="10" /><Setter Property="CornerRadius" Value="0" />
+      <Setter Property="Background" Value="{DynamicResource FieldBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlBorder}" /><Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentFill}" />
+    </Style>
+
+    <!-- framed grid headers, monospace cells, no zebra gloss -->
+    <Style Selector="DataGridColumnHeader">
+      <Setter Property="Background" Value="#FFE4E4E4" />
+      <Setter Property="BorderBrush" Value="#FFC8C8C8" /><Setter Property="BorderThickness" Value="1" />
+      <Setter Property="FontSize" Value="11" /><Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Padding" Value="6,3" />
+    </Style>
+    <Style Selector="DataGridCell">
+      <Setter Property="FontFamily" Value="{DynamicResource ReadoutFont}" />
+      <Setter Property="FontSize" Value="11" /><Setter Property="Padding" Value="6,2" />
+    </Style>
+    <Style Selector="DataGridRow:pointerover /template/ Rectangle#BackgroundRectangle">
+      <Setter Property="Fill" Value="#FFCDE1F5" /><Setter Property="Opacity" Value="1" />
+    </Style>
+
+    <!-- classic notebook tabs: the active tab merges into the page -->
+    <Style Selector="TabItem">
+      <Setter Property="FontSize" Value="12" /><Setter Property="MinHeight" Value="22" />
+      <Setter Property="Height" Value="22" /><Setter Property="Padding" Value="14,0" />
+      <Setter Property="Margin" Value="0,0,2,-1" />
+      <Setter Property="Background" Value="#FFE4E4E4" />
+      <Setter Property="Foreground" Value="{DynamicResource LabelForeground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource CardBorder}" />
+      <Setter Property="BorderThickness" Value="1,1,1,0" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="TabItem:selected">
+      <Setter Property="Background" Value="{DynamicResource PanelBackground}" />
+      <Setter Property="Foreground" Value="#FF101010" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TabItem:selected /template/ Border#PART_SelectedPipe"><Setter Property="IsVisible" Value="False" /></Style>
+
+    <Style Selector="Border.thumb">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlBorder}" /><Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.canvas">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ControlBorder}" /><Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.safeArea">
+      <Setter Property="BorderBrush" Value="#FF7FB2E5" /><Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Border.plate">
+      <Setter Property="Background" Value="#E6FFFFFF" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentFill}" /><Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="8,3" />
+    </Style>
+    <Style Selector="TextBlock.plateText">
+      <Setter Property="FontFamily" Value="{DynamicResource ReadoutFont}" /><Setter Property="FontSize" Value="14" />
+    </Style>
+    <Style Selector="Separator.vertical">
+      <Setter Property="Width" Value="1" /><Setter Property="Height" Value="18" />
+      <Setter Property="Background" Value="{DynamicResource CardBorder}" /><Setter Property="Margin" Value="4,0" />
+    </Style>
+    <Style Selector="Menu"><Setter Property="Background" Value="{DynamicResource PanelBackground}" /></Style>
+    <Style Selector="Expander">
+      <Setter Property="Background" Value="{DynamicResource ControlFace}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource CardBorder}" /><Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="0" />
+    </Style>
+  </Window.Styles>
+
+  <DockPanel LastChildFill="True">
+
+    <!-- ══ menu ════════════════════════════════════════════════════════ -->
+    <Menu DockPanel.Dock="Top" Height="26" Padding="4,0">
+      <MenuItem Header="_File">
+        <MenuItem Header="Open image…" InputGesture="Ctrl+O" />
+        <MenuItem Header="Save frame as…" InputGesture="Ctrl+S" />
+        <Separator />
+        <MenuItem Header="Exit" />
+      </MenuItem>
+      <MenuItem Header="_Configurations">
+        <MenuItem Header="Station (callsign, grid, locator)" />
+        <MenuItem Header="Audio devices" />
+        <MenuItem Header="Storage &amp; naming" />
+        <MenuItem Header="Macros" />
+      </MenuItem>
+      <MenuItem Header="_Rig &amp; PTT">
+        <MenuItem Header="CAT interface (rigctld)…" />
+        <MenuItem Header="PTT method…" />
+        <MenuItem Header="Frequency memories…" />
+        <MenuItem Header="Test PTT (1 s)" />
+      </MenuItem>
+      <MenuItem Header="Cali_bration">
+        <MenuItem Header="Run 15-minute clock calibration" />
+        <MenuItem Header="Loopback self-test" />
+        <MenuItem Header="Tone generator…" />
+        <MenuItem Header="Slant reference…" />
+      </MenuItem>
+      <MenuItem Header="_View">
+        <MenuItem Header="Spectrum + waterfall" ToggleType="CheckBox" IsChecked="True" />
+        <MenuItem Header="Decode activity" ToggleType="CheckBox" IsChecked="True" />
+        <MenuItem Header="Compact density" ToggleType="CheckBox" />
+      </MenuItem>
+      <MenuItem Header="_Tools">
+        <MenuItem Header="Re-decode from WAV…" />
+        <MenuItem Header="Export session log…" />
+      </MenuItem>
+      <MenuItem Header="_Help" />
+    </Menu>
+
+    <!-- ══ status bar ══════════════════════════════════════════════════ -->
+    <Border DockPanel.Dock="Bottom" Height="24" Background="{DynamicResource PanelBackground}"
+            BorderBrush="{DynamicResource CardBorder}" BorderThickness="0,1,0,0">
+      <StackPanel Orientation="Horizontal" Spacing="9" Margin="12,0" VerticalAlignment="Center">
+        <Border Classes="accentPill"><TextBlock Text="Receiving" /></Border>
+        <TextBlock Classes="readout" Text="{Binding StatusFrequency}" />
+        <TextBlock Classes="readout" Text="{Binding DetectedMode}" />
+        <TextBlock Classes="readout" Text="{Binding LineProgressText}" />
+        <TextBlock Classes="readout" Text="{Binding SnrText}" />
+        <TextBlock Classes="readout" Text="{Binding SlantText}" />
+        <TextBlock Classes="readout" Text="{Binding BufferText}" />
+        <TextBlock Classes="readout" HorizontalAlignment="Right" Text="{Binding FramesTodayText}" />
+        <TextBlock Classes="readout" Text="{Binding LogSizeText}" />
+      </StackPanel>
+    </Border>
+
+    <Grid RowDefinitions="Auto,*">
+
+      <!-- ══ header: VFO · favourites · transceiver ═════════════════════ -->
+      <Grid Grid.Row="0" ColumnDefinitions="Auto,*,278" Margin="10,8,10,6" ColumnSpacing="6">
+
+        <Border Grid.Column="0" Classes="card" Padding="16,8">
+          <StackPanel Orientation="Horizontal" Spacing="16">
+            <StackPanel>
+              <TextBlock Classes="caption" Text="VFO A · RX · M1" />
+              <TextBlock Text="{Binding VfoDisplay}" FontSize="40" FontWeight="SemiBold" />
+            </StackPanel>
+            <StackPanel Spacing="5" VerticalAlignment="Center">
+              <!-- Fluent segmented control = RadioButtons in a bordered strip -->
+              <Border Classes="segment">
+                <StackPanel Orientation="Horizontal">
+                  <RadioButton Classes="seg" GroupName="Sideband" IsChecked="True" Content="USB" />
+                  <RadioButton Classes="seg" GroupName="Sideband" Content="LSB" />
+                  <RadioButton Classes="seg" GroupName="Sideband" Content="FM" />
+                </StackPanel>
+              </Border>
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <Border Classes="pill"><TextBlock Text="BW 2.7k" /></Border>
+                <Border Classes="pill"><TextBlock Text="SPLIT OFF" /></Border>
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <Border Classes="pill"><TextBlock Text="STEP 500 Hz" /></Border>
+                <Border Classes="pill"><TextBlock Text="RIT 0" /></Border>
+              </StackPanel>
+            </StackPanel>
+            <Border BorderBrush="{DynamicResource CardBorder}" BorderThickness="1,0,0,0" Padding="14,0,0,0">
+              <StackPanel Spacing="4" HorizontalAlignment="Right">
+                <TextBlock Classes="readout" FontSize="15" Text="{Binding UtcText}" />
+                <Border Classes="softPill"><TextBlock Text="CAT linked" /></Border>
+                <Border Classes="pill"><TextBlock Text="{Binding RigMeters}" /></Border>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="1" Classes="card">
+          <StackPanel Spacing="5">
+            <Grid ColumnDefinitions="Auto,*">
+              <TextBlock Classes="cardHeader" Text="Favourites" />
+              <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right"
+                         Text="M1…M7 recall · Shift+M store · double-click to rename" />
+            </Grid>
+            <ItemsControl ItemsSource="{Binding Favourites}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel Orientation="Horizontal" /></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:MemoryChannel">
+                  <Button Height="38" Margin="0,0,6,0" Padding="11,0"
+                          Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).RecallCommand}"
+                          CommandParameter="{Binding}">
+                    <StackPanel>
+                      <TextBlock Classes="value" Text="{Binding FrequencyWithSideband}" />
+                      <TextBlock Classes="caption" FontWeight="Normal" Text="{Binding Name}" />
+                    </StackPanel>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Button Classes="accent" Height="38" Content="Store current" Command="{Binding StoreCurrentCommand}" />
+              <Button Classes="small" Content="Edit list…" />
+              <Button Classes="small" Content="Import" />
+              <Button Classes="small" Content="Scan M1–M3" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="2" Classes="card">
+          <StackPanel Spacing="5">
+            <TextBlock Classes="cardHeader" Text="Transceiver" />
+            <UniformGrid Columns="2" Margin="0,0,0,2">
+              <ToggleButton Classes="accent" Margin="0,0,3,0" IsChecked="{Binding IsMonitoring}"
+                            Content="{Binding MonitorButtonText}" />
+              <Button Margin="3,0,0,0" Content="Halt" Command="{Binding HaltCommand}" />
+            </UniformGrid>
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
+              <TextBlock Classes="label" Text="RX level" VerticalAlignment="Center" />
+              <Slider Grid.Column="1" Minimum="-60" Maximum="0" Value="{Binding RxLevelDb}" />
+              <TextBlock Grid.Column="2" Classes="value" VerticalAlignment="Center" Text="{Binding RxLevelDb, StringFormat={}{0:0.0}}" />
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
+              <TextBlock Classes="label" Text="TX level" VerticalAlignment="Center" />
+              <Slider Grid.Column="1" Minimum="-30" Maximum="0" Value="{Binding TxLevelDb}" />
+              <TextBlock Grid.Column="2" Classes="value" VerticalAlignment="Center" Text="{Binding TxLevelDb, StringFormat={}{0:0.0}}" />
+            </Grid>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- ══ workspaces ═════════════════════════════════════════════════ -->
+      <TabControl Grid.Row="1" Margin="0" Padding="9,7">
+
+
+        <!-- ─────────────── Receive ─────────────── -->
+        <TabItem Header="Receive">
+          <Grid ColumnDefinitions="258,*,330" ColumnSpacing="6">
+
+            <!-- left: decoder controls -->
+            <StackPanel Grid.Column="0" Spacing="10">
+
+              <Border Classes="card">
+                <StackPanel Spacing="5">
+                  <TextBlock Classes="cardHeader" Text="Mode" />
+                  <Border Classes="segment">
+                    <UniformGrid Columns="2">
+                      <RadioButton Classes="seg" GroupName="ModeLock" IsChecked="{Binding IsAutoDetect}" Content="Auto" />
+                      <RadioButton Classes="seg" GroupName="ModeLock" Content="Locked" />
+                    </UniformGrid>
+                  </Border>
+                  <ComboBox ItemsSource="{Binding AllModes}" SelectedItem="{Binding SelectedMode}" HorizontalAlignment="Stretch" />
+                  <ItemsControl ItemsSource="{Binding QuickModes}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate><UniformGrid Columns="4" /></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate><Border Classes="pill" Margin="1"><TextBlock Text="{Binding}" HorizontalAlignment="Center" /></Border></DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Line time" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding LineTimeText}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Lines" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding GeometryText}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Remaining" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding RemainingText}" /></Grid>
+                </StackPanel>
+              </Border>
+
+              <Border Classes="card">
+                <StackPanel Spacing="5">
+                  <TextBlock Classes="cardHeader" Text="Sync &amp; slant" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Source" /><TextBlock Grid.Column="1" Classes="value" Text="VIS + 1200 Hz" /></Grid>
+                  <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Slant ppm" VerticalAlignment="Center" />
+                    <NumericUpDown Grid.Column="1" HorizontalAlignment="Right" Width="104" Increment="0.1"
+                                   FormatString="+0.000;-0.000" Value="{Binding SlantPpm}" />
+                  </Grid>
+                  <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Offset px" VerticalAlignment="Center" />
+                    <NumericUpDown Grid.Column="1" HorizontalAlignment="Right" Width="104" Increment="1" Value="{Binding LineOffset}" />
+                  </Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Auto-correct" /><TextBlock Grid.Column="1" Classes="accentValue" Text="On · locked" /></Grid>
+                  <UniformGrid Columns="2">
+                    <Button Classes="small" Margin="0,0,3,0" Content="Re-sync" Command="{Binding ResyncCommand}" />
+                    <Button Classes="small" Margin="3,0,0,0" Content="Reset" Command="{Binding ResetSyncCommand}" />
+                  </UniformGrid>
+                  <Expander Header="Advanced timing" Padding="0">
+                    <StackPanel Spacing="4" Margin="0,4,0,0">
+                      <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Sample clock" /><TextBlock Grid.Column="1" Classes="value" Text="47 999.66 Hz" /></Grid>
+                      <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Sync window" /><TextBlock Grid.Column="1" Classes="value" Text="±4.8 ms" /></Grid>
+                      <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="VIS threshold" /><TextBlock Grid.Column="1" Classes="value" Text="−26 dB" /></Grid>
+                      <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Drop-line" /><TextBlock Grid.Column="1" Classes="value" Text="interpolate" /></Grid>
+                    </StackPanel>
+                  </Expander>
+                </StackPanel>
+              </Border>
+
+              <Border Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="cardHeader" Text="Input chain" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Device" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding InputDevice}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Squelch" /><TextBlock Grid.Column="1" Classes="value" Text="−38 dB" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="BPF" /><TextBlock Grid.Column="1" Classes="value" Text="1.0–2.5 kHz" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Notch / AGC" /><TextBlock Grid.Column="1" Classes="value" Text="off · slow" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Buffer" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding BufferText}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Clipping" /><TextBlock Grid.Column="1" Classes="value" Text="0.0%" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Noise floor" /><TextBlock Grid.Column="1" Classes="value" Text="−38.4 dB" /></Grid>
+                  <TextBlock Classes="label" Text="L" />
+                  <ProgressBar Height="6" Minimum="-60" Maximum="0" Value="{Binding LevelLeftDb}" />
+                  <TextBlock Classes="label" Text="R" />
+                  <ProgressBar Height="6" Minimum="-60" Maximum="0" Value="{Binding LevelRightDb}" />
+                </StackPanel>
+              </Border>
+
+              <Border Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="cardHeader" Text="Signal quality" />
+                  <TextBlock Classes="caption" Text="SNR per line" />
+                  <!-- per-scan-line SNR for the frame in progress -->
+                  <local:PlotView Height="46" Kind="LineSnr" Source="{Binding SnrPerLine}" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="min / max" /><TextBlock Grid.Column="1" Classes="value" Text="14.8 / 24.1 dB" /></Grid>
+                  <TextBlock Classes="caption" Text="Luminance histogram" />
+                  <!-- luminance histogram of the decoded pixels -->
+                  <local:PlotView Height="46" Kind="Histogram" Source="{Binding Histogram}" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="clip lo / hi" /><TextBlock Grid.Column="1" Classes="value" Text="0.2% / 0.0%" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Sync 1200 Hz" /><TextBlock Grid.Column="1" Classes="value" Text="1199.82 · −0.18" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Black 1500 Hz" /><TextBlock Grid.Column="1" Classes="value" Text="1500.11 · +0.11" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="White 2300 Hz" /><TextBlock Grid.Column="1" Classes="value" Text="2296.04 · −3.96" /></Grid>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+
+            <!-- centre: plots · frame · decode log -->
+            <Grid Grid.Column="1" RowDefinitions="154,*,150" RowSpacing="6">
+
+              <Border Grid.Row="0" Classes="card">
+                <DockPanel LastChildFill="True">
+                  <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="cardHeader" Text="Spectrum &amp; waterfall" />
+                    <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="1000…2600 Hz" />
+                  </Grid>
+                  <Grid ColumnDefinitions="*,*,150" ColumnSpacing="8" Margin="0,5,0,0">
+                    <Border Classes="plot">
+                      <!-- live FFT of the RX audio, 1000–2600 Hz -->
+                      <local:PlotView Kind="Spectrum" Source="{Binding SpectrumFrame}" />
+                    </Border>
+                    <Border Grid.Column="1" Classes="plot">
+                      <!-- FFT over time, newest row on top; click a column to retune -->
+                      <local:PlotView Kind="Waterfall" Source="{Binding WaterfallFrame}"
+                                      PointerPressed="OnWaterfallClicked" />
+                    </Border>
+                    <StackPanel Grid.Column="2" Spacing="2">
+                      <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Bins / px" VerticalAlignment="Center" /><NumericUpDown Grid.Column="1" Classes="tight" Value="{Binding BinsPerPixel}" /></Grid>
+                      <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Start" VerticalAlignment="Center" /><NumericUpDown Grid.Column="1" Classes="tight" Increment="100" Value="{Binding StartHz}" /></Grid>
+                      <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Span" VerticalAlignment="Center" /><NumericUpDown Grid.Column="1" Classes="tight" Increment="100" Value="{Binding SpanHz}" /></Grid>
+                      <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Gain" VerticalAlignment="Center" /><Slider Grid.Column="1" Value="{Binding PlotGain}" /></Grid>
+                      <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Zero" VerticalAlignment="Center" /><Slider Grid.Column="1" Value="{Binding PlotZero}" /></Grid>
+                      <Border Classes="segment" HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal">
+                          <RadioButton Classes="seg" GroupName="PlotView" IsChecked="True" Content="Both" />
+                          <RadioButton Classes="seg" GroupName="PlotView" Content="Spec" />
+                          <RadioButton Classes="seg" GroupName="PlotView" Content="WF" />
+                        </StackPanel>
+                      </Border>
+                    </StackPanel>
+                  </Grid>
+                </DockPanel>
+              </Border>
+
+              <Border Grid.Row="1" Classes="card">
+                <DockPanel LastChildFill="True">
+                  <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="cardHeader" Text="Incoming frame" />
+                    <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="{Binding LineProgressText}" />
+                  </Grid>
+
+                  <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="6" Margin="0,6,0,0">
+                    <Button Classes="accent" Content="Save frame" Command="{Binding SaveFrameCommand}" />
+                    <Button Content="Abort" Command="{Binding AbortCommand}" />
+                    <Button Content="Re-decode" />
+                    <Button Content="Copy to TX" Command="{Binding CopyToTxCommand}" />
+                    <Button Content="Log QSO" />
+                    <ProgressBar Width="180" Height="6" VerticalAlignment="Center"
+                                 Maximum="{Binding TotalLines}" Value="{Binding CurrentLine}" />
+                    <TextBlock Classes="value" VerticalAlignment="Center" Text="{Binding LineProgressText}" />
+                  </StackPanel>
+
+                  <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6" Margin="0,5,0,0">
+                    <!-- 5:4 keeps a Scottie/Martin frame edge-to-edge, no letterbox -->
+                    <Border Classes="plot" Width="{Binding $self.Bounds.Height, Converter={StaticResource Ratio54}}">
+                      <!-- the picture being decoded, painted line by line -->
+                      <local:PlotView Kind="Frame" Source="{Binding IncomingFrame}" />
+                    </Border>
+                    <DockPanel Grid.Column="1" LastChildFill="True">
+                      <TextBlock DockPanel.Dock="Top" Classes="caption" Text="Previous frames" Margin="0,0,0,6" />
+                      <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                        <ItemsRepeater ItemsSource="{Binding PreviousFrames}">
+                          <ItemsRepeater.Layout>
+                            <UniformGridLayout MinItemWidth="150" MinColumnSpacing="8" MinRowSpacing="8" />
+                          </ItemsRepeater.Layout>
+                          <ItemsRepeater.ItemTemplate>
+                            <DataTemplate x:DataType="vm:FrameThumb">
+                              <Border Classes="thumb">
+                                <StackPanel>
+                                  <Panel>
+                                    <Image Source="{Binding Preview}" Stretch="UniformToFill" />
+                                    <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4">
+                                      <TextBlock Text="{Binding Mode}" />
+                                    </Border>
+                                  </Panel>
+                                  <StackPanel Margin="6,3">
+                                    <TextBlock Classes="value" Text="{Binding Callsign}" />
+                                    <TextBlock Classes="readoutSmall" Text="{Binding TimeUtc}" />
+                                  </StackPanel>
+                                </StackPanel>
+                              </Border>
+                            </DataTemplate>
+                          </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                      </ScrollViewer>
+                    </DockPanel>
+                  </Grid>
+                </DockPanel>
+              </Border>
+
+              <Border Grid.Row="2" Classes="card">
+                <DockPanel LastChildFill="True">
+                  <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="Decode activity" />
+                  <Grid ColumnDefinitions="*,266" ColumnSpacing="6" Margin="0,5,0,0">
+                    <DataGrid ItemsSource="{Binding Decodes}" IsReadOnly="True"
+                              GridLinesVisibility="Horizontal" HeadersVisibility="Column"
+                              CanUserSortColumns="True" FontSize="12">
+                      <DataGrid.Columns>
+                        <DataGridTextColumn Header="UTC" Binding="{Binding TimeUtc}" />
+                        <DataGridTextColumn Header="Freq" Binding="{Binding Frequency}" />
+                        <DataGridTextColumn Header="Mode" Binding="{Binding Mode}" />
+                        <DataGridTextColumn Header="Call · OCR" Binding="{Binding Callsign}" />
+                        <DataGridTextColumn Header="Grid · QRZ" Binding="{Binding Grid}" />
+                        <DataGridTextColumn Header="SNR" Binding="{Binding SnrDb}" />
+                        <DataGridTextColumn Header="Slant" Binding="{Binding SlantPpm}" />
+                        <DataGridTextColumn Header="Lines" Binding="{Binding Lines}" />
+                        <DataGridTextColumn Header="State" Binding="{Binding State}" />
+                      </DataGrid.Columns>
+                    </DataGrid>
+                    <Border Grid.Column="1" BorderBrush="{DynamicResource CardBorder}" BorderThickness="1,0,0,0" Padding="10,0,0,0">
+                      <DockPanel LastChildFill="True">
+                        <TextBlock DockPanel.Dock="Top" Classes="caption" Text="Decoder trace" />
+                        <ScrollViewer>
+                          <ItemsControl ItemsSource="{Binding TraceLines}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate><TextBlock Classes="readoutSmall" Text="{Binding}" /></DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </ScrollViewer>
+                      </DockPanel>
+                    </Border>
+                  </Grid>
+                </DockPanel>
+              </Border>
+            </Grid>
+
+            <!-- right: metadata · unattended · session -->
+            <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" RowSpacing="6">
+
+              <Border Grid.Row="0" Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="cardHeader" Text="Frame metadata" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Callsign · OCR" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding Frame.Callsign}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Grid / dist · QRZ" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding Frame.GridAndDistance}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Frequency · CAT" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding Frame.Frequency}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Mode / VIS" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding Frame.ModeAndVis}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Started" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding Frame.StartedUtc}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="SNR / slant" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding Frame.SnrAndSlant}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="OCR confidence" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding Frame.OcrConfidence}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Dropped lines" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding Frame.DroppedLines}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Size on disk" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding Frame.FileSize}" /></Grid>
+                  <TextBlock Classes="caption" FontWeight="Normal" Text="Note" />
+                  <TextBox Text="{Binding Frame.Note}" />
+                  <TextBlock Classes="caption" FontWeight="Normal" Text="Override callsign" />
+                  <TextBox Watermark="{Binding Frame.Callsign}" Text="{Binding Frame.CallsignOverride}" />
+                  <UniformGrid Columns="2">
+                    <Button Classes="small" Margin="0,0,3,0" Content="Lookup QRZ" Command="{Binding LookupCommand}" />
+                    <Button Classes="small" Margin="3,0,0,0" Content="Flag" />
+                  </UniformGrid>
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Row="1" Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="cardHeader" Text="Unattended RX" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Watch" /><TextBlock Grid.Column="1" Classes="value" Text="M1 · M2 · M4" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Scan dwell" /><TextBlock Grid.Column="1" Classes="value" Text="90 s" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Alert" /><TextBlock Grid.Column="1" Classes="value" Text="sound + desktop" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Session" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding SessionText}" /></Grid>
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Row="2" Classes="card">
+                <DockPanel LastChildFill="True">
+                  <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="Session frames" />
+                  <ListBox ItemsSource="{Binding SessionFrames}" Background="Transparent" BorderThickness="0" Margin="0,4,0,0">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:FrameThumb">
+                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
+                          <TextBlock Classes="value" Text="{Binding Callsign}" />
+                          <TextBlock Grid.Column="1" Classes="label" Text="{Binding Mode}" />
+                          <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{Binding Meta}" />
+                        </Grid>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </DockPanel>
+              </Border>
+            </Grid>
+          </Grid>
+        </TabItem>
+
+        <!-- ─────────────── Transmit ─────────────── -->
+        <TabItem Header="Transmit">
+          <Grid ColumnDefinitions="258,*,330" ColumnSpacing="6">
+
+            <StackPanel Grid.Column="0" Spacing="10">
+              <Border Classes="card">
+                <StackPanel Spacing="5">
+                  <TextBlock Classes="cardHeader" Text="TX mode" />
+                  <Border Classes="segment">
+                    <UniformGrid Columns="2">
+                      <RadioButton Classes="seg" GroupName="TxMode" IsChecked="{Binding TxModeAuto}" Content="Auto" />
+                      <RadioButton Classes="seg" GroupName="TxMode" Content="Manual" />
+                    </UniformGrid>
+                  </Border>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Auto picks" /><TextBlock Grid.Column="1" Classes="value" Text="match last RX" /></Grid>
+                  <!-- every mode the encoder supports, with VIS code and duration -->
+                  <ComboBox ItemsSource="{Binding AllModes}" SelectedItem="{Binding TxMode}" HorizontalAlignment="Stretch" />
+                  <ItemsControl ItemsSource="{Binding QuickModes}">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate><Border Classes="pill" Margin="1"><TextBlock Text="{Binding}" HorizontalAlignment="Center" /></Border></DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Duration" /><TextBlock Grid.Column="1" Classes="value" Text="126.0 s" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Geometry" /><TextBlock Grid.Column="1" Classes="value" Text="640×496" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="VOX tone" /><TextBlock Grid.Column="1" Classes="value" Text="1900 Hz · 0.5 s" /></Grid>
+                </StackPanel>
+              </Border>
+
+              <Border Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="cardHeader" Text="Identification" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="FSK ID" /><TextBlock Grid.Column="1" Classes="value" Text="DL2QSK" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="CW ID" /><TextBlock Grid.Column="1" Classes="value" Text="18 WPM · 800 Hz" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Tail" /><TextBlock Grid.Column="1" Classes="value" Text="CW after frame" /></Grid>
+                </StackPanel>
+              </Border>
+
+              <Border Classes="card">
+                <DockPanel LastChildFill="True">
+                  <StackPanel DockPanel.Dock="Top" Spacing="4">
+                    <TextBlock Classes="cardHeader" Text="Output" />
+                    <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Device" /><TextBlock Grid.Column="1" Classes="value" Text="hw:2,0" /></Grid>
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                      <TextBlock Classes="label" Text="Drive" VerticalAlignment="Center" />
+                      <Slider Grid.Column="1" Minimum="-30" Maximum="0" Value="{Binding TxLevelDb}" />
+                      <TextBlock Grid.Column="2" Classes="value" VerticalAlignment="Center" Text="−6.0" />
+                    </Grid>
+                    <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="ALC" /><TextBlock Grid.Column="1" Classes="accentValue" Text="clear" /></Grid>
+                    <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Power / SWR" /><TextBlock Grid.Column="1" Classes="value" Text="40 W · 1.3" /></Grid>
+                    <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Tone map" /><TextBlock Grid.Column="1" Classes="value" Text="1500–2300 Hz" /></Grid>
+                    <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="TX clock" /><TextBlock Grid.Column="1" Classes="value" Text="48 000.12 Hz" /></Grid>
+                    <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Monitor audio" /><TextBlock Grid.Column="1" Classes="value" Text="off" /></Grid>
+                    <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Occupied BW" /><TextBlock Grid.Column="1" Classes="value" Text="2.31 kHz" /></Grid>
+                    <TextBlock Classes="caption" Text="Power / ALC meter" />
+                  </StackPanel>
+                  <!-- forward power and ALC across the transmission, from CAT -->
+                  <local:PlotView Kind="TxMeter" Source="{Binding TxMeterFrame}" MinHeight="20" />
+                </DockPanel>
+              </Border>
+
+              <Border Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="cardHeader" Text="Outgoing metadata" />
+                  <TextBlock Classes="caption" Text="In the signal" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="VIS code" /><TextBlock Grid.Column="1" Classes="value" Text="95 · PD120" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="FSK ID" /><TextBlock Grid.Column="1" Classes="value" Text="DL2QSK" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="CW ID" /><TextBlock Grid.Column="1" Classes="value" Text="DL2QSK · 18 WPM" /></Grid>
+                  <TextBlock Classes="caption" Text="Burned into the picture" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Callsign" /><TextBlock Grid.Column="1" Classes="value" Text="DL2QSK" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="To station" /><TextBlock Grid.Column="1" Classes="value" Text="EA7KDT" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Grid / beam" /><TextBlock Grid.Column="1" Classes="value" Text="JO31 · 212°" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Report" /><TextBlock Grid.Column="1" Classes="value" Text="RSV 595" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Freq / mode" /><TextBlock Grid.Column="1" Classes="value" Text="14.230 · PD120" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Date / UTC" /><TextBlock Grid.Column="1" Classes="value" Text="05 AUG · 14:24Z" /></Grid>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+
+            <!-- centre: image editor -->
+            <Border Grid.Column="1" Classes="card">
+              <DockPanel LastChildFill="True">
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*">
+                  <TextBlock Classes="cardHeader" Text="Editor" />
+                  <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="outgoing frame · 640×496 · PD120" />
+                </Grid>
+
+                <!-- tool strip -->
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="4" Margin="0,6">
+                  <RadioButton Classes="tool" GroupName="Tool" IsChecked="True" Content="Move" />
+                  <RadioButton Classes="tool" GroupName="Tool" Content="Crop" />
+                  <RadioButton Classes="tool" GroupName="Tool" Content="Scale" />
+                  <RadioButton Classes="tool" GroupName="Tool" Content="Rotate" />
+                  <RadioButton Classes="tool" GroupName="Tool" Content="Text" />
+                  <RadioButton Classes="tool" GroupName="Tool" Content="Box" />
+                  <RadioButton Classes="tool" GroupName="Tool" Content="Line" />
+                  <RadioButton Classes="tool" GroupName="Tool" Content="Mask" />
+                  <RadioButton Classes="tool" GroupName="Tool" Content="Pick" />
+                  <Separator Classes="vertical" />
+                  <Button Classes="small" Content="Undo" Command="{Binding UndoCommand}" />
+                  <Button Classes="small" Content="Redo" Command="{Binding RedoCommand}" />
+                  <Button Classes="small" Content="Fit" />
+                  <Button Classes="small" Content="100%" />
+                  <ToggleButton Classes="small" Content="Snap grid" />
+                  <ToggleButton Classes="small" IsChecked="True" Content="Safe area" />
+                </StackPanel>
+
+                <Grid ColumnDefinitions="*,210" ColumnSpacing="6">
+                  <DockPanel LastChildFill="True">
+                    <!-- adjustments -->
+                    <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto"
+                          ColumnSpacing="16" RowSpacing="4" Margin="0,6,0,0">
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8"><TextBlock Classes="label" Text="Brightness" VerticalAlignment="Center" /><Slider Grid.Column="1" Minimum="-50" Maximum="50" Value="{Binding Brightness}" /><TextBlock Grid.Column="2" Classes="value" VerticalAlignment="Center" Text="{Binding Brightness}" /></Grid>
+                      <Grid Grid.Column="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8"><TextBlock Classes="label" Text="Contrast" VerticalAlignment="Center" /><Slider Grid.Column="1" Minimum="-50" Maximum="50" Value="{Binding Contrast}" /><TextBlock Grid.Column="2" Classes="value" VerticalAlignment="Center" Text="{Binding Contrast}" /></Grid>
+                      <Grid Grid.Column="2" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8"><TextBlock Classes="label" Text="Saturation" VerticalAlignment="Center" /><Slider Grid.Column="1" Minimum="-50" Maximum="50" Value="{Binding Saturation}" /><TextBlock Grid.Column="2" Classes="value" VerticalAlignment="Center" Text="{Binding Saturation}" /></Grid>
+                      <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8"><TextBlock Classes="label" Text="Gamma" VerticalAlignment="Center" /><Slider Grid.Column="1" Minimum="0.4" Maximum="2.2" Value="{Binding Gamma}" /><TextBlock Grid.Column="2" Classes="value" VerticalAlignment="Center" Text="{Binding Gamma, StringFormat={}{0:0.00}}" /></Grid>
+                      <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8"><TextBlock Classes="label" Text="Sharpen" VerticalAlignment="Center" /><Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding Sharpen}" /><TextBlock Grid.Column="2" Classes="value" VerticalAlignment="Center" Text="{Binding Sharpen, StringFormat={}{0:0.0}}" /></Grid>
+                      <Grid Grid.Row="1" Grid.Column="2" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8"><TextBlock Classes="label" Text="Denoise" VerticalAlignment="Center" /><Slider Grid.Column="1" Minimum="0" Maximum="1" Value="{Binding Denoise}" /><TextBlock Grid.Column="2" Classes="value" VerticalAlignment="Center" Text="{Binding Denoise, StringFormat={}{0:0.0}}" /></Grid>
+                    </Grid>
+
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="6" Margin="0,6,0,0">
+                      <Button Classes="accent" Content="Transmit" Command="{Binding TransmitCommand}" />
+                      <Button Content="Tune 5 s" Command="{Binding TuneCommand}" />
+                      <Button Content="Preview audio" Command="{Binding PreviewCommand}" />
+                      <Button Content="Halt" Command="{Binding HaltCommand}" />
+                      <ProgressBar Width="180" Height="6" VerticalAlignment="Center" Value="{Binding TxProgress}" />
+                      <TextBlock Classes="value" VerticalAlignment="Center" Text="{Binding TxStateText}" />
+                    </StackPanel>
+
+                    <!-- canvas: base image + metadata layers -->
+                    <Border Classes="canvas" ClipToBounds="True">
+                      <Panel>
+                        <Image Source="{Binding OutgoingImage}" Stretch="Uniform" />
+                        <Border Classes="safeArea" Margin="14" />
+                        <Border Classes="plate" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12">
+                          <TextBlock Classes="plateText" Text="{Binding MyCallsign}" />
+                        </Border>
+                        <Border Classes="plate" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="12">
+                          <TextBlock Classes="readoutSmall" Text="{Binding CaptionLine}" />
+                        </Border>
+                      </Panel>
+                    </Border>
+                  </DockPanel>
+
+                  <!-- inspector: fields · text style · templates -->
+                  <Grid Grid.Column="1" RowDefinitions="Auto,Auto,*" RowSpacing="8">
+                    <Border Grid.Row="0" Classes="cardInner">
+                      <StackPanel Spacing="4">
+                        <TextBlock Classes="cardHeaderSmall" Text="Insert field" />
+                        <ItemsControl ItemsSource="{Binding InsertFields}">
+                          <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:MetadataField">
+                              <Button Classes="chip" Margin="0,0,4,4" ToolTip.Tip="{Binding Value}"
+                                      Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).InsertFieldCommand}"
+                                      CommandParameter="{Binding}" Content="{Binding Token}" />
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Source" /><TextBlock Grid.Column="1" Classes="value" Text="last RX + station" /></Grid>
+                        <UniformGrid Columns="2">
+                          <Button Classes="small" Margin="0,0,3,0" Content="Fill all" Command="{Binding FillAllCommand}" />
+                          <Button Classes="small" Margin="3,0,0,0" Content="Clear" Command="{Binding ClearFieldsCommand}" />
+                        </UniformGrid>
+                      </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="1" Classes="cardInner">
+                      <StackPanel Spacing="3">
+                        <TextBlock Classes="cardHeaderSmall" Text="Text style" />
+                        <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Font / size" /><TextBlock Grid.Column="1" Classes="value" Text="Semibold · 28 px" /></Grid>
+                        <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Fill / stroke" /><TextBlock Grid.Column="1" Classes="value" Text="white · 2 px" /></Grid>
+                      </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="2" Classes="cardInner">
+                      <DockPanel LastChildFill="True">
+                        <TextBlock DockPanel.Dock="Top" Classes="cardHeaderSmall" Text="Saved templates" />
+                        <UniformGrid DockPanel.Dock="Bottom" Columns="2" Margin="0,5,0,0">
+                          <Button Classes="accent small" Margin="0,0,3,0" Content="Fill &amp; send" Command="{Binding FillAndSendCommand}" />
+                          <Button Classes="small" Margin="3,0,0,0" Content="Save" Command="{Binding SaveTemplateCommand}" />
+                        </UniformGrid>
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled" Margin="0,5,0,0">
+                          <ItemsRepeater ItemsSource="{Binding Templates}">
+                            <ItemsRepeater.Layout>
+                              <UniformGridLayout MinItemWidth="94" MinColumnSpacing="6" MinRowSpacing="6" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                              <DataTemplate x:DataType="vm:FrameTemplate">
+                                <Border Classes="thumb">
+                                  <StackPanel>
+                                    <Panel>
+                                      <Image Source="{Binding Preview}" Stretch="UniformToFill" />
+                                      <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3">
+                                        <TextBlock Text="{Binding Mode}" />
+                                      </Border>
+                                    </Panel>
+                                    <StackPanel Margin="5,3">
+                                      <TextBlock Classes="value" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
+                                      <TextBlock Classes="readoutSmall" TextTrimming="CharacterEllipsis" Text="{Binding Fields}" />
+                                    </StackPanel>
+                                  </StackPanel>
+                                </Border>
+                              </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                          </ItemsRepeater>
+                        </ScrollViewer>
+                      </DockPanel>
+                    </Border>
+                  </Grid>
+                </Grid>
+              </DockPanel>
+            </Border>
+
+            <!-- right: queue · timing · log · reuse (PTT lives in Rig & PTT settings) -->
+            <Grid Grid.Column="2" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
+              <Border Grid.Row="0" Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="cardHeader" Text="Queue" />
+                  <ItemsControl ItemsSource="{Binding TxQueue}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:QueueItem">
+                        <Grid Classes="kv" ColumnDefinitions="*,Auto">
+                          <TextBlock Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Grid.Column="1" Classes="value" Text="{Binding Mode}" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Between frames" /><TextBlock Grid.Column="1" Classes="value" Text="wait 20 s" /></Grid>
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Row="1" Classes="card">
+                <DockPanel LastChildFill="True">
+                  <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="Mode timing reference" />
+                  <DataGrid ItemsSource="{Binding ModeTimings}" IsReadOnly="True" FontSize="12"
+                            GridLinesVisibility="Horizontal" HeadersVisibility="Column" Margin="0,4,0,0">
+                    <DataGrid.Columns>
+                      <DataGridTextColumn Header="Mode" Binding="{Binding Name}" />
+                      <DataGridTextColumn Header="Lines" Binding="{Binding Lines}" />
+                      <DataGridTextColumn Header="Line ms" Binding="{Binding LineMs}" />
+                      <DataGridTextColumn Header="Frame" Binding="{Binding FrameSeconds}" />
+                    </DataGrid.Columns>
+                  </DataGrid>
+                </DockPanel>
+              </Border>
+
+              <Border Grid.Row="2" Classes="card">
+                <DockPanel LastChildFill="True">
+                  <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="TX log" />
+                  <DataGrid ItemsSource="{Binding TxLog}" IsReadOnly="True" FontSize="12"
+                            GridLinesVisibility="Horizontal" HeadersVisibility="Column" Margin="0,4,0,0">
+                    <DataGrid.Columns>
+                      <DataGridTextColumn Header="UTC" Binding="{Binding TimeUtc}" />
+                      <DataGridTextColumn Header="Mode" Binding="{Binding Mode}" />
+                      <DataGridTextColumn Header="Dur" Binding="{Binding Duration}" />
+                      <DataGridTextColumn Header="Drive" Binding="{Binding Drive}" />
+                      <DataGridTextColumn Header="SWR" Binding="{Binding Swr}" />
+                      <DataGridTextColumn Header="Result" Binding="{Binding Result}" />
+                    </DataGrid.Columns>
+                  </DataGrid>
+                </DockPanel>
+              </Border>
+
+              <Border Grid.Row="3" Classes="card">
+                <DockPanel LastChildFill="True">
+                  <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="Recently sent — reuse" />
+                  <UniformGrid DockPanel.Dock="Bottom" Columns="2" Margin="0,6,0,0">
+                    <Button Classes="accent small" Margin="0,0,3,0" Content="Refill &amp; queue" Command="{Binding RefillAndQueueCommand}" />
+                    <Button Classes="small" Margin="3,0,0,0" Content="Open in editor" />
+                  </UniformGrid>
+                  <ScrollViewer HorizontalScrollBarVisibility="Disabled" Margin="0,5,0,0">
+                    <ItemsRepeater ItemsSource="{Binding RecentlySent}">
+                      <ItemsRepeater.Layout>
+                        <UniformGridLayout MinItemWidth="100" MinColumnSpacing="8" MinRowSpacing="8" />
+                      </ItemsRepeater.Layout>
+                      <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="vm:FrameTemplate">
+                          <Border Classes="thumb">
+                            <StackPanel>
+                              <Panel>
+                                <Image Source="{Binding Preview}" Stretch="UniformToFill" />
+                                <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3">
+                                  <TextBlock Text="{Binding Mode}" />
+                                </Border>
+                              </Panel>
+                              <StackPanel Margin="5,3">
+                                <TextBlock Classes="value" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
+                                <TextBlock Classes="readoutSmall" TextTrimming="CharacterEllipsis" Text="{Binding Fields}" />
+                              </StackPanel>
+                            </StackPanel>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsRepeater.ItemTemplate>
+                    </ItemsRepeater>
+                  </ScrollViewer>
+                </DockPanel>
+              </Border>
+            </Grid>
+          </Grid>
+        </TabItem>
+
+        <!-- ─────────────── Gallery ─────────────── -->
+        <TabItem Header="Gallery">
+          <Grid ColumnDefinitions="*,330" ColumnSpacing="6">
+            <Border Classes="card">
+              <DockPanel LastChildFill="True">
+                <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*">
+                  <TextBlock Classes="cardHeader" Text="Received" />
+                  <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="{Binding GalleryCountText}" />
+                </Grid>
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="0,6">
+                  <TextBox Width="250" Watermark="callsign, grid, mode, note…" Text="{Binding GalleryFilter}" />
+                  <ToggleButton Classes="small" Content="All" />
+                  <ToggleButton Classes="small accent" IsChecked="True" Content="Today" />
+                  <ToggleButton Classes="small" Content="14 MHz" />
+                  <ToggleButton Classes="small" Content="Unlogged" />
+                  <ToggleButton Classes="small" Content="Flagged" />
+                  <ComboBox Width="130" SelectedIndex="0" HorizontalAlignment="Right">
+                    <ComboBoxItem>Sort: newest</ComboBoxItem>
+                    <ComboBoxItem>Sort: callsign</ComboBoxItem>
+                    <ComboBoxItem>Sort: SNR</ComboBoxItem>
+                  </ComboBox>
+                </StackPanel>
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                  <ItemsRepeater ItemsSource="{Binding Gallery}">
+                    <ItemsRepeater.Layout>
+                      <UniformGridLayout MinItemWidth="190" MinColumnSpacing="6" MinRowSpacing="6" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                      <DataTemplate x:DataType="vm:FrameThumb">
+                        <Border Classes="thumb">
+                          <StackPanel>
+                            <Panel>
+                              <Image Source="{Binding Preview}" Stretch="UniformToFill" />
+                              <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4">
+                                <TextBlock Text="{Binding Mode}" />
+                              </Border>
+                            </Panel>
+                            <StackPanel Margin="6,3">
+                              <TextBlock Classes="value" Text="{Binding Callsign}" />
+                              <TextBlock Classes="readoutSmall" TextTrimming="CharacterEllipsis" Text="{Binding Meta}" />
+                            </StackPanel>
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                  </ItemsRepeater>
+                </ScrollViewer>
+              </DockPanel>
+            </Border>
+
+            <Grid Grid.Column="1" RowDefinitions="*,Auto" RowSpacing="6">
+              <Border Classes="card">
+                <StackPanel Spacing="5">
+                  <TextBlock Classes="cardHeader" Text="Selected frame" />
+                  <Border Classes="plot" Height="248">
+                    <Image Source="{Binding SelectedFrame.Preview}" Stretch="Uniform" />
+                  </Border>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="File" /><TextBlock Grid.Column="1" Classes="value" TextTrimming="CharacterEllipsis" Text="{Binding SelectedFrame.FileName}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Mode / SNR" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding SelectedFrame.ModeAndSnr}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Freq / time" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding SelectedFrame.FrequencyAndTime}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Grid / dist" /><TextBlock Grid.Column="1" Classes="value" Text="{Binding SelectedFrame.GridAndDistance}" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Log entry" /><TextBlock Grid.Column="1" Classes="accentValue" Text="{Binding SelectedFrame.LogEntry}" /></Grid>
+                  <UniformGrid Columns="3">
+                    <Button Classes="accent small" Margin="0,0,3,0" Content="Open in log" />
+                    <Button Classes="small" Margin="3,0" Content="Export" />
+                    <Button Classes="small" Margin="3,0,0,0" Content="Re-decode" />
+                  </UniformGrid>
+                </StackPanel>
+              </Border>
+
+              <Border Grid.Row="1" Classes="card">
+                <StackPanel Spacing="4">
+                  <TextBlock Classes="cardHeader" Text="Storage" />
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Folder" /><TextBlock Grid.Column="1" Classes="value" Text="~/sstv/rx" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Naming" /><TextBlock Grid.Column="1" Classes="value" Text="rx_%Y%m%d_%H%M_%call" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Sidecar" /><TextBlock Grid.Column="1" Classes="value" Text="JSON + EXIF" /></Grid>
+                  <Grid Classes="kv" ColumnDefinitions="Auto,*"><TextBlock Classes="label" Text="Disk" /><TextBlock Grid.Column="1" Classes="value" Text="14.2 GB free" /></Grid>
+                </StackPanel>
+              </Border>
+            </Grid>
+          </Grid>
+        </TabItem>
+      </TabControl>
+    </Grid>
+  </DockPanel>
+</Window>

@@ -124,15 +124,5 @@ public sealed class ReceiveHistoryRecorder
         await _historyStore.RecordAsync(entry).ConfigureAwait(false);
     }
 
-    private async Task<string> ResolveImagesDirectoryAsync()
-    {
-        var settings = await _settingsStore.LoadAsync().ConfigureAwait(false);
-        var section = settings.GetSection(ReceiveHistorySettings.SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
-        if (!string.IsNullOrWhiteSpace(section?.ImagesDirectory))
-        {
-            return section.ImagesDirectory;
-        }
-
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "ScanlineStudio", "History");
-    }
+    private Task<string> ResolveImagesDirectoryAsync() => ReceiveHistorySettings.ResolveDirectoryAsync(_settingsStore);
 }

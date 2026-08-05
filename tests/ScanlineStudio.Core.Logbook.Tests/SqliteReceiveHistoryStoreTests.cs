@@ -1,5 +1,6 @@
 using SixLabors.ImageSharp;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Core.Logbook.Tests;
 
@@ -11,7 +12,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
             var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null);
 
             await store.RecordAsync(entry);
@@ -35,7 +36,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
             await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null));
             await store.RecordAsync(new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "martin1", "/tmp/b.png", null));
 
@@ -56,7 +57,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
             var old = DateTimeOffset.UtcNow.AddDays(-10);
             var recent = DateTimeOffset.UtcNow;
             await store.RecordAsync(new ReceiveHistoryEntry("old", old, "robot36", "/tmp/a.png", null));
@@ -79,7 +80,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
             var now = DateTimeOffset.UtcNow;
             await store.RecordAsync(new ReceiveHistoryEntry("first", now.AddMinutes(-5), "robot36", "/tmp/a.png", null));
             await store.RecordAsync(new ReceiveHistoryEntry("second", now, "robot36", "/tmp/b.png", null));
@@ -113,7 +114,7 @@ public sealed class SqliteReceiveHistoryStoreTests
                 await image.SaveAsPngAsync(imagePath);
             }
 
-            var store = new SqliteReceiveHistoryStore(dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
             var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", imagePath, null);
 
             IImageSource thumbnail = await store.LoadThumbnailAsync(entry, maxDimension: 4);
@@ -129,6 +130,50 @@ public sealed class SqliteReceiveHistoryStoreTests
         {
             DeleteDb(dbPath);
             File.Delete(imagePath);
+        }
+    }
+
+    [Fact]
+    public async Task GetImagesDirectoryAsync_NoSectionConfigured_ReturnsTheDefaultPicturesFolder()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+
+            var directory = await store.GetImagesDirectoryAsync();
+
+            var expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "ScanlineStudio", "History");
+            Assert.Equal(expected, directory);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task GetImagesDirectoryAsync_SectionConfigured_ReturnsTheConfiguredFolder_ForTheGalleryTabsStorageCard()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var settingsStore = new FakeSettingsStore
+            {
+                Settings = new AppSettings().WithSection(
+                    ReceiveHistorySettings.SectionKey,
+                    new ReceiveHistorySettings { ImagesDirectory = "/custom/rx/history" },
+                    ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings),
+            };
+            var store = new SqliteReceiveHistoryStore(settingsStore, dbPath);
+
+            var directory = await store.GetImagesDirectoryAsync();
+
+            Assert.Equal("/custom/rx/history", directory);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
         }
     }
 

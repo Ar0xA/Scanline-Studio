@@ -7,17 +7,29 @@
                   after actually seeing the app default to dark on a dark-OS-theme machine.
                   User-overridable theme selection is a future settings-UI item, not built yet. -->
 
+    <Application.Resources>
+        <ResourceDictionary>
+            <!-- Global square-corner override (spec/09-ui.md Aesthetic Directive): closes the
+                 gap the per-control Style selectors in Tokens.axaml never covered (Flyout,
+                 ListBoxItem, menu popups still got FluentTheme's rounded corners without this).
+                 Application.Resources is the correct scope to match the mockup's own
+                 Window.Resources declaration of these same three keys. -->
+            <CornerRadius x:Key="ControlCornerRadius">0</CornerRadius>
+            <CornerRadius x:Key="OverlayCornerRadius">0</CornerRadius>
+            <CornerRadius x:Key="ButtonCornerRadius">0</CornerRadius>
+        </ResourceDictionary>
+    </Application.Resources>
+
     <Application.DataTemplates>
         <local:ViewLocator />
     </Application.DataTemplates>
 
     <Application.Styles>
         <FluentTheme />
-        <!-- Dock's Fluent theme pack: as of the 11.3.x line this moved to its own
-             Dock.Avalonia.Themes.Fluent package (see ScanlineStudio.UI.csproj's comment), root path
-             not the old /Themes/ subfolder; confirmed by inspecting the actual package contents. -->
-        <StyleInclude Source="avares://Dock.Avalonia.Themes.Fluent/DockFluentTheme.axaml" />
         <!-- Design-token layer (spec/09-ui.md): every panel draws from this, not one-off brushes. -->
         <StyleInclude Source="avares://ScanlineStudio.UI/Styles/Tokens.axaml" />
+        <!-- Flat WSJT-X/fldigi-utilitarian chrome (current Aesthetic Directive) — included after
+             Tokens.axaml so its selectors win on any overlapping property. -->
+        <StyleInclude Source="avares://ScanlineStudio.UI/Styles/Cards.axaml" />
     </Application.Styles>
 </Application>

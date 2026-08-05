@@ -1,10 +1,10 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Linq;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Dock.Model.Mvvm.Controls;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
@@ -24,7 +24,7 @@ namespace ScanlineStudio.UI.ViewModels;
 /// then open the editor for crop/resize/stretch/overlay" -- this VM owns that hand-off (constructing
 /// the editor, reacting to Applied/Cancelled) but never touches Dock/window placement itself; see
 /// <see cref="EditorOpened"/>/<see cref="EditorClosed"/>.</summary>
-public sealed partial class TxControlsPaneViewModel : Tool, IDisposable
+public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 {
     private readonly ISstvSessionService _sstvSession;
     private readonly IImageFileLoader _imageFileLoader;
@@ -149,12 +149,11 @@ public sealed partial class TxControlsPaneViewModel : Tool, IDisposable
         _settingsStore = settingsStore;
         _radioSession = radioSession;
 
-        Id = "TxControls";
-        Title = localization.GetString("Panes.TxControls.Title");
-        localization.CultureChanged += () => Title = localization.GetString("Panes.TxControls.Title");
-
         AvailableModes = sstvSession.AvailableModes;
         _selectedMode = AvailableModes.Count > 0 ? AvailableModes[0] : null;
+        ModeTimingRows = AvailableModes
+            .Select(m => new ModeTimingRowViewModel(m.DisplayName, m.ImageHeight, m.LineDurationMs, m.LineDurationMs * m.ImageHeight / 1000.0))
+            .ToList();
 
         sstvSession.ModeDetected += OnModeDetected;
         radioSession.StateChanges.Subscribe(OnRadioStateChanged);
@@ -179,6 +178,15 @@ public sealed partial class TxControlsPaneViewModel : Tool, IDisposable
     private const int StockThumbnailMaxDimension = 64;
 
     public IReadOnlyList<SstvModeDefinition> AvailableModes { get; }
+
+    /// <summary>Mode-timing-reference table (mock2's own card) -- fully real, zero new data:
+    /// computed once from <see cref="AvailableModes"/>'s own <c>LineDurationMs</c>/<c>ImageHeight</c>.
+    /// "Frame" is an approximation (<c>LineDurationMs * ImageHeight</c>) -- some color families
+    /// transmit 2 scan lines per image row (see <c>SstvModeDefinition.ImageHeight</c>'s own doc
+    /// history), so the true total transmitted-line count can differ slightly from
+    /// <c>ImageHeight</c> for those modes; not exact for every family, close enough for a
+    /// reference table.</summary>
+    public IReadOnlyList<ModeTimingRowViewModel> ModeTimingRows { get; }
 
     public ObservableCollection<StockEntryViewModel> StockEntries { get; } = [];
 
@@ -449,7 +457,7 @@ public sealed partial class TxControlsPaneViewModel : Tool, IDisposable
             return;
         }
 
-        var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _localization);
+        var editor = new TxImageEditorPaneViewModel(original, mode, _preparer);
         editor.Applied += final => OnEditorApplied(fileName, original, editor, final);
         editor.Cancelled += OnEditorCancelled;
         EditorOpened?.Invoke(editor);
@@ -586,3 +594,7 @@ public sealed partial class FavoriteModeOptionViewModel : ObservableObject
 /// construction), same shape as <see cref="StockEntryViewModel"/> and for the identical reason (see
 /// that type's own doc comment).</summary>
 public sealed record FavoriteModeButtonViewModel(SstvModeDefinition Mode, System.Windows.Input.ICommand SelectCommand);
+
+/// <summary>One row of the Mode-timing-reference table (mock2's own card) -- see
+/// <see cref="TxControlsPaneViewModel.ModeTimingRows"/>'s doc comment for how it's computed.</summary>
+public sealed record ModeTimingRowViewModel(string ModeName, int Lines, double LineMs, double FrameSeconds);

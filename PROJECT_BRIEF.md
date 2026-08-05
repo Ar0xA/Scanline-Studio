@@ -2,7 +2,105 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-05, latest, ACTIVE) — Settings/Options + TX quick-controls + radio telemetry: ALL 6 PIECES DONE + committed/pushed (`247fde7`). Legacy YONIQ/QSSTV inventory pass DONE, documented in spec/14-roadmap.md's new "Phase 4+ backlog" section. User is now working on a UI design pass themselves — no implementation work in progress; wait for direction before building any of the inventoried backlog items.
+## Resume here (2026-08-05, latest, ACTIVE) — UI restructure: drop Dock.Avalonia for a fixed Menu/header/3-tab shell + new flat WSJT-X/fldigi style. ALL 6 PIECES DONE, hands-on verified, full solution green. NOT YET COMMITTED — waiting on user go-ahead.
+
+Full plan at `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` (6 pieces). User brought
+back two mockup rounds (`mockups/*_mock.*` then `mockups/*_mock2.*`, both gitignored/untracked)
+after the previous "UI design pass" note below — reviewed, diffed byte-for-byte (mock2 is a
+pure stylesheet swap over mock1's unchanged structure), got an `auditor` (Opus, high) plan-review
+pass (verdict EQUIVALENT-WITH-RISKS, 5 gaps folded into Piece 2's checklist before building),
+then the user said "go for it, normal way, plan, auditor, create in auto" — implementing all 6
+pieces sequentially without per-piece confirmation stops.
+
+**Locked decisions**: drop Dock.Avalonia entirely (fixed Menu → header cards → TabControl
+Receive/Transmit/Gallery, no floating/rearranging — nothing today used layout persistence
+anyway); adopt mock2's flat Win32/Qt-style chrome as the new Aesthetic Directive (supersedes
+`spec/09-ui.md`'s old "raw SDR instrumentation" text, itself now updated); wire ONLY real
+backend data per tab/card, omit anything without it (logged as backlog notes in
+`spec/14-roadmap.md`'s existing Phase 4+ backlog section, not yet added — happens as Pieces
+4-6 land their own omissions). Mid-session live feedback after seeing Piece 1 built: denser
+type (11.5px base/17px rows, done), Receiving-toggle green/Halt-button red-tinted (done, as
+new `.receiving`/`.halt` classes), LED status indicators for RX/TX-inhibit (style added, real
+wiring is Piece 3's job since that's where real IsReceiving/SWR-cutoff state lives). The
+"decode rows colored by state" ask needs a new decode-state field `ReceiveHistoryEntry`
+doesn't have today — flagged to the user, not yet resolved (build it now vs. backlog it).
+
+**Piece 1 (style tokens) DONE**: new `Styles/Cards.axaml` (ScanlineStudio-prefixed color
+resources, `card`/`cardInner`/`plot`/`pill`/`accentPill`/`softPill`/`segment`+`seg`/`tool`/
+`thumb`/`canvas`/`safeArea`/`plate`/`kv`/`led` classes, global corner-radius override in
+`App.axaml`'s `Application.Resources`), `spec/09-ui.md`'s Aesthetic Directive rewritten to
+document the supersession explicitly.
+
+**Piece 2 (drop Dock.Avalonia) DONE**, hands-on verified (screenshotted all 3 tabs via the
+established xwd_capture.py/wmctrl workflow on the secondary monitor, no crashes): deleted
+`AppDockFactory.cs` + its test + Dock.* package refs + `DockFluentTheme.axaml` include; the 5
+pane VMs (`WaterfallPaneViewModel`/`RxImagePaneViewModel`/`RxHistoryPaneViewModel`/
+`TxControlsPaneViewModel`/`TxImageEditorPaneViewModel`) now derive from `ViewModelBase`, not
+`Tool` (dropped `Id`/`Title`/`CultureChanged` lambdas — dead now that mock2 uses static card
+headers, not dynamic dock titles); `ViewLocator.Match` no longer checks `IDockable`;
+`MainWindow.axaml` rebuilt as Menu (View menu deleted, nothing closable anymore) → unchanged
+header strip (Piece 3 will split it into cards) → `TabControl` hosting each pane via plain
+`ContentControl`+ViewLocator auto-resolution; `MainViewModel` constructs the 4 DI-singleton
+panes + a nullable `ActiveEditor` (replaces `AppDockFactory.OpenTxImageEditor`/
+`CloseTxImageEditor`'s `AddDockable`/`CloseDockable` pair) wired from
+`TxControlsPaneViewModel.EditorOpened`/`EditorClosed`; added an explicit `EditorCanvas.Focus()`
+call on attach (Dock's `ActiveDockable` used to provide this for free — without it, arrow-key
+crop-nudge would have silently stopped working). Known cosmetic gap: `Slider`'s thumb still
+renders FluentTheme's default round handle, not Cards.axaml's flat rectangular one — my
+`Slider /template/ Thumb` selector isn't winning; fix when sliders get real attention in
+Piece 3/5.
+
+**Piece 3 (header cards) DONE**: `RadioStatusViewModel` stayed one flat class (the "3 cards" are
+a `MainWindow.axaml` layout concern, not a VM split). Added real `ISstvSessionService.IsReceiving`
+(new getter backed by the service's own already-tracked `_isReceiving` field), wired to
+`ToggleButton.receiving` + a separate `Button.halt`/`HaltReceivingCommand` (mock2's own two-
+control pair). Real `CatLinked` from `IRadioSessionService.ConnectionEvents`
+(`Connected`→true, `Disconnected`/`Failed`/`Reconnecting`→false, `CommandFailed` deliberately
+ignored — that state's own contract says the connection stays healthy). Added the bottom status
+bar (wasn't in the original 6-piece plan, folded in here): RX LED (`IsReceiving`) + "TX INHIBIT"
+LED bound to `TxControls.ErrorMessage != null` (the closest honest signal — no persistent TX-
+lockout state exists). 8 new tests.
+
+**Piece 4 (Receive tab) DONE**: real 258/*/330 Grid. Found mock2's Mode card's Auto/Locked
+toggle + quick-mode-button grid have NO backing feature (`ISstvDecoder` always auto-detects via
+VIS, no manual mode-lock exists) — omitted, backlogged. Added small real
+`RxImagePaneViewModel.DetectedMode` (subscribes to the already-existing `ISstvSessionService.
+ModeDetected`) backing `DetectedModeText`/`LineTimeText`/`LinesText`. `WaterfallPaneView.axaml`/
+`RxImagePaneView.axaml` restyled in place (`Classes="plot"`) — no new PlotView abstraction.
+"Previous frames" card reuses `RxHistoryPaneViewModel.Entries` directly. 9 backlog notes, 2 new
+tests. Caught a real runtime-only crash via hands-on screenshot that headless tests missed:
+`Margin="{DynamicResource ScanlineStudioSpacingMedium}"` — a bare double assigned to a
+Thickness-typed property, the exact footgun `Tokens.axaml`'s own comment warns about.
+
+**Piece 5 (Transmit tab) DONE**: `TxControlsPaneView.axaml` restyled in place to cards (same VM,
+same real data). Added real, zero-new-data `TxControlsPaneViewModel.ModeTimingRows` (computed
+from `AvailableModes`' own `LineDurationMs`/`ImageHeight`; "Frame" duration is a documented
+approximation for 2-rows-per-line color families). Drive slider lives in `MainWindow.axaml`'s
+Transmit tab directly, bound to `RadioStatus.TxVolumePercent` (cross-VM-sibling binding, same
+trick as the status bar) rather than coupling `TxControlsPaneViewModel` to
+`RadioStatusViewModel`. 11 backlog notes, 2 new tests. Hands-on screenshot caught a real
+column-width bug in the mode-timing table (values overlapping) — fixed with explicit pixel
+widths.
+
+**Piece 6 (Gallery tab) DONE**: added `IReceiveHistoryStore.GetImagesDirectoryAsync()` (real —
+extracted `ReceiveHistoryRecorder`'s existing resolution logic to a shared
+`ReceiveHistorySettings.ResolveDirectoryAsync`, both classes now call the one implementation;
+`SqliteReceiveHistoryStore` gained an `ISettingsStore` constructor dependency, DI resolves it
+automatically). Gallery tab is a real 2-column layout (thumbnail grid + selected-frame inspector
++ Storage card) built directly against `RxHistory` sub-properties — NOT the old standalone
+`RxHistoryPaneView` reused wholesale; that file was now orphaned (nothing bound the whole VM as
+`ContentControl.Content` anymore) and was deleted. Added real `ShowTodayOnly` (defaults true,
+matching mock2) driving `IReceiveHistoryStore.QueryAsync`'s real `From`/`To` filter. 4 backlog
+notes, 5 new tests. Hands-on screenshot confirmed the Storage card shows the real resolved path.
+
+**Final state**: full solution `dotnet test` green (10 projects, 840 tests, 0 failures). Every
+visually-changed piece hands-on screenshot-verified via the established xwd_capture.py/wmctrl
+workflow on the secondary monitor (HDMI-1). **Nothing committed yet** — planned as one bundled
+commit per the established "chop into pieces, test each, commit at milestone" discipline,
+matching how the previous Settings/TX/telemetry plan was committed as a single commit at the
+end. Waiting on explicit user go-ahead before committing/pushing.
+
+## Resume here (2026-08-05, superseded by the entry above) — Settings/Options + TX quick-controls + radio telemetry: ALL 6 PIECES DONE + committed/pushed (`247fde7`). Legacy YONIQ/QSSTV inventory pass DONE, documented in spec/14-roadmap.md's new "Phase 4+ backlog" section. User is now working on a UI design pass themselves — no implementation work in progress; wait for direction before building any of the inventoried backlog items.
 
 Full plan at `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` (6 pieces) — approved after
 thorough research (legacy YONIQ settings inventory, current settings infra, current UI/dialog

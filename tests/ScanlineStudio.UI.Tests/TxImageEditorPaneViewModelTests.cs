@@ -24,7 +24,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var original = CreateSource(20, 20);
         var preparer = new FakeTransmitImagePreparer();
 
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, preparer, new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(original, SmallMode, preparer);
 
         Assert.NotNull(vm.WorkingCopyBitmap);
         Assert.NotNull(vm.PreviewImage);
@@ -41,7 +41,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var original = CreateSource(4, 4);
         var preparer = new FakeTransmitImagePreparer();
 
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, preparer, new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(original, SmallMode, preparer);
 
         Assert.NotNull(vm.WorkingCopyBitmap);
         Assert.Equal(1, preparer.ResizeCallCount);
@@ -51,7 +51,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void NudgeCropMove_PlainArrow_MovesByExactlyOnePixelRelativeToOriginalResolution()
     {
         var original = CreateSource(100, 50);
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, new FakeTransmitImagePreparer(), new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(original, SmallMode, new FakeTransmitImagePreparer());
         vm.CropRect = new NormalizedRect(0.5, 0.5, 0.2, 0.2);
 
         vm.NudgeCropMove(NudgeDirection.Right, ctrl: false);
@@ -64,7 +64,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void NudgeCropMove_CtrlArrow_MovesByExactlySixteenPixelsRelativeToOriginalResolution()
     {
         var original = CreateSource(100, 50);
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, new FakeTransmitImagePreparer(), new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(original, SmallMode, new FakeTransmitImagePreparer());
         vm.CropRect = new NormalizedRect(0, 0, 0.2, 0.2);
 
         vm.NudgeCropMove(NudgeDirection.Down, ctrl: true);
@@ -77,7 +77,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void NudgeCropResize_EngagesStretchAndResizesByExactlyOnePixel()
     {
         var original = CreateSource(100, 100);
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, new FakeTransmitImagePreparer(), new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(original, SmallMode, new FakeTransmitImagePreparer());
         vm.CropRect = new NormalizedRect(0, 0, 0.2, 0.2);
         Assert.True(vm.PreserveAspect);
 
@@ -92,7 +92,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void AddOverlayElement_AddsAndSelectsItAndTriggersPreviewRecompute()
     {
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer, new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer);
         var countBefore = preparer.ApplyOverlayCallCount;
 
         vm.AddOverlayElementCommand.Execute(null);
@@ -106,7 +106,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void ChangingAnOverlayElementProperty_TriggersPreviewRecompute()
     {
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer, new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer);
         vm.AddOverlayElementCommand.Execute(null);
         var element = vm.OverlayElements[0];
         var countBefore = preparer.ApplyOverlayCallCount;
@@ -120,7 +120,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void RemoveOverlayElement_UnsubscribesAndClearsSelectionWhenItWasSelected()
     {
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer, new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer);
         vm.AddOverlayElementCommand.Execute(null);
         var element = vm.OverlayElements[0];
 
@@ -143,7 +143,7 @@ public sealed class TxImageEditorPaneViewModelTests
         // distinct instance from the original -- this is what makes the assertion discriminating.
         var original = CreateSource(20, 20);
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, preparer, new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(original, SmallMode, preparer);
 
         IImageSource? applied = null;
         vm.Applied += img => applied = img;
@@ -160,7 +160,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void Cancel_FiresCancelledEventWithoutInvokingThePipelineAgain()
     {
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer, new FakeLocalizationService());
+        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer);
         var cropCountBefore = preparer.CropCallCount;
         var resizeCountBefore = preparer.ResizeCallCount;
         var overlayCountBefore = preparer.ApplyOverlayCallCount;

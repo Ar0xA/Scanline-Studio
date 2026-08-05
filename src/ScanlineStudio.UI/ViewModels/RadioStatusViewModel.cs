@@ -56,6 +56,22 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private double _tuneDurationSeconds = 5;
 
+    /// <summary>Backs the Transceiver card's Receiving/Halt toggle -- real state, mirrors
+    /// <see cref="ISstvSessionService.IsReceiving"/> exactly (including the case where a startup
+    /// auto-start silently failed for lack of an audio device).</summary>
+    [ObservableProperty]
+    private bool _isReceiving;
+
+    private bool _suppressReceivingCommand;
+
+    /// <summary>Real state: true only while <see cref="IRadioSessionService.ConnectionEvents"/>'s most
+    /// recent lifecycle transition was <see cref="RadioConnectionState.Connected"/> -- a
+    /// <see cref="RadioConnectionState.CommandFailed"/> event is deliberately ignored here (that state
+    /// means a single command failed while the connection itself stays healthy, per that enum's own
+    /// doc comment; it must not flip this indicator off).</summary>
+    [ObservableProperty]
+    private bool _catLinked;
+
     public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization)
     {
         _radioSession = radioSession;
@@ -63,8 +79,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         _localization = localization;
         _frequencyDisplay = localization.GetString("RadioStatus.NoFrequency");
         _modeDisplay = string.Empty;
+        _isReceiving = sstvSession.IsReceiving;
+        _catLinked = radioSession.LastKnownState is not null;
 
         radioSession.StateChanges.Subscribe(OnStateChanged);
+        radioSession.ConnectionEvents.Subscribe(OnConnectionEvent);
         if (radioSession.LastKnownState is { } state)
         {
             OnStateChanged(state);
@@ -94,6 +113,16 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             SelectedRadioMode = state.Mode;
             _suppressModeCommand = false;
         });
+    }
+
+    private void OnConnectionEvent(RadioConnectionEvent evt)
+    {
+        if (evt.State == RadioConnectionState.CommandFailed)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => CatLinked = evt.State == RadioConnectionState.Connected);
     }
 
     private async Task LoadPresetsAsync()
@@ -191,6 +220,65 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         catch (Exception)
         {
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.TuneFailed"));
+        }
+    }
+
+    partial void OnIsReceivingChanged(bool value)
+    {
+        if (_suppressReceivingCommand)
+        {
+            return;
+        }
+
+        _ = SetReceivingSafeAsync(value);
+    }
+
+    private async Task SetReceivingSafeAsync(bool value)
+    {
+        try
+        {
+            if (value)
+            {
+                await _sstvSession.StartReceivingAsync().ConfigureAwait(false);
+            }
+            else
+            {
+                await _sstvSession.StopReceivingAsync().ConfigureAwait(false);
+            }
+
+            Dispatcher.UIThread.Post(() => ErrorMessage = null);
+        }
+        catch (Exception)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                ErrorMessage = _localization.GetString("RadioStatus.Error.ReceivingFailed");
+                _suppressReceivingCommand = true;
+                IsReceiving = !value;
+                _suppressReceivingCommand = false;
+            });
+        }
+    }
+
+    /// <summary>Separate from unchecking the Receiving toggle -- mirrors mock2's own explicit
+    /// Receiving/Halt button pair, not just a single two-state toggle.</summary>
+    [RelayCommand]
+    private async Task HaltReceivingAsync()
+    {
+        try
+        {
+            await _sstvSession.StopReceivingAsync().ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                _suppressReceivingCommand = true;
+                IsReceiving = false;
+                _suppressReceivingCommand = false;
+                ErrorMessage = null;
+            });
+        }
+        catch (Exception)
+        {
+            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.ReceivingFailed"));
         }
     }
 
