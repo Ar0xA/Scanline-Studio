@@ -39,14 +39,22 @@
                     </ComboBox.ItemTemplate>
                 </ComboBox>
                 <UniformGrid Columns="4">
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.TxControls.QuickMode1}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.TxControls.QuickMode2}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.TxControls.QuickMode3}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.TxControls.QuickMode4}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.TxControls.QuickMode5}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.TxControls.QuickMode6}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.TxControls.QuickMode7}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.TxControls.QuickMode8}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC1}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC2}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SCDX}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M1}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M2}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M3}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M4}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.R36}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.R72}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD50}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD90}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD120}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD160}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD180}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD290}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC2180}" HorizontalAlignment="Center" /></Border>
                 </UniformGrid>
                 <Grid Classes="kv" ColumnDefinitions="Auto,*">
                     <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.DurationLabel}" />
@@ -112,58 +120,29 @@
             </StackPanel>
         </Border>
 
-        <!-- Stock/browse image source. -->
-        <Border Classes="card">
-            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.StockLabel}" />
-                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120">
-                    <ListBox.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <WrapPanel />
-                        </ItemsPanelTemplate>
-                    </ListBox.ItemsPanel>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="vm:StockEntryViewModel">
-                            <Button Command="{Binding SelectCommand}"
-                                    CommandParameter="{Binding Entry}"
-                                    ToolTip.Tip="{Binding Entry.FileName}">
-                                <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />
-                            </Button>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-                <Button Content="{loc:Translate Panes.TxControls.SelectImage}"
-                        Command="{Binding SelectImageCommand}"
-                        HorizontalAlignment="Stretch" />
-                <TextBlock Classes="caption" Text="{Binding SelectedFileName}"
-                           IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
-                <Image Source="{Binding PreviewImage}"
-                       Stretch="Uniform"
-                       MaxHeight="160"
-                       IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
-            </StackPanel>
-        </Border>
-
-        <TextBlock Text="{Binding ErrorMessage}"
-                   Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
-                   TextWrapping="Wrap"
-                   IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
-
-        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-            <ToggleButton Content="{loc:Translate Panes.TxControls.Transmit}"
-                          Theme="{StaticResource ScanlineStudioTxToggleButtonTheme}"
-                          Command="{Binding TransmitCommand}"
-                          IsChecked="{Binding IsTransmitting, Mode=OneWay}"
-                          HorizontalAlignment="Stretch" />
-            <Button Classes="halt" Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
-        </StackPanel>
-
-        <!-- Output telemetry: each readout only renders when the connected rig/backend actually
-             negotiated that meter capability; never a placeholder for an unsupported rig
+        <!-- Output: merged Drive slider (moved from the header's standalone card in
+             MainWindow.axaml; same underlying RadioStatus.TxVolumePercent value via ancestor
+             binding, not a second independent value) + a literal Device row, plus the real
+             per-capability meters and
+             SWR auto-cutoff. Each meter row only renders when the connected rig/backend actually
+             negotiated that capability; never a placeholder for an unsupported rig
              (spec/14-roadmap.md's Piece 6 design decision). -->
         <Border Classes="card">
             <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.TelemetryLabel}" />
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.OutputLabel}" />
+                <Grid Classes="kv" ColumnDefinitions="Auto,*,Auto">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.DriveLabel}" VerticalAlignment="Center" />
+                    <Slider Grid.Column="1" Margin="4,0"
+                            Value="{Binding $parent[Window].((vm:MainViewModel)DataContext).RadioStatus.TxVolumePercent}"
+                            Minimum="0" Maximum="100" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Classes="value"
+                               Text="{Binding $parent[Window].((vm:MainViewModel)DataContext).RadioStatus.TxVolumePercent}"
+                               VerticalAlignment="Center" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.OutputDeviceLabel}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.OutputDeviceValue}" />
+                </Grid>
                 <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowPowerMeter}">
                     <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Power}" />
                     <TextBlock Grid.Column="1" Classes="value" Text="{Binding LivePowerPercent}" />
@@ -212,6 +191,52 @@
                 <Border Classes="plot" MinHeight="20" />
             </StackPanel>
         </Border>
+
+        <!-- Stock/browse image source. -->
+        <Border Classes="card">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.StockLabel}" />
+                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:StockEntryViewModel">
+                            <Button Command="{Binding SelectCommand}"
+                                    CommandParameter="{Binding Entry}"
+                                    ToolTip.Tip="{Binding Entry.FileName}">
+                                <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />
+                            </Button>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <Button Content="{loc:Translate Panes.TxControls.SelectImage}"
+                        Command="{Binding SelectImageCommand}"
+                        HorizontalAlignment="Stretch" />
+                <TextBlock Classes="caption" Text="{Binding SelectedFileName}"
+                           IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                <Image Source="{Binding PreviewImage}"
+                       Stretch="Uniform"
+                       MaxHeight="160"
+                       IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            </StackPanel>
+        </Border>
+
+        <TextBlock Text="{Binding ErrorMessage}"
+                   Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
+                   TextWrapping="Wrap"
+                   IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+            <ToggleButton Content="{loc:Translate Panes.TxControls.Transmit}"
+                          Theme="{StaticResource ScanlineStudioTxToggleButtonTheme}"
+                          Command="{Binding TransmitCommand}"
+                          IsChecked="{Binding IsTransmitting, Mode=OneWay}"
+                          HorizontalAlignment="Stretch" />
+            <Button Classes="halt" Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
+        </StackPanel>
 
         <!-- Outgoing metadata: visual scaffolding only; blocked on the same missing operator-
              profile setting as Identification, plus a "to station"/report/QSO-context concept

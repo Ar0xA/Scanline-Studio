@@ -3,7 +3,8 @@ using Microsoft.Extensions.Logging;
 namespace ScanlineStudio.Host;
 
 /// <summary>Minimal file <see cref="ILoggerProvider"/> — appends timestamped, leveled lines to a
-/// fixed path, overwritten fresh each launch (no rotation need for a desktop diagnostic file).
+/// fixed path across launches (a crashed/killed prior run's lines must survive to the next launch,
+/// or they're unrecoverable evidence for exactly the kind of bug this file exists to diagnose).
 /// Exists alongside the console provider `Host.CreateApplicationBuilder` already registers by
 /// default, since capturing this app's console output through a background shell has proven
 /// unreliable in practice (a process that crashes before flushing loses everything); a file on
@@ -17,7 +18,7 @@ public sealed class FileLoggerProvider : ILoggerProvider
     public FileLoggerProvider(string filePath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
-        _writer = new StreamWriter(filePath, append: false) { AutoFlush = true };
+        _writer = new StreamWriter(filePath, append: true) { AutoFlush = true };
     }
 
     public ILogger CreateLogger(string categoryName) => new FileLogger(categoryName, _writer, _lock);

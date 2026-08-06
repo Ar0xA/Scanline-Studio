@@ -44,10 +44,19 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [ObservableProperty]
     private string? _imagesDirectory;
 
+    /// <summary>Gallery tab's "Received" header count caption -- real, recomputed off
+    /// <see cref="Entries"/>' own <see cref="ObservableCollection{T}.CollectionChanged"/> rather
+    /// than duplicated as a separately-maintained counter.</summary>
+    [ObservableProperty]
+    private string _entryCountText = string.Empty;
+
     public RxHistoryPaneViewModel(IReceiveHistoryStore historyStore, ILogger<RxHistoryPaneViewModel> logger)
     {
         _historyStore = historyStore;
         _logger = logger;
+
+        Entries.CollectionChanged += (_, _) => UpdateEntryCountText();
+        UpdateEntryCountText();
 
         // Best-effort initial load -- a failure here (e.g. history store not reachable yet) leaves
         // the pane empty rather than blocking construction; RefreshCommand lets the user retry.
@@ -56,6 +65,12 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     }
 
     public ObservableCollection<RxHistoryEntryViewModel> Entries { get; } = [];
+
+    private void UpdateEntryCountText() => EntryCountText = Entries.Count switch
+    {
+        1 => "1 frame",
+        var count => $"{count} frames",
+    };
 
     partial void OnShowTodayOnlyChanged(bool value) => _ = RefreshAsync();
 
