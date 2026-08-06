@@ -29,9 +29,10 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// <summary>The currently (or most recently) auto-detected RX mode -- real data from
     /// <see cref="ISstvSessionService.ModeDetected"/>. There is no manual "lock to a specific
     /// mode" decode feature in this port (<see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder"/>
-    /// always auto-detects via the VIS header) -- the Receive tab's Mode card is real-data-only
-    /// because of this; mock2's Auto/Locked segmented control and quick-mode-button grid have no
-    /// backing feature and are intentionally omitted (spec/14-roadmap.md backlog).</summary>
+    /// always auto-detects via the VIS header) -- mock2's Auto/Locked segmented control is shown
+    /// (Auto statically checked, matching this real always-auto-detect behavior) but "Locked" has
+    /// no backing feature yet, same for the quick-mode-button grid below it
+    /// (spec/14-roadmap.md backlog).</summary>
     [ObservableProperty]
     private SstvModeDefinition? _detectedMode;
 
@@ -45,6 +46,10 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
     public string DetectedModeText => DetectedMode?.DisplayName ?? "—";
 
+    /// <summary>"Scottie 1 — VIS 60"-shaped, matching mock2's own active-mode dropdown content
+    /// exactly (DisplayName + real VisCode, not a placeholder).</summary>
+    public string DetectedModeDisplay => DetectedMode is { } mode ? $"{mode.DisplayName} — VIS {mode.VisCode}" : "—";
+
     public string LineTimeText => DetectedMode is { } mode ? $"{mode.LineDurationMs:0.0} ms" : "—";
 
     public string LinesText => DetectedMode is { } mode ? mode.ImageHeight.ToString(CultureInfo.InvariantCulture) : "—";
@@ -52,6 +57,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     partial void OnDetectedModeChanged(SstvModeDefinition? value)
     {
         OnPropertyChanged(nameof(DetectedModeText));
+        OnPropertyChanged(nameof(DetectedModeDisplay));
         OnPropertyChanged(nameof(LineTimeText));
         OnPropertyChanged(nameof(LinesText));
     }
