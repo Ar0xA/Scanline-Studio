@@ -64,6 +64,10 @@ public partial class MainViewModel : ViewModelBase
     /// dialog/Window in the app; not worth building one for a single caller).</summary>
     public event Action<OptionsWindowViewModel>? OptionsRequested;
 
+    /// <summary>File &gt; Exit -- same view-model-never-touches-a-Window reasoning as
+    /// <see cref="OptionsRequested"/>; the code-behind owns the actual <c>Close()</c> call.</summary>
+    public event Action? ExitRequested;
+
     [RelayCommand]
     private void OpenOptions()
     {
@@ -71,9 +75,19 @@ public partial class MainViewModel : ViewModelBase
         OptionsRequested?.Invoke(_services.GetRequiredService<OptionsWindowViewModel>());
     }
 
+    [RelayCommand]
+    private void Exit()
+    {
+        Log.ExitInvoked(_logger);
+        ExitRequested?.Invoke();
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOptions command invoked")]
         public static partial void OpenOptionsInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Exit command invoked")]
+        public static partial void ExitInvoked(ILogger logger);
     }
 }

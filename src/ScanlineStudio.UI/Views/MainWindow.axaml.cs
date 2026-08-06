@@ -45,6 +45,16 @@ public partial class MainWindow : Window
                         Log.ShowDialogReturned(logger);
                     }
                 };
+
+                vm.ExitRequested += () =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.ExitRequested(logger);
+                    }
+
+                    Close();
+                };
             }
         };
     }
@@ -59,5 +69,8 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OptionsWindowView.ShowDialog returned")]
         public static partial void ShowDialogReturned(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Exit requested; closing main window")]
+        public static partial void ExitRequested(ILogger logger);
     }
 }
