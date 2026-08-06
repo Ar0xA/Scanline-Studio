@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SixLabors.ImageSharp;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Settings;
@@ -170,6 +171,101 @@ public sealed class SqliteReceiveHistoryStoreTests
             var directory = await store.GetImagesDirectoryAsync();
 
             Assert.Equal("/custom/rx/history", directory);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task RecordAsync_ExceedsDefaultRetentionLimit_DeletesOldestEntriesBeyond32()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var now = DateTimeOffset.UtcNow;
+
+            // 33 entries, oldest to newest -- one more than the legacy-verified default of 32
+            // (ReceiveHistorySettings.DefaultMaxEntries's own doc comment has the exact legacy
+            // source citations).
+            for (var i = 0; i < 33; i++)
+            {
+                await store.RecordAsync(new ReceiveHistoryEntry($"entry-{i}", now.AddMinutes(i), "robot36", $"/tmp/{i}.png", null));
+            }
+
+            var results = await store.QueryAsync(new ReceiveHistoryFilter());
+
+            Assert.Equal(32, results.Count);
+            Assert.DoesNotContain(results, r => r.Id == "entry-0");
+            Assert.Contains(results, r => r.Id == "entry-32");
+            Assert.Contains(results, r => r.Id == "entry-1");
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task RecordAsync_ConfiguredRetentionLimit_UsesTheConfiguredValueNotTheDefault()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var settingsStore = new FakeSettingsStore
+            {
+                Settings = new AppSettings().WithSection(
+                    ReceiveHistorySettings.SectionKey,
+                    new ReceiveHistorySettings { MaxEntries = 2 },
+                    ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings),
+            };
+            var store = new SqliteReceiveHistoryStore(settingsStore, dbPath);
+            var now = DateTimeOffset.UtcNow;
+
+            await store.RecordAsync(new ReceiveHistoryEntry("first", now, "robot36", "/tmp/a.png", null));
+            await store.RecordAsync(new ReceiveHistoryEntry("second", now.AddMinutes(1), "robot36", "/tmp/b.png", null));
+            await store.RecordAsync(new ReceiveHistoryEntry("third", now.AddMinutes(2), "robot36", "/tmp/c.png", null));
+
+            var results = await store.QueryAsync(new ReceiveHistoryFilter());
+
+            Assert.Equal(["third", "second"], results.Select(r => r.Id));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task RecordAsync_ExistingSectionPredatesTheMaxEntriesField_FallsBackTo32NotZero()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            // Simulates a settings.json saved before MaxEntries existed on this section: the JSON
+            // object genuinely has no "MaxEntries" property at all (not even null) -- the exact
+            // shape System.Text.Json silently defaults to the CLR default (0) for, not the
+            // property initializer, per ReceiveHistorySettings.MaxEntries's own doc comment. A
+            // regression here would mean every existing installation's history gets truncated to
+            // zero the moment this field shipped.
+            var sections = new Dictionary<string, JsonElement>
+            {
+                [ReceiveHistorySettings.SectionKey] = JsonDocument.Parse("""{"ImagesDirectory":"/custom/rx/history"}""").RootElement,
+            };
+            var settingsStore = new FakeSettingsStore { Settings = new AppSettings { Sections = sections } };
+            var store = new SqliteReceiveHistoryStore(settingsStore, dbPath);
+            var now = DateTimeOffset.UtcNow;
+
+            for (var i = 0; i < 33; i++)
+            {
+                await store.RecordAsync(new ReceiveHistoryEntry($"entry-{i}", now.AddMinutes(i), "robot36", $"/tmp/{i}.png", null));
+            }
+
+            var results = await store.QueryAsync(new ReceiveHistoryFilter());
+
+            Assert.Equal(32, results.Count);
         }
         finally
         {

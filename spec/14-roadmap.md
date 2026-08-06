@@ -4112,8 +4112,18 @@ filter — those are a known exclusion, not rediscovered here):
   new DSP math. Small-medium.
 - AFC on/off toggle — real and genuinely distinct from the demodulator-type choice (PLL/
   zero-crossing/Hilbert); AFC is currently hardcoded always-on in this port. Trivial-small.
-- RX history retention limit (legacy default 32), window position/size memory across restarts,
-  "jump to latest" history-browser nav button — all trivial.
+- ~~RX history retention limit (legacy default 32)~~ — **done** (2026-08-06): verified against
+  actual legacy source (`Main.cpp:898`'s `sys.m_HistMax = 32`, applied unconditionally to
+  `CBitmapHist::m_Head.m_Max` on every `Open()`, `ComLib.cpp:2658-2686` — the class's own
+  constructor default of 64 never survives to be the effective default). `ReceiveHistorySettings`
+  gained a nullable `MaxEntries` (STJ-property-default-loss-safe, same pattern as
+  `AudioDeviceSettings.TxVolumePercent`) and `SqliteReceiveHistoryStore.RecordAsync` now trims the
+  queryable index to the newest N after every insert. Deliberately does **not** delete the
+  underlying image files on disk (legacy's single fixed-size ring buffer has no equivalent to this
+  port's separate real files; unsupervised automatic file deletion is a materially different risk
+  than trimming a DB index) — orphaned files beyond the retention window are a real, tracked
+  follow-up, not a silent gap. Window position/size memory across restarts and the "jump to
+  latest" history-browser nav button remain open, trivial.
 - RX buffer mode + "high-precision" slant/sync replay actions — medium, DSP-adjacent (a rolling
   raw-audio buffer replayed through sync/slant correction); flag carefully, don't treat as a
   plain UI toggle.
