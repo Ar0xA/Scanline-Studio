@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using ScanlineStudio.Abstractions.Imaging;
 
 namespace ScanlineStudio.UI.ViewModels;
@@ -32,6 +33,18 @@ public sealed partial class OverlayElementViewModel : ObservableObject
     public double ImageWidth { get; init; }
 
     public double ImageHeight { get; init; }
+
+    /// <summary>Set once by <see cref="TxImageEditorPaneViewModel.AddOverlayElement"/> at creation
+    /// time (its own <c>RemoveOverlayElementCommand</c>), not bound in XAML via
+    /// `$parent[ItemsControl].((vm:TxImageEditorPaneViewModel)DataContext)...` -- that pattern
+    /// throws `ArgumentException: Unable to resolve type` the first time this element's
+    /// DataTemplate is actually realized (this project uses classic, non-compiled bindings; an
+    /// inline type cast in a binding path forces a runtime type-resolution step that doesn't
+    /// reliably find sibling view-model types). This list starts empty and is only ever populated
+    /// by <c>AddOverlayElement</c>, so the old binding had never actually been exercised by any
+    /// hands-on session so far -- same latent-crash shape as TxControlsPaneViewModel's own Drive
+    /// slider, found and fixed the same way.</summary>
+    public IRelayCommand? RemoveCommand { get; init; }
 
     public double LeftPixels => X * ImageWidth;
 

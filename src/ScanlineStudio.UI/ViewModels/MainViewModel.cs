@@ -46,6 +46,10 @@ public partial class MainViewModel : ViewModelBase
         txControls.EditorClosed += () => ActiveEditor = null;
 
         RadioStatus = new RadioStatusViewModel(radioSession, sstvSession, localization, radioStatusLogger);
+
+        // Plain reference hand-off, not an XAML ancestor-lookup binding -- see
+        // TxControlsPaneViewModel.RadioStatus's own doc comment for why.
+        txControls.RadioStatus = RadioStatus;
     }
 
     public WaterfallPaneViewModel Waterfall { get; }

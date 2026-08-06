@@ -130,7 +130,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [RelayCommand]
     private void AddOverlayElement()
     {
-        var element = new OverlayElementViewModel { ImageWidth = WorkingCopyWidth, ImageHeight = WorkingCopyHeight };
+        var element = new OverlayElementViewModel { ImageWidth = WorkingCopyWidth, ImageHeight = WorkingCopyHeight, RemoveCommand = RemoveOverlayElementCommand };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
         OverlayElements.Add(element);
         SelectedOverlayElement = element;

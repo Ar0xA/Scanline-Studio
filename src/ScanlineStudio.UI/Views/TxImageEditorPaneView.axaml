@@ -83,7 +83,7 @@
                 <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
                             Spacing="{DynamicResource ScanlineStudioSpacingSmall}"
                             Classes="cardInner">
-                    <Button Classes="accent" Content="{loc:Translate Panes.TxImageEditor.TransmitAction}" />
+                    <Button Classes="primary" Content="{loc:Translate Panes.TxImageEditor.TransmitAction}" />
                     <Button Content="{loc:Translate Panes.TxImageEditor.TuneAction}" />
                     <Button Content="{loc:Translate Panes.TxImageEditor.PreviewAudio}" />
                     <Button Classes="halt" Content="{loc:Translate Panes.TxImageEditor.HaltAction}" />
@@ -224,7 +224,7 @@
                                         <TextBox Text="{Binding X}" Width="60" />
                                         <TextBox Text="{Binding Y}" Width="60" />
                                         <Button Content="{loc:Translate Panes.TxImageEditor.Remove}"
-                                                Command="{Binding $parent[ItemsControl].((vm:TxImageEditorPaneViewModel)DataContext).RemoveOverlayElementCommand}"
+                                                Command="{Binding RemoveCommand}"
                                                 CommandParameter="{Binding}" />
                                     </StackPanel>
                                 </StackPanel>
@@ -325,7 +325,7 @@
                             </Border>
                         </WrapPanel>
                         <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                            <Button Classes="accent small" Content="{loc:Translate Panes.TxImageEditor.FillAndSend}" />
+                            <Button Classes="primary small" Content="{loc:Translate Panes.TxImageEditor.FillAndSend}" />
                             <Button Classes="small" Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" />
                         </StackPanel>
                     </StackPanel>
