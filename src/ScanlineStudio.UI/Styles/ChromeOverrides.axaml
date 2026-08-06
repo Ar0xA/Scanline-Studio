@@ -24,6 +24,15 @@
       <x:Double x:Key="TextControlThemeMinHeight">19</x:Double>
       <Thickness x:Key="TextControlThemePadding">4,0,4,0</Thickness>
 
+      <!-- Same shape of fix as TextControlThemeMinHeight above: FluentTheme's Expander header
+           takes its height from ExpanderMinHeight (default 48px), not its content - rendered
+           over 2x taller than every other compact control in this app (Button/ToggleButton are
+           19px) with no Height setter able to shrink it, until this resource is overridden. -->
+      <x:Double x:Key="ExpanderMinHeight">19</x:Double>
+      <Thickness x:Key="ExpanderHeaderPadding">8,0,0,0</Thickness>
+      <x:Double x:Key="ExpanderChevronButtonSize">19</x:Double>
+      <Thickness x:Key="ExpanderChevronMargin">6,0,4,0</Thickness>
+
       <!-- ══ rectangular Win32/Qt thumb ══════════════════════════════════ -->
       <ControlTheme x:Key="ScanlineStudioSquareThumb" TargetType="Thumb">
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />

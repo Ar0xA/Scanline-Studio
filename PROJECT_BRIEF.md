@@ -2,7 +2,81 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-06, latest, ACTIVE) — RadioHeaderView extracted from MainWindow.axaml into its own UserControl, pixel-fidelity pass against mock2 across ~15 rounds of live screenshot feedback (VFO/Favourites/Transceiver cards), operator-callsign menu chip added, window min-size locked to FullHD-safe floor. Build/tests green throughout. COMMITTING AND PUSHING THIS ENTRY.
+## Resume here (2026-08-06, latest, ACTIVE) — Receive tab pixel-fidelity pass against mock2: status bar, Spectrum card height, Mode card (Auto/Locked segment + active-mode dropdown), Sync & slant card (Re-sync/Reset + Advanced timing), Incoming-frame action bar/progress bar. Found and fixed a recurring root cause: several controls (segments, UniformGrid button pairs, Expander) don't stretch to fill their parent's width by default in this codebase's StackPanel-heavy layout - needs explicit HorizontalAlignment="Stretch" on the container AND each child. COMMITTED AND PUSHED THIS ENTRY.
+
+Continuation of the RadioHeaderView pixel-fidelity work (previous entry below, commits `a4291c1`/
+`a3d7133`), now working down through the rest of the Receive tab's left column and the Incoming
+Frame card.
+
+**Root-cause pattern found this round, reused 3 times**: `Border.segment`/`UniformGrid`/`Expander`
+placed inside a `StackPanel` size to their own content instead of stretching to the parent's full
+width, even though Avalonia's `StackPanel` normally stretches children by default - something
+about these specific control combinations (custom `RadioButton.seg` template, `UniformGrid`,
+`Expander`'s own `HorizontalAlignment` default) opts out of that. Fix is always the same: add
+`HorizontalAlignment="Stretch"` explicitly on the outer container **and** each child
+(`HorizontalContentAlignment="Center"` on buttons/radios so their text stays centered once
+stretched). Hit and fixed for: the RadioHeaderView USB/LSB/FM segment (previous entry, worked
+around differently by dropping to plain `ToggleButton`s); this round's Mode-card Auto/Locked
+segment; Sync-card Re-sync/Reset button pair; Sync-card Advanced-timing `Expander`. Worth
+remembering as the first thing to check next time a mock2 control renders "too narrow, left-
+aligned, with a gap" instead of spanning its row.
+
+**Mode card** (`MainWindow.axaml`'s Receive-tab left column, `RxImagePaneViewModel.cs`):
+- Added mock2's own Auto/Locked segment (`Border.segment`/`RadioButton.seg`, matching the exact
+  pattern `TxControlsPaneView.axaml`'s Auto/Manual segment already uses) - "Auto" is statically
+  checked (matches the real always-auto-detect behavior, `ISstvDecoder` has no manual lock-to-
+  mode feature); "Locked" is present but non-functional, same visual-only convention as the
+  quick-mode pill grid below it.
+- Removed the separate "Detected —" label row: redundant once the active-mode dropdown itself
+  shows the same real value.
+- The mode-override `ComboBox` is no longer `IsEnabled="False"` (mock2 doesn't render it as
+  disabled) and its one item is now bound to a new real `RxImagePaneViewModel.DetectedModeDisplay`
+  computed property (`"{DisplayName} — VIS {VisCode}"`, e.g. "Scottie 1 — VIS 60") instead of a
+  hardcoded "SC1" - matches mock2's own "Scottie 1 — VIS 60" format exactly using real
+  `SstvModeDefinition.VisCode` data, not a placeholder string. `DetectedMode`'s existing
+  `DisplayName` ("Scottie S1" per the legacy-derived real naming) was deliberately left alone even
+  though mock2's own literal text says "Scottie 1" without the S - that's real backing data tied
+  to legacy fidelity, not a placeholder to reshape for a UI pass.
+
+**Sync & slant card**: Re-sync/Reset buttons and the Advanced-timing `Expander` both needed the
+stretch fix above. The `Expander` also needed **height** fixed:
+`ChromeOverrides.axaml` gained `ExpanderMinHeight` (48px FluentTheme default → 19px, matching this
+app's compact `Button`/`ToggleButton` height convention), `ExpanderHeaderPadding` (16,0,0,0 →
+8,0,0,0), `ExpanderChevronButtonSize` (32 → 19), `ExpanderChevronMargin` (20,0,8,0 → 6,0,4,0) - same
+"FluentTheme takes this from a resource key, not the template, so no local Height setter can shrink
+it" root cause as the earlier `TextControlThemeMinHeight` fix in the same file.
+
+**Incoming-frame action bar** (bottom of the "Incoming frame" card): the progress bar was a fixed
+180px stub sitting flush against the Log QSO button; restructured the row from `StackPanel` to
+`DockPanel` (buttons docked left, frame-count text docked right, bar as the fill-the-middle last
+child) so the bar actually spans the row like mock2's own. Went through a few rounds of live
+correction on the frame-count text specifically: first added it back next to the bar (right-docked,
+no "Ln" prefix - new `Panes.RxImage.FrameLineCount` = "84/120", replacing the removed
+`Panes.RxImage.LineProgressValue` = "Ln 84/120"), then also dropped the redundant duplicate that
+used to sit in the card header's own top-right caption (mock2 doesn't show the count twice either).
+
+**Bottom status bar + Spectrum card** (previous session's last round, for continuity): status bar
+restructured into a `DockPanel` so "frames today/log" pins to the far right like mock2's own
+layout, "RX" renamed to "Receiving", M1 memory tag added, every literal value/wording matched to
+mock2 exactly. Spectrum & waterfall card's row height reverted from 180px back to mock2's own
+154px - the extra height was a workaround for a `NumericUpDown` clipping bug that
+`ChromeOverrides.axaml` (added earlier this session) already fixed at the root, so it was pure
+excess by the time this round started. Committed as `a3d7133`.
+
+**Build/test discipline held throughout**: every round rebuilt `ScanlineStudio.UI`, ran
+`ScanlineStudio.UI.Tests` (74/74 green start to finish), rebuilt `ScanlineStudio.Host`, relaunched
+the real app, and screenshotted via the established python-xlib capture script + `wmctrl`
+positioning workflow on the secondary monitor (HDMI-1, real offset x=3840 - corrected mid-session
+after a wrong x=1920 assumption produced a "resized not moved" screenshot bug) before reporting
+back. App launches were flaky this round (`nohup ... &` intermittently reported exit code 144 with
+no process/log surviving, cause not diagnosed - a plain retry always worked on the 2nd or 3rd try;
+not a code bug, a sandbox/process-launch quirk).
+
+**Not yet done / explicitly deferred**: Transmit and Gallery tabs still haven't had this same
+close pixel-diff pass (Pieces 12-17 landed them structurally only). Two-tone frequency display,
+"Edit presets…" and Tune-feature button mapping remain deferred from the previous entry, unchanged.
+
+## Resume here (2026-08-06, superseded by the entry above) — RadioHeaderView extracted from MainWindow.axaml into its own UserControl, pixel-fidelity pass against mock2 across ~15 rounds of live screenshot feedback (VFO/Favourites/Transceiver cards), operator-callsign menu chip added, window min-size locked to FullHD-safe floor. Build/tests green throughout. COMMITTED AND PUSHED (a4291c1, a3d7133).
 
 Continuation of the "keep going until our current program looks like the actual mock" work (Pieces
 12-17 of the gap-closure plan, `~/.claude/plans/wondrous-crafting-ladybug.md`, already committed as
