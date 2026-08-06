@@ -157,33 +157,165 @@
             <TabItem Header="{loc:Translate MainWindow.Tabs.Receive}">
                 <Grid ColumnDefinitions="258,*,330" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
 
-                    <!-- Mode card: real-data-only. mock2's Auto/Locked segmented control and
-                         quick-mode-button grid are omitted; ISstvDecoder always auto-detects via
-                         the VIS header, there is no manual "lock to a mode" decode feature to wire
-                         them to (see RxImagePaneViewModel.DetectedMode's own doc comment;
-                         spec/14-roadmap.md backlog). -->
-                    <Border Grid.Column="0" Classes="card" DataContext="{Binding RxImage}">
-                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                            <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxImage.ModeCardHeader}" />
-                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.DetectedMode}" />
-                                <TextBlock Grid.Column="1" Classes="value" Text="{Binding DetectedModeText}" />
-                            </Grid>
-                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.LineTime}" />
-                                <TextBlock Grid.Column="1" Classes="value" Text="{Binding LineTimeText}" />
-                            </Grid>
-                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.Lines}" />
-                                <TextBlock Grid.Column="1" Classes="value" Text="{Binding LinesText}" />
-                            </Grid>
+                    <!-- Left column: real Mode card + 3 new visual-scaffolding-only cards (Sync &
+                         slant / Input chain / Signal quality) reproducing mock2's layout with
+                         hardcoded placeholder values; no real data/commands wired yet
+                         (spec/14-roadmap.md backlog covers exactly what each one is standing in
+                         for). mock2's Auto/Locked segmented control and quick-mode-button grid in
+                         the Mode card are still omitted entirely, not just unwired: ISstvDecoder
+                         always auto-detects via the VIS header, there is no manual "lock to a
+                         mode" decode feature at all to even fake a control for (see
+                         RxImagePaneViewModel.DetectedMode's own doc comment). -->
+                    <ScrollViewer Grid.Column="0">
+                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
+                            <Border Classes="card" DataContext="{Binding RxImage}">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxImage.ModeCardHeader}" />
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.DetectedMode}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding DetectedModeText}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.LineTime}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding LineTimeText}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.Lines}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding LinesText}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Sync & slant: visual scaffolding only: no slant-tracking data
+                                 model exists yet (spec/14-roadmap.md backlog: "Manual ReSync
+                                 button"/"AFC toggle"). -->
+                            <Border Classes="card">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxSync.CardHeader}" />
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.Source}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.SourceValue}" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SlantPpm}" VerticalAlignment="Center" />
+                                        <NumericUpDown Grid.Column="1" HorizontalAlignment="Right" Width="104" Increment="0.1" FormatString="+0.000;-0.000" Value="3.400" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.OffsetPx}" VerticalAlignment="Center" />
+                                        <NumericUpDown Grid.Column="1" HorizontalAlignment="Right" Width="104" Increment="1" Value="-12" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.AutoCorrect}" />
+                                        <TextBlock Grid.Column="1" Classes="accentValue" Text="{loc:Translate Panes.RxSync.AutoCorrectValue}" />
+                                    </Grid>
+                                    <UniformGrid Columns="2">
+                                        <Button Classes="small" Margin="0,0,3,0" Content="{loc:Translate Panes.RxSync.Resync}" />
+                                        <Button Classes="small" Margin="3,0,0,0" Content="{loc:Translate Panes.RxSync.Reset}" />
+                                    </UniformGrid>
+                                    <Expander Header="{loc:Translate Panes.RxSync.AdvancedTiming}" Padding="0">
+                                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,0">
+                                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SampleClock}" />
+                                                <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.SampleClockValue}" />
+                                            </Grid>
+                                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SyncWindow}" />
+                                                <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.SyncWindowValue}" />
+                                            </Grid>
+                                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.VisThreshold}" />
+                                                <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.VisThresholdValue}" />
+                                            </Grid>
+                                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.DropLine}" />
+                                                <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.DropLineValue}" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Expander>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Input chain: visual scaffolding only: none of this is measured
+                                 anywhere in ScanlineStudio.Core.Audio/Sstv today (spec/14-roadmap.md backlog). -->
+                            <Border Classes="card">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxInput.CardHeader}" />
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Device}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.DeviceValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Squelch}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.SquelchValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Bpf}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.BpfValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.NotchAgc}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.NotchAgcValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Buffer}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.BufferValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Clipping}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.ClippingValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.NoiseFloor}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.NoiseFloorValue}" />
+                                    </Grid>
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.LevelL}" />
+                                    <ProgressBar Height="6" Minimum="-60" Maximum="0" Value="-14.2" />
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.LevelR}" />
+                                    <ProgressBar Height="6" Minimum="-60" Maximum="0" Value="-15.0" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Signal quality: visual scaffolding only: no per-line SNR or
+                                 histogram computation exists in the decode pipeline
+                                 (spec/14-roadmap.md backlog). Plot placeholders are bare
+                                 Border Classes="plot" with no content, matching this pass's "no
+                                 new PlotView abstraction" rule. -->
+                            <Border Classes="card">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxSignal.CardHeader}" />
+                                    <TextBlock Classes="caption" Text="{loc:Translate Panes.RxSignal.SnrPerLine}" />
+                                    <Border Classes="plot" Height="46" />
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.MinMax}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.MinMaxValue}" />
+                                    </Grid>
+                                    <TextBlock Classes="caption" Text="{loc:Translate Panes.RxSignal.LuminanceHistogram}" />
+                                    <Border Classes="plot" Height="46" />
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.ClipLoHi}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.ClipLoHiValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.SyncTone}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.SyncToneValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.BlackTone}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.BlackToneValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.WhiteTone}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.WhiteToneValue}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
-                    </Border>
+                    </ScrollViewer>
 
                     <!-- Centre: Spectrum & waterfall + Incoming frame, both restyled in place
                          (Border Classes="plot" now lives inside WaterfallPaneView.axaml/
                          RxImagePaneView.axaml themselves); no new PlotView abstraction. -->
-                    <Grid Grid.Column="1" RowDefinitions="180,*" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
+                    <Grid Grid.Column="1" RowDefinitions="154,*,150" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
                         <Border Grid.Row="0" Classes="card">
                             <DockPanel LastChildFill="True">
                                 <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.Waterfall.CardHeader}" />
@@ -193,42 +325,191 @@
                         <Border Grid.Row="1" Classes="card">
                             <DockPanel LastChildFill="True">
                                 <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.RxImage.CardHeader}" />
-                                <ContentControl Content="{Binding RxImage}" Margin="0,4,0,0" />
+                                <!-- Previous-frames strip relocated here from its own right-column
+                                     card, matching mock2's own placement (inside the Incoming-frame
+                                     card, beside the image); still the same real
+                                     RxHistoryPaneViewModel.Entries binding, just repositioned. -->
+                                <Grid ColumnDefinitions="*,160" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="0,4,0,0">
+                                    <ContentControl Content="{Binding RxImage}" />
+                                    <DockPanel Grid.Column="1" LastChildFill="True">
+                                        <TextBlock DockPanel.Dock="Top" Classes="caption" Text="{loc:Translate Panes.RxHistory.PreviousFramesHeader}" Margin="0,0,0,4" />
+                                        <TextBlock DockPanel.Dock="Top" Classes="caption"
+                                                   Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
+                                                   IsVisible="{Binding !RxHistory.Entries.Count}" />
+                                        <ScrollViewer>
+                                            <ItemsControl ItemsSource="{Binding RxHistory.Entries}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:RxHistoryEntryViewModel">
+                                                        <Border Classes="thumb" Margin="0,0,0,6">
+                                                            <StackPanel>
+                                                                <Image Source="{Binding Thumbnail}" Height="72" Stretch="Uniform" />
+                                                                <TextBlock Classes="readoutSmall" Text="{Binding Entry.ModeId}" HorizontalAlignment="Center" />
+                                                                <TextBlock Classes="readoutSmall" Text="{Binding Entry.ReceivedAt, StringFormat=HH:mm:ss}" HorizontalAlignment="Center" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </DockPanel>
+                                </Grid>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Decode activity: visual scaffolding only, header-only DataGrid (no
+                             ItemsSource); no structured decode-history event log exists yet,
+                             distinct from ReceiveHistoryStore (spec/14-roadmap.md backlog). -->
+                        <Border Grid.Row="2" Classes="card">
+                            <DockPanel LastChildFill="True">
+                                <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.RxDecodeLog.CardHeader}" />
+                                <Grid ColumnDefinitions="*,266" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="0,4,0,0">
+                                    <DataGrid IsReadOnly="True" GridLinesVisibility="Horizontal" HeadersVisibility="Column" FontSize="12">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColUtc}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColFreq}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColMode}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColCallsign}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColGrid}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColSnr}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColSlant}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColLines}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColState}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <Border Grid.Column="1" BorderBrush="{DynamicResource ScanlineStudioCardBorderColor}" BorderThickness="1,0,0,0" Padding="10,0,0,0">
+                                        <DockPanel LastChildFill="True">
+                                            <TextBlock DockPanel.Dock="Top" Classes="caption" Text="{loc:Translate Panes.RxDecodeLog.TraceHeader}" />
+                                            <ScrollViewer>
+                                                <ItemsControl />
+                                            </ScrollViewer>
+                                        </DockPanel>
+                                    </Border>
+                                </Grid>
                             </DockPanel>
                         </Border>
                     </Grid>
 
-                    <!-- Right: previous-frames strip; reuses RxHistoryPaneViewModel.Entries
-                         directly (mode+timestamp only, no fabricated callsign field; that data
-                         doesn't exist on ReceiveHistoryEntry). -->
-                    <Border Grid.Column="2" Classes="card">
-                        <DockPanel LastChildFill="True">
-                            <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.RxHistory.PreviousFramesHeader}" />
-                            <TextBlock DockPanel.Dock="Top" Classes="caption"
-                                       Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
-                                       IsVisible="{Binding !RxHistory.Entries.Count}" />
-                            <ScrollViewer Margin="0,4,0,0">
-                                <ItemsControl ItemsSource="{Binding RxHistory.Entries}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel Orientation="Horizontal" />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:RxHistoryEntryViewModel">
-                                            <Border Classes="thumb" Width="96" Margin="0,0,4,4">
-                                                <StackPanel>
-                                                    <Image Source="{Binding Thumbnail}" Height="72" Stretch="Uniform" />
-                                                    <TextBlock Classes="readoutSmall" Text="{Binding Entry.ModeId}" HorizontalAlignment="Center" />
-                                                    <TextBlock Classes="readoutSmall" Text="{Binding Entry.ReceivedAt, StringFormat=HH:mm:ss}" HorizontalAlignment="Center" />
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </ScrollViewer>
-                        </DockPanel>
-                    </Border>
+                    <!-- Right column: visual scaffolding only. Frame metadata's fields (OCR,
+                         QRZ lookup, dropped-lines, file size, note/override-callsign) and
+                         Unattended RX's scan/watch state have no backing data or feature at all
+                         yet (spec/14-roadmap.md backlog: "Frame metadata card"/"Unattended RX").
+                         Session frames is a distinct placeholder list matching mock2's own
+                         Callsign/Mode/Meta text format; not a second copy of the real
+                         thumbnail strip, which lives in the Incoming-frame card above. -->
+                    <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
+                        <Border Grid.Row="0" Classes="card">
+                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxFrameMeta.CardHeader}" />
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.CallsignValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.GridDistance}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.GridDistanceValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.Frequency}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.FrequencyValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.ModeVis}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.ModeVisValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.Started}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.StartedValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.SnrSlant}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.SnrSlantValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.OcrConfidence}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.OcrConfidenceValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.DroppedLines}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.DroppedLinesValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.FileSize}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.FileSizeValue}" />
+                                </Grid>
+                                <TextBlock Classes="caption" Text="{loc:Translate Panes.RxFrameMeta.NoteLabel}" />
+                                <TextBox Text="{loc:Translate Panes.RxFrameMeta.NoteValue}" />
+                                <TextBlock Classes="caption" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignLabel}" />
+                                <TextBox Watermark="{loc:Translate Panes.RxFrameMeta.CallsignValue}" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignValue}" />
+                                <UniformGrid Columns="2">
+                                    <Button Classes="small" Margin="0,0,3,0" Content="{loc:Translate Panes.RxFrameMeta.LookupQrz}" />
+                                    <Button Classes="small" Margin="3,0,0,0" Content="{loc:Translate Panes.RxFrameMeta.Flag}" />
+                                </UniformGrid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="1" Classes="card">
+                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxUnattended.CardHeader}" />
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxUnattended.Watch}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxUnattended.WatchValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxUnattended.ScanDwell}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxUnattended.ScanDwellValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxUnattended.Alert}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxUnattended.AlertValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxUnattended.Session}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxUnattended.SessionValue}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="2" Classes="card">
+                            <DockPanel LastChildFill="True">
+                                <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.RxSessionFrames.CardHeader}" />
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,0">
+                                    <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row1Callsign}" />
+                                        <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row1Mode}" />
+                                        <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row1Meta}" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row2Callsign}" />
+                                        <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row2Mode}" />
+                                        <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row2Meta}" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row3Callsign}" />
+                                        <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row3Mode}" />
+                                        <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row3Meta}" />
+                                    </Grid>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
                 </Grid>
             </TabItem>
             <TabItem Header="{loc:Translate MainWindow.Tabs.Transmit}">
@@ -257,33 +538,95 @@
                          (a null Content just renders nothing, no visibility toggle needed). -->
                     <ContentControl Grid.Column="1" Content="{Binding ActiveEditor}" />
 
-                    <!-- Right: mode-timing-reference table, fully real; computed from
-                         SstvModeDefinition's own LineDurationMs/ImageHeight, zero new data. -->
-                    <Border Grid.Column="2" Classes="card">
-                        <DockPanel LastChildFill="True">
-                            <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.TxControls.ModeTimingHeader}" />
-                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,46,60,56" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,2">
-                                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxControls.ModeTimingMode}" />
-                                <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxControls.ModeTimingLines}" />
-                                <TextBlock Grid.Column="2" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxControls.ModeTimingLineMs}" />
-                                <TextBlock Grid.Column="3" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxControls.ModeTimingFrame}" />
-                            </Grid>
-                            <ScrollViewer>
-                                <ItemsControl ItemsSource="{Binding TxControls.ModeTimingRows}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:ModeTimingRowViewModel">
-                                            <Grid ColumnDefinitions="*,46,60,56" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                                <TextBlock Classes="value" HorizontalAlignment="Left" Text="{Binding ModeName}" />
-                                                <TextBlock Grid.Column="1" Classes="value" Text="{Binding Lines}" />
-                                                <TextBlock Grid.Column="2" Classes="value" Text="{Binding LineMs, StringFormat={}{0:0.0}}" />
-                                                <TextBlock Grid.Column="3" Classes="value" Text="{Binding FrameSeconds, StringFormat={}{0:0.0}}" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </ScrollViewer>
-                        </DockPanel>
-                    </Border>
+                    <!-- Right: Queue (new placeholder) / Mode-timing-reference (real, untouched) /
+                         TX log (new placeholder) / Recently sent (new placeholder). -->
+                    <ScrollViewer Grid.Column="2">
+                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
+
+                            <!-- New: queue of frames waiting to transmit (no queueing feature exists
+                                 yet; empty placeholder list). -->
+                            <Border Classes="card">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxQueue.Header}" />
+                                    <ItemsControl />
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.TxQueue.BetweenFrames}" />
+                                        <TextBlock Grid.Column="1" Classes="value" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxQueue.BetweenFramesValue}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Mode-timing-reference table, fully real; computed from
+                                 SstvModeDefinition's own LineDurationMs/ImageHeight, zero new data. -->
+                            <Border Classes="card">
+                                <DockPanel LastChildFill="True">
+                                    <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.TxControls.ModeTimingHeader}" />
+                                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,46,60,56" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,2">
+                                        <TextBlock Classes="caption" Text="{loc:Translate Panes.TxControls.ModeTimingMode}" />
+                                        <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxControls.ModeTimingLines}" />
+                                        <TextBlock Grid.Column="2" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxControls.ModeTimingLineMs}" />
+                                        <TextBlock Grid.Column="3" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxControls.ModeTimingFrame}" />
+                                    </Grid>
+                                    <ItemsControl ItemsSource="{Binding TxControls.ModeTimingRows}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:ModeTimingRowViewModel">
+                                                <Grid ColumnDefinitions="*,46,60,56" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                                    <TextBlock Classes="value" HorizontalAlignment="Left" Text="{Binding ModeName}" />
+                                                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding Lines}" />
+                                                    <TextBlock Grid.Column="2" Classes="value" Text="{Binding LineMs, StringFormat={}{0:0.0}}" />
+                                                    <TextBlock Grid.Column="3" Classes="value" Text="{Binding FrameSeconds, StringFormat={}{0:0.0}}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </DockPanel>
+                            </Border>
+
+                            <!-- New: sent-frame log (no logging-of-sent-frames feature exists yet;
+                                 header-only DataGrid, no ItemsSource). -->
+                            <Border Classes="card">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxLog.Header}" />
+                                    <DataGrid IsReadOnly="True" AutoGenerateColumns="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" FontSize="10.5" MinHeight="90">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.TxLog.Utc}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.TxLog.Mode}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.TxLog.Dur}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.TxLog.Drive}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.TxLog.Swr}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn>
+                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.TxLog.Result}" /></DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- New: recently-sent frames (no send-history feature exists yet; empty
+                                 placeholder list + no-op buttons). -->
+                            <Border Classes="card">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxRecentlySent.Header}" />
+                                    <ItemsControl />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <Button Content="{loc:Translate Panes.TxRecentlySent.Resend}" />
+                                        <Button Content="{loc:Translate Panes.TxRecentlySent.Export}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+                    </ScrollViewer>
                 </Grid>
             </TabItem>
             <TabItem Header="{loc:Translate MainWindow.Tabs.Gallery}">
@@ -304,8 +647,19 @@
                                         <RadioButton Classes="seg" GroupName="GalleryFilter" Content="{loc:Translate Panes.RxHistory.FilterToday}" IsChecked="{Binding ShowTodayOnly}" />
                                     </StackPanel>
                                 </Border>
+                                <ToggleButton Classes="small" Content="{loc:Translate Panes.RxHistory.Filter14Mhz}" />
+                                <ToggleButton Classes="small" Content="{loc:Translate Panes.RxHistory.FilterUnlogged}" />
+                                <ToggleButton Classes="small" Content="{loc:Translate Panes.RxHistory.FilterFlagged}" />
                                 <Button Classes="small" Content="{loc:Translate Panes.RxHistory.Refresh}" Command="{Binding RefreshCommand}" />
                             </StackPanel>
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                <TextBox Watermark="{loc:Translate Panes.RxHistory.SearchWatermark}" />
+                                <ComboBox Grid.Column="1" Margin="6,0,0,0" SelectedIndex="0">
+                                    <ComboBoxItem Content="{loc:Translate Panes.RxHistory.SortNewest}" />
+                                    <ComboBoxItem Content="{loc:Translate Panes.RxHistory.SortCallsign}" />
+                                    <ComboBoxItem Content="{loc:Translate Panes.RxHistory.SortSnr}" />
+                                </ComboBox>
+                            </Grid>
                             <TextBlock DockPanel.Dock="Top" Classes="caption"
                                        Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
                                        IsVisible="{Binding !Entries.Count}" />
@@ -358,6 +712,19 @@
                                     <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.ReceivedAtLabel}" />
                                     <TextBlock Grid.Column="1" Classes="value" Text="{Binding SelectedEntry.Entry.ReceivedAt}" />
                                 </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.GridDistLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.GridDistValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.LogEntryLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.LogEntryValue}" />
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <Button Content="{loc:Translate Panes.RxHistory.OpenInLog}" />
+                                    <Button Content="{loc:Translate Panes.RxHistory.ExportFrame}" />
+                                    <Button Content="{loc:Translate Panes.RxHistory.Redecode}" />
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                         <Border Grid.Row="1" Classes="card">
@@ -366,6 +733,18 @@
                                 <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.FolderLabel}" />
                                     <TextBlock Grid.Column="1" Classes="value" Text="{Binding ImagesDirectory}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.NamingLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.NamingValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.SidecarLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.SidecarValue}" />
+                                </Grid>
+                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.DiskLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.DiskValue}" />
                                 </Grid>
                             </StackPanel>
                         </Border>

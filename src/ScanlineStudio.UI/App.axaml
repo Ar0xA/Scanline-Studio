@@ -26,6 +26,11 @@
 
     <Application.Styles>
         <FluentTheme />
+        <!-- DataGrid ships its own theme separately from the base Avalonia packages; needed for
+             two mock2 visual-scaffolding-only cards (Decode activity, TX log). Included before
+             Tokens.axaml/Cards.axaml so those two files' own DataGridColumnHeader/DataGridCell
+             overrides win. -->
+        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
         <!-- Design-token layer (spec/09-ui.md): every panel draws from this, not one-off brushes. -->
         <StyleInclude Source="avares://ScanlineStudio.UI/Styles/Tokens.axaml" />
         <!-- Flat WSJT-X/fldigi-utilitarian chrome (current Aesthetic Directive) — included after

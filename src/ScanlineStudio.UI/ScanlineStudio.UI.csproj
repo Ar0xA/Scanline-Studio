@@ -11,6 +11,10 @@
     <PackageReference Include="Avalonia.Diagnostics" Version="11.3.12" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.12" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.12" />
+    <!-- Needed for two mock2 visual-scaffolding-only cards (Decode activity, TX log); pinned
+         to match every other Avalonia package here (11.3.12), not the 11.2.3 sitting in the
+         local NuGet cache from an older, unrelated restore. -->
+    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.12" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
   </ItemGroup>
