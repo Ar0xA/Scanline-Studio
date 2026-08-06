@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 using ScanlineStudio.Core.Audio.MiniAudio;
 
@@ -22,7 +23,7 @@ public class MiniAudioDeviceEnumeratorTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
 
             Assert.True(enumerator.OutputDevices.Count > 0, "No output devices enumerated at all.");
@@ -63,8 +64,8 @@ public class MiniAudioDeviceEnumeratorTests
         // AssemblyInfo.cs disabled it; kept loose regardless, since the only thing this test is
         // actually meant to guarantee is that neither instance throws or corrupts the other's view,
         // not that the system's real device list is frozen for the duration of the test.
-        using var first = new MiniAudioDeviceEnumerator();
-        using var second = new MiniAudioDeviceEnumerator();
+        using var first = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+        using var second = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
 
         await first.RefreshAsync();
         await second.RefreshAsync();
@@ -87,7 +88,7 @@ public class MiniAudioDeviceEnumeratorTests
     {
         for (var i = 0; i < 20; i++)
         {
-            var enumerator = new MiniAudioDeviceEnumerator();
+            var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             var refreshTask = enumerator.RefreshAsync();
 
             // Deliberately not awaiting refreshTask first -- races DisposeAsync against whatever

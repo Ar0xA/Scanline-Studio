@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
@@ -53,7 +54,7 @@ public class MiniAudioEngineSstvRoundTripTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
             Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
@@ -69,11 +70,11 @@ public class MiniAudioEngineSstvRoundTripTests
             // no additional locking needed for these two field writes.
             decoder.LineDecoded += update => lastUpdate = update;
 
-            await using var captureEngine = new MiniAudioEngine();
+            await using var captureEngine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             captureEngine.SamplesCaptured += chunk => decoder.PushSamples(chunk);
             await captureEngine.StartCaptureAsync(monitor!, SampleRate);
 
-            await using var playbackEngine = new MiniAudioEngine();
+            await using var playbackEngine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             await playbackEngine.StartPlaybackAsync(sink!, SampleRate);
 
             var offset = 0;

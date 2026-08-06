@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.UI.Imaging;
 
@@ -20,6 +21,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private const int PreviewMaxDimension = 512;
 
     private readonly IReceiveHistoryStore _historyStore;
+    private readonly ILogger<RxHistoryPaneViewModel> _logger;
 
     [ObservableProperty]
     private RxHistoryEntryViewModel? _selectedEntry;
@@ -42,9 +44,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [ObservableProperty]
     private string? _imagesDirectory;
 
-    public RxHistoryPaneViewModel(IReceiveHistoryStore historyStore)
+    public RxHistoryPaneViewModel(IReceiveHistoryStore historyStore, ILogger<RxHistoryPaneViewModel> logger)
     {
         _historyStore = historyStore;
+        _logger = logger;
 
         // Best-effort initial load -- a failure here (e.g. history store not reachable yet) leaves
         // the pane empty rather than blocking construction; RefreshCommand lets the user retry.
@@ -62,15 +65,17 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         {
             ImagesDirectory = await _historyStore.GetImagesDirectoryAsync();
         }
-        catch
+        catch (Exception ex)
         {
             // Best-effort, same reasoning as RefreshAsync -- the Storage card just shows nothing.
+            Log.GetImagesDirectoryFailed(_logger, ex);
         }
     }
 
     [RelayCommand]
     private async Task RefreshAsync()
     {
+        Log.RefreshInvoked(_logger, ShowTodayOnly);
         var filter = ShowTodayOnly
             ? new ReceiveHistoryFilter(From: new DateTimeOffset(DateTime.Today))
             : new ReceiveHistoryFilter();
@@ -80,8 +85,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         {
             entries = await _historyStore.QueryAsync(filter);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.QueryFailed(_logger, ex);
             return;
         }
 
@@ -94,10 +100,11 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
                 var image = await _historyStore.LoadThumbnailAsync(entry, ThumbnailMaxDimension);
                 thumbnail = ImageSourceBitmapConverter.ToBitmap(image);
             }
-            catch
+            catch (Exception ex)
             {
                 // A missing/corrupt file for one entry must not blank the whole list -- that entry
                 // just renders without a thumbnail.
+                Log.LoadThumbnailFailed(_logger, ex);
             }
 
             thumbnails.Add(new RxHistoryEntryViewModel(entry, thumbnail));
@@ -108,10 +115,13 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         {
             Entries.Add(item);
         }
+
+        Log.RefreshCompleted(_logger, Entries.Count);
     }
 
     partial void OnSelectedEntryChanged(RxHistoryEntryViewModel? value)
     {
+        Log.SelectedEntryChanged(_logger);
         PreviewImage = null;
         if (value is null)
         {
@@ -128,10 +138,35 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             var image = await _historyStore.LoadThumbnailAsync(entry, PreviewMaxDimension);
             PreviewImage = ImageSourceBitmapConverter.ToBitmap(image);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.LoadPreviewFailed(_logger, ex);
             PreviewImage = null;
         }
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "GetImagesDirectoryAsync failed")]
+        public static partial void GetImagesDirectoryFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh invoked: showTodayOnly={ShowTodayOnly}")]
+        public static partial void RefreshInvoked(ILogger logger, bool showTodayOnly);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QueryAsync failed; history list stays empty")]
+        public static partial void QueryFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Loading a history thumbnail failed")]
+        public static partial void LoadThumbnailFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh completed: {Count} entries")]
+        public static partial void RefreshCompleted(ILogger logger, int count);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SelectedEntry changed")]
+        public static partial void SelectedEntryChanged(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading preview image failed")]
+        public static partial void LoadPreviewFailed(ILogger logger, Exception ex);
     }
 }
 

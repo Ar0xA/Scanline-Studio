@@ -1,5 +1,6 @@
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Radio;
 
 namespace ScanlineStudio.Core.Radio;
@@ -20,7 +21,7 @@ namespace ScanlineStudio.Core.Radio;
 /// (<c>min(2^attempt * PollInterval, 30s)</c>, <c>attempt</c> clamped before the shift so it can never
 /// overflow, no jitter -- single client, single local daemon, nothing to de-synchronize).
 /// </summary>
-public sealed class RadioController : IRadioController, IAsyncDisposable
+public sealed partial class RadioController : IRadioController, IAsyncDisposable
 {
     private const int MaxBackoffAttempt = 30; // 2^30 * any realistic PollInterval already exceeds the
                                                // 30s cap many times over; clamping here is what keeps
@@ -28,6 +29,7 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
     private static readonly TimeSpan MaxBackoffDelay = TimeSpan.FromSeconds(30);
 
     private readonly IReadOnlyList<IRadioProtocolFactory> _factories;
+    private readonly ILogger<RadioController> _logger;
     private readonly BehaviorSubject<RadioState?> _stateChanges = new(null);
     private readonly Subject<RadioConnectionEvent> _connectionEvents = new();
 
@@ -36,9 +38,15 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
     private Task? _pollLoopTask;
     private bool _disposed;
 
-    public RadioController(IEnumerable<IRadioProtocolFactory> factories)
+    // Gates the poll loop's failure logging so a dead rig logs once on entering a failure state,
+    // not every poll interval forever (the poll loop is effectively a hot path once backed off to
+    // a short interval) -- see docs/logging-guidelines.md's hot-path rule.
+    private RadioConnectionState? _lastLoggedFailureState;
+
+    public RadioController(IEnumerable<IRadioProtocolFactory> factories, ILogger<RadioController> logger)
     {
         _factories = factories.ToList();
+        _logger = logger;
     }
 
     public RadioState? LastKnownState => _stateChanges.Value;
@@ -71,6 +79,8 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
         _protocol = ResolveProtocol(spec);
 
         PublishConnectionEvent(RadioConnectionState.Connected, reason: null, error: null);
+        Log.Connected(_logger, spec.GetType().Name, _protocol.Capabilities);
+        _lastLoggedFailureState = null;
 
         _pollLoopCts = new CancellationTokenSource();
         // Capture the token into a local before scheduling: Task.Run's lambda body executes later, on
@@ -106,6 +116,7 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
             await protocol.DisposeAsync().ConfigureAwait(false);
             _stateChanges.OnNext(null);
             PublishConnectionEvent(RadioConnectionState.Disconnected, reason: null, error: null);
+            Log.Disconnected(_logger);
         }
     }
 
@@ -127,7 +138,7 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
     private IRadioProtocol ResolveProtocol(RadioConnectionSpec spec)
     {
         var matches = _factories.Where(f => f.CanHandle(spec)).ToList();
-        return matches.Count switch
+        var protocol = matches.Count switch
         {
             0 => throw new InvalidOperationException(
                 $"No IRadioProtocolFactory is registered for {spec.GetType().Name}."),
@@ -136,6 +147,8 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
                 $"{spec.GetType().Name} -- registration is ambiguous, exactly one must match."),
             _ => matches[0].Create(spec),
         };
+        Log.ProtocolResolved(_logger, matches[0].GetType().Name, matches.Count);
+        return protocol;
     }
 
     private async Task RunPollLoopAsync(RadioConnectionSpec spec, CancellationToken ct)
@@ -161,6 +174,14 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
                 // Command-level failure -- the connection is fine. Don't touch backoff, keep cadence.
                 attempt = 0;
                 PublishConnectionEvent(RadioConnectionState.CommandFailed, ex.Message, ex);
+                // Gated by state transition (not every poll) -- see the hot-path rule this class's
+                // own _lastLoggedFailureState field doc comment references.
+                if (_lastLoggedFailureState != RadioConnectionState.CommandFailed)
+                {
+                    _lastLoggedFailureState = RadioConnectionState.CommandFailed;
+                    Log.CommandFailed(_logger, ex);
+                }
+
                 if (!await DelayAsync(spec.PollInterval, ct).ConfigureAwait(false))
                 {
                     return;
@@ -173,25 +194,58 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
                 // Transport-level failure -- back off, then close/reopen via a fresh protocol instance
                 // from the factory (never just retry the same dead transport forever).
                 attempt = Math.Min(attempt + 1, MaxBackoffAttempt);
+                var delay = ComputeBackoffDelay(attempt, spec.PollInterval);
                 PublishConnectionEvent(RadioConnectionState.Reconnecting, ex.Message, ex);
+                // Log the first failure in full, then only a periodic summary -- a dead rig would
+                // otherwise log every retry indefinitely once backed off to a short interval.
+                if (attempt == 1)
+                {
+                    Log.TransportFailureEnteringBackoff(_logger, attempt, delay, ex);
+                    _lastLoggedFailureState = RadioConnectionState.Reconnecting;
+                }
+                else if (attempt % 10 == 0)
+                {
+                    Log.TransportFailureStillRetrying(_logger, attempt, delay);
+                }
 
                 await SafeDisposeCurrentProtocolAsync().ConfigureAwait(false);
 
-                if (!await DelayAsync(ComputeBackoffDelay(attempt, spec.PollInterval), ct).ConfigureAwait(false))
+                if (!await DelayAsync(delay, ct).ConfigureAwait(false))
                 {
                     return;
                 }
 
                 try
                 {
+                    // Constructing a protocol instance here only proves the factory could build the
+                    // object -- both real factories connect lazily (a bare `new TcpTransport(...)`),
+                    // so this can never throw against a genuinely dead rig and must not be treated as
+                    // "reconnected." The real test is the next PollAsync call, below -- that's where
+                    // recovery is actually logged (a previous version of this logged a false
+                    // "reconnected" here, which also permanently suppressed the real one, since
+                    // _lastLoggedFailureState was cleared before the connection was ever proven).
                     _protocol = ResolveProtocol(spec);
                 }
                 catch (Exception reconnectEx)
                 {
                     PublishConnectionEvent(RadioConnectionState.Failed, reconnectEx.Message, reconnectEx);
+                    if (_lastLoggedFailureState != RadioConnectionState.Failed)
+                    {
+                        _lastLoggedFailureState = RadioConnectionState.Failed;
+                        Log.ReconnectAttemptFailed(_logger, attempt, reconnectEx);
+                    }
                 }
 
                 continue;
+            }
+
+            // The real recovery signal -- a poll that actually succeeded, not just a protocol object
+            // that constructed. See the comment at ResolveProtocol's call site above for why logging
+            // "reconnected" there instead would be a false positive.
+            if (_lastLoggedFailureState is not null)
+            {
+                Log.ReconnectSucceeded(_logger, attempt);
+                _lastLoggedFailureState = null;
             }
 
             attempt = 0;
@@ -214,10 +268,12 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
             {
                 await protocol.DisposeAsync().ConfigureAwait(false);
             }
-            catch
+            catch (Exception ex)
             {
                 // Disposing an already-broken transport can itself throw -- the protocol is being
-                // discarded either way, so there's nothing further to do with this exception.
+                // discarded either way, so there's nothing further to do with this exception beyond
+                // recording it for diagnosis.
+                Log.DisposeCurrentProtocolFailed(_logger, ex);
             }
         }
     }
@@ -249,12 +305,14 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
         {
             _stateChanges.OnNext(state);
         }
-        catch
+        catch (Exception ex)
         {
             // A StateChanges subscriber's OnNext threw. Subject<T> rethrows into the caller (this poll
             // loop) and skips notifying any subscriber registered after the one that threw -- per
             // IRadioController's own concurrency contract, an unhandled subscriber exception must never
-            // kill the loop, so it's swallowed here after having been attempted once.
+            // kill the loop, so it's swallowed here after having been attempted once. This is always a
+            // subscriber bug, never expected in normal operation -- logged at Error, not Warning.
+            Log.StateChangesSubscriberThrew(_logger, ex);
         }
     }
 
@@ -265,10 +323,11 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
         {
             _connectionEvents.OnNext(evt);
         }
-        catch
+        catch (Exception ex)
         {
             // Same reasoning as PublishState -- must never propagate into ConnectAsync/DisconnectAsync
             // or the poll loop.
+            Log.ConnectionEventsSubscriberThrew(_logger, ex);
         }
     }
 
@@ -285,5 +344,45 @@ public sealed class RadioController : IRadioController, IAsyncDisposable
         _stateChanges.Dispose();
         _connectionEvents.OnCompleted();
         _connectionEvents.Dispose();
+        Log.Disposed(_logger);
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Information, Message = "Radio connected: spec={SpecType}, capabilities={Capabilities}")]
+        public static partial void Connected(ILogger logger, string specType, RadioCapabilities capabilities);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Radio disconnected")]
+        public static partial void Disconnected(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Resolved protocol via {FactoryType} ({MatchCount} factory match(es))")]
+        public static partial void ProtocolResolved(ILogger logger, string factoryType, int matchCount);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Radio command-level poll failure")]
+        public static partial void CommandFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Radio transport failure, entering backoff (attempt={Attempt}, delay={Delay})")]
+        public static partial void TransportFailureEnteringBackoff(ILogger logger, int attempt, TimeSpan delay, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Radio still retrying after {Attempt} attempts (delay={Delay})")]
+        public static partial void TransportFailureStillRetrying(ILogger logger, int attempt, TimeSpan delay);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Radio reconnected after {Attempt} attempt(s)")]
+        public static partial void ReconnectSucceeded(ILogger logger, int attempt);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Radio reconnect attempt {Attempt} failed")]
+        public static partial void ReconnectAttemptFailed(ILogger logger, int attempt, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Disposing the current (broken) protocol instance threw")]
+        public static partial void DisposeCurrentProtocolFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "A StateChanges subscriber threw")]
+        public static partial void StateChangesSubscriberThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "A ConnectionEvents subscriber threw")]
+        public static partial void ConnectionEventsSubscriberThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "RadioController disposed")]
+        public static partial void Disposed(ILogger logger);
     }
 }

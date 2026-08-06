@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 
 namespace ScanlineStudio.Core.Audio.MiniAudio;
@@ -27,8 +28,10 @@ namespace ScanlineStudio.Core.Audio.MiniAudio;
 /// part of a bug-fix pass. In practice this is a minor, self-correcting UI inconsistency (the next
 /// refresh reconciles it), not data corruption -- documented honestly rather than claimed fixed.
 /// </summary>
-public sealed class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposable, IAsyncDisposable
+public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposable, IAsyncDisposable
 {
+    private readonly ILogger<MiniAudioDeviceEnumerator> _logger;
+
     private const int MaxDevices = 128;
     private const int MaxNativeFormats = 64; // matches ma_device_info.nativeDataFormats' own fixed size
 
@@ -52,8 +55,9 @@ public sealed class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposa
     private Task _refreshTask = Task.CompletedTask;
     private volatile DeviceSnapshot _snapshot = EmptySnapshot;
 
-    public MiniAudioDeviceEnumerator()
+    public MiniAudioDeviceEnumerator(ILogger<MiniAudioDeviceEnumerator> logger)
     {
+        _logger = logger;
         MiniAudioContext.Acquire();
     }
 
@@ -97,12 +101,16 @@ public sealed class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposa
         }
     }
 
-    private static List<AudioDeviceInfo> Enumerate(bool isCapture)
+    private List<AudioDeviceInfo> Enumerate(bool isCapture)
     {
         var nativeDevices = new NativeAudio.DeviceInfo[MaxDevices];
         var count = NativeAudio.yoniq_audio_enumerate_devices(isCapture ? 1 : 0, nativeDevices, MaxDevices);
         if (count < 0)
         {
+            // Today this is the entire explanation for "no audio devices show up in Options" --
+            // previously 100% invisible (silently returned an empty list, identical to "this
+            // machine genuinely has none").
+            Log.EnumerationFailed(_logger, isCapture, count);
             return [];
         }
 
@@ -121,7 +129,7 @@ public sealed class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposa
         return result;
     }
 
-    private static (int MaxChannels, IReadOnlyList<int> SampleRates) ProbeNativeFormats(string deviceId, bool isCapture)
+    private (int MaxChannels, IReadOnlyList<int> SampleRates) ProbeNativeFormats(string deviceId, bool isCapture)
     {
         byte[] idBytes;
         try
@@ -130,7 +138,10 @@ public sealed class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposa
         }
         catch (ArgumentException)
         {
-            return (0, []); // an id too long for our own ABI's fixed buffer -- can't probe it, degrade honestly
+            // An id too long for our own ABI's fixed buffer -- can't probe it, degrade honestly.
+            // This device will silently report 0 channels/no supported rates without this log line.
+            Log.DeviceIdTooLongToProbe(_logger, deviceId);
+            return (0, []);
         }
 
         var formats = new NativeAudio.NativeFormat[MaxNativeFormats];
@@ -139,6 +150,7 @@ public sealed class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposa
         {
             // Probing failed (busy device, backend this shim doesn't yet support probing on,
             // etc.) -- degrade honestly to "no constraint reported" rather than guessing.
+            Log.NativeFormatProbeFailed(_logger, deviceId);
             return (0, []);
         }
 
@@ -181,10 +193,11 @@ public sealed class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposa
         {
             completedInTime = refreshTask.Wait(TimeSpan.FromSeconds(5));
         }
-        catch (AggregateException)
+        catch (AggregateException ex)
         {
             // The task itself finished (with a fault) within the timeout -- not hung, just
             // unsuccessful. Treat the same as completing on time.
+            Log.RefreshFaultedDuringDispose(_logger, ex);
             completedInTime = true;
         }
 
@@ -243,5 +256,20 @@ public sealed class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, IDisposa
         {
             MiniAudioContext.Release();
         }
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Error, Message = "Native device enumeration failed (isCapture={IsCapture}, returned {Count}) -- device list will appear empty")]
+        public static partial void EnumerationFailed(ILogger logger, bool isCapture, int count);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Device id '{DeviceId}' is too long for the native ABI's fixed buffer; cannot probe its supported formats")]
+        public static partial void DeviceIdTooLongToProbe(ILogger logger, string deviceId);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Native format probe failed for device '{DeviceId}'; reporting no constraints")]
+        public static partial void NativeFormatProbeFailed(ILogger logger, string deviceId);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "In-flight device refresh faulted during synchronous Dispose")]
+        public static partial void RefreshFaultedDuringDispose(ILogger logger, Exception ex);
     }
 }

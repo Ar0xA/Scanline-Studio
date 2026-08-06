@@ -3,6 +3,7 @@ using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Application;
@@ -22,6 +23,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private readonly IRadioSessionService _radioSession;
     private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
+    private readonly ILogger<RadioStatusViewModel> _logger;
     private bool _suppressVolumePersist;
     private CancellationTokenSource? _volumePersistCts;
 
@@ -72,11 +74,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private bool _catLinked;
 
-    public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization)
+    public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, ILogger<RadioStatusViewModel> logger)
     {
         _radioSession = radioSession;
         _sstvSession = sstvSession;
         _localization = localization;
+        _logger = logger;
         _frequencyDisplay = localization.GetString("RadioStatus.NoFrequency");
         _modeDisplay = string.Empty;
         _isReceiving = sstvSession.IsReceiving;
@@ -89,8 +92,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             OnStateChanged(state);
         }
 
-        _ = LoadPresetsAsync();
-        _ = LoadTxVolumeAsync();
+        _ = LoadPresetsSafeAsync();
+        _ = LoadTxVolumeSafeAsync();
     }
 
     public IReadOnlyList<RadioMode> AvailableModes { get; } = Enum.GetValues<RadioMode>();
@@ -125,21 +128,39 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         Dispatcher.UIThread.Post(() => CatLinked = evt.State == RadioConnectionState.Connected);
     }
 
-    private async Task LoadPresetsAsync()
+    /// <summary>Unguarded fire-and-forget from the constructor before this wrap was added -- a
+    /// failure here (e.g. settings store not reachable yet) would have thrown on a thread nothing
+    /// observes, an unlogged latent crash risk.</summary>
+    private async Task LoadPresetsSafeAsync()
     {
-        var presets = await _radioSession.GetFrequencyPresetsAsync().ConfigureAwait(false);
-        Dispatcher.UIThread.Post(() => RebuildPresetCollections(presets));
+        try
+        {
+            var presets = await _radioSession.GetFrequencyPresetsAsync().ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() => RebuildPresetCollections(presets));
+        }
+        catch (Exception ex)
+        {
+            Log.LoadPresetsFailed(_logger, ex);
+        }
     }
 
-    private async Task LoadTxVolumeAsync()
+    /// <summary>Same reasoning as <see cref="LoadPresetsSafeAsync"/>.</summary>
+    private async Task LoadTxVolumeSafeAsync()
     {
-        var percent = await _sstvSession.GetTxVolumePercentAsync().ConfigureAwait(false);
-        Dispatcher.UIThread.Post(() =>
+        try
         {
-            _suppressVolumePersist = true;
-            TxVolumePercent = percent;
-            _suppressVolumePersist = false;
-        });
+            var percent = await _sstvSession.GetTxVolumePercentAsync().ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                _suppressVolumePersist = true;
+                TxVolumePercent = percent;
+                _suppressVolumePersist = false;
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.LoadTxVolumeFailed(_logger, ex);
+        }
     }
 
     private void RebuildPresetCollections(IReadOnlyList<FrequencyPreset> presets)
@@ -161,13 +182,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             return;
         }
 
+        Log.SetFrequencyInvoked(_logger, mhz);
         try
         {
             ErrorMessage = null;
             await _radioSession.SetFrequencyAsync((long)(mhz * 1_000_000)).ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.SetFrequencyFailed(_logger, mhz, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.NoRadioConnected"));
         }
     }
@@ -175,23 +198,33 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [RelayCommand]
     private async Task ApplyPresetAsync(FrequencyPreset preset)
     {
+        Log.ApplyPresetInvoked(_logger, preset.Label, preset.FrequencyHz, preset.Mode);
         try
         {
             ErrorMessage = null;
             await _radioSession.SetFrequencyAsync(preset.FrequencyHz).ConfigureAwait(false);
             await _radioSession.SetModeAsync(preset.Mode).ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.ApplyPresetFailed(_logger, preset.Label, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.NoRadioConnected"));
         }
     }
 
     [RelayCommand]
-    private void AddPresetRow() => EditorRows.Add(new FrequencyPresetEditorRowViewModel(new FrequencyPreset(string.Empty, 14_230_000, RadioMode.Usb), RemovePresetRowCommand));
+    private void AddPresetRow()
+    {
+        Log.AddPresetRowInvoked(_logger);
+        EditorRows.Add(new FrequencyPresetEditorRowViewModel(new FrequencyPreset(string.Empty, 14_230_000, RadioMode.Usb), RemovePresetRowCommand));
+    }
 
     [RelayCommand]
-    private void RemovePresetRow(FrequencyPresetEditorRowViewModel row) => EditorRows.Remove(row);
+    private void RemovePresetRow(FrequencyPresetEditorRowViewModel row)
+    {
+        Log.RemovePresetRowInvoked(_logger);
+        EditorRows.Remove(row);
+    }
 
     [RelayCommand]
     private async Task SavePresetsAsync()
@@ -205,20 +238,30 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             }
         }
 
-        await _radioSession.SaveFrequencyPresetsAsync(presets).ConfigureAwait(false);
-        Dispatcher.UIThread.Post(() => RebuildPresetCollections(presets));
+        Log.SavePresetsInvoked(_logger, presets.Count);
+        try
+        {
+            await _radioSession.SaveFrequencyPresetsAsync(presets).ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() => RebuildPresetCollections(presets));
+        }
+        catch (Exception ex)
+        {
+            Log.SavePresetsFailed(_logger, ex);
+        }
     }
 
     [RelayCommand]
     private async Task TuneAsync()
     {
+        Log.TuneInvoked(_logger, TuneFrequencyHz, TuneDurationSeconds);
         try
         {
             ErrorMessage = null;
             await _sstvSession.TuneAsync(TuneFrequencyHz, TimeSpan.FromSeconds(TuneDurationSeconds)).ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.TuneFailed(_logger, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.TuneFailed"));
         }
     }
@@ -230,6 +273,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             return;
         }
 
+        Log.IsReceivingChanged(_logger, value);
         _ = SetReceivingSafeAsync(value);
     }
 
@@ -248,8 +292,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
             Dispatcher.UIThread.Post(() => ErrorMessage = null);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.SetReceivingFailed(_logger, value, ex);
             Dispatcher.UIThread.Post(() =>
             {
                 ErrorMessage = _localization.GetString("RadioStatus.Error.ReceivingFailed");
@@ -265,6 +310,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [RelayCommand]
     private async Task HaltReceivingAsync()
     {
+        Log.HaltReceivingInvoked(_logger);
         try
         {
             await _sstvSession.StopReceivingAsync().ConfigureAwait(false);
@@ -276,8 +322,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
                 ErrorMessage = null;
             });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.HaltReceivingFailed(_logger, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.ReceivingFailed"));
         }
     }
@@ -306,10 +353,18 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
         catch (TaskCanceledException)
         {
+            // Normal control flow -- a newer slider tick superseded this one. Not worth a log line.
             return;
         }
 
-        await _sstvSession.SetTxVolumePercentAsync(value, ct).ConfigureAwait(false);
+        try
+        {
+            await _sstvSession.SetTxVolumePercentAsync(value, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.PersistTxVolumeFailed(_logger, value, ex);
+        }
     }
 
     partial void OnSelectedRadioModeChanged(RadioMode value)
@@ -319,6 +374,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             return;
         }
 
+        Log.SelectedRadioModeChanged(_logger, value);
         _ = SetModeSafeAsync(value);
     }
 
@@ -328,10 +384,71 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         {
             await _radioSession.SetModeAsync(value).ConfigureAwait(false);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.SetModeFailed(_logger, value, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.NoRadioConnected"));
         }
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading frequency presets failed")]
+        public static partial void LoadPresetsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX volume percent failed")]
+        public static partial void LoadTxVolumeFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SetFrequency invoked: {Mhz} MHz")]
+        public static partial void SetFrequencyInvoked(ILogger logger, double mhz);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetFrequency failed: {Mhz} MHz")]
+        public static partial void SetFrequencyFailed(ILogger logger, double mhz, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "ApplyPreset invoked: {Label} ({FrequencyHz}Hz, {Mode})")]
+        public static partial void ApplyPresetInvoked(ILogger logger, string label, long frequencyHz, RadioMode mode);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ApplyPreset failed: {Label}")]
+        public static partial void ApplyPresetFailed(ILogger logger, string label, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "AddPresetRow invoked")]
+        public static partial void AddPresetRowInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "RemovePresetRow invoked")]
+        public static partial void RemovePresetRowInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SavePresets invoked: {Count} preset(s)")]
+        public static partial void SavePresetsInvoked(ILogger logger, int count);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "SavePresets failed")]
+        public static partial void SavePresetsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Tune invoked: {FrequencyHz}Hz for {Seconds}s")]
+        public static partial void TuneInvoked(ILogger logger, double frequencyHz, double seconds);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Tune failed")]
+        public static partial void TuneFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "IsReceiving changed: {Value}")]
+        public static partial void IsReceivingChanged(ILogger logger, bool value);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetReceiving({Value}) failed")]
+        public static partial void SetReceivingFailed(ILogger logger, bool value, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "HaltReceiving invoked")]
+        public static partial void HaltReceivingInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "HaltReceiving failed")]
+        public static partial void HaltReceivingFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting TX volume ({Value}%) failed")]
+        public static partial void PersistTxVolumeFailed(ILogger logger, int value, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SelectedRadioMode changed: {Value}")]
+        public static partial void SelectedRadioModeChanged(ILogger logger, RadioMode value);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetMode({Value}) failed")]
+        public static partial void SetModeFailed(ILogger logger, RadioMode value, Exception ex);
     }
 }
 

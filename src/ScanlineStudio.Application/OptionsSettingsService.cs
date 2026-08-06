@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Localization;
 using ScanlineStudio.Core.Radio;
@@ -11,15 +12,17 @@ namespace ScanlineStudio.Application;
 /// type). Not behind an interface: exactly one implementation, one consumer type
 /// (`OptionsWindowViewModel`) -- matches this project's own "don't add abstractions beyond what's
 /// needed" convention (e.g. `AppDockFactory` is likewise a concrete class, not an interface).</summary>
-public sealed class OptionsSettingsService
+public sealed partial class OptionsSettingsService
 {
     private readonly ISettingsStore _settingsStore;
+    private readonly ILogger<OptionsSettingsService> _logger;
 
     private AppSettings _loadedSettings = new();
 
-    public OptionsSettingsService(ISettingsStore settingsStore)
+    public OptionsSettingsService(ISettingsStore settingsStore, ILogger<OptionsSettingsService> logger)
     {
         _settingsStore = settingsStore;
+        _logger = logger;
     }
 
     /// <summary>Derived from each real settings-section record's own default field values, never
@@ -92,5 +95,12 @@ public sealed class OptionsSettingsService
 
         await _settingsStore.SaveAsync(settings, ct).ConfigureAwait(false);
         _loadedSettings = settings;
+        Log.Saved(_logger, snapshot.RadioBackendId, snapshot.SampleRate, snapshot.CultureCode);
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Options saved: radioBackend={RadioBackendId}, sampleRate={SampleRate}, culture={CultureCode}")]
+        public static partial void Saved(ILogger logger, string radioBackendId, int sampleRate, string? cultureCode);
     }
 }

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Settings;
@@ -12,7 +13,7 @@ public sealed class ReceiveHistoryRecorderTests
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 4);
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, new FakeSettingsStore());
+        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, new FakeSettingsStore(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -42,7 +43,7 @@ public sealed class ReceiveHistoryRecorderTests
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 6); // paired: groups at 0, 2, 4
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, new FakeSettingsStore());
+        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, new FakeSettingsStore(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -64,7 +65,7 @@ public sealed class ReceiveHistoryRecorderTests
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100);
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, new FakeSettingsStore());
+        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, new FakeSettingsStore(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));

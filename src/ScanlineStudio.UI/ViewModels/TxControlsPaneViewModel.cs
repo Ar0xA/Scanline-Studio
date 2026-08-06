@@ -5,6 +5,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
@@ -34,6 +35,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private readonly ILocalizationService _localization;
     private readonly ISettingsStore _settingsStore;
     private readonly IRadioSessionService _radioSession;
+    private readonly ILogger<TxControlsPaneViewModel> _logger;
 
     private const int SwrCutoffConsecutiveSamplesRequired = 2;
 
@@ -138,7 +140,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         IFilePickerService filePickerService,
         ILocalizationService localization,
         ISettingsStore settingsStore,
-        IRadioSessionService radioSession)
+        IRadioSessionService radioSession,
+        ILogger<TxControlsPaneViewModel> logger)
     {
         _sstvSession = sstvSession;
         _imageFileLoader = imageFileLoader;
@@ -148,6 +151,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _localization = localization;
         _settingsStore = settingsStore;
         _radioSession = radioSession;
+        _logger = logger;
 
         AvailableModes = sstvSession.AvailableModes;
         _selectedMode = AvailableModes.Count > 0 ? AvailableModes[0] : null;
@@ -207,19 +211,26 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     private async Task LoadTxPaneUiSettingsAsync()
     {
-        var settings = await _settingsStore.LoadAsync();
-        var txPaneUi = settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings) ?? new TxPaneUiSettings();
-
-        AutoFollowRxMode = txPaneUi.AutoFollowRxMode;
-
-        foreach (var mode in AvailableModes)
+        try
         {
-            var option = new FavoriteModeOptionViewModel(mode, txPaneUi.FavoriteModeIds.Contains(mode.Id));
-            option.PropertyChanged += OnFavoriteModeOptionChanged;
-            FavoriteModeOptions.Add(option);
-        }
+            var settings = await _settingsStore.LoadAsync();
+            var txPaneUi = settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings) ?? new TxPaneUiSettings();
 
-        RebuildFavoriteModes();
+            AutoFollowRxMode = txPaneUi.AutoFollowRxMode;
+
+            foreach (var mode in AvailableModes)
+            {
+                var option = new FavoriteModeOptionViewModel(mode, txPaneUi.FavoriteModeIds.Contains(mode.Id));
+                option.PropertyChanged += OnFavoriteModeOptionChanged;
+                FavoriteModeOptions.Add(option);
+            }
+
+            RebuildFavoriteModes();
+        }
+        catch (Exception ex)
+        {
+            Log.LoadTxPaneUiSettingsFailed(_logger, ex);
+        }
     }
 
     private void OnFavoriteModeOptionChanged(object? sender, PropertyChangedEventArgs e)
@@ -246,33 +257,58 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// section, and a from-scratch write here would silently clobber it.</summary>
     private async Task PersistTxPaneUiSettingsAsync()
     {
-        var settings = await _settingsStore.LoadAsync();
-        var current = settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings) ?? new TxPaneUiSettings();
-        var updated = current with
+        try
         {
-            FavoriteModeIds = FavoriteModeOptions.Where(o => o.IsSelected).Select(o => o.Mode.Id).ToArray(),
-            AutoFollowRxMode = AutoFollowRxMode,
-        };
+            var settings = await _settingsStore.LoadAsync();
+            var current = settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings) ?? new TxPaneUiSettings();
+            var updated = current with
+            {
+                FavoriteModeIds = FavoriteModeOptions.Where(o => o.IsSelected).Select(o => o.Mode.Id).ToArray(),
+                AutoFollowRxMode = AutoFollowRxMode,
+            };
 
-        await _settingsStore.SaveAsync(settings.WithSection(TxPaneUiSettings.SectionKey, updated, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings));
+            await _settingsStore.SaveAsync(settings.WithSection(TxPaneUiSettings.SectionKey, updated, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings));
+        }
+        catch (Exception ex)
+        {
+            Log.PersistTxPaneUiSettingsFailed(_logger, ex);
+        }
     }
 
     partial void OnAutoFollowRxModeChanged(bool value) => _ = PersistTxPaneUiSettingsAsync();
 
     private async Task LoadSafetySettingsAsync()
     {
-        var spec = await _radioSession.GetSafetySettingsAsync();
-        Dispatcher.UIThread.Post(() =>
+        try
         {
-            _suppressSafetyPersist = true;
-            SwrCutoffEnabled = spec.SwrCutoffEnabled;
-            SwrCutoffThreshold = spec.SwrCutoffThreshold;
-            _suppressSafetyPersist = false;
-        });
+            var spec = await _radioSession.GetSafetySettingsAsync();
+            Dispatcher.UIThread.Post(() =>
+            {
+                _suppressSafetyPersist = true;
+                SwrCutoffEnabled = spec.SwrCutoffEnabled;
+                SwrCutoffThreshold = spec.SwrCutoffThreshold;
+                _suppressSafetyPersist = false;
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.LoadSafetySettingsFailed(_logger, ex);
+        }
     }
 
-    private Task PersistSafetySettingsAsync() =>
-        _radioSession.SaveSafetySettingsAsync(new RadioSafetySpec(SwrCutoffEnabled, SwrCutoffThreshold));
+    /// <summary>Error, not Warning -- a silently-failed SWR-cutoff-setting write means the user's
+    /// safety setting didn't take effect with nothing telling them so.</summary>
+    private async Task PersistSafetySettingsAsync()
+    {
+        try
+        {
+            await _radioSession.SaveSafetySettingsAsync(new RadioSafetySpec(SwrCutoffEnabled, SwrCutoffThreshold));
+        }
+        catch (Exception ex)
+        {
+            Log.PersistSafetySettingsFailed(_logger, ex);
+        }
+    }
 
     partial void OnSwrCutoffEnabledChanged(bool value)
     {
@@ -341,6 +377,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _consecutiveSwrOverThreshold++;
         if (_consecutiveSwrOverThreshold >= SwrCutoffConsecutiveSamplesRequired)
         {
+            Log.SwrCutoffTriggered(_logger, swr, SwrCutoffThreshold);
             _cutoffTriggered = true;
             _transmitCts?.Cancel();
         }
@@ -360,18 +397,24 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
-    private void SelectFavoriteMode(SstvModeDefinition mode) => SelectedMode = mode;
+    private void SelectFavoriteMode(SstvModeDefinition mode)
+    {
+        Log.SelectFavoriteModeInvoked(_logger, mode.Id);
+        SelectedMode = mode;
+    }
 
     [RelayCommand]
     private async Task RefreshStockLibraryAsync()
     {
+        Log.RefreshStockLibraryInvoked(_logger);
         IReadOnlyList<StockImageEntry> entries;
         try
         {
             entries = await _stockLibrary.ListAsync();
         }
-        catch
+        catch (Exception ex)
         {
+            Log.ListStockEntriesFailed(_logger, ex);
             return; // Best-effort -- see constructor's own comment.
         }
 
@@ -384,10 +427,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 var image = await _stockLibrary.LoadThumbnailAsync(entry, StockThumbnailMaxDimension);
                 thumbnail = ImageSourceBitmapConverter.ToBitmap(image);
             }
-            catch
+            catch (Exception ex)
             {
                 // A missing/corrupt file for one entry must not blank the whole strip -- see
                 // RxHistoryPaneViewModel.RefreshAsync's identical reasoning.
+                Log.LoadStockThumbnailFailed(_logger, entry.FileName, ex);
             }
 
             withThumbnails.Add(new StockEntryViewModel(entry, thumbnail, SelectStockImageCommand));
@@ -403,8 +447,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task SelectImageAsync()
     {
+        Log.SelectImageInvoked(_logger);
         ErrorMessage = null;
-        var path = await _filePickerService.PickImageFileAsync();
+        string? path;
+        try
+        {
+            path = await _filePickerService.PickImageFileAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.PickImageFileFailed(_logger, ex);
+            return;
+        }
+
         if (path is null)
         {
             return;
@@ -416,6 +471,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task SelectStockImageAsync(StockImageEntry entry)
     {
+        Log.SelectStockImageInvoked(_logger, entry.FileName);
         ErrorMessage = null;
         await OpenEditorForSourceAsync(entry, entry.FileName);
     }
@@ -442,8 +498,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 _ => throw new InvalidOperationException($"Unrecognized TX source type: {source.GetType()}"),
             };
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.LoadTxSourceImageFailed(_logger, fileName, ex);
             _isEditorOpen = false;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             return;
@@ -491,6 +548,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        Log.TransmitInvoked(_logger, mode.Id);
         ErrorMessage = null;
         _cutoffTriggered = false;
         _consecutiveSwrOverThreshold = 0;
@@ -506,11 +564,22 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         catch (OperationCanceledException)
         {
             // A manual Stop TX click is an intentional user action -- no scary error text for that
-            // case, only for an auto-cutoff (see _cutoffTriggered's own doc comment).
-            ErrorMessage = _cutoffTriggered ? _localization.GetString("Panes.TxControls.Error.SwrCutoff") : null;
+            // case, only for an auto-cutoff (see _cutoffTriggered's own doc comment). The cutoff
+            // itself was already logged at Warning by CheckSwrCutoff; a manual stop is Information,
+            // not a failure.
+            if (_cutoffTriggered)
+            {
+                ErrorMessage = _localization.GetString("Panes.TxControls.Error.SwrCutoff");
+            }
+            else
+            {
+                Log.TransmitStoppedManually(_logger, mode.Id);
+                ErrorMessage = null;
+            }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            Log.TransmitFailed(_logger, mode.Id, ex);
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.TransmitFailed");
         }
         finally
@@ -529,7 +598,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private bool CanStopTransmit() => IsTransmitting;
 
     [RelayCommand(CanExecute = nameof(CanStopTransmit))]
-    private void StopTransmit() => _transmitCts?.Cancel();
+    private void StopTransmit()
+    {
+        Log.StopTransmitInvoked(_logger);
+        _transmitCts?.Cancel();
+    }
 
     /// <summary>Re-runs Crop→Resize→ApplyOverlay against the retained <see cref="EditState"/>'s
     /// original at the new mode's dimensions -- normalized (0..1) crop/overlay coordinates make this
@@ -539,6 +612,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// specifically for that I/O race and would be unused complexity now that the source is cached.</summary>
     partial void OnSelectedModeChanged(SstvModeDefinition? value)
     {
+        Log.SelectedModeChanged(_logger, value?.Id);
         if (value is null || _editState is not { } edit)
         {
             _loadedImage = null;
@@ -560,6 +634,63 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// is torn down mid-transmission -- otherwise that transmit (and the rig's PTT) would run to
     /// completion on its own with nothing left to stop it early.</summary>
     public void Dispose() => _transmitCts?.Cancel();
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TxPaneUiSettings failed")]
+        public static partial void LoadTxPaneUiSettingsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting TxPaneUiSettings failed")]
+        public static partial void PersistTxPaneUiSettingsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading radio safety settings failed")]
+        public static partial void LoadSafetySettingsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Persisting radio safety settings failed")]
+        public static partial void PersistSafetySettingsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SWR auto-cutoff triggered: SWR={Swr}, threshold={Threshold}")]
+        public static partial void SwrCutoffTriggered(ILogger logger, float swr, double threshold);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SelectFavoriteMode invoked: {ModeId}")]
+        public static partial void SelectFavoriteModeInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "RefreshStockLibrary invoked")]
+        public static partial void RefreshStockLibraryInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Listing stock image entries failed")]
+        public static partial void ListStockEntriesFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Loading stock thumbnail failed: {FileName}")]
+        public static partial void LoadStockThumbnailFailed(ILogger logger, string fileName, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SelectImage invoked")]
+        public static partial void SelectImageInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "PickImageFileAsync failed")]
+        public static partial void PickImageFileFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SelectStockImage invoked: {FileName}")]
+        public static partial void SelectStockImageInvoked(ILogger logger, string fileName);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX source image failed: {FileName}")]
+        public static partial void LoadTxSourceImageFailed(ILogger logger, string fileName, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Transmit invoked: mode={ModeId}")]
+        public static partial void TransmitInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Transmit stopped manually: mode={ModeId}")]
+        public static partial void TransmitStoppedManually(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Transmit failed: mode={ModeId}")]
+        public static partial void TransmitFailed(ILogger logger, string modeId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "StopTransmit invoked")]
+        public static partial void StopTransmitInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SelectedMode changed: {ModeId}")]
+        public static partial void SelectedModeChanged(ILogger logger, string? modeId);
+    }
 }
 
 /// <summary>Carries its own <see cref="SelectCommand"/> (the parent's

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
@@ -7,7 +8,7 @@ using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Application;
 
-public sealed class SstvSessionService : ISstvSessionService
+public sealed partial class SstvSessionService : ISstvSessionService
 {
     private readonly IAudioEngine _audioEngine;
     private readonly IAudioDeviceEnumerator _deviceEnumerator;
@@ -15,9 +16,18 @@ public sealed class SstvSessionService : ISstvSessionService
     private readonly ISstvDecoder _decoder;
     private readonly ISstvEncoder _encoder;
     private readonly IRadioSessionService _radioSession;
+    private readonly ILogger<SstvSessionService> _logger;
     private readonly Action<ReadOnlyMemory<float>> _decoderHandler;
     private readonly Action<ReadOnlyMemory<float>> _waterfallHandler;
     private bool _isReceiving;
+
+    // Hot-path exception rate-limiting (docs/logging-guidelines.md's "Hot-path rule") -- these
+    // handlers run on the audio engine's own capture-forwarding path, once per captured chunk;
+    // logging every occurrence would turn a logging change into dropped RX samples. First
+    // occurrence logs immediately, then only every Nth after that.
+    private const int ExceptionLogEveryN = 200;
+    private int _decoderExceptionCount;
+    private int _waterfallExceptionCount;
 
     public SstvSessionService(
         IAudioEngine audioEngine,
@@ -27,7 +37,8 @@ public sealed class SstvSessionService : ISstvSessionService
         ISstvEncoder encoder,
         IWaterfallSource waterfall,
         IReceivedImageBuffer receivedImage,
-        IRadioSessionService radioSession)
+        IRadioSessionService radioSession,
+        ILogger<SstvSessionService> logger)
     {
         _audioEngine = audioEngine;
         _deviceEnumerator = deviceEnumerator;
@@ -37,6 +48,7 @@ public sealed class SstvSessionService : ISstvSessionService
         Waterfall = waterfall;
         ReceivedImage = receivedImage;
         _radioSession = radioSession;
+        _logger = logger;
 
         // Isolated fan-out (Phase-3 plan decision #3): a throwing/slow handler on one target must
         // never prevent the other from running -- this is what actually fixes the bug the pre-build
@@ -47,13 +59,17 @@ public sealed class SstvSessionService : ISstvSessionService
             {
                 _decoder.PushSamples(samples);
             }
-            catch
+            catch (Exception ex)
             {
                 // Deliberately swallowed here, not rethrown into the audio engine's own forwarder
                 // (which has no exception isolation of its own -- see IWaterfallSource's doc
-                // comment). A future step wires real diagnostic logging once ScanlineStudio.Application has
-                // an ILogger dependency; today, silently continuing beats corrupting the other
-                // fan-out target or crashing the drain thread.
+                // comment) -- silently continuing beats corrupting the other fan-out target or
+                // crashing the drain thread. Rate-limited log per the hot-path rule above.
+                var count = Interlocked.Increment(ref _decoderExceptionCount);
+                if (count == 1 || count % ExceptionLogEveryN == 0)
+                {
+                    Log.DecoderPushSamplesFailed(_logger, count, ex);
+                }
             }
         };
         _waterfallHandler = samples =>
@@ -62,8 +78,13 @@ public sealed class SstvSessionService : ISstvSessionService
             {
                 Waterfall.PushSamples(samples);
             }
-            catch
+            catch (Exception ex)
             {
+                var count = Interlocked.Increment(ref _waterfallExceptionCount);
+                if (count == 1 || count % ExceptionLogEveryN == 0)
+                {
+                    Log.WaterfallPushSamplesFailed(_logger, count, ex);
+                }
             }
         };
     }
@@ -96,6 +117,7 @@ public sealed class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured += _decoderHandler;
         _audioEngine.SamplesCaptured += _waterfallHandler;
         _isReceiving = true;
+        Log.RxStarted(_logger, device.Id, settings.SampleRate);
     }
 
     public async Task StopReceivingAsync()
@@ -109,14 +131,19 @@ public sealed class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured -= _waterfallHandler;
         await _audioEngine.StopCaptureAsync().ConfigureAwait(false);
         _isReceiving = false;
+        Log.RxStopped(_logger);
     }
 
     public Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
-        => PlayWithPttAsync(_encoder.EncodeAsync(mode, image, ct), _encoder.SampleRate, ct);
+    {
+        Log.TxStarting(_logger, mode.Id, image.Width, image.Height);
+        return PlayWithPttAsync(_encoder.EncodeAsync(mode, image, ct), _encoder.SampleRate, ct);
+    }
 
     public Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default)
     {
         const int sampleRate = 48_000;
+        Log.TuneStarting(_logger, frequencyHz, duration);
         return PlayWithPttAsync(GenerateTone(frequencyHz, duration, sampleRate, ct), sampleRate, ct);
     }
 
@@ -136,6 +163,7 @@ public sealed class SstvSessionService : ISstvSessionService
             current with { TxVolumePercent = percent },
             AudioSettingsJsonContext.Default.AudioDeviceSettings);
         await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+        Log.TxVolumeSet(_logger, percent);
     }
 
     /// <summary>Shared PTT-guarantee shape for both <see cref="TransmitAsync"/> and <see cref="TuneAsync"/>:
@@ -155,10 +183,24 @@ public sealed class SstvSessionService : ISstvSessionService
         var gain = (await GetTxVolumePercentAsync(ct).ConfigureAwait(false)) / 100f;
 
         await _radioSession.SetPttAsync(true, ct).ConfigureAwait(false);
+        Log.PttKeyed(_logger);
         try
         {
             await _audioEngine.StartPlaybackAsync(device, sampleRate, ct).ConfigureAwait(false);
             await PumpToPlaybackAsync(samples, gain, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is a normal, expected way for this to end (manual Stop TX, SWR
+            // auto-cutoff -- see TxControlsPaneViewModel for which one) -- this layer has no way to
+            // tell which caused it, so it's logged generically at Information, not as a failure.
+            Log.PlaybackCancelled(_logger);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.PlaybackFailed(_logger, ex);
+            throw;
         }
         finally
         {
@@ -174,25 +216,29 @@ public sealed class SstvSessionService : ISstvSessionService
             // step is independently guarded so one failure can never mask the original exception or
             // prevent a sibling cleanup step from running.
             using var cleanupCts = new CancellationTokenSource(CleanupTimeout);
-            await TryCleanupAsync(() => _audioEngine.StopPlaybackAsync()).ConfigureAwait(false);
-            await TryCleanupAsync(() => _radioSession.SetPttAsync(false, cleanupCts.Token)).ConfigureAwait(false);
+            await TryCleanupAsync("StopPlayback", () => _audioEngine.StopPlaybackAsync()).ConfigureAwait(false);
+            await TryCleanupAsync("PTT off", () => _radioSession.SetPttAsync(false, cleanupCts.Token)).ConfigureAwait(false);
+            Log.PttReleased(_logger);
             if (wasReceiving)
             {
-                await TryCleanupAsync(() => StartReceivingAsync(cleanupCts.Token)).ConfigureAwait(false);
+                await TryCleanupAsync("Resume RX", () => StartReceivingAsync(cleanupCts.Token)).ConfigureAwait(false);
             }
         }
     }
 
-    private static async Task TryCleanupAsync(Func<Task> step)
+    private async Task TryCleanupAsync(string stepName, Func<Task> step)
     {
         try
         {
             await step().ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
             // Best-effort cleanup step -- see PlayWithPttAsync's own doc comment for why a failure
-            // here must never mask the original exception or block a sibling cleanup step.
+            // here must never mask the original exception or block a sibling cleanup step. Still
+            // logged at Warning (not swallowed silently) -- a failed "PTT off" step in particular
+            // leaves the rig keyed, a safety-relevant condition a user needs to know about.
+            Log.CleanupStepFailed(_logger, stepName, ex);
         }
     }
 
@@ -266,6 +312,7 @@ public sealed class SstvSessionService : ISstvSessionService
         if (deviceId is null)
         {
             var kind = forCapture ? "capture" : "playback";
+            Log.NoDeviceConfigured(_logger, kind);
             throw new InvalidOperationException($"No {kind} audio device configured -- set one in settings before starting a session.");
         }
 
@@ -275,6 +322,7 @@ public sealed class SstvSessionService : ISstvSessionService
         if (device is null)
         {
             var kind = forCapture ? "capture" : "playback";
+            Log.ConfiguredDeviceNotFound(_logger, kind, deviceId, devices.Count);
             throw new InvalidOperationException($"Configured {kind} device '{deviceId}' was not found among currently available devices.");
         }
 
@@ -286,5 +334,50 @@ public sealed class SstvSessionService : ISstvSessionService
         var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
         return appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
             ?? new AudioDeviceSettings();
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Error, Message = "Decoder PushSamples threw ({Count} occurrences so far)")]
+        public static partial void DecoderPushSamplesFailed(ILogger logger, int count, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Waterfall PushSamples threw ({Count} occurrences so far)")]
+        public static partial void WaterfallPushSamplesFailed(ILogger logger, int count, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX started: device={DeviceId}, sampleRate={SampleRate}Hz")]
+        public static partial void RxStarted(ILogger logger, string deviceId, int sampleRate);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX stopped")]
+        public static partial void RxStopped(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "TX starting: mode={ModeId}, {Width}x{Height}")]
+        public static partial void TxStarting(ILogger logger, string modeId, int width, int height);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Tune starting: {FrequencyHz}Hz for {Duration}")]
+        public static partial void TuneStarting(ILogger logger, double frequencyHz, TimeSpan duration);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TX volume set to {Percent}%")]
+        public static partial void TxVolumeSet(ILogger logger, int percent);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "PTT keyed")]
+        public static partial void PttKeyed(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "PTT released")]
+        public static partial void PttReleased(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Playback cancelled")]
+        public static partial void PlaybackCancelled(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Playback failed")]
+        public static partial void PlaybackFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Cleanup step '{StepName}' failed")]
+        public static partial void CleanupStepFailed(ILogger logger, string stepName, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "No {Kind} audio device configured")]
+        public static partial void NoDeviceConfigured(ILogger logger, string kind);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Configured {Kind} device '{DeviceId}' not found among {AvailableCount} available devices")]
+        public static partial void ConfiguredDeviceNotFound(ILogger logger, string kind, string deviceId, int availableCount);
     }
 }

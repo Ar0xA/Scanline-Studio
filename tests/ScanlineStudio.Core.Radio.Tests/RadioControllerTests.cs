@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Core.Radio;
 
@@ -12,7 +13,7 @@ public class RadioControllerTests
     [Fact]
     public async Task ConnectAsync_ThrowsInvalidOperationException_WhenNoFactoryMatches()
     {
-        var controller = new RadioController([]);
+        var controller = new RadioController([], NullLogger<RadioController>.Instance);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => controller.ConnectAsync(new TestConnectionSpec(), CancellationToken.None));
@@ -26,7 +27,7 @@ public class RadioControllerTests
             new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState)),
             new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState)),
         };
-        var controller = new RadioController(factories);
+        var controller = new RadioController(factories, NullLogger<RadioController>.Instance);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => controller.ConnectAsync(new TestConnectionSpec(), CancellationToken.None));
@@ -36,7 +37,7 @@ public class RadioControllerTests
     public async Task ConnectAsync_ThrowsNotSupportedException_ForScanPollingStrategy()
     {
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
-        var controller = new RadioController([factory]);
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         var spec = new TestConnectionSpec { Strategy = PollingStrategy.Scan };
 
         await Assert.ThrowsAsync<NotSupportedException>(() => controller.ConnectAsync(spec, CancellationToken.None));
@@ -45,7 +46,7 @@ public class RadioControllerTests
     [Fact]
     public async Task SetFrequencyAsync_ThrowsInvalidOperationException_WhenNotConnected()
     {
-        var controller = new RadioController([]);
+        var controller = new RadioController([], NullLogger<RadioController>.Instance);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => controller.SetFrequencyAsync(14074000, CancellationToken.None));
@@ -54,7 +55,7 @@ public class RadioControllerTests
     [Fact]
     public async Task NoneConnectionSpec_NeverPublishesState_AndReportsNoCapabilities()
     {
-        var controller = new RadioController([new NoneRadioProtocolFactory()]);
+        var controller = new RadioController([new NoneRadioProtocolFactory()], NullLogger<RadioController>.Instance);
 
         await controller.ConnectAsync(new NoneConnectionSpec(), CancellationToken.None);
         await Task.Delay(TimeSpan.FromMilliseconds(300)); // longer than the default 250ms poll interval
@@ -71,7 +72,7 @@ public class RadioControllerTests
     {
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
         var events = new List<RadioConnectionState>();
-        var controller = new RadioController([factory]);
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
 
         await controller.ConnectAsync(new TestConnectionSpec(), CancellationToken.None);
@@ -87,7 +88,7 @@ public class RadioControllerTests
     {
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
         var received = new List<RadioState>();
-        var controller = new RadioController([factory]);
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         using var sub = controller.StateChanges.Subscribe(received.Add);
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
@@ -125,7 +126,7 @@ public class RadioControllerTests
         });
 
         var events = new List<RadioConnectionEvent>();
-        var controller = new RadioController([factory]);
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         using var sub = controller.ConnectionEvents.Subscribe(events.Add);
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
@@ -155,7 +156,7 @@ public class RadioControllerTests
         });
 
         var events = new List<RadioConnectionEvent>();
-        var controller = new RadioController([factory]);
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         using var sub = controller.ConnectionEvents.Subscribe(events.Add);
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
@@ -178,7 +179,7 @@ public class RadioControllerTests
             return Task.FromResult(FixedStateValue);
         }));
 
-        var controller = new RadioController([factory]);
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         // Subscribed first -- Subject<T>.OnNext propagates a subscriber's exception synchronously and
         // skips notifying subscribers registered after the one that threw, so this deliberately proves
         // the POLL LOOP survives, not that every subscriber gets notified every time.
