@@ -2,7 +2,56 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-06, latest, ACTIVE) — Receive tab pixel-fidelity pass against mock2: status bar, Spectrum card height, Mode card (Auto/Locked segment + active-mode dropdown), Sync & slant card (Re-sync/Reset + Advanced timing), Incoming-frame action bar/progress bar. Found and fixed a recurring root cause: several controls (segments, UniformGrid button pairs, Expander) don't stretch to fill their parent's width by default in this codebase's StackPanel-heavy layout - needs explicit HorizontalAlignment="Stretch" on the container AND each child. COMMITTED AND PUSHED THIS ENTRY.
+## Resume here (2026-08-06, latest, ACTIVE) — RX history retention cap, done autonomously overnight (user asked for non-GUI backend work while away). Full solution build/test green (all projects, 548 DSP tests included). COMMITTING AND PUSHING THIS ENTRY.
+
+User picked this from a 4-option menu (`spec/14-roadmap.md`'s Phase 4+ backlog) as the safest
+non-GUI task to run unsupervised. **Verified against actual legacy source first** (CLAUDE.md §0/§3
+rule) rather than trusting the roadmap's own "legacy default 32" claim at face value — briefly
+suspected it was wrong (`CBitmapHist`'s own C++ constructor sets `m_Head.m_Max = 64`,
+`ComLib.h:591`) before tracing further and confirming `Main.cpp:898`'s `sys.m_HistMax = 32` (read
+from ini `[Window]/HistMax`) is unconditionally applied over that constructor default on every
+`CBitmapHist::Open()` call (`ComLib.cpp:2658-2686`, both the fresh-file and existing-file
+branches) — so 32 **is** the real, always-effective default; 64 never survives to matter. Full
+citation trail lives on `ReceiveHistorySettings.DefaultMaxEntries`'s own doc comment now, not just
+here.
+
+**Implementation** (`ScanlineStudio.Core.Logbook`): `ReceiveHistorySettings` gained
+`MaxEntries` — nullable (`int?`), **not** a property-initializer default, per the exact System.Text.Json
+default-loss trap already documented/fixed once this session on
+`AudioDeviceSettings.TxVolumePercent` (STJ silently deserializes a property missing from an
+already-persisted JSON payload to the CLR default `0`, not the C# initializer value) — the `??
+DefaultMaxEntries` fallback lives only at the one read site, `ResolveMaxEntriesAsync`.
+`SqliteReceiveHistoryStore.RecordAsync` now trims the `ReceiveHistory` table to the newest N rows
+(by `ReceivedAt`) after every insert, via a `DELETE ... WHERE Id NOT IN (SELECT ... ORDER BY
+ReceivedAt DESC LIMIT $maxEntries)`.
+
+**Deliberate scope boundary, documented not silently dropped**: this trims the *queryable index*
+only — it does **not** delete the underlying image files from disk. Legacy's version is a genuine
+fixed-size ring buffer (one `history.bin` blob, oldest slot physically overwritten); this port
+saves separate real image files, and unsupervised automatic file deletion while the user is asleep
+is a materially different (higher, irreversible) risk than trimming a database index. Orphaned
+files beyond the retention window will accumulate on disk — a real, tracked follow-up
+(`spec/14-roadmap.md`'s own entry now says this explicitly), not a bug in this piece.
+
+**Tests** (`SqliteReceiveHistoryStoreTests`, 3 new, `ScanlineStudio.Core.Logbook.Tests` 10→13):
+default-32 trimming (33 inserts → newest 32 survive, oldest evicted), a configured non-default
+limit is honored, and the STJ-default-loss regression specifically — constructs a raw `JsonElement`
+with the `ReceiveHistory` section present but genuinely missing the `MaxEntries` property (not just
+`null`, actually absent, simulating a real pre-existing `settings.json`) and asserts the fallback
+is 32, not 0. **Verified via revert-fix-confirm-fail**: temporarily changed `MaxEntries` back to a
+naive `int = DefaultMaxEntries` property initializer, confirmed that exact regression test fails
+with `Expected: 32, Actual: 0` (i.e. every existing installation's history would have been silently
+truncated to zero entries the moment this field shipped), then restored the nullable fix.
+
+**Full solution verified green** after the piece (not just the touched project, per this
+milestone's own scope): all 10 test projects, 883 tests total (`Core.Sstv.Tests`' 548 DSP
+golden-vector tests included, run in the background since they alone take ~8 minutes — confirmed
+unaffected, as expected for a change with zero DSP-layer touches).
+
+`spec/14-roadmap.md`'s own backlog entry updated in place (struck through, marked done, citation
+trail added) rather than left stale for a future session to re-discover.
+
+## Resume here (2026-08-06, superseded by the entry above) — Receive tab pixel-fidelity pass against mock2: status bar, Spectrum card height, Mode card (Auto/Locked segment + active-mode dropdown), Sync & slant card (Re-sync/Reset + Advanced timing), Incoming-frame action bar/progress bar. Found and fixed a recurring root cause: several controls (segments, UniformGrid button pairs, Expander) don't stretch to fill their parent's width by default in this codebase's StackPanel-heavy layout - needs explicit HorizontalAlignment="Stretch" on the container AND each child. Committed as `5fd61a9`.
 
 Continuation of the RadioHeaderView pixel-fidelity work (previous entry below, commits `a4291c1`/
 `a3d7133`), now working down through the rest of the Receive tab's left column and the Incoming
