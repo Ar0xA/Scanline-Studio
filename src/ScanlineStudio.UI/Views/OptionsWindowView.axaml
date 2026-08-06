@@ -10,134 +10,476 @@
         MinWidth="480" MinHeight="360"
         WindowStartupLocation="CenterOwner">
 
-    <Border Classes="ScanlineStudioPanelBody">
+    <Border Classes="card">
         <Grid RowDefinitions="*,Auto">
 
             <TabControl Grid.Row="0">
 
                 <TabItem Header="{loc:Translate Options.General.Tab}">
-                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                        <Border Classes="ScanlineStudioModuleGroup">
-                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.General.Language}" />
-                                <ComboBox ItemsSource="{Binding AvailableCultures}"
-                                          SelectedItem="{Binding SelectedCulture}"
-                                          HorizontalAlignment="Stretch">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate x:DataType="sys:CultureInfo">
-                                            <TextBlock Text="{Binding DisplayName}" />
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                            </StackPanel>
-                        </Border>
-                        <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetGeneralToDefaultCommand}" />
-                    </StackPanel>
+                    <ScrollViewer>
+                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.General.Language}" />
+                                    <ComboBox ItemsSource="{Binding AvailableCultures}"
+                                              SelectedItem="{Binding SelectedCulture}"
+                                              HorizontalAlignment="Stretch">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate x:DataType="sys:CultureInfo">
+                                                <TextBlock Text="{Binding DisplayName}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Disabled placeholders: legacy MemWin/JPEGQ, no window-geometry
+                                 persistence or JPEG-quality knob exists yet. -->
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <CheckBox Content="{loc:Translate Options.General.RememberWindow}"
+                                              IsEnabled="False"
+                                              ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.General.JpegQuality}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.General.JpegQuality.Help}" />
+                                    </StackPanel>
+                                    <NumericUpDown Value="85" Minimum="0" Maximum="100" Width="120" HorizontalAlignment="Left"
+                                                   IsEnabled="False"
+                                                   ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Disabled placeholder: legacy's 7 waterfall/spectrum colors (PCLow,
+                                 PCHigh, PCFFTB/PCFFT/PCFFTStg/PCSync/PCFreq); the new flat
+                                 design's palette isn't per-element customizable yet. -->
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.General.ColorsHeader}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.General.ColorsHeader.Help}" />
+                                    </StackPanel>
+                                    <WrapPanel>
+                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.Low}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.High}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftBackground}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftSignal}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftHistory}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftSync}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftFrequency}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetGeneralToDefaultCommand}" />
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
 
                 <TabItem Header="{loc:Translate Options.Audio.Tab}">
-                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                        <Border Classes="ScanlineStudioModuleGroup">
-                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Audio.CaptureDevice}" />
-                                <ComboBox ItemsSource="{Binding CaptureDevices}"
-                                          SelectedItem="{Binding SelectedCaptureDevice}"
-                                          HorizontalAlignment="Stretch">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding Name}" />
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
+                    <ScrollViewer>
+                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.CaptureDevice}" />
+                                    <ComboBox ItemsSource="{Binding CaptureDevices}"
+                                              SelectedItem="{Binding SelectedCaptureDevice}"
+                                              HorizontalAlignment="Stretch">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Name}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
 
-                                <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Audio.PlaybackDevice}" />
-                                <ComboBox ItemsSource="{Binding PlaybackDevices}"
-                                          SelectedItem="{Binding SelectedPlaybackDevice}"
-                                          HorizontalAlignment="Stretch">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding Name}" />
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.PlaybackDevice}" />
+                                    <ComboBox ItemsSource="{Binding PlaybackDevices}"
+                                              SelectedItem="{Binding SelectedPlaybackDevice}"
+                                              HorizontalAlignment="Stretch">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Name}" />
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
 
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.SampleRate}" />
-                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.SampleRate.Help}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.SampleRate}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.SampleRate.Help}" />
+                                    </StackPanel>
+                                    <TextBox Text="{Binding SampleRate}" Width="120" HorizontalAlignment="Left" />
                                 </StackPanel>
-                                <TextBox Text="{Binding SampleRate}" Width="120" HorizontalAlignment="Left" />
-                            </StackPanel>
-                        </Border>
-                        <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetAudioToDefaultCommand}" />
-                    </StackPanel>
+                            </Border>
+
+                            <!-- Disabled placeholders: legacy RxFifo/TxFifo/SoundPriority/
+                                 AppPriority/Source(stereo)/CBSTX; no FIFO-size, process/sound
+                                 card priority, or stereo-source hook exists in the audio engine
+                                 yet. -->
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Audio.PerformanceHeader}" />
+
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.RxFifo}" />
+                                    <NumericUpDown Value="16" Minimum="4" Maximum="64" Width="120" HorizontalAlignment="Left"
+                                                   IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.TxFifo}" />
+                                    <NumericUpDown Value="16" Minimum="4" Maximum="64" Width="120" HorizontalAlignment="Left"
+                                                   IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.SoundPriority}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.Normal}" IsChecked="True" />
+                                        <RadioButton GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.High}" />
+                                        <RadioButton GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.VeryHigh}" />
+                                        <RadioButton GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.Critical}" />
+                                    </StackPanel>
+
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.AppPriority}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="AppPriorityPlaceholder" Content="{loc:Translate Options.Audio.AppPriority.Normal}" IsChecked="True" />
+                                        <RadioButton GroupName="AppPriorityPlaceholder" Content="{loc:Translate Options.Audio.AppPriority.High}" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.StereoSource}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.StereoSource.Help}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Mono}" IsChecked="True" />
+                                        <RadioButton GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Left}" />
+                                        <RadioButton GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Right}" />
+                                    </StackPanel>
+                                    <CheckBox Content="{loc:Translate Options.Audio.StereoTx}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetAudioToDefaultCommand}" />
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
 
                 <TabItem Header="{loc:Translate Options.Radio.Tab}">
-                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                        <Border Classes="ScanlineStudioModuleGroup">
-                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Backend}" />
-                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Backend.Help}" />
-                                </StackPanel>
-                                <RadioButton GroupName="RadioBackend"
-                                             Content="{loc:Translate Options.Radio.Backend.None}"
-                                             IsChecked="{Binding IsNoneBackendSelected}" />
-                                <RadioButton GroupName="RadioBackend"
-                                             Content="{loc:Translate Options.Radio.Backend.Rigctld}"
-                                             IsChecked="{Binding IsRigctldBackendSelected}" />
-                                <RadioButton GroupName="RadioBackend"
-                                             Content="{loc:Translate Options.Radio.Backend.Hamlib}"
-                                             IsChecked="{Binding IsHamlibBackendSelected}" />
-
-                                <StackPanel IsVisible="{Binding IsRigctldSelected}" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Radio.Host}" />
-                                    <TextBox Text="{Binding RigctldHost}" />
-                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Radio.Port}" />
-                                    <TextBox Text="{Binding RigctldPort}" Width="120" HorizontalAlignment="Left" />
-                                </StackPanel>
-
-                                <StackPanel IsVisible="{Binding IsHamlibSelected}" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                    <ScrollViewer>
+                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.Model}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.Model.Help}" />
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Backend}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Backend.Help}" />
                                     </StackPanel>
-                                    <TextBox Text="{Binding HamlibModel}" Width="120" HorizontalAlignment="Left" />
+                                    <RadioButton GroupName="RadioBackend"
+                                                 Content="{loc:Translate Options.Radio.Backend.None}"
+                                                 IsChecked="{Binding IsNoneBackendSelected}" />
+                                    <RadioButton GroupName="RadioBackend"
+                                                 Content="{loc:Translate Options.Radio.Backend.Rigctld}"
+                                                 IsChecked="{Binding IsRigctldBackendSelected}" />
+                                    <RadioButton GroupName="RadioBackend"
+                                                 Content="{loc:Translate Options.Radio.Backend.Hamlib}"
+                                                 IsChecked="{Binding IsHamlibBackendSelected}" />
+                                    <!-- Disabled placeholder: matches spec/03-cat-layer.md's documented
+                                         (but "speculative/not yet designed") 5th backend. -->
+                                    <RadioButton GroupName="RadioBackendPlaceholder"
+                                                 IsEnabled="False"
+                                                 Content="{loc:Translate Options.Radio.Backend.OmniRig}"
+                                                 ToolTip.Tip="{loc:Translate Options.Radio.Backend.OmniRig.Help}" />
 
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.SerialPort}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.SerialPort.Help}" />
+                                    <StackPanel IsVisible="{Binding IsRigctldSelected}" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" Text="{loc:Translate Options.Radio.Host}" />
+                                        <TextBox Text="{Binding RigctldHost}" />
+                                        <TextBlock Classes="label" Text="{loc:Translate Options.Radio.Port}" />
+                                        <TextBox Text="{Binding RigctldPort}" Width="120" HorizontalAlignment="Left" />
                                     </StackPanel>
-                                    <TextBox Text="{Binding HamlibSerialPort}" />
 
-                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Options.Radio.Hamlib.BaudRate}" />
-                                    <TextBox Text="{Binding HamlibBaudRate}" Width="120" HorizontalAlignment="Left" />
+                                    <StackPanel IsVisible="{Binding IsHamlibSelected}" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                            <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.Model}" />
+                                            <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.Model.Help}" />
+                                        </StackPanel>
+                                        <TextBox Text="{Binding HamlibModel}" Width="120" HorizontalAlignment="Left" />
 
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.PttType}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.PttType.Help}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                            <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.SerialPort}" />
+                                            <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.SerialPort.Help}" />
+                                        </StackPanel>
+                                        <TextBox Text="{Binding HamlibSerialPort}" />
+
+                                        <TextBlock Classes="label" Text="{loc:Translate Options.Radio.Hamlib.BaudRate}" />
+                                        <TextBox Text="{Binding HamlibBaudRate}" Width="120" HorizontalAlignment="Left" />
+
+                                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                            <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.PttType}" />
+                                            <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.PttType.Help}" />
+                                        </StackPanel>
+                                        <TextBox Text="{Binding HamlibPttType}" />
                                     </StackPanel>
-                                    <TextBox Text="{Binding HamlibPttType}" />
                                 </StackPanel>
-                            </StackPanel>
-                        </Border>
-                        <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetRadioToDefaultCommand}" />
-                    </StackPanel>
+                            </Border>
+
+                            <!-- Disabled placeholders: legacy CBRTS/PTTLock; no PTT-during-RX
+                                 control surface on IRadioController yet. -->
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <CheckBox Content="{loc:Translate Options.Radio.RtsOnRx}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <CheckBox Content="{loc:Translate Options.Radio.PttLock}"
+                                                  IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" VerticalAlignment="Center" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.PttLock.Help}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetRadioToDefaultCommand}" />
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
 
                 <TabItem Header="{loc:Translate Options.Tx.Tab}">
-                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                        <Border Classes="ScanlineStudioModuleGroup">
-                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="ScanlineStudioReadout" FontSize="10" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.Callsign}" />
-                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.Callsign.Help}" />
+                    <ScrollViewer>
+                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.Callsign}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.Callsign.Help}" />
+                                    </StackPanel>
+                                    <TextBox Text="{Binding Callsign}" Width="200" HorizontalAlignment="Left" />
                                 </StackPanel>
-                                <TextBox Text="{Binding Callsign}" Width="200" HorizontalAlignment="Left" />
-                            </StackPanel>
-                        </Border>
-                        <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetTxToDefaultCommand}" />
-                    </StackPanel>
+                            </Border>
+
+                            <!-- Disabled placeholder: legacy's YONIQ-fork-specific QRZ.com lookup
+                                 toggle; legacy hardcodes a personal API password for this, which
+                                 is not being resurrected in any form; only the bare enable concept
+                                 is represented. -->
+                            <Border Classes="cardInner">
+                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <CheckBox Content="{loc:Translate Options.Tx.QrzLookup}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" VerticalAlignment="Center" />
+                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.QrzLookup.Help}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetTxToDefaultCommand}" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- New tab: RX/demod behavior. All disabled; AnalogFmSstvDecoder hardcodes
+                     sense level, auto-stop/sync/slant, and demod type internally with no public
+                     knob (confirmed by reading its full public surface). -->
+                <TabItem Header="{loc:Translate Options.Decode.Tab}">
+                    <ScrollViewer>
+                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.SenseLevel}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.SenseLevel.Help}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.VeryLow}" />
+                                        <RadioButton GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.Low}" IsChecked="True" />
+                                        <RadioButton GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.High}" />
+                                        <RadioButton GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.VeryHigh}" />
+                                    </StackPanel>
+
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Decode.RxBpf}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.Normal}" IsChecked="True" />
+                                        <RadioButton GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.Wide}" />
+                                        <RadioButton GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.Sharp}" />
+                                        <RadioButton GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.VerySharp}" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.DemodType}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.DemodType.Help}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.Pll}" />
+                                        <RadioButton GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.ZeroCrossing}" />
+                                        <RadioButton GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.Hilbert}" IsChecked="True" />
+                                    </StackPanel>
+
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Decode.RxBuffer}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Off}" IsChecked="True" />
+                                        <RadioButton GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.On}" />
+                                        <RadioButton GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Extended}" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.AutoStart}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.AutoStart.Help}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.Off}" />
+                                        <RadioButton GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.On}" IsChecked="True" />
+                                    </StackPanel>
+
+                                    <CheckBox Content="{loc:Translate Options.Decode.AutoStop}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <CheckBox Content="{loc:Translate Options.Decode.AutoRestart}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <CheckBox Content="{loc:Translate Options.Decode.AutoSync}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <CheckBox Content="{loc:Translate Options.Decode.AutoSlant}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- New tab: ID methods + VOX + tune-satellite trigger. All disabled; none of
+                     CW/FSK/sound-file ID, VOX, or the satellite-tune trigger exist yet. Tune
+                     frequency/duration themselves are real (header's Tune row) and intentionally
+                     NOT duplicated here. -->
+                <TabItem Header="{loc:Translate Options.Identification.Tab}">
+                    <ScrollViewer>
+                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Identification.IdMethodHeader}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.Off}" IsChecked="True" />
+                                        <RadioButton GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.Cw}" />
+                                        <RadioButton GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.SoundFile}" />
+                                    </StackPanel>
+
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Identification.CwText}" />
+                                    <TextBox IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwFrequency}" />
+                                        <NumericUpDown Value="800" Minimum="300" Maximum="3000" Width="120" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwSpeed}" />
+                                        <NumericUpDown Value="18" Minimum="10" Maximum="40" Width="120" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.SoundFile}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Identification.SoundFile.Help}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBox Width="260" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Content="{loc:Translate Options.Identification.SoundFile.Browse}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </StackPanel>
+
+                                    <CheckBox Content="{loc:Translate Options.Identification.FskEncode}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <CheckBox Content="{loc:Translate Options.Identification.FskDecode}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Identification.VoxHeader}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="VoxModePlaceholder" Content="{loc:Translate Options.Identification.Vox.Off}" IsChecked="True" />
+                                        <RadioButton GroupName="VoxModePlaceholder" Content="{loc:Translate Options.Identification.Vox.On}" />
+                                    </StackPanel>
+                                    <Button Content="{loc:Translate Options.Identification.Vox.EditTone}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="cardInner">
+                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <CheckBox Content="{loc:Translate Options.Identification.TuneSatellite}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" VerticalAlignment="Center" />
+                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Identification.TuneSatellite.Help}" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- New tab: deep DSP/diagnostic internals. All disabled. Filter-response preview
+                     buttons (legacy DispTxBpf/DispLoopLPF/DispOutLPF/DispCrossOutLPF/RxBpfBtn) are
+                     intentionally not included; they preview filters that are themselves
+                     disabled placeholders, so there is nothing real to preview yet. -->
+                <TabItem Header="{loc:Translate Options.Advanced.Tab}">
+                    <ScrollViewer>
+                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                            <TextBlock Classes="caption" TextWrapping="Wrap" Text="{loc:Translate Options.Advanced.Caption}" />
+
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Advanced.PllHeader}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.PllHeader.Help}" />
+                                    </StackPanel>
+                                    <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" RowDefinitions="Auto,Auto" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="{loc:Translate Options.Advanced.Pll.VcoGain}" />
+                                        <NumericUpDown Grid.Row="0" Grid.Column="1" Value="2600" Minimum="0" Maximum="100000" />
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Classes="label" Text="{loc:Translate Options.Advanced.Pll.LoopOrder}" />
+                                        <NumericUpDown Grid.Row="0" Grid.Column="3" Value="1" Minimum="1" Maximum="32" />
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="{loc:Translate Options.Advanced.Pll.LoopCutoff}" />
+                                        <NumericUpDown Grid.Row="1" Grid.Column="1" Value="200" Minimum="0" Maximum="10000" />
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Classes="label" Text="{loc:Translate Options.Advanced.Pll.OutCutoff}" />
+                                        <NumericUpDown Grid.Row="1" Grid.Column="3" Value="1200" Minimum="0" Maximum="10000" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Advanced.CrossingHeader}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.CrossingHeader.Help}" />
+                                    </StackPanel>
+                                    <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" RowDefinitions="Auto,Auto" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="{loc:Translate Options.Advanced.Crossing.Order}" />
+                                        <NumericUpDown Grid.Row="0" Grid.Column="1" Value="1" Minimum="1" Maximum="32" />
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Classes="label" Text="{loc:Translate Options.Advanced.Crossing.Cutoff}" />
+                                        <NumericUpDown Grid.Row="0" Grid.Column="3" Value="1200" Minimum="0" Maximum="10000" />
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="{loc:Translate Options.Advanced.Crossing.Smoothing}" />
+                                        <NumericUpDown Grid.Row="1" Grid.Column="1" Value="2000" Minimum="500" Maximum="8000" />
+                                    </Grid>
+                                    <CheckBox Content="{loc:Translate Options.Advanced.Differentiator}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Advanced.TxFilterHeader}" />
+                                    <CheckBox Content="{loc:Translate Options.Advanced.TxBpf}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <CheckBox Content="{loc:Translate Options.Advanced.TxLpf}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.TxSampleClockOffset}" />
+                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.TxSampleClockOffset.Help}" />
+                                        <NumericUpDown Value="0" Minimum="-1500" Maximum="1500" Increment="0.02" FormatString="F2" Width="100" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Advanced.MiscHeader}" />
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Advanced.Loopback}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.Off}" IsChecked="True" />
+                                        <RadioButton GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.Internal}" />
+                                        <RadioButton GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.External}" />
+                                    </StackPanel>
+                                    <CheckBox Content="{loc:Translate Options.Advanced.PolynomialCalibration}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <Button Content="{loc:Translate Options.Advanced.ClockAdjustWizard}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Content="{loc:Translate Options.Advanced.LevelCalibrationWizard}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
 
             </TabControl>
