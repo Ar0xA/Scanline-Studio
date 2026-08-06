@@ -2,7 +2,100 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-06, latest, ACTIVE) — Production logging rollout DONE across all 16 projects, auditor-reviewed twice, one real bug found+fixed. Options-menu click mystery CONFIRMED (not logging-related) — real sandbox input-delivery issue, not a code bug. NOT YET COMMITTED.
+## Resume here (2026-08-06, latest, ACTIVE) — RadioHeaderView extracted from MainWindow.axaml into its own UserControl, pixel-fidelity pass against mock2 across ~15 rounds of live screenshot feedback (VFO/Favourites/Transceiver cards), operator-callsign menu chip added, window min-size locked to FullHD-safe floor. Build/tests green throughout. COMMITTING AND PUSHING THIS ENTRY.
+
+Continuation of the "keep going until our current program looks like the actual mock" work (Pieces
+12-17 of the gap-closure plan, `~/.claude/plans/wondrous-crafting-ladybug.md`, already committed as
+`4f810f4`/`7ac8cfb` before this entry). This session's work was **not** part of that piece list —
+it's the header-specific pixel-fidelity pass the user drove live via screenshots, one small change
+at a time ("go block by block instead of all over the window").
+
+**RadioHeaderView.axaml (new file)**: VFO/Favourites/Transceiver header cards extracted out of
+`MainWindow.axaml` into their own `UserControl` (designer supplied `mockups/split/*` as the
+starting shape; only `Views/`+`Styles/` dropped in, `mockups/fixes/`+`mockups/split/` stay
+untracked reference material, never committed). `MainWindow.axaml` now just does
+`<views:RadioHeaderView Grid.Row="1" DataContext="{Binding RadioStatus}" />`. The manual
+frequency-entry TextBox+Set+mode-ComboBox that used to sit next to the VFO readout was removed
+entirely — mock2 has no equivalent control there.
+
+**Fixed this session, in order, each verified via a live screenshot on the secondary monitor
+(HDMI-1, real offset is x=3840 not x=1920 — corrected a wrong assumption baked into the capture
+workflow)**:
+1. USB/LSB/FM sideband segment control's merged-border trick clipped the first segment's left
+   edge and later double-drew top/bottom borders when patched — replaced with plain `ToggleButton`s
+   per direct user instruction ("just make them buttons nothing fancy").
+2. "No frequency" placeholder text → literal "000.000.000" to match mock2's zero-state readout.
+3. Favourites card restructured to mock2's real two-row shape: row 1 = preset-recall buttons +
+   "Store current" docked right on the **same row** (horizontally aligned with the presets, not a
+   separate row); row 2 = "Edit list…"/"Import"/"Scan M1–M3" left-aligned. The real "Edit
+   presets…" flyout (`EditorRows`/`AddPresetRowCommand`/`SavePresetsCommand`) was removed from view
+   per direct user request — **not** deleted from `RadioStatusViewModel`, just unmapped; still
+   needs a real button to attach to later. 5 orphaned en.json keys removed
+   (`RadioStatus.EditPresets`/`PresetLabelPlaceholder`/`RemovePreset`/`AddPreset`/`SavePresets`).
+   New `FrequencyPresetButtonViewModel.FrequencyWithMode` computed property backs the two-line
+   preset-button content.
+4. Favourites row-2 buttons: "Edit list/Import/Scan" forced to white background (inline
+   `Background="White"`, scoped to just these three — `Button.small` stays its normal gray
+   elsewhere in the app, e.g. Options/TxImageEditor/RxHistory toolbars); "Store current" got a new
+   `Button.success` class (green, `ChromeOverrides.axaml`) — later routed back and forth (blue →
+   green per literal mock pixels → green again per direct user override, see item 8) before
+   settling on green; text in every one of these buttons set `HorizontalContentAlignment="Center"
+   VerticalContentAlignment="Center"`.
+5. **Operator callsign menu chip (new, real)**: `MainViewModel` gained `Callsign` (loaded from
+   `OptionsSettingsService`/`OperatorSettings`, same pattern as `OptionsWindowViewModel`) and a
+   computed `CallsignDisplay` that falls back to the ham-radio placeholder `"N0CALL"` when unset —
+   always-visible chip (`Border.pill.softPill`, same green-chip palette mock2 itself uses for
+   `DL2QSK · JO31`), docked top-right of the Menu row (`MainWindow.axaml`'s Grid.Row="0" restructured
+   from a bare `<Menu>` into a 2-column `Grid`). Per direct user instruction, **no** cfg-profile
+   chip and **no** grid-locator suffix are shown — mock2 has both, this app has neither concept
+   backed by real data yet.
+6. Window min-size: was `1024x600` (a "smallest before panes break" floor), now pinned equal to
+   `Width`/`Height` (`1920x1032` — FullHD 1920x1080 minus 48px for a taskbar/menu bar) so the
+   window can only grow, never shrink below the FullHD-safe floor. Per-pane alignment *at* that
+   floor is an explicitly deferred follow-up, not yet tuned.
+7. Transceiver card: Receiving/Halt are now equal-width (`Grid` with two `*` columns, was an
+   unequal-width `StackPanel`); the Tune row (Hz/s edit fields + Tune button) was removed from view
+   per direct user request — mock2 never shows it here either, and `TuneCommand`/
+   `TuneFrequencyHz`/`TuneDurationSeconds` remain untouched on `RadioStatusViewModel`, just
+   unmapped. `RadioStatus.RxLevelLabel`/`TxVolumeLabel` re-worded "RX LEVEL"/"TX VOLUME" → "RX
+   level"/"TX level" to match mock2's casing (`TxVolumePercent`'s real 0–100% binding stays as-is —
+   mock2's own "-6.0" TX-level number is a literal/static display value with no real backing
+   concept, unlike the real working volume slider already wired here).
+8. **Explicit user override of mock2's own literal pixels**: sampled mock2's "Receiving" button
+   at exactly `#D6E7F7`/`#5A9AD4` (same blue as `Button.primary`) and matched it pixel-for-pixel
+   first; user then asked for green/red instead ("receiving = green, halt = red") — reverted to
+   the pre-existing `ToggleButton.receiving:checked` green palette (`#C2E8C2`/`#3F8F3F`, now also
+   bold+colored text to match the weight mock2's own blue version had) and restored `Halt`'s
+   `Classes="halt"` (the same red destructive-action style used for Stop-Transmit/TX-editor-Halt
+   elsewhere in the app). Net effect: this one card intentionally diverges from mock2's literal
+   pixels by direct instruction — green/red reads as a clearer status pair than mock2's flat blue.
+
+**Build/test discipline held throughout**: every round rebuilt `ScanlineStudio.UI`, ran
+`ScanlineStudio.UI.Tests` (74/74 green start to finish, only the very last no-test-needed round
+per explicit user instruction), rebuilt `ScanlineStudio.Host`, killed+relaunched the real app, and
+screenshotted via the established python-xlib `XGetImage` capture script
+(`scratchpad/capture.py`) + `wmctrl` positioning workflow before reporting back.
+
+**Repeated self-inflicted bug this session**: the standard "sweep `--` out of XAML comments before
+build" python regex (`re.sub(r'-{2,}', '-', ...)`) was applied incorrectly at one point and
+corrupted comment **delimiters** themselves (`<!--`→`<!-`, `-->`→`->`), not just interior
+double-hyphens — caught immediately by the build error, repaired with a second regex pass
+(`<!-(.*?)->` → `<!--\1-->`) that restored delimiters while leaving already-collapsed interior
+hyphens alone. Going forward: only sweep the comment **body** between delimiters, never the whole
+matched span including the delimiters.
+
+**Not yet done / explicitly deferred, not forgotten**:
+- Map "Edit presets…" functionality onto "Edit list…" (or a new location) — VM-side is ready
+  (`EditorRows`/`AddPresetRowCommand`/`SavePresetsCommand`), just not wired to a button.
+- Map the Tune feature (`TuneCommand`/`TuneFrequencyHz`/`TuneDurationSeconds`) onto some control —
+  same situation, VM-side untouched.
+- Two-tone frequency display (bold leading digits + dimmed `.000` trailing digits, matching
+  mock2's own split) — blocked on deciding a real `FrequencyDisplay` format that has something to
+  split on (current format doesn't dot-group the way mock2's literal text does).
+- Transmit and Gallery tabs have **not** had the same close pixel-diff pass the Receive-tab header
+  just got — Pieces 12-17 landed them structurally, not fine-tuned against mock screenshots.
+
+## Resume here (2026-08-06, superseded by the entry above) — Production logging rollout DONE across all 16 projects, auditor-reviewed twice, one real bug found+fixed. Options-menu click mystery CONFIRMED (not logging-related) — real sandbox input-delivery issue, not a code bug. NOT YET COMMITTED.
 
 **Logging rollout** (triggered by the Options-menu click investigation below going nowhere with
 `Console.WriteLine` diagnostics — user's direction: stop, build real production logging instead,

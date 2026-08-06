@@ -46,7 +46,7 @@
                  comma-separated fallback list, same mechanism as bundling Inter for body text, but
                  relying on each OS's own already-installed monospace font rather than adding another
                  bundled-font dependency for a Phase-3 minimal need. -->
-            <FontFamily x:Key="ScanlineStudioMonospaceFontFamily">Consolas,Cascadia Mono,DejaVu Sans Mono,Liberation Mono,Menlo,monospace</FontFamily>
+            <FontFamily x:Key="ScanlineStudioMonospaceFontFamily">Cascadia Mono,Consolas,DejaVu Sans Mono,Liberation Mono,Menlo,monospace</FontFamily>
 
             <!-- TX toggle button: opt-in (Theme="{StaticResource ScanlineStudioTxToggleButtonTheme}"), not a
                  global implicit style, since this state coloring is specific to the one TX/transmit

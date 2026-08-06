@@ -1,0 +1,209 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+             xmlns:loc="using:ScanlineStudio.UI.Localization"
+             x:Class="ScanlineStudio.UI.Views.RadioHeaderView"
+             x:DataType="vm:RadioStatusViewModel">
+
+    <!-- VFO / Favourites / Transceiver header cards (spec/09-ui.md, mock2's own 3-column
+         header row): MainWindow chrome, not a dockable pane (Phase-3 plan decision #9's
+         scope trim). Connecting happens once at ScanlineStudio.Host startup from persisted
+         settings, not from this strip; always visible regardless of which tab is active.
+
+         Extracted from MainWindow.axaml so these three cards can be edited without scrolling
+         past a thousand lines of tab content. DataContext is the RadioStatus view-model,
+         supplied by the host: <views:RadioHeaderView DataContext="{Binding RadioStatus}" />.
+
+         No outer Border/background wrapper: Border.ScanlineStudioPanelHeader (a dark-chrome
+         "#1B1B20 panel strip" left over from the pre-mock2 "raw SDR instrumentation" look, plus a
+         blanket TextBlock-foreground override for everything nested inside it) doesn't exist in
+         mock2 at all - its own header is just this Grid sitting directly on the page background,
+         which is also why each card's own 1px Border.card outline reads clearly: there's no
+         second, slightly-different background color competing with it at the edge. -->
+        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+          <Grid ColumnDefinitions="Auto,*,260" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
+
+              <!-- VFO card: matches mock2's own VFO card (no separate "VFO" cardHeader label
+                   above the caption - mock2 goes straight from caption to the big readout; 40pt
+                   frequency, not 20; the USB/LSB/FM sideband segment IS reproduced here as a
+                   literal control, matching the mock - real buttons/variables get mapped in
+                   later). One deliberate deviation from mock2's own source: the vertical divider
+                   line mock2 draws between the pills and the UTC/CAT/rig-meters column
+                   (BorderThickness="1,0,0,0") is dropped per direct user feedback - just the
+                   padding/spacing remains, no border. Frequency readout and CAT-link status are
+                   real; sideband segment/BW·SPLIT·STEP·RIT pills/UTC clock/rig-meters pill are
+                   literal: no sideband, bandwidth, split, step, RIT, or rig-meter concept exists
+                   on IRadioSessionService today (spec/14-roadmap.md backlog). CAT link is a
+                   single colored pill (softPill=green when linked, alertPill=red when not), not
+                   a separate LED dot + pill - matches mock2's own softPill treatment exactly.
+                   The manual-entry frequency TextBox+Set button and mode ComboBox that used to
+                   sit next to the readout are removed, matching mock2's own VFO card, which has
+                   no separate edit control there. -->
+              <Border Grid.Column="0" Classes="card" Padding="16,8">
+                  <StackPanel Orientation="Horizontal" Spacing="16">
+                      <StackPanel>
+                          <TextBlock Classes="caption" Text="{loc:Translate RadioStatus.VfoCaption}" />
+                          <!-- Exact ".val readout" spec per the designer: Cascadia
+                               Mono/Consolas/ui-monospace/monospace stack (ScanlineStudioMonospace
+                               FontFamily, reordered in Tokens.axaml to lead with Cascadia Mono),
+                               40px/600-weight, letter-spacing -0.01em (= -0.4px at 40px),
+                               line-height 1.05 (= 42px at 40px). font-variant-numeric:
+                               tabular-nums is skipped: it's a proportional-font fallback for
+                               even digit widths, which a genuinely monospace font family already
+                               guarantees for free. The ".000" dimmed-gray (#8A8A8A) trailing
+                               digits are deferred: our real FrequencyDisplay format
+                               ("14.230000 MHz") doesn't share mock2's own "14.230.000" grouping
+                               to split on; single-color for now, map the two-tone split once the
+                               real format is decided. Margin nudges it down from the caption,
+                               matching the mock's own vertical rhythm. -->
+                          <TextBlock FontFamily="{DynamicResource ScanlineStudioMonospaceFontFamily}"
+                                     FontSize="40" FontWeight="SemiBold"
+                                     LetterSpacing="-0.4" LineHeight="42"
+                                     Margin="0,8,0,0"
+                                     Text="{Binding FrequencyDisplay}" />
+                      </StackPanel>
+                      <!-- Shared Grid (not two independent StackPanels) so each row lines up
+                           exactly across both columns, matching mock2's own row-for-row
+                           alignment: segment/UTC, BW+Split/CAT-link, Step+RIT/rig-meters. -->
+                      <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="Auto,Auto"
+                            ColumnSpacing="16" RowSpacing="5" VerticalAlignment="Center">
+                          <!-- Plain ToggleButtons, not the segment/seg merged-border control:
+                               that control's border-overlap trick (Margin="-1,0,0,0" on every
+                               segment, to fuse adjacent borders into one shared line) clips the
+                               first segment's own left edge, and the container-border fix for
+                               that doubled the top/bottom lines instead. Simpler and correct. -->
+                          <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                              <ToggleButton IsChecked="True" Content="{loc:Translate RadioStatus.SidebandUsb}" />
+                              <ToggleButton Content="{loc:Translate RadioStatus.SidebandLsb}" />
+                              <ToggleButton Content="{loc:Translate RadioStatus.SidebandFm}" />
+                          </StackPanel>
+                          <TextBlock Grid.Row="0" Grid.Column="1" Classes="readout" FontSize="15"
+                                     HorizontalAlignment="Right" VerticalAlignment="Center"
+                                     Text="{loc:Translate RadioStatus.UtcValue}" />
+
+                          <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                              <Border Classes="pill"><TextBlock Text="{loc:Translate RadioStatus.BwValue}" /></Border>
+                              <Border Classes="pill"><TextBlock Text="{loc:Translate RadioStatus.SplitValue}" /></Border>
+                          </StackPanel>
+                          <Border Grid.Row="1" Grid.Column="1" Classes="pill"
+                                  Classes.softPill="{Binding CatLinked}" Classes.alertPill="{Binding !CatLinked}"
+                                  BorderThickness="0" HorizontalAlignment="Right" VerticalAlignment="Center">
+                              <Panel>
+                                  <TextBlock Text="{loc:Translate RadioStatus.CatLinked}" IsVisible="{Binding CatLinked}" />
+                                  <TextBlock Text="{loc:Translate RadioStatus.CatNotLinked}" IsVisible="{Binding !CatLinked}" />
+                              </Panel>
+                          </Border>
+
+                          <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                              <Border Classes="pill"><TextBlock Text="{loc:Translate RadioStatus.StepValue}" /></Border>
+                              <Border Classes="pill"><TextBlock Text="{loc:Translate RadioStatus.RitValue}" /></Border>
+                          </StackPanel>
+                          <Border Grid.Row="2" Grid.Column="1" Classes="pill" HorizontalAlignment="Right" VerticalAlignment="Center">
+                              <TextBlock Text="{loc:Translate RadioStatus.RigMetersValue}" />
+                          </Border>
+                      </Grid>
+                  </StackPanel>
+              </Border>
+
+              <!-- Favourites card: frequency memory presets; click applies both frequency+mode
+                   in one action (WSJT-X band-shortcut convention). Membership user-configured
+                   via the "Edit favourites..." popup, backed by FrequencyPresetsSettings.
+                   Hint caption + Store current/Edit list/Import/Scan M1-M3 are literal, added
+                   alongside (not replacing) the real "Edit presets..." flyout button below. -->
+              <Border Grid.Column="1" Classes="card">
+                  <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                      <Grid ColumnDefinitions="Auto,*">
+                          <TextBlock Classes="cardHeader" Text="{loc:Translate RadioStatus.FavouritesHeader}" />
+                          <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate RadioStatus.FavouritesHint}" />
+                      </Grid>
+                      <!-- Row 1: preset-recall buttons, with Store current docked to the
+                           right on the SAME row (horizontally aligned with the preset
+                           buttons), not the Edit list/Import/Scan row below. -->
+                      <DockPanel LastChildFill="True">
+                          <Button DockPanel.Dock="Right" Classes="success" Height="38"
+                                  Content="{loc:Translate RadioStatus.StoreCurrent}"
+                                  VerticalAlignment="Top"
+                                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+                          <ItemsControl ItemsSource="{Binding Presets}">
+                              <ItemsControl.ItemsPanel>
+                                  <ItemsPanelTemplate>
+                                      <WrapPanel Orientation="Horizontal" />
+                                  </ItemsPanelTemplate>
+                              </ItemsControl.ItemsPanel>
+                              <ItemsControl.ItemTemplate>
+                                  <DataTemplate x:DataType="vm:FrequencyPresetButtonViewModel">
+                                      <!-- Height/Padding/two-line content match mock2's own
+                                           preset-button shape exactly (frequency+mode on top,
+                                           label below) - both lines are real, from the same
+                                           FrequencyPreset the button already carries. -->
+                                      <Button Height="38" Padding="11,0"
+                                              Command="{Binding SelectCommand}"
+                                              CommandParameter="{Binding Preset}"
+                                              Margin="0,0,4,4">
+                                          <StackPanel>
+                                              <TextBlock Classes="value" Text="{Binding FrequencyWithMode}" />
+                                              <TextBlock Classes="caption" FontWeight="Normal" Text="{Binding Label}" />
+                                          </StackPanel>
+                                      </Button>
+                                  </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                      </DockPanel>
+
+                      <!-- Row 2: Edit list/Import/Scan, left-aligned. The real "Edit
+                           presets..." editor (EditorRows/AddPresetRowCommand/
+                           SavePresetsCommand flyout) is removed from view per direct user
+                           request, not deleted from the view-model - map it onto "Edit list..."
+                           (or elsewhere) once that's decided; the C# side is untouched. -->
+                      <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                          <Button Classes="small" Background="White" Content="{loc:Translate RadioStatus.EditFavouritesList}"
+                                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+                          <Button Classes="small" Background="White" Content="{loc:Translate RadioStatus.ImportFavourites}"
+                                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+                          <Button Classes="small" Background="White" Content="{loc:Translate RadioStatus.ScanFavourites}"
+                                  HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+                      </StackPanel>
+                  </StackPanel>
+              </Border>
+
+              <!-- Transceiver card: Receiving/Halt (real ISstvSessionService.IsReceiving state)
+                   and TX output volume (a post-encode playback gain, not an encoder/DSP
+                   parameter; matches WSJT-X's own documented Pwr slider semantics) are real. RX
+                   level is a literal slider matching mock2's own layout: no gain parameter exists
+                   anywhere for it today (spec/14-roadmap.md backlog). Tune (legacy Option.cpp's
+                   TuneFreq/TuneCommand) and its Hz/s edit fields are removed from view per direct
+                   user request - mock2 never shows them here either; the real
+                   TuneCommand/TuneFrequencyHz/TuneDurationSeconds VM members are untouched, just
+                   unmapped to a control for now. Receiving/Halt are equal-width (Grid, not
+                   StackPanel) and Receiving uses the same filled-blue palette as Button.primary,
+                   not a green state color - both match mock2's own pixels exactly (sampled: bg
+                   #D6E7F7, border #5A9AD4); Halt is a plain button, not the red "halt" class used
+                   elsewhere for destructive actions - mock2's own Halt here is plain gray. -->
+              <Border Grid.Column="2" Classes="card">
+                  <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                      <TextBlock Classes="cardHeader" Text="{loc:Translate RadioStatus.TransceiverHeader}" />
+                      <Grid ColumnDefinitions="*,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                          <ToggleButton Classes="receiving" IsChecked="{Binding IsReceiving}" Content="{loc:Translate RadioStatus.Receiving}"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                          <Button Grid.Column="1" Classes="halt" Content="{loc:Translate RadioStatus.Halt}" Command="{Binding HaltReceivingCommand}"
+                                  HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                      </Grid>
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                          <TextBlock Classes="label" Text="{loc:Translate RadioStatus.RxLevelLabel}" VerticalAlignment="Center" />
+                          <Slider Grid.Column="1" Minimum="-60" Maximum="0" Value="-14.2" VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="2" Classes="value" Text="{loc:Translate RadioStatus.RxLevelValue}" VerticalAlignment="Center" />
+                      </Grid>
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                          <TextBlock Classes="label" Text="{loc:Translate RadioStatus.TxVolumeLabel}" VerticalAlignment="Center" />
+                          <Slider Grid.Column="1" Value="{Binding TxVolumePercent}" Minimum="0" Maximum="100" VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="2" Classes="value" Text="{Binding TxVolumePercent}" VerticalAlignment="Center" />
+                      </Grid>
+                  </StackPanel>
+              </Border>
+          </Grid>
+          <TextBlock Text="{Binding ErrorMessage}"
+                     Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
+                     TextWrapping="Wrap"
+                     IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+</UserControl>
