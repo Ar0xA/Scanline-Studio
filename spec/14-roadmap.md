@@ -4195,6 +4195,48 @@ wired everything real, these had no real data behind them today):
 - Gallery Storage card's Sidecar-format and disk-free-space readouts — no JSON/EXIF sidecar is
   written today, and no free-space query exists anywhere. Small each.
 
+**Options window: legacy YONIQ Option-dialog items added as disabled+tooltip placeholders
+(2026-08-06)** — direct user request: port every option legacy's own Options dialog has, skip
+what's already covered elsewhere, grey out + explain whatever has no real backing feature yet.
+Most of the ~50 items added map onto gaps
+**already tracked above** (PLL VCO gain/loop order/cutoff, zero-crossing type/order/cutoff/
+smoothing, RxBPF width, sense/squelch level, differentiator, calibration wizard, TX BPF/LPF, TX
+sample-clock offset, loopback test mode — all under "already-deliberately-dropped DSP tunables"
+just above; demod-type selector and auto-start-on-sync-detect — cross-reference "Manual ReSync"/
+"AFC toggle"/"Auto-stop-at-end-of-signal" above; window-position/size memory — cross-reference
+"RX history retention limit" above; 7 waterfall/spectrum colors — cross-reference "Waterfall/
+color" above; CW ID text/frequency/speed + FSK encode/decode — cross-reference "TX macros /
+CW-ID" above, same operator-profile blocker; OmniRig 4th CAT backend — already tracked in
+`spec/03-cat-layer.md` as speculative/undesigned) — no new notes for any of those. Genuinely new
+gaps found while doing this pass, not previously tracked anywhere:
+- Sound FIFO buffer size (RX/TX), sound-card thread priority, app process priority — no
+  buffer-size or OS-priority knob exists anywhere in `ScanlineStudio.Core.Audio.MiniAudio`. Small
+  each, mostly plumbing (MiniAudio's own buffer-size param + `Process.PriorityClass`).
+- Stereo capture source (Mono/Left/Right) + separate stereo-TX toggle — capture is always
+  whatever channel layout the device provides; no per-channel selection exists. Small-medium.
+- RTS-on-RX, PTT lock (hold PTT continuously, a manual-keying diagnostic aid) — no PTT-during-RX
+  control surface exists on `IRadioController`/`IRadioSessionService`. Small each.
+- Sound-file ID (a recorded `.mmv`-style audio clip played instead of a CW-keyed tone) — distinct
+  from CW-ID above (which is real and already tracked); this is a second, separate ID method with
+  its own file-path field. Small-medium once CW-ID's operator-profile blocker is resolved, since
+  they'd likely share the same "ID method" selector.
+- Tune-satellite-trigger toggle (after the tune tone's duration elapses, switch to TX instead of
+  RX automatically) — the real Tune button/frequency/duration already exist (header strip); only
+  this one auto-switch-to-TX behavior is missing. Trivial once someone wants it.
+- QRZ.com lookup enable — narrower than the already-tracked "OCR/QRZ lookup" gap under Frame
+  metadata above (that one covers OCR too); legacy's own QRZ integration also hardcoded a personal
+  account password, which is not being resurrected in any form — a real implementation needs its
+  own API-key configuration, not a straight port.
+- JPEG save quality (0-100) — received images are saved as PNG (lossless) today; this setting has
+  no format to apply to unless/until a JPEG save path is added. Trivial once/if that happens.
+- Legacy's `WinFont`/Japanese-English font-switch buttons and the Windows-only "always use DIB"
+  rendering toggle are **not tracked here at all** — see `docs/removed-features.md`'s new
+  "Legacy UI font switching" entry (superseded by the design system, not a gap) and the
+  Win32/GDI-only DIB toggle isn't a real user-facing capability, no entry needed either.
+- Legacy's YONIQ-fork-specific external "log connection" (IP:port socket to an unnamed companion
+  app) is also **not tracked here** — see `docs/removed-features.md`'s new entry; too
+  underspecified to even represent as a disabled placeholder.
+
 ## Explicitly deferred beyond v1
 
 - Perspective correction / webcam capture ([[07-image-pipeline]]).

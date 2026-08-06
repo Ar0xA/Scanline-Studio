@@ -97,6 +97,13 @@
         <Setter Property="ClipToBounds" Value="True" />
     </Style>
 
+    <!-- Avalonia defaults ToolTip.ShowOnDisabled to False; every "not yet implemented, see
+         tooltip" disabled control in Options relies on this being on, so it's set globally here
+         rather than repeated per-control. -->
+    <Style Selector="Control:disabled">
+        <Setter Property="ToolTip.ShowOnDisabled" Value="True" />
+    </Style>
+
     <Style Selector="Button">
         <Setter Property="Height" Value="17" />
         <Setter Property="Padding" Value="10,0" />
