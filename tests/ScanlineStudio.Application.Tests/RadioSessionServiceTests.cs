@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Core.Radio;
 using ScanlineStudio.Settings;
@@ -11,7 +12,7 @@ public sealed class RadioSessionServiceTests
     {
         var controller = new FakeRadioController();
         var settingsStore = new FakeSettingsStore();
-        var service = new RadioSessionService(controller, settingsStore);
+        var service = new RadioSessionService(controller, settingsStore, NullLogger<RadioSessionService>.Instance);
 
         await service.ConnectUsingSettingsAsync();
 
@@ -30,7 +31,7 @@ public sealed class RadioSessionServiceTests
                 new RadioConnectionSettings { BackendId = "rigctld", Host = "127.0.0.1", Port = 4532 },
                 RadioSettingsJsonContext.Default.RadioConnectionSettings),
         };
-        var service = new RadioSessionService(controller, settingsStore);
+        var service = new RadioSessionService(controller, settingsStore, NullLogger<RadioSessionService>.Instance);
 
         await service.ConnectUsingSettingsAsync();
 
@@ -43,7 +44,7 @@ public sealed class RadioSessionServiceTests
     public async Task SetPttAsync_DelegatesToController()
     {
         var controller = new FakeRadioController();
-        var service = new RadioSessionService(controller, new FakeSettingsStore());
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), NullLogger<RadioSessionService>.Instance);
 
         await service.SetPttAsync(true);
         await service.SetPttAsync(false);

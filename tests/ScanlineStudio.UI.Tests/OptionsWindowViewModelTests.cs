@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Extensions.Logging.Abstractions;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using ScanlineStudio.Abstractions.Audio;
@@ -29,7 +30,7 @@ public sealed class OptionsWindowViewModelTests
         };
         var audioDeviceEnumerator = new FakeAudioDeviceEnumerator { InputDevices = [CaptureDevice], OutputDevices = [PlaybackDevice] };
 
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), audioDeviceEnumerator);
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), audioDeviceEnumerator, NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("en", vm.SelectedCulture?.Name);
@@ -48,7 +49,7 @@ public sealed class OptionsWindowViewModelTests
     {
         var settingsStore = new FakeSettingsStore();
         var audioDeviceEnumerator = new FakeAudioDeviceEnumerator { InputDevices = [CaptureDevice], OutputDevices = [PlaybackDevice] };
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), audioDeviceEnumerator);
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), audioDeviceEnumerator, NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         vm.SelectedCaptureDevice = CaptureDevice;
@@ -83,7 +84,7 @@ public sealed class OptionsWindowViewModelTests
     public void CancelCommand_FiresRequestCloseWithoutSaving()
     {
         var settingsStore = new FakeSettingsStore();
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator());
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         vm.Callsign = "SHOULD-NOT-PERSIST";
 
@@ -104,7 +105,7 @@ public sealed class OptionsWindowViewModelTests
             Settings = new AppSettings().WithSection(AudioDeviceSettings.SectionKey, new AudioDeviceSettings { CaptureDeviceId = "cap1", PlaybackDeviceId = "play1", SampleRate = 48000 }, AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
         var audioDeviceEnumerator = new FakeAudioDeviceEnumerator { InputDevices = [CaptureDevice], OutputDevices = [PlaybackDevice] };
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), audioDeviceEnumerator);
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), audioDeviceEnumerator, NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(48000, vm.SampleRate);
 
@@ -122,7 +123,7 @@ public sealed class OptionsWindowViewModelTests
         {
             Settings = new AppSettings().WithSection(RadioConnectionSettings.SectionKey, new RadioConnectionSettings { BackendId = "rigctld", Host = "x", Port = 1 }, RadioSettingsJsonContext.Default.RadioConnectionSettings),
         };
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator());
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.IsRigctldSelected);
 
@@ -137,7 +138,7 @@ public sealed class OptionsWindowViewModelTests
     [AvaloniaFact]
     public void RadioBackendRadioButtons_TogglingOneUpdatesRadioBackendIdAndTheOthers()
     {
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator());
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         vm.IsRigctldBackendSelected = true;
@@ -169,7 +170,7 @@ public sealed class OptionsWindowViewModelTests
                 new RadioConnectionSettings { BackendId = "hamlib", HamlibModel = 1035, SerialPort = "/dev/ttyUSB0", BaudRate = 4800, PttType = "RIG_PTT_RIG" },
                 RadioSettingsJsonContext.Default.RadioConnectionSettings),
         };
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator());
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.IsHamlibSelected);
@@ -183,7 +184,7 @@ public sealed class OptionsWindowViewModelTests
     public async Task SaveCommand_PersistsHamlibFieldsWhenBackendIsHamlib()
     {
         var settingsStore = new FakeSettingsStore();
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator());
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         vm.IsHamlibBackendSelected = true;
@@ -212,7 +213,7 @@ public sealed class OptionsWindowViewModelTests
                 new RadioConnectionSettings { BackendId = "hamlib", HamlibModel = 1035, SerialPort = "/dev/ttyUSB0", BaudRate = 4800, PttType = "RIG_PTT_RIG" },
                 RadioSettingsJsonContext.Default.RadioConnectionSettings),
         };
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator());
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.IsHamlibSelected);
 
@@ -234,7 +235,7 @@ public sealed class OptionsWindowViewModelTests
                 .WithSection(RadioConnectionSettings.SectionKey, new RadioConnectionSettings { BackendId = "rigctld", Host = "x", Port = 1 }, RadioSettingsJsonContext.Default.RadioConnectionSettings)
                 .WithSection(OperatorSettings.SectionKey, new OperatorSettings { Callsign = "SOMECALL" }, OperatorSettingsJsonContext.Default.OperatorSettings),
         };
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator());
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         vm.RequestResetAllCommand.Execute(null);
@@ -256,7 +257,7 @@ public sealed class OptionsWindowViewModelTests
         {
             Settings = new AppSettings().WithSection(OperatorSettings.SectionKey, new OperatorSettings { Callsign = "SOMECALL" }, OperatorSettingsJsonContext.Default.OperatorSettings),
         };
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator());
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         vm.RequestResetAllCommand.Execute(null);
 

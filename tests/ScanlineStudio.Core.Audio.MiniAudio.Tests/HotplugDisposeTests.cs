@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 
 namespace ScanlineStudio.Core.Audio.MiniAudio.Tests;
@@ -35,14 +36,14 @@ public class HotplugDisposeTests
         MiniAudioCaptureSession? session = null;
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
 
             toneProcess = StartToneIntoSink(sinkName, durationSeconds: 15);
 
-            session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100);
+            session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100, NullLogger.Instance);
             long totalReceived = 0;
             // See MiniAudioCaptureSessionTests' identical fix and comment: without
             // RunContinuationsAsynchronously, a synchronous TrySetResult from the drain thread
@@ -103,7 +104,7 @@ public class HotplugDisposeTests
         MiniAudioPlaybackSession? session = null;
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
             Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");

@@ -75,6 +75,9 @@ codebase once built, not to the initial port.
   files are **not** a string table).
 - Nullable reference types; treat warnings as errors.
 - SOLID principles; composition over inheritance.
+- New/changed code that does I/O, calls an external system, or handles a user command needs
+  logging (`[LoggerMessage]` pattern, mandatory — CA1848 makes a plain `logger.LogDebug(...)` call
+  a build error) — see [docs/logging-guidelines.md](docs/logging-guidelines.md).
 
 ---
 

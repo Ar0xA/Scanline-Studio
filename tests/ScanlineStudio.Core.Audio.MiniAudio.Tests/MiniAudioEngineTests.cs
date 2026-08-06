@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Core.Audio.MiniAudio;
@@ -23,7 +24,7 @@ public class MiniAudioEngineTests
         Process? toneProcess = null;
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
@@ -33,7 +34,7 @@ public class MiniAudioEngineTests
             var receivedChunks = new List<float[]>();
             var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            await using var engine = new MiniAudioEngine();
+            await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             engine.SamplesCaptured += chunk =>
             {
                 lock (receivedChunks)
@@ -85,12 +86,12 @@ public class MiniAudioEngineTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
 
-            await using var engine = new MiniAudioEngine();
+            await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => engine.StartCaptureAsync(monitor!, sampleRate: 44100));
@@ -119,12 +120,12 @@ public class MiniAudioEngineTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
 
-            await using var engine = new MiniAudioEngine();
+            await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
 
             var attempts = Enumerable.Range(0, 8)
                 .Select(async _ =>
@@ -164,12 +165,12 @@ public class MiniAudioEngineTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
             Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
 
-            await using var engine = new MiniAudioEngine();
+            await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
 
             var attempts = Enumerable.Range(0, 8)
                 .Select(async _ =>
@@ -200,7 +201,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task StopCaptureAsync_WhenNeverStarted_IsIdempotentNoOp()
     {
-        await using var engine = new MiniAudioEngine();
+        await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         await engine.StopCaptureAsync();
         await engine.StopCaptureAsync(); // twice -- still a no-op, matching every session's Dispose convention
     }
@@ -208,7 +209,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task StartCaptureAsync_WithUnknownDeviceId_ThrowsAudioDeviceUnavailableException()
     {
-        await using var engine = new MiniAudioEngine();
+        await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         var bogusDevice = new AudioDeviceInfo("this-device-does-not-exist", "Bogus", MaxInputChannels: 1, MaxOutputChannels: 0, SupportedSampleRates: []);
 
         await Assert.ThrowsAsync<AudioDeviceUnavailableException>(() => engine.StartCaptureAsync(bogusDevice, sampleRate: 44100));
@@ -220,7 +221,7 @@ public class MiniAudioEngineTests
         // Exercises the ArgumentException (NativeAudio.EncodeFixedString) translation path
         // specifically -- a real, reachable failure mode distinct from "open failed", confirmed by
         // reading MiniAudioDeviceEnumerator's own identical handling of this case.
-        await using var engine = new MiniAudioEngine();
+        await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         var overLongId = new string('x', 512);
         var bogusDevice = new AudioDeviceInfo(overLongId, "Bogus", MaxInputChannels: 1, MaxOutputChannels: 0, SupportedSampleRates: []);
 
@@ -244,7 +245,7 @@ public class MiniAudioEngineTests
         Process? toneProcess = null;
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
@@ -254,7 +255,7 @@ public class MiniAudioEngineTests
             var stopReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var alreadyStoppedFromCallback = 0;
 
-            await using var engine = new MiniAudioEngine();
+            await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             engine.SamplesCaptured += chunk =>
             {
                 if (chunk.Length > 0 && Interlocked.Exchange(ref alreadyStoppedFromCallback, 1) == 0)
@@ -318,7 +319,7 @@ public class MiniAudioEngineTests
         Process? toneProcess = null;
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
@@ -329,7 +330,7 @@ public class MiniAudioEngineTests
             var externalStopStarting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var alreadyStoppedFromCallback = 0;
 
-            await using var engine = new MiniAudioEngine();
+            await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             engine.SamplesCaptured += chunk =>
             {
                 if (chunk.Length > 0 && Interlocked.Exchange(ref alreadyStoppedFromCallback, 1) == 0)
@@ -375,7 +376,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task DisposeAsync_IsIdempotent_WhenCalledTwice()
     {
-        var engine = new MiniAudioEngine();
+        var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         await engine.DisposeAsync();
         await engine.DisposeAsync();
     }
@@ -391,7 +392,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task DisposeAsync_CalledConcurrentlyTwice_WithNothingStarted_BothComplete()
     {
-        var engine = new MiniAudioEngine();
+        var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         var dispose1 = engine.DisposeAsync().AsTask();
         var dispose2 = engine.DisposeAsync().AsTask();
         await Task.WhenAll(dispose1, dispose2);
@@ -420,12 +421,12 @@ public class MiniAudioEngineTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
 
-            var engine = new MiniAudioEngine();
+            var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
 
             var dispose1 = engine.DisposeAsync().AsTask();
@@ -458,14 +459,14 @@ public class MiniAudioEngineTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
             Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
 
-            var engine = new MiniAudioEngine();
+            var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
             await engine.StartPlaybackAsync(sink!, sampleRate: 44100);
             engine.EnqueuePlaybackSamples(GenerateSineTone(frequencyHz: 1000, durationSeconds: 0.2, sampleRate: 44100));
@@ -486,7 +487,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task StartCaptureAsync_AfterDisposeAsync_ThrowsObjectDisposedException()
     {
-        var engine = new MiniAudioEngine();
+        var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         await engine.DisposeAsync();
 
         var device = new AudioDeviceInfo("id", "name", MaxInputChannels: 1, MaxOutputChannels: 0, SupportedSampleRates: []);
@@ -496,7 +497,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task StartPlaybackAsync_AfterDisposeAsync_ThrowsObjectDisposedException()
     {
-        var engine = new MiniAudioEngine();
+        var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         await engine.DisposeAsync();
 
         var device = new AudioDeviceInfo("id", "name", MaxInputChannels: 0, MaxOutputChannels: 1, SupportedSampleRates: []);
@@ -521,12 +522,12 @@ public class MiniAudioEngineTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
             Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
 
-            await using var engine = new MiniAudioEngine();
+            await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             await engine.StartPlaybackAsync(sink!, sampleRate: 44100);
             engine.EnqueuePlaybackSamples(GenerateSineTone(frequencyHz: 1000, durationSeconds: 0.05, sampleRate: 44100));
 
@@ -565,7 +566,7 @@ public class MiniAudioEngineTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
 
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
@@ -576,7 +577,7 @@ public class MiniAudioEngineTests
 
             var receivedChunks = new List<float[]>();
 
-            await using var captureEngine = new MiniAudioEngine();
+            await using var captureEngine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             captureEngine.SamplesCaptured += chunk =>
             {
                 lock (receivedChunks)
@@ -586,7 +587,7 @@ public class MiniAudioEngineTests
             };
             await captureEngine.StartCaptureAsync(monitor!, sampleRate);
 
-            await using var playbackEngine = new MiniAudioEngine();
+            await using var playbackEngine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             await playbackEngine.StartPlaybackAsync(sink!, sampleRate);
 
             var tone = GenerateSineTone(frequencyHz: 1000, toneDurationSeconds, sampleRate);
@@ -670,7 +671,7 @@ public class MiniAudioEngineTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
             Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
@@ -678,11 +679,11 @@ public class MiniAudioEngineTests
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
 
             var receivedChunkCount = 0;
-            await using var captureEngine = new MiniAudioEngine();
+            await using var captureEngine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             captureEngine.SamplesCaptured += _ => Interlocked.Increment(ref receivedChunkCount);
             await captureEngine.StartCaptureAsync(monitor!, sampleRate);
 
-            await using var playbackEngine = new MiniAudioEngine();
+            await using var playbackEngine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             await playbackEngine.StartPlaybackAsync(sink!, sampleRate);
 
             var tone = GenerateSineTone(frequencyHz: 1000, toneDurationSeconds, sampleRate);
@@ -752,12 +753,12 @@ public class MiniAudioEngineTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
             Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
 
-            await using var engine = new MiniAudioEngine();
+            await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
             await engine.StartPlaybackAsync(sink!, sampleRate: 44100);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => engine.StartPlaybackAsync(sink!, sampleRate: 44100));
@@ -773,7 +774,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task StopPlaybackAsync_WhenNeverStarted_IsIdempotentNoOp()
     {
-        await using var engine = new MiniAudioEngine();
+        await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         await engine.StopPlaybackAsync();
         await engine.StopPlaybackAsync();
     }
@@ -781,7 +782,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task EnqueuePlaybackSamples_WhenNeverStarted_ThrowsInvalidOperationException()
     {
-        await using var engine = new MiniAudioEngine();
+        await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         Assert.Throws<InvalidOperationException>(() => engine.EnqueuePlaybackSamples(new float[10]));
     }
 
@@ -792,7 +793,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task EnqueuePlaybackSamples_AfterDisposeAsync_ThrowsObjectDisposedException()
     {
-        var engine = new MiniAudioEngine();
+        var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         await engine.DisposeAsync();
 
         Assert.Throws<ObjectDisposedException>(() => engine.EnqueuePlaybackSamples(new float[10]));
@@ -801,7 +802,7 @@ public class MiniAudioEngineTests
     [Fact]
     public async Task StartPlaybackAsync_WithUnknownDeviceId_ThrowsAudioDeviceUnavailableException()
     {
-        await using var engine = new MiniAudioEngine();
+        await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
         var bogusDevice = new AudioDeviceInfo("this-device-does-not-exist", "Bogus", MaxInputChannels: 0, MaxOutputChannels: 1, SupportedSampleRates: []);
 
         await Assert.ThrowsAsync<AudioDeviceUnavailableException>(() => engine.StartPlaybackAsync(bogusDevice, sampleRate: 44100));

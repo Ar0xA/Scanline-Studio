@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Application;
@@ -24,6 +25,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private readonly OptionsSettingsService _optionsSettingsService;
     private readonly ILocalizationService _localization;
     private readonly IAudioDeviceEnumerator _audioDeviceEnumerator;
+    private readonly ILogger<OptionsWindowViewModel> _logger;
 
     [ObservableProperty]
     private CultureInfo? _selectedCulture;
@@ -67,13 +69,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     public OptionsWindowViewModel(
         OptionsSettingsService optionsSettingsService,
         ILocalizationService localization,
-        IAudioDeviceEnumerator audioDeviceEnumerator)
+        IAudioDeviceEnumerator audioDeviceEnumerator,
+        ILogger<OptionsWindowViewModel> logger)
     {
         _optionsSettingsService = optionsSettingsService;
         _localization = localization;
         _audioDeviceEnumerator = audioDeviceEnumerator;
+        _logger = logger;
 
-        _ = LoadAsync();
+        _ = LoadSafeAsync();
     }
 
     public IReadOnlyList<CultureInfo> AvailableCultures => _localization.AvailableCultures;
@@ -130,26 +134,36 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     /// window either way; it does not need to distinguish which.</summary>
     public event Action? RequestClose;
 
-    private async Task LoadAsync()
+    /// <summary>Unguarded fire-and-forget from the constructor before this wrap was added -- the
+    /// audio enumerator's <c>RefreshAsync</c> call can throw, which used to mean the Options dialog
+    /// could open completely blank with no explanation anywhere.</summary>
+    private async Task LoadSafeAsync()
     {
-        var snapshot = await _optionsSettingsService.LoadAsync();
-        ApplyFromSnapshot(snapshot);
-
-        await _audioDeviceEnumerator.RefreshAsync();
-        CaptureDevices.Clear();
-        foreach (var device in _audioDeviceEnumerator.InputDevices)
+        try
         {
-            CaptureDevices.Add(device);
-        }
+            var snapshot = await _optionsSettingsService.LoadAsync();
+            ApplyFromSnapshot(snapshot);
 
-        PlaybackDevices.Clear();
-        foreach (var device in _audioDeviceEnumerator.OutputDevices)
+            await _audioDeviceEnumerator.RefreshAsync();
+            CaptureDevices.Clear();
+            foreach (var device in _audioDeviceEnumerator.InputDevices)
+            {
+                CaptureDevices.Add(device);
+            }
+
+            PlaybackDevices.Clear();
+            foreach (var device in _audioDeviceEnumerator.OutputDevices)
+            {
+                PlaybackDevices.Add(device);
+            }
+
+            SelectedCaptureDevice = CaptureDevices.FirstOrDefault(d => d.Id == snapshot.CaptureDeviceId);
+            SelectedPlaybackDevice = PlaybackDevices.FirstOrDefault(d => d.Id == snapshot.PlaybackDeviceId);
+        }
+        catch (Exception ex)
         {
-            PlaybackDevices.Add(device);
+            Log.LoadFailed(_logger, ex);
         }
-
-        SelectedCaptureDevice = CaptureDevices.FirstOrDefault(d => d.Id == snapshot.CaptureDeviceId);
-        SelectedPlaybackDevice = PlaybackDevices.FirstOrDefault(d => d.Id == snapshot.PlaybackDeviceId);
     }
 
     private void ApplyFromSnapshot(OptionsSnapshot snapshot)
@@ -169,6 +183,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [RelayCommand]
     private async Task SaveAsync()
     {
+        // The single most useful Debug line in the app for "why didn't my settings take effect"
+        // bugs -- deliberately omits nothing secret-shaped exists in this snapshot today (host/port/
+        // device ids/sample rate/culture/backend id are all safe to log as-is).
+        Log.SaveInvoked(_logger, RadioBackendId, SampleRate, SelectedCulture?.Name);
+
         var snapshot = new OptionsSnapshot(
             CultureCode: SelectedCulture?.Name,
             CaptureDeviceId: SelectedCaptureDevice?.Id,
@@ -183,26 +202,49 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             HamlibPttType: HamlibPttType,
             Callsign: Callsign);
 
-        await _optionsSettingsService.SaveAsync(snapshot);
-
-        if (SelectedCulture is { } culture && !culture.Equals(_localization.CurrentCulture))
+        try
         {
-            await _localization.SetCultureAsync(culture);
+            await _optionsSettingsService.SaveAsync(snapshot);
+
+            if (SelectedCulture is { } culture && !culture.Equals(_localization.CurrentCulture))
+            {
+                try
+                {
+                    await _localization.SetCultureAsync(culture);
+                }
+                catch (Exception ex)
+                {
+                    Log.SetCultureFailed(_logger, culture.Name, ex);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.SaveFailed(_logger, ex);
+            return;
         }
 
         RequestClose?.Invoke();
     }
 
     [RelayCommand]
-    private void Cancel() => RequestClose?.Invoke();
+    private void Cancel()
+    {
+        Log.CancelInvoked(_logger);
+        RequestClose?.Invoke();
+    }
 
     [RelayCommand]
     private void ResetGeneralToDefault()
-        => SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == OptionsSettingsService.Defaults.CultureCode);
+    {
+        Log.ResetSectionInvoked(_logger, "General");
+        SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == OptionsSettingsService.Defaults.CultureCode);
+    }
 
     [RelayCommand]
     private void ResetAudioToDefault()
     {
+        Log.ResetSectionInvoked(_logger, "Audio");
         var defaults = OptionsSettingsService.Defaults;
         SelectedCaptureDevice = CaptureDevices.FirstOrDefault(d => d.Id == defaults.CaptureDeviceId);
         SelectedPlaybackDevice = PlaybackDevices.FirstOrDefault(d => d.Id == defaults.PlaybackDeviceId);
@@ -212,6 +254,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [RelayCommand]
     private void ResetRadioToDefault()
     {
+        Log.ResetSectionInvoked(_logger, "Radio");
         var defaults = OptionsSettingsService.Defaults;
         RadioBackendId = defaults.RadioBackendId;
         RigctldHost = defaults.RigctldHost;
@@ -223,7 +266,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void ResetTxToDefault() => Callsign = OptionsSettingsService.Defaults.Callsign;
+    private void ResetTxToDefault()
+    {
+        Log.ResetSectionInvoked(_logger, "Tx");
+        Callsign = OptionsSettingsService.Defaults.Callsign;
+    }
 
     [RelayCommand]
     private void RequestResetAll() => IsConfirmingResetAll = true;
@@ -231,6 +278,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [RelayCommand]
     private void ConfirmResetAll()
     {
+        Log.ConfirmResetAllInvoked(_logger);
         ResetGeneralToDefault();
         ResetAudioToDefault();
         ResetRadioToDefault();
@@ -248,5 +296,29 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsNoneBackendSelected));
         OnPropertyChanged(nameof(IsRigctldBackendSelected));
         OnPropertyChanged(nameof(IsHamlibBackendSelected));
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Error, Message = "Loading Options failed; dialog may render with defaults")]
+        public static partial void LoadFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Save invoked: radioBackend={RadioBackendId}, sampleRate={SampleRate}, culture={CultureCode}")]
+        public static partial void SaveInvoked(ILogger logger, string radioBackendId, int sampleRate, string? cultureCode);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Save failed; settings not persisted")]
+        public static partial void SaveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetCultureAsync({Culture}) failed after a successful settings save")]
+        public static partial void SetCultureFailed(ILogger logger, string culture, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Cancel invoked")]
+        public static partial void CancelInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Reset section to default: {Section}")]
+        public static partial void ResetSectionInvoked(ILogger logger, string section);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Reset ALL to defaults confirmed")]
+        public static partial void ConfirmResetAllInvoked(ILogger logger);
     }
 }

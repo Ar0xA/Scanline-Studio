@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Radio;
 
 namespace ScanlineStudio.Core.Radio.Rigctld;
@@ -22,7 +24,7 @@ namespace ScanlineStudio.Core.Radio.Rigctld;
 /// concurrent use. A <see cref="SemaphoreSlim"/> serializes every request/response transaction
 /// (including the initial connect+probe) so only one is ever in flight against the transport.
 /// </summary>
-public sealed class RigctldClientProtocol : IRadioProtocol
+public sealed partial class RigctldClientProtocol : IRadioProtocol
 {
     // Hamlib's own mode-token vocabulary (verified against a local Hamlib source clone,
     // src/misc.c's mode_str[] table -- see spec/04-rigctld.md). RadioMode's Data/DataR/Pkt split has
@@ -69,13 +71,24 @@ public sealed class RigctldClientProtocol : IRadioProtocol
 
     private readonly IRadioTransport _transport;
     private readonly TimeSpan _connectTimeout;
+    private readonly ILogger _logger;
     private readonly SemaphoreSlim _requestLock = new(1, 1);
     private bool _disposed;
 
-    public RigctldClientProtocol(IRadioTransport transport, TimeSpan connectTimeout)
+    // Meter reads happen up to 3x per poll while transmitting -- logging every soft-failure
+    // unconditionally would be a hot-path violation for a long transmission on a rig that
+    // intermittently errors one meter (see docs/logging-guidelines.md's poll-loop rule). Tracked
+    // per command (not a single flag) since SWR/ALC/power can independently flap; PollAsync only
+    // ever calls TryGetMeterAsync sequentially under _requestLock, so a plain Dictionary is safe.
+    private readonly Dictionary<string, bool> _meterLastReadFailed = new();
+
+    // Optional, defaulting to a no-op logger: constructed via `new` in RigctldProtocolFactory,
+    // not through DI. RigctldProtocolFactory does pass its own real ILogger through today.
+    public RigctldClientProtocol(IRadioTransport transport, TimeSpan connectTimeout, ILogger? logger = null)
     {
         _transport = transport;
         _connectTimeout = connectTimeout;
+        _logger = logger ?? NullLogger.Instance;
     }
 
     public string RigId => "rigctld-client";
@@ -212,10 +225,12 @@ public sealed class RigctldClientProtocol : IRadioProtocol
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            Log.ConnectTimedOut(_logger, _connectTimeout);
             throw new TimeoutException($"Connecting to rigctld timed out after {_connectTimeout}.");
         }
 
         Capabilities = await ProbeCapabilitiesAsync(ct).ConfigureAwait(false);
+        Log.CapabilitiesNegotiated(_logger, Capabilities);
     }
 
     /// <summary>Probes `f`/`m`/`t` once and sets capability flags from which return a value vs. an
@@ -289,7 +304,31 @@ public sealed class RigctldClientProtocol : IRadioProtocol
     {
         await WriteCommandAsync(command, ct).ConfigureAwait(false);
         var line = await ReadLineAsync(ct).ConfigureAwait(false);
-        return IsErrorLine(line) ? null : ParseMeterFloat(line);
+        if (IsErrorLine(line))
+        {
+            // Gated by state transition, not every failed read -- see this class's own
+            // _meterLastReadFailed field doc comment for why.
+            if (!_meterLastReadFailed.GetValueOrDefault(command))
+            {
+                _meterLastReadFailed[command] = true;
+                Log.MeterReadFailed(_logger, command, line);
+            }
+
+            return null;
+        }
+
+        if (_meterLastReadFailed.Remove(command))
+        {
+            Log.MeterReadRecovered(_logger, command);
+        }
+
+        var value = ParseMeterFloat(line);
+        if (value is null)
+        {
+            Log.MeterReadUnparseable(_logger, command, line);
+        }
+
+        return value;
     }
 
     /// <summary>Culture-invariant on purpose (a real bug caught before shipping: the default
@@ -391,5 +430,23 @@ public sealed class RigctldClientProtocol : IRadioProtocol
         _disposed = true;
         await _transport.DisposeAsync().ConfigureAwait(false);
         _requestLock.Dispose();
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "rigctld connect timed out after {ConnectTimeout}")]
+        public static partial void ConnectTimedOut(ILogger logger, TimeSpan connectTimeout);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "rigctld capabilities negotiated: {Capabilities}")]
+        public static partial void CapabilitiesNegotiated(ILogger logger, RadioCapabilities capabilities);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Meter read '{Command}' returned an error line: '{Line}'")]
+        public static partial void MeterReadFailed(ILogger logger, string command, string line);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Meter read '{Command}' recovered after a prior error")]
+        public static partial void MeterReadRecovered(ILogger logger, string command);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Meter read '{Command}' returned an unparseable value: '{Line}'")]
+        public static partial void MeterReadUnparseable(ILogger logger, string command, string line);
     }
 }

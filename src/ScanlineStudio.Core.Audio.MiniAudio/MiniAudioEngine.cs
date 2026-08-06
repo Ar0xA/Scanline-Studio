@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 
 namespace ScanlineStudio.Core.Audio.MiniAudio;
@@ -58,8 +59,11 @@ namespace ScanlineStudio.Core.Audio.MiniAudio;
 /// another claim could contend against) -- see that method's own doc comment for the full
 /// reasoning and why the fix carries no native-lifetime risk.
 /// </summary>
-public sealed class MiniAudioEngine : IAudioEngine
+public sealed partial class MiniAudioEngine : IAudioEngine
 {
+    private readonly ILogger<MiniAudioEngine> _logger;
+    private readonly ILoggerFactory? _loggerFactory;
+
     // Piece Engine 3: guards Start/StopCaptureAsync's multi-step "check nothing started, open,
     // publish" as one atomic critical section, closing the TOCTOU an earlier piece deliberately
     // left open (two concurrent StartCaptureAsync calls could otherwise both pass the check before
@@ -79,8 +83,15 @@ public sealed class MiniAudioEngine : IAudioEngine
     // caller's teardown -- native close, MiniAudioContext.Release() -- was still in progress).
     private readonly TaskCompletionSource _disposedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public MiniAudioEngine()
+    // ILoggerFactory optional, defaulting to null: when supplied (as Program.cs does today via DI,
+    // which registers ILoggerFactory automatically), MiniAudioCaptureSession gets its own
+    // correctly-categorized logger instead of sharing this type's ILogger<MiniAudioEngine> category
+    // -- keeps per-category level filtering meaningful. Falls back to the shared logger when omitted
+    // (e.g. in tests constructing this directly).
+    public MiniAudioEngine(ILogger<MiniAudioEngine> logger, ILoggerFactory? loggerFactory = null)
     {
+        _logger = logger;
+        _loggerFactory = loggerFactory;
         try
         {
             MiniAudioContext.Acquire();
@@ -95,6 +106,7 @@ public sealed class MiniAudioEngine : IAudioEngine
             // Without this, a broken ScanlineStudio.Host native-shim copy target (see Engine 6's own commit)
             // would surface as a raw DllNotFoundException from `new MiniAudioEngine()` instead of
             // the typed exception AudioDeviceUnavailableException's own doc comment promises.
+            Log.ContextInitFailed(_logger, ex);
             throw new AudioDeviceUnavailableException("Failed to initialize the audio backend.", ex);
         }
     }
@@ -154,6 +166,7 @@ public sealed class MiniAudioEngine : IAudioEngine
             var session = await Task.Run(() => OpenCaptureSession(device, sampleRate), ct).ConfigureAwait(false);
             session.SamplesAvailable += OnCaptureSamplesAvailable;
             _captureSession = session;
+            Log.CaptureOpened(_logger, device.Id, sampleRate);
         }
         finally
         {
@@ -267,8 +280,17 @@ public sealed class MiniAudioEngine : IAudioEngine
     /// another's if a subscriber stopped one session and started a new one from within the same
     /// callback invocation -- fixed by asking the session itself). Dispatches to a pool thread via
     /// <c>Task.Run</c> otherwise, matching every other session-closing call in this class.</summary>
-    private static async Task DisposeCaptureSessionAsync(MiniAudioCaptureSession session)
+    private async Task DisposeCaptureSessionAsync(MiniAudioCaptureSession session)
     {
+        // Checked once here, at the single point every capture-stop path (explicit StopCaptureAsync
+        // and engine-teardown DisposeAsync) funnels through -- never polled live on the drain thread
+        // itself (see docs/logging-guidelines.md's hot-path rule). A non-zero count means RX samples
+        // were silently dropped during this session; today that was completely invisible.
+        if (session.OverrunCount > 0)
+        {
+            Log.CaptureOverrunsDetected(_logger, session.OverrunCount);
+        }
+
         if (session.IsRunningOnDrainThread)
         {
             session.Dispose();
@@ -277,13 +299,16 @@ public sealed class MiniAudioEngine : IAudioEngine
         {
             await Task.Run(session.Dispose).ConfigureAwait(false);
         }
+
+        Log.CaptureStopped(_logger);
     }
 
-    private static MiniAudioCaptureSession OpenCaptureSession(AudioDeviceInfo device, int sampleRate)
+    private MiniAudioCaptureSession OpenCaptureSession(AudioDeviceInfo device, int sampleRate)
     {
         try
         {
-            return new MiniAudioCaptureSession(device.Id, sampleRate);
+            var sessionLogger = _loggerFactory?.CreateLogger<MiniAudioCaptureSession>() ?? (ILogger)_logger;
+            return new MiniAudioCaptureSession(device.Id, sampleRate, sessionLogger);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or DllNotFoundException or EntryPointNotFoundException)
         {
@@ -294,6 +319,7 @@ public sealed class MiniAudioEngine : IAudioEngine
             // EntryPointNotFoundException (native shim missing/mismatched). Anything outside this
             // set is left untranslated -- deliberately not treated as "device unavailable" when it
             // might be a genuine, unrelated bug.
+            Log.CaptureOpenFailed(_logger, device.Id, sampleRate, ex);
             throw new AudioDeviceUnavailableException($"Failed to open capture device '{device.Id}' at {sampleRate}Hz.", ex);
         }
     }
@@ -335,6 +361,7 @@ public sealed class MiniAudioEngine : IAudioEngine
             // device), confirmed by reading it -- same reasoning as StartCaptureAsync's Task.Run.
             var session = await Task.Run(() => OpenPlaybackSession(device, sampleRate), ct).ConfigureAwait(false);
             _playbackSession = session;
+            Log.PlaybackOpened(_logger, device.Id, sampleRate);
         }
         finally
         {
@@ -403,7 +430,7 @@ public sealed class MiniAudioEngine : IAudioEngine
     /// (an explicit caller request, which must surface a failed drain rather than hide it) and
     /// <see cref="DisposeAsync"/> (best-effort cleanup, which swallows the same condition -- see its
     /// own comment for why).</summary>
-    private static async Task DrainAndDisposePlaybackSessionAsync(MiniAudioPlaybackSession session)
+    private async Task DrainAndDisposePlaybackSessionAsync(MiniAudioPlaybackSession session)
     {
         // DrainAsync itself is already a non-blocking async poll loop (PendingFrames reads +
         // Task.Delay(10)) -- no Task.Run needed here, unlike the session's own constructor/Dispose.
@@ -425,10 +452,18 @@ public sealed class MiniAudioEngine : IAudioEngine
         // for the device/server buffers this shim has no visibility into.
         await Task.Delay(DrainTailMargin).ConfigureAwait(false);
 
+        // Checked once here, the single point every playback-stop path funnels through -- same
+        // reasoning as DisposeCaptureSessionAsync's own OverrunCount check.
+        if (session.UnderrunCount > 0)
+        {
+            Log.PlaybackUnderrunsDetected(_logger, session.UnderrunCount);
+        }
+
         await Task.Run(session.Dispose).ConfigureAwait(false);
+        Log.PlaybackStopped(_logger);
     }
 
-    private static MiniAudioPlaybackSession OpenPlaybackSession(AudioDeviceInfo device, int sampleRate)
+    private MiniAudioPlaybackSession OpenPlaybackSession(AudioDeviceInfo device, int sampleRate)
     {
         try
         {
@@ -437,6 +472,7 @@ public sealed class MiniAudioEngine : IAudioEngine
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or DllNotFoundException or EntryPointNotFoundException)
         {
             // Same real failure-mode set as OpenCaptureSession -- see its own doc comment.
+            Log.PlaybackOpenFailed(_logger, device.Id, sampleRate, ex);
             throw new AudioDeviceUnavailableException($"Failed to open playback device '{device.Id}' at {sampleRate}Hz.", ex);
         }
     }
@@ -481,7 +517,7 @@ public sealed class MiniAudioEngine : IAudioEngine
                     {
                         await DrainAndDisposePlaybackSessionAsync(playbackSession).ConfigureAwait(false);
                     }
-                    catch (AudioDeviceUnavailableException)
+                    catch (AudioDeviceUnavailableException ex)
                     {
                         // Best-effort cleanup, unlike StopPlaybackAsync's own explicit-caller-request
                         // path (which surfaces this) -- DrainAndDisposePlaybackSessionAsync already
@@ -489,6 +525,7 @@ public sealed class MiniAudioEngine : IAudioEngine
                         // to clean up here. A caller that cares whether playback actually finished
                         // draining should call StopPlaybackAsync explicitly before disposing, not rely
                         // on DisposeAsync for that.
+                        Log.PlaybackDrainCleanupSwallowed(_logger, ex);
                     }
                 }
             }
@@ -526,5 +563,38 @@ public sealed class MiniAudioEngine : IAudioEngine
                 _disposedSignal.TrySetResult();
             }
         }
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to initialize the MiniAudio native context -- the native shim may be missing or mismatched")]
+        public static partial void ContextInitFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to open capture device '{DeviceId}' at {SampleRate}Hz")]
+        public static partial void CaptureOpenFailed(ILogger logger, string deviceId, int sampleRate, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Capture opened: device='{DeviceId}' @ {SampleRate}Hz")]
+        public static partial void CaptureOpened(ILogger logger, string deviceId, int sampleRate);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Capture session had {OverrunCount} buffer overrun(s) -- RX samples were dropped")]
+        public static partial void CaptureOverrunsDetected(ILogger logger, int overrunCount);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Capture stopped")]
+        public static partial void CaptureStopped(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to open playback device '{DeviceId}' at {SampleRate}Hz")]
+        public static partial void PlaybackOpenFailed(ILogger logger, string deviceId, int sampleRate, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Playback opened: device='{DeviceId}' @ {SampleRate}Hz")]
+        public static partial void PlaybackOpened(ILogger logger, string deviceId, int sampleRate);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Playback session had {UnderrunCount} buffer underrun(s)")]
+        public static partial void PlaybackUnderrunsDetected(ILogger logger, int underrunCount);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Playback stopped")]
+        public static partial void PlaybackStopped(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Playback failed to drain during best-effort dispose cleanup; session was already closed by the drain path itself")]
+        public static partial void PlaybackDrainCleanupSwallowed(ILogger logger, Exception ex);
     }
 }
