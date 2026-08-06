@@ -105,7 +105,7 @@
     </Style>
 
     <Style Selector="Button">
-        <Setter Property="Height" Value="17" />
+        <Setter Property="Height" Value="19" />
         <Setter Property="Padding" Value="10,0" />
         <Setter Property="FontWeight" Value="Normal" />
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />
@@ -121,26 +121,28 @@
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlPressedColor}" />
     </Style>
     <!-- "accent" means the default action, not a filled blue pill. -->
-    <Style Selector="Button.accent">
+    <!-- Named "primary", not "accent": FluentTheme ships its own Button.accent style that
+         paints the ContentPresenter, and a Background setter on the Button loses to it. -->
+    <Style Selector="Button.primary /template/ ContentPresenter">
         <Setter Property="Background" Value="#FFD6E7F7" />
         <Setter Property="BorderBrush" Value="#FF5A9AD4" />
-        <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="#FF0B3E68" />
+        <Setter Property="TextBlock.Foreground" Value="#FF0B3E68" />
+        <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
     </Style>
     <!-- Halt/Stop-style destructive action: red-tinted at rest, not just on press; a stop
          action should read as such before the user's pointer ever touches it. -->
-    <Style Selector="Button.halt">
+    <Style Selector="Button.halt /template/ ContentPresenter">
         <Setter Property="Background" Value="#FFF5D6D6" />
         <Setter Property="BorderBrush" Value="#FFB33A3A" />
-        <Setter Property="Foreground" Value="#FF6B0F0F" />
-        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextBlock.Foreground" Value="#FF6B0F0F" />
+        <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="Button.halt:pointerover /template/ ContentPresenter">
         <Setter Property="Background" Value="#FFF0C2C2" />
         <Setter Property="BorderBrush" Value="#FF8F2626" />
     </Style>
     <Style Selector="Button.small, ToggleButton.small">
-        <Setter Property="Height" Value="14" />
+        <Setter Property="Height" Value="17" />
         <Setter Property="Padding" Value="8,0" />
         <Setter Property="FontSize" Value="10.5" />
     </Style>
@@ -154,7 +156,7 @@
     </Style>
 
     <Style Selector="ToggleButton">
-        <Setter Property="Height" Value="17" />
+        <Setter Property="Height" Value="19" />
         <Setter Property="Padding" Value="10,0" />
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />
         <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
@@ -180,7 +182,7 @@
     <Style Selector="RadioButton.seg">
         <Setter Property="Template">
             <ControlTemplate>
-                <Border Name="face" Height="17" Padding="9,0" Margin="-1,0,0,0"
+                <Border Name="face" Height="19" Padding="9,0" Margin="-1,0,0,0"
                         Background="{DynamicResource ScanlineStudioControlFaceColor}"
                         BorderBrush="{DynamicResource ScanlineStudioControlBorderColor}" BorderThickness="1" CornerRadius="0">
                     <ContentPresenter Content="{TemplateBinding Content}" FontSize="11.5"
@@ -201,7 +203,7 @@
     <Style Selector="RadioButton.tool">
         <Setter Property="Template">
             <ControlTemplate>
-                <Border Name="face" Height="17" Padding="8,0" Background="{DynamicResource ScanlineStudioControlFaceColor}"
+                <Border Name="face" Height="19" Padding="8,0" Background="{DynamicResource ScanlineStudioControlFaceColor}"
                         BorderBrush="{DynamicResource ScanlineStudioControlBorderColor}" BorderThickness="1">
                     <ContentPresenter Content="{TemplateBinding Content}" FontSize="11" VerticalAlignment="Center" />
                 </Border>
@@ -215,7 +217,7 @@
 
     <!-- Status fields: sunken white monospace boxes (fldigi style), not rounded colorful badges. -->
     <Style Selector="Border.pill">
-        <Setter Property="Height" Value="17" />
+        <Setter Property="Height" Value="18" />
         <Setter Property="Padding" Value="6,0" />
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioFieldBackgroundColor}" />
         <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
@@ -243,8 +245,8 @@
     </Style>
 
     <Style Selector="TextBox, ComboBox, NumericUpDown">
-        <Setter Property="MinHeight" Value="17" />
-        <Setter Property="Height" Value="17" />
+        <Setter Property="MinHeight" Value="19" />
+        <Setter Property="Height" Value="19" />
         <Setter Property="FontSize" Value="11.5" />
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioFieldBackgroundColor}" />
         <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
@@ -280,14 +282,6 @@
         <Setter Property="MinHeight" Value="18" />
         <Setter Property="Foreground" Value="{DynamicResource ScanlineStudioAccentFillColor}" />
     </Style>
-    <Style Selector="Slider /template/ Thumb">
-        <Setter Property="Width" Value="9" />
-        <Setter Property="Height" Value="15" />
-        <Setter Property="CornerRadius" Value="0" />
-        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />
-        <Setter Property="BorderBrush" Value="#FF6E6E6E" />
-        <Setter Property="BorderThickness" Value="1" />
-    </Style>
     <Style Selector="ProgressBar">
         <Setter Property="Height" Value="10" />
         <Setter Property="CornerRadius" Value="0" />
@@ -319,8 +313,8 @@
     <!-- Classic notebook tabs: the active tab merges into the page. -->
     <Style Selector="TabItem">
         <Setter Property="FontSize" Value="11.5" />
-        <Setter Property="MinHeight" Value="17" />
-        <Setter Property="Height" Value="17" />
+        <Setter Property="MinHeight" Value="20" />
+        <Setter Property="Height" Value="20" />
         <Setter Property="Padding" Value="14,0" />
         <Setter Property="Margin" Value="0,0,2,-1" />
         <Setter Property="Background" Value="#FFE4E4E4" />

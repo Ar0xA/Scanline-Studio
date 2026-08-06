@@ -17,67 +17,6 @@
             <CornerRadius x:Key="ControlCornerRadius">0</CornerRadius>
             <CornerRadius x:Key="OverlayCornerRadius">0</CornerRadius>
             <CornerRadius x:Key="ButtonCornerRadius">0</CornerRadius>
-
-            <!-- Fluent's TextBox (and anything that wraps one, like NumericUpDown's
-                 PART_TextBox) pulls its minimum height from this theme resource key at
-                 measure time, not from a locally-set Height/MinHeight style setter - the
-                 shared "TextBox, ComboBox, NumericUpDown" Height=17 in Cards.axaml wasn't
-                 enough on its own to stop the control measuring taller than that. -->
-            <x:Double x:Key="TextControlThemeMinHeight">19</x:Double>
-
-            <!-- Full ButtonSpinner ControlTheme replacement, not a Cards.axaml Style override:
-                 FluentTheme's own ButtonSpinner.xaml hard-codes MinWidth="34" as a literal XAML
-                 attribute directly on PART_IncreaseButton/PART_DecreaseButton inside its
-                 ControlTemplate. A value written that way applies at BindingPriority.Template,
-                 which outranks any external Style (including a "ButtonSpinner /template/
-                 RepeatButton#PART_IncreaseButton" selector) - that's why those rules in
-                 Cards.axaml never visibly took effect no matter how the selector was written.
-                 Replacing the whole ControlTheme (a resource, not a style) is the only way to
-                 actually change it. Used by every NumericUpDown in the app (Slant ppm/Offset px,
-                 the waterfall's Bins-px/Start/Span) - 13px stacked arrows instead of Fluent's
-                 34px side-by-side pair, matching this app's own dense Qt/WSJT-X control sizing
-                 rather than a touch-target-sized default. -->
-            <ControlTheme x:Key="{x:Type ButtonSpinner}" TargetType="ButtonSpinner">
-                <Setter Property="Background" Value="{DynamicResource ScanlineStudioFieldBackgroundColor}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="0" />
-                <Setter Property="Padding" Value="0" />
-                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                <Setter Property="VerticalContentAlignment" Value="Center" />
-                <Setter Property="Template">
-                    <ControlTemplate>
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}">
-                            <DockPanel>
-                                <UniformGrid DockPanel.Dock="Right" Rows="2" Width="11"
-                                             IsVisible="{TemplateBinding ShowButtonSpinner}">
-                                    <RepeatButton Name="PART_IncreaseButton" Padding="0" MinWidth="0" MinHeight="0"
-                                                  Background="{DynamicResource ScanlineStudioControlFaceColor}"
-                                                  BorderBrush="{DynamicResource ScanlineStudioControlBorderColor}"
-                                                  BorderThickness="1,0,0,1" CornerRadius="0">
-                                        <Path Data="M 0 3 L 2.5 0 L 5 3 Z" Fill="#FF303030" Stroke="{x:Null}"
-                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                    </RepeatButton>
-                                    <RepeatButton Name="PART_DecreaseButton" Padding="0" MinWidth="0" MinHeight="0"
-                                                  Background="{DynamicResource ScanlineStudioControlFaceColor}"
-                                                  BorderBrush="{DynamicResource ScanlineStudioControlBorderColor}"
-                                                  BorderThickness="1,0,0,0" CornerRadius="0">
-                                        <Path Data="M 0 0 L 2.5 3 L 5 0 Z" Fill="#FF303030" Stroke="{x:Null}"
-                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                    </RepeatButton>
-                                </UniformGrid>
-                                <ContentPresenter Name="PART_ContentPresenter"
-                                                  Content="{TemplateBinding Content}"
-                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
-                                                  Padding="{TemplateBinding Padding}"
-                                                  VerticalContentAlignment="Center" />
-                            </DockPanel>
-                        </Border>
-                    </ControlTemplate>
-                </Setter>
-            </ControlTheme>
         </ResourceDictionary>
     </Application.Resources>
 
@@ -97,5 +36,8 @@
         <!-- Flat WSJT-X/fldigi-utilitarian chrome (current Aesthetic Directive) — included after
              Tokens.axaml so its selectors win on any overlapping property. -->
         <StyleInclude Source="avares://ScanlineStudio.UI/Styles/Cards.axaml" />
+        <!-- Replacement ControlThemes for parts no Style selector can reach (Slider, ButtonSpinner)
+             plus the field-metric resource overrides. Must be last. -->
+        <StyleInclude Source="avares://ScanlineStudio.UI/Styles/ChromeOverrides.axaml" />
     </Application.Styles>
 </Application>

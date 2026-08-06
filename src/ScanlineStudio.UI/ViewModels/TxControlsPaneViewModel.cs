@@ -179,6 +179,23 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// remove the editor pane at this point.</summary>
     public event Action? EditorClosed;
 
+    /// <summary>Set once by <see cref="MainViewModel"/>'s own constructor, right after both VMs
+    /// exist, so the Output card's Drive slider (moved here from the header) can bind straight to
+    /// <c>RadioStatus.TxVolumePercent</c> -- the single real source of truth for that value.
+    /// Deliberately NOT constructor-injected: <see cref="RadioStatusViewModel"/> isn't
+    /// DI-registered (<see cref="MainViewModel"/> constructs it by hand), so DI can't supply it
+    /// here, and a separate DI registration would fork the value into two out-of-sync instances.
+    /// Deliberately NOT an XAML ancestor-lookup-with-type-cast binding either (the
+    /// `$parent[Window].((vm:MainViewModel)DataContext)...` this replaced) -- that pattern throws
+    /// `ArgumentException: Unable to resolve type` at runtime the first time the view is actually
+    /// realized, since this project uses classic (non-compiled) bindings and inline type casts in a
+    /// binding path force a runtime type-resolution step that doesn't reliably find sibling
+    /// view-model types. A plain reference assigned once from the parent is the established safe
+    /// pattern here (see FavoriteModeButtonViewModel/StockEntryViewModel/
+    /// FrequencyPresetButtonViewModel, each carrying its own pre-resolved command for the same
+    /// reason).</summary>
+    public RadioStatusViewModel? RadioStatus { get; set; }
+
     private const int StockThumbnailMaxDimension = 64;
 
     public IReadOnlyList<SstvModeDefinition> AvailableModes { get; }
