@@ -97,26 +97,28 @@
                          slant / Input chain / Signal quality) reproducing mock2's layout with
                          hardcoded placeholder values; no real data/commands wired yet
                          (spec/14-roadmap.md backlog covers exactly what each one is standing in
-                         for). mock2's Auto/Locked segmented control is still omitted entirely,
-                         not just unwired: ISstvDecoder always auto-detects via the VIS header,
-                         there is no manual "lock to a mode" decode feature at all to even fake a
-                         control for (see RxImagePaneViewModel.DetectedMode's own doc comment).
-                         The quick-mode pill grid below renders but does nothing (same convention
-                         as every other placeholder control this pass); the mode-override combo
-                         is disabled+tooltip instead of fake-enabled, for the same no-lock-to-mode
-                         reason as the Auto/Locked segment: a dropdown implies more real control
-                         than a grid of dead pills does. -->
+                         for). mock2's Auto/Locked segment is shown (Auto statically checked -
+                         matches the real always-auto-detect behavior; "Locked" has no manual
+                         lock-to-a-mode decode feature behind it, same visual-only convention as
+                         the quick-mode pill grid below it - see RxImagePaneViewModel.DetectedMode's
+                         own doc comment). The "Detected" label row was dropped: the active-mode
+                         dropdown right below now shows the same real DetectedModeDisplay value
+                         (DisplayName + VIS code, matching mock2's own "Scottie 1 — VIS 60"
+                         format exactly), so showing it twice was redundant once the dropdown
+                         itself carries it. -->
                     <ScrollViewer Grid.Column="0">
                         <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
                             <Border Classes="card" DataContext="{Binding RxImage}">
                                 <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                     <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxImage.ModeCardHeader}" />
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.DetectedMode}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding DetectedModeText}" />
-                                    </Grid>
-                                    <ComboBox IsEnabled="False" HorizontalAlignment="Stretch" SelectedIndex="0" ToolTip.Tip="{loc:Translate Panes.RxImage.ModeOverride.Help}">
-                                        <ComboBoxItem Content="{loc:Translate Panes.QuickModeGrid.SC1}" />
+                                    <Border Classes="segment" HorizontalAlignment="Stretch">
+                                        <UniformGrid Columns="2" HorizontalAlignment="Stretch">
+                                            <RadioButton Classes="seg" GroupName="RxModeAutoLocked" IsChecked="True" Content="{loc:Translate Panes.RxImage.AutoLockedAuto}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                                            <RadioButton Classes="seg" GroupName="RxModeAutoLocked" Content="{loc:Translate Panes.RxImage.AutoLockedLocked}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                                        </UniformGrid>
+                                    </Border>
+                                    <ComboBox HorizontalAlignment="Stretch" SelectedIndex="0" ToolTip.Tip="{loc:Translate Panes.RxImage.ModeOverride.Help}">
+                                        <ComboBoxItem Content="{Binding DetectedModeDisplay}" />
                                     </ComboBox>
                                     <UniformGrid Columns="4">
                                         <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC1}" HorizontalAlignment="Center" /></Border>
@@ -173,11 +175,11 @@
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.AutoCorrect}" />
                                         <TextBlock Grid.Column="1" Classes="accentValue" Text="{loc:Translate Panes.RxSync.AutoCorrectValue}" />
                                     </Grid>
-                                    <UniformGrid Columns="2">
-                                        <Button Classes="small" Margin="0,0,3,0" Content="{loc:Translate Panes.RxSync.Resync}" />
-                                        <Button Classes="small" Margin="3,0,0,0" Content="{loc:Translate Panes.RxSync.Reset}" />
+                                    <UniformGrid Columns="2" HorizontalAlignment="Stretch">
+                                        <Button Classes="small" Margin="0,0,3,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" />
+                                        <Button Classes="small" Margin="3,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" />
                                     </UniformGrid>
-                                    <Expander Header="{loc:Translate Panes.RxSync.AdvancedTiming}" Padding="0">
+                                    <Expander Header="{loc:Translate Panes.RxSync.AdvancedTiming}" Padding="0" HorizontalAlignment="Stretch">
                                         <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,0">
                                             <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                                 <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SampleClock}" />
@@ -338,23 +340,27 @@
                         </Border>
                         <Border Grid.Row="1" Classes="card">
                             <DockPanel LastChildFill="True">
-                                <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxImage.CardHeader}" />
-                                    <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxImage.LineProgressValue}" />
-                                </Grid>
+                                <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.RxImage.CardHeader}" />
                                 <!-- Bottom action bar: literal/no-op. RxImagePaneViewModel has
                                      no Save/Abort/Re-decode/Copy-to-TX/Log-QSO commands today
-                                     (spec/14-roadmap.md backlog); progress bar/text are likewise
-                                     literal, no LineProgressText-equivalent property exists. -->
-                                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,6,0,0">
-                                    <Button Classes="primary" Content="{loc:Translate Panes.RxImage.SaveFrame}" />
-                                    <Button Content="{loc:Translate Panes.RxImage.Abort}" />
-                                    <Button Content="{loc:Translate Panes.RxImage.RedecodeAction}" />
-                                    <Button Content="{loc:Translate Panes.RxImage.CopyToTx}" />
-                                    <Button Content="{loc:Translate Panes.RxImage.LogQso}" />
-                                    <ProgressBar Width="180" Height="6" VerticalAlignment="Center" Minimum="0" Maximum="100" Value="70" />
-                                    <TextBlock Classes="value" VerticalAlignment="Center" Text="{loc:Translate Panes.RxImage.LineProgressValue}" />
-                                </StackPanel>
+                                     (spec/14-roadmap.md backlog); progress bar/count are likewise
+                                     literal. DockPanel (not StackPanel): buttons left, count
+                                     pinned far right (no "Ln" prefix - just the raw x/y count),
+                                     progress bar fills the middle gap between them - matches
+                                     mock2's own bar-fills-the-row shape while keeping the frame
+                                     count visible per direct user request. The redundant top-right
+                                     header caption (same value, different spot) was dropped. -->
+                                <DockPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+                                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                        <Button Classes="primary" Content="{loc:Translate Panes.RxImage.SaveFrame}" />
+                                        <Button Content="{loc:Translate Panes.RxImage.Abort}" />
+                                        <Button Content="{loc:Translate Panes.RxImage.RedecodeAction}" />
+                                        <Button Content="{loc:Translate Panes.RxImage.CopyToTx}" />
+                                        <Button Content="{loc:Translate Panes.RxImage.LogQso}" />
+                                    </StackPanel>
+                                    <TextBlock DockPanel.Dock="Right" Classes="value" VerticalAlignment="Center" Margin="12,0,0,0" Text="{loc:Translate Panes.RxImage.FrameLineCount}" />
+                                    <ProgressBar Height="6" VerticalAlignment="Center" Margin="12,0,0,0" Minimum="0" Maximum="100" Value="70" />
+                                </DockPanel>
                                 <!-- Previous-frames strip relocated here from its own right-column
                                      card, matching mock2's own placement (inside the Incoming-frame
                                      card, beside the image); still the same real
