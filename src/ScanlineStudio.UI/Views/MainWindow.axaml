@@ -177,7 +177,7 @@
                                     </Flyout>
                                 </Button.Flyout>
                             </Button>
-                            <Button Classes="accent" Content="{loc:Translate RadioStatus.StoreCurrent}" VerticalAlignment="Center" />
+                            <Button Classes="primary" Content="{loc:Translate RadioStatus.StoreCurrent}" VerticalAlignment="Center" />
                             <Button Classes="small" Content="{loc:Translate RadioStatus.EditFavouritesList}" VerticalAlignment="Center" />
                             <Button Classes="small" Content="{loc:Translate RadioStatus.ImportFavourites}" VerticalAlignment="Center" />
                             <Button Classes="small" Content="{loc:Translate RadioStatus.ScanFavourites}" VerticalAlignment="Center" />
@@ -492,7 +492,7 @@
                                      (spec/14-roadmap.md backlog); progress bar/text are likewise
                                      literal, no LineProgressText-equivalent property exists. -->
                                 <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,6,0,0">
-                                    <Button Classes="accent" Content="{loc:Translate Panes.RxImage.SaveFrame}" />
+                                    <Button Classes="primary" Content="{loc:Translate Panes.RxImage.SaveFrame}" />
                                     <Button Content="{loc:Translate Panes.RxImage.Abort}" />
                                     <Button Content="{loc:Translate Panes.RxImage.RedecodeAction}" />
                                     <Button Content="{loc:Translate Panes.RxImage.CopyToTx}" />
@@ -508,8 +508,21 @@
                                      callsign line are literal: ReceiveHistoryEntry has no
                                      callsign field (see RxHistoryPaneViewModel.cs's own doc
                                      comment), same precedent as Frame metadata's static text. -->
-                                <Grid ColumnDefinitions="*,266" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="0,4,0,0">
-                                    <ContentControl Content="{Binding RxImage}" />
+                                <!-- Frame column is Auto, not a fixed/star width: a plain Border/
+                                     Image (no PlotView/aspect-ratio-converter exists in this
+                                     codebase) has no intrinsic size, so a star column just
+                                     stretched it edge-to-edge with no 5:4 constraint at all.
+                                     Viewbox around a fixed 320x256 box (real SSTV frame
+                                     dimensions) uniformly scales to the row's available height
+                                     and reports that scaled width back to the Auto column -
+                                     no C# measure override needed. Previous-frames now gets
+                                     whatever's left, matching mock2's own intent. -->
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="0,4,0,0">
+                                    <Viewbox Stretch="Uniform" HorizontalAlignment="Left">
+                                        <Border Width="320" Height="256">
+                                            <ContentControl Content="{Binding RxImage}" />
+                                        </Border>
+                                    </Viewbox>
                                     <DockPanel Grid.Column="1" LastChildFill="True">
                                         <TextBlock DockPanel.Dock="Top" Classes="caption" Text="{loc:Translate Panes.RxHistory.PreviousFramesHeader}" Margin="0,0,0,4" />
                                         <TextBlock DockPanel.Dock="Top" Classes="caption"
@@ -524,10 +537,12 @@
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate x:DataType="vm:RxHistoryEntryViewModel">
+                                                        <!-- 120x96 = 5:4, the real SSTV frame aspect ratio (was
+                                                             120x72 = 5:3, letterboxing every real thumbnail). -->
                                                         <Border Classes="thumb" Width="120" Margin="0,0,6,6">
                                                             <StackPanel>
                                                                 <Panel>
-                                                                    <Image Source="{Binding Thumbnail}" Height="72" Stretch="Uniform" />
+                                                                    <Image Source="{Binding Thumbnail}" Height="96" Stretch="Uniform" />
                                                                     <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
                                                                         <TextBlock Text="{Binding Entry.ModeId}" />
                                                                     </Border>
@@ -871,7 +886,7 @@
                                 <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                     <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxRecentlySent.Header}" />
                                     <UniformGrid Columns="2">
-                                        <Button Classes="accent small" Margin="0,0,3,0" Content="{loc:Translate Panes.TxRecentlySent.RefillAndQueue}" />
+                                        <Button Classes="primary small" Margin="0,0,3,0" Content="{loc:Translate Panes.TxRecentlySent.RefillAndQueue}" />
                                         <Button Classes="small" Margin="3,0,0,0" Content="{loc:Translate Panes.TxRecentlySent.OpenInEditor}" />
                                     </UniformGrid>
                                     <WrapPanel>
@@ -982,10 +997,12 @@
                                                  IsHitTestVisible="False" so it never steals the click that
                                                  selects the ListBoxItem underneath. Callsign/meta line is
                                                  literal: ReceiveHistoryEntry has no such fields today. -->
+                                            <!-- 190x152 = 5:4, the real SSTV frame aspect ratio (was
+                                                 190x110 = 1.73:1, letterboxing every real thumbnail). -->
                                             <Border Classes="thumb" Width="190" Margin="0,0,6,6">
                                                 <StackPanel>
                                                     <Panel>
-                                                        <Image Source="{Binding Thumbnail}" Height="110" Stretch="Uniform" />
+                                                        <Image Source="{Binding Thumbnail}" Height="152" Stretch="Uniform" />
                                                         <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
                                                             <TextBlock Text="{Binding Entry.ModeId}" />
                                                         </Border>
@@ -1047,7 +1064,7 @@
                                     <TextBlock Grid.Column="1" Classes="accentValue" Text="{loc:Translate Panes.RxHistory.LogEntryValue}" />
                                 </Grid>
                                 <UniformGrid Columns="3">
-                                    <Button Classes="accent small" Margin="0,0,3,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" />
+                                    <Button Classes="primary small" Margin="0,0,3,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" />
                                     <Button Classes="small" Margin="3,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" />
                                     <Button Classes="small" Margin="3,0,0,0" Content="{loc:Translate Panes.RxHistory.Redecode}" />
                                 </UniformGrid>

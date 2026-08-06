@@ -92,7 +92,9 @@
          nothing oversized" rule. -->
     <Style Selector="TabItem">
         <Setter Property="CornerRadius" Value="0" />
-        <Setter Property="FontSize" Value="13" />
+        <!-- Cards.axaml sets the workspace tabs to 11.5; this only needs to stop FluentTheme's
+             oversized default for tabs in windows Cards.axaml doesn't reach (Options). -->
+        <Setter Property="FontSize" Value="11.5" />
         <Setter Property="Padding" Value="{DynamicResource ScanlineStudioPaddingMedium}" />
     </Style>
 

@@ -121,9 +121,10 @@
         </Border>
 
         <!-- Output: merged Drive slider (moved from the header's standalone card in
-             MainWindow.axaml; same underlying RadioStatus.TxVolumePercent value via ancestor
-             binding, not a second independent value) + a literal Device row, plus the real
-             per-capability meters and
+             MainWindow.axaml; same underlying RadioStatus.TxVolumePercent value via the
+             RadioStatus reference MainViewModel assigns onto this VM directly, not a second
+             independent value - see TxControlsPaneViewModel.RadioStatus's own doc comment) +
+             a literal Device row, plus the real per-capability meters and
              SWR auto-cutoff. Each meter row only renders when the connected rig/backend actually
              negotiated that capability; never a placeholder for an unsupported rig
              (spec/14-roadmap.md's Piece 6 design decision). -->
@@ -133,10 +134,10 @@
                 <Grid Classes="kv" ColumnDefinitions="Auto,*,Auto">
                     <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.DriveLabel}" VerticalAlignment="Center" />
                     <Slider Grid.Column="1" Margin="4,0"
-                            Value="{Binding $parent[Window].((vm:MainViewModel)DataContext).RadioStatus.TxVolumePercent}"
+                            Value="{Binding RadioStatus.TxVolumePercent}"
                             Minimum="0" Maximum="100" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="2" Classes="value"
-                               Text="{Binding $parent[Window].((vm:MainViewModel)DataContext).RadioStatus.TxVolumePercent}"
+                               Text="{Binding RadioStatus.TxVolumePercent}"
                                VerticalAlignment="Center" />
                 </Grid>
                 <Grid Classes="kv" ColumnDefinitions="Auto,*">

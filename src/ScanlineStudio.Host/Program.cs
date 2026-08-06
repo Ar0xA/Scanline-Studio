@@ -87,7 +87,15 @@ internal static partial class Program
         }
 
         hostBuilder.Services.AddSingleton<ISettingsStore>(sp => new JsonSettingsStore(sp.GetRequiredService<ILogger<JsonSettingsStore>>()));
-        hostBuilder.Services.AddTransient<MainViewModel>();
+
+        // Singleton, not transient: resolved exactly once at startup (App.axaml.cs) as the app's
+        // one root view-model, but a second resolve would silently fork
+        // TxControlsPaneViewModel.RadioStatus (assigned once in this constructor, from a singleton
+        // TxControlsPaneViewModel) into a second, out-of-sync RadioStatusViewModel instance -- the
+        // exact forked-persistence failure the RadioStatus wiring is designed to avoid. Only one
+        // resolve site exists today, so this was a dormant risk, not an active bug; registering it
+        // correctly here closes it off rather than leaving it to bite a future second call site.
+        hostBuilder.Services.AddSingleton<MainViewModel>();
 
         // Options dialog -- transient so each open/close cycle gets a fresh OptionsSettingsService
         // (re-reads settings.json from disk each time, no stale in-memory copy carried over).
