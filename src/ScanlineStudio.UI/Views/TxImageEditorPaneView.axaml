@@ -6,11 +6,45 @@
              x:Class="ScanlineStudio.UI.Views.TxImageEditorPaneView"
              x:DataType="vm:TxImageEditorPaneViewModel">
 
-    <Border Classes="ScanlineStudioPanelBody">
-        <Grid ColumnDefinitions="2*,Auto" RowDefinitions="Auto,Auto,*">
+    <Border Classes="card">
+        <Grid ColumnDefinitions="2*,Auto" RowDefinitions="Auto,Auto,Auto,*">
 
-            <!-- Toolbar: aspect toggle + add-text + apply/cancel, all in one rigid module strip. -->
-            <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Classes="ScanlineStudioModuleGroup">
+            <!-- New decorative tool strip: Move/Crop/Scale/.../Pick are visual scaffolding only
+                 (no real per-tool mode behind them yet); Undo/Redo/Fit/100%/Snap-grid/Safe-area
+                 are likewise unwired this pass. -->
+            <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Classes="cardInner">
+                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                    <RadioButton Classes="tool" GroupName="EditorTool" IsChecked="True"
+                                 Content="{loc:Translate Panes.TxImageEditor.ToolMove}" />
+                    <RadioButton Classes="tool" GroupName="EditorTool"
+                                 Content="{loc:Translate Panes.TxImageEditor.ToolCrop}" />
+                    <RadioButton Classes="tool" GroupName="EditorTool"
+                                 Content="{loc:Translate Panes.TxImageEditor.ToolScale}" />
+                    <RadioButton Classes="tool" GroupName="EditorTool"
+                                 Content="{loc:Translate Panes.TxImageEditor.ToolRotate}" />
+                    <RadioButton Classes="tool" GroupName="EditorTool"
+                                 Content="{loc:Translate Panes.TxImageEditor.ToolText}" />
+                    <RadioButton Classes="tool" GroupName="EditorTool"
+                                 Content="{loc:Translate Panes.TxImageEditor.ToolBox}" />
+                    <RadioButton Classes="tool" GroupName="EditorTool"
+                                 Content="{loc:Translate Panes.TxImageEditor.ToolLine}" />
+                    <RadioButton Classes="tool" GroupName="EditorTool"
+                                 Content="{loc:Translate Panes.TxImageEditor.ToolMask}" />
+                    <RadioButton Classes="tool" GroupName="EditorTool"
+                                 Content="{loc:Translate Panes.TxImageEditor.ToolPick}" />
+                    <Button Classes="small" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
+                    <Button Classes="small" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
+                    <Button Classes="small" Content="{loc:Translate Panes.TxImageEditor.Fit}" />
+                    <Button Classes="small" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
+                    <ToggleButton Classes="small" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" />
+                    <ToggleButton Classes="small" Content="{loc:Translate Panes.TxImageEditor.SafeArea}"
+                                  HorizontalAlignment="Right" />
+                </StackPanel>
+            </Border>
+
+            <!-- Toolbar: aspect toggle + add-text + apply/cancel, all real and wired — kept as-is,
+                 restyled container only. -->
+            <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Classes="cardInner">
                 <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
                     <CheckBox Content="{loc:Translate Panes.TxImageEditor.PreserveAspect}"
                               IsChecked="{Binding PreserveAspect}" />
@@ -24,9 +58,8 @@
                 </StackPanel>
             </Border>
 
-            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
-                       Classes="ScanlineStudioReadout"
-                       FontSize="10"
+            <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                       Classes="caption"
                        TextWrapping="Wrap"
                        Text="{loc:Translate Panes.TxImageEditor.Caption}" />
 
@@ -35,8 +68,41 @@
                  see PicRect.cpp) and draggable overlay text, both drawn over the pre-downsampled
                  working copy at native pixel size (Stretch="None") so on-screen pixels map directly
                  to normalized crop/overlay coordinates with no scale-factor math needed. -->
-            <ScrollViewer Grid.Row="2" Grid.Column="0"
-                          HorizontalScrollBarVisibility="Auto"
+            <DockPanel Grid.Row="3" Grid.Column="0" LastChildFill="True">
+
+                <!-- Bottom action bar: decorative duplicate of the real Transmit/Halt controls in
+                     TxControlsPaneView's left column (locked decision #8, plan) - no Command this
+                     pass. -->
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                            Spacing="{DynamicResource ScanlineStudioSpacingSmall}"
+                            Classes="cardInner">
+                    <Button Classes="accent" Content="{loc:Translate Panes.TxImageEditor.TransmitAction}" />
+                    <Button Content="{loc:Translate Panes.TxImageEditor.TuneAction}" />
+                    <Button Content="{loc:Translate Panes.TxImageEditor.PreviewAudio}" />
+                    <Button Classes="halt" Content="{loc:Translate Panes.TxImageEditor.HaltAction}" />
+                    <ProgressBar Value="0" Minimum="0" Maximum="100" Width="140" Height="6"
+                                 VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Adjustments row: literal Value=, no binding this pass. -->
+                <Grid DockPanel.Dock="Bottom" Classes="cardInner"
+                      ColumnDefinitions="Auto,*,Auto,*,Auto,*"
+                      RowDefinitions="Auto,Auto">
+                    <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="{loc:Translate Panes.TxImageEditor.Brightness}" />
+                    <Slider Grid.Row="0" Grid.Column="1" Margin="4,0" Value="0" Minimum="-100" Maximum="100" />
+                    <TextBlock Grid.Row="0" Grid.Column="2" Classes="label" Text="{loc:Translate Panes.TxImageEditor.Contrast}" />
+                    <Slider Grid.Row="0" Grid.Column="3" Margin="4,0" Value="0" Minimum="-100" Maximum="100" />
+                    <TextBlock Grid.Row="0" Grid.Column="4" Classes="label" Text="{loc:Translate Panes.TxImageEditor.Saturation}" />
+                    <Slider Grid.Row="0" Grid.Column="5" Margin="4,0" Value="0" Minimum="-100" Maximum="100" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="{loc:Translate Panes.TxImageEditor.Gamma}" />
+                    <Slider Grid.Row="1" Grid.Column="1" Margin="4,0" Value="0" Minimum="-100" Maximum="100" />
+                    <TextBlock Grid.Row="1" Grid.Column="2" Classes="label" Text="{loc:Translate Panes.TxImageEditor.Sharpen}" />
+                    <Slider Grid.Row="1" Grid.Column="3" Margin="4,0" Value="0" Minimum="0" Maximum="100" />
+                    <TextBlock Grid.Row="1" Grid.Column="4" Classes="label" Text="{loc:Translate Panes.TxImageEditor.Denoise}" />
+                    <Slider Grid.Row="1" Grid.Column="5" Margin="4,0" Value="0" Minimum="0" Maximum="100" />
+                </Grid>
+
+            <ScrollViewer HorizontalScrollBarVisibility="Auto"
                           VerticalScrollBarVisibility="Auto">
                 <Canvas x:Name="EditorCanvas"
                         Width="{Binding WorkingCopyWidth}"
@@ -91,16 +157,20 @@
                 </Canvas>
             </ScrollViewer>
 
+            </DockPanel>
+
             <!-- Side panel: real pipeline preview (mode-exact pixels, nearest-neighbor upscaled for
                  display so low-res SSTV fidelity is visible, not smoothed away) + the overlay
                  element list with numeric X/Y fields (legacy's own real precedent for text
-                 placement precision, TextIn.h's SEX/SEY fields), alongside free drag. -->
-            <StackPanel Grid.Row="2" Grid.Column="1"
-                        Spacing="{DynamicResource ScanlineStudioSpacingMedium}"
+                 placement precision, TextIn.h's SEX/SEY fields), alongside free drag, plus new
+                 mock2 scaffolding cards below (Insert field/Text style/Saved templates). -->
+            <ScrollViewer Grid.Row="3" Grid.Column="1"
+                          VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}"
                         MinWidth="220">
-                <Border Classes="ScanlineStudioModuleGroup">
+                <Border Classes="cardInner">
                     <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                        <TextBlock Classes="ScanlineStudioReadout" FontSize="10" Text="{loc:Translate Panes.TxImageEditor.PreviewLabel}" />
+                        <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Panes.TxImageEditor.PreviewLabel}" />
                         <Image Source="{Binding PreviewImage}"
                                Stretch="Uniform"
                                MaxHeight="200"
@@ -111,7 +181,7 @@
                 <ItemsControl ItemsSource="{Binding OverlayElements}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:OverlayElementViewModel">
-                            <Border Classes="ScanlineStudioModuleGroup" Margin="0,0,0,4">
+                            <Border Classes="cardInner" Margin="0,0,0,4">
                                 <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                     <TextBox Text="{Binding Text}" />
                                     <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
@@ -126,7 +196,48 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+
+                <!-- New mock2 scaffolding: insert-field token chips (no Command this pass). -->
+                <Border Classes="cardInner">
+                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                        <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" />
+                        <WrapPanel>
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip1}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip2}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip3}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip4}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip5}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip6}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip7}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip8}" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- New mock2 scaffolding: text style (literal, applies to the selected overlay
+                     element; no selection-tracking exists yet so nothing to bind to). -->
+                <Border Classes="cardInner">
+                    <Grid Classes="kv" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
+                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="{loc:Translate Panes.TxImageEditor.FontSizeLabel}" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxImageEditor.FontSizeValue}" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="{loc:Translate Panes.TxImageEditor.FillStrokeLabel}" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxImageEditor.FillStrokeValue}" />
+                    </Grid>
+                </Border>
+
+                <!-- New mock2 scaffolding: saved templates list (empty; no store exists yet). -->
+                <Border Classes="cardInner">
+                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                        <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Panes.TxImageEditor.TemplatesHeader}" />
+                        <ItemsControl />
+                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                            <Button Content="{loc:Translate Panes.TxImageEditor.FillAndSend}" />
+                            <Button Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
+            </ScrollViewer>
 
         </Grid>
     </Border>
