@@ -15,10 +15,18 @@ namespace ScanlineStudio.UI.ViewModels;
 public partial class MainViewModel : ViewModelBase
 {
     private readonly IServiceProvider _services;
+    private readonly OptionsSettingsService _optionsSettingsService;
     private readonly ILogger<MainViewModel> _logger;
 
     [ObservableProperty]
     private TxImageEditorPaneViewModel? _activeEditor;
+
+    /// <summary>Operator's own callsign (spec/09-ui.md menu-row chip, mock2's own top-right
+    /// "DL2QSK" green pill) -- real, loaded from <see cref="OptionsSettingsService"/> the same
+    /// way <see cref="OptionsWindowViewModel"/> does; null/empty until the user sets it in
+    /// Options, in which case the chip stays hidden (see <see cref="HasCallsign"/>).</summary>
+    [ObservableProperty]
+    private string? _callsign;
 
     public MainViewModel(
         WaterfallPaneViewModel waterfall,
@@ -28,11 +36,13 @@ public partial class MainViewModel : ViewModelBase
         IRadioSessionService radioSession,
         ISstvSessionService sstvSession,
         ILocalizationService localization,
+        OptionsSettingsService optionsSettingsService,
         IServiceProvider services,
         ILogger<MainViewModel> logger,
         ILogger<RadioStatusViewModel> radioStatusLogger)
     {
         _services = services;
+        _optionsSettingsService = optionsSettingsService;
         _logger = logger;
 
         Waterfall = waterfall;
@@ -50,6 +60,8 @@ public partial class MainViewModel : ViewModelBase
         // Plain reference hand-off, not an XAML ancestor-lookup binding -- see
         // TxControlsPaneViewModel.RadioStatus's own doc comment for why.
         txControls.RadioStatus = RadioStatus;
+
+        _ = LoadCallsignAsync();
     }
 
     public WaterfallPaneViewModel Waterfall { get; }
@@ -61,6 +73,13 @@ public partial class MainViewModel : ViewModelBase
     public TxControlsPaneViewModel TxControls { get; }
 
     public RadioStatusViewModel RadioStatus { get; }
+
+    /// <summary>What the menu-row chip actually displays -- "N0CALL" (the standard ham-radio
+    /// placeholder callsign) until the user sets a real one in Options, matching mock2's own
+    /// chip always being present rather than appearing/disappearing.</summary>
+    public string CallsignDisplay => string.IsNullOrWhiteSpace(Callsign) ? "N0CALL" : Callsign;
+
+    partial void OnCallsignChanged(string? value) => OnPropertyChanged(nameof(CallsignDisplay));
 
     /// <summary>Carries the freshly-DI-resolved <see cref="OptionsWindowViewModel"/> so
     /// `MainWindow`'s code-behind can construct/show the actual `Window` -- a view-model must never
@@ -86,6 +105,19 @@ public partial class MainViewModel : ViewModelBase
         ExitRequested?.Invoke();
     }
 
+    private async Task LoadCallsignAsync()
+    {
+        try
+        {
+            var snapshot = await _optionsSettingsService.LoadAsync();
+            Callsign = snapshot.Callsign;
+        }
+        catch (Exception ex)
+        {
+            Log.LoadCallsignFailed(_logger, ex);
+        }
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOptions command invoked")]
@@ -93,5 +125,8 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit command invoked")]
         public static partial void ExitInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Loading operator callsign failed; menu-row chip stays hidden")]
+        public static partial void LoadCallsignFailed(ILogger logger, Exception ex);
     }
 }

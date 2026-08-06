@@ -168,10 +168,13 @@
     </Style>
     <!-- Receiving/monitoring toggle: green when active, a state color rather than the generic
          pressed-blue every other toggle uses, since "currently receiving" is a status worth
-         reading at a glance, not just a pressed key. -->
+         reading at a glance, not just a pressed key. Direct user override of mock2's own literal
+         blue pixel value - green/red (Receiving/Halt) reads clearer as a status pair. -->
     <Style Selector="ToggleButton.receiving:checked /template/ ContentPresenter">
         <Setter Property="Background" Value="#FFC2E8C2" />
         <Setter Property="BorderBrush" Value="#FF3F8F3F" />
+        <Setter Property="TextBlock.Foreground" Value="#FF1F5C1F" />
+        <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
     </Style>
 
     <!-- Segmented control = radio buttons drawn as pressed/unpressed keys. -->
@@ -242,6 +245,16 @@
     </Style>
     <Style Selector="Border.softPill > TextBlock">
         <Setter Property="Foreground" Value="#FF2C4715" />
+    </Style>
+    <!-- Red counterpart to softPill: not part of mock2's own static reference (which only ever
+         shows the linked/green state), but needed for the real not-linked state - same red
+         palette as Button.halt for one consistent "alert" language app-wide. -->
+    <Style Selector="Border.alertPill">
+        <Setter Property="Background" Value="#FFF5D6D6" />
+        <Setter Property="BorderBrush" Value="#FFB33A3A" />
+    </Style>
+    <Style Selector="Border.alertPill > TextBlock">
+        <Setter Property="Foreground" Value="#FF6B0F0F" />
     </Style>
 
     <Style Selector="TextBox, ComboBox, NumericUpDown">

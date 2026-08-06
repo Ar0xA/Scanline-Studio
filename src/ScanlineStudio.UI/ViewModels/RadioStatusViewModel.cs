@@ -460,6 +460,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 public sealed record FrequencyPresetButtonViewModel(FrequencyPreset Preset, System.Windows.Input.ICommand SelectCommand)
 {
     public string Label => Preset.Label;
+
+    /// <summary>Top line of the two-line button content mock2's own Favourites card uses
+    /// (frequency + mode, e.g. "14.230 USB"), real -- computed from the same
+    /// <see cref="FrequencyPreset"/> the button already carries, not a second data source.</summary>
+    public string FrequencyWithMode => $"{Preset.FrequencyHz / 1_000_000.0:0.000} {Preset.Mode}";
 }
 
 /// <summary>One editable row in the "Edit presets..." flyout. A plain mutable view-model (not a

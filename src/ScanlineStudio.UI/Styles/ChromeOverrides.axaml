@@ -156,6 +156,22 @@
     <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
   </Style>
 
+  <!-- Green "store/save" affirmative action (e.g. Store current favourite) - same shape
+       as primary/halt, filled-pill palette on the ContentPresenter. -->
+  <Style Selector="Button.success /template/ ContentPresenter">
+    <Setter Property="Background" Value="#FFD9F2D9" />
+    <Setter Property="BorderBrush" Value="#FF3FA34A" />
+    <Setter Property="TextBlock.Foreground" Value="#FF0F5C1D" />
+    <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="Button.success:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="#FFC5E8C5" />
+    <Setter Property="BorderBrush" Value="#FF2E8C3A" />
+  </Style>
+  <Style Selector="Button.success:pressed /template/ ContentPresenter">
+    <Setter Property="Background" Value="#FFB0DEB0" />
+  </Style>
+
   <!-- ══ entry fields ═══════════════════════════════════════════════════
        19px rows, monospace, right-aligned numerics, vertically centred so
        the glyphs stop being clipped at the descender. -->
