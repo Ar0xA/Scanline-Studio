@@ -251,6 +251,25 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
+    <!-- NumericUpDown's own inner Padding is template-bound straight to PART_TextBox
+         (confirmed against Avalonia 11.2.3's real NumericUpDown.xaml source), so these
+         setters land directly on the control instance and apply normally. The spinner
+         buttons themselves are a different story - see the ButtonSpinner ControlTheme
+         replacement in App.axaml's Application.Resources for why that had to be a full
+         template replacement rather than a Style override here. -->
+    <Style Selector="NumericUpDown">
+        <Setter Property="MinHeight" Value="19" />
+        <Setter Property="Height" Value="19" />
+        <Setter Property="Padding" Value="4,0" />
+        <Setter Property="HorizontalContentAlignment" Value="Right" />
+        <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+    </Style>
+    <!-- Fallback in case HorizontalContentAlignment doesn't flow through to the inner
+         TextBox in every case: PART_TextBox itself isn't a literal template value (unlike
+         the spinner buttons), so a Style CAN reach it directly here. -->
+    <Style Selector="NumericUpDown /template/ TextBox#PART_TextBox">
+        <Setter Property="TextAlignment" Value="Right" />
+    </Style>
     <Style Selector="NumericUpDown.tight">
         <Setter Property="Width" Value="72" />
         <Setter Property="HorizontalAlignment" Value="Right" />
