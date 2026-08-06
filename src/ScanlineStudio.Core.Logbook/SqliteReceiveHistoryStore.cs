@@ -117,6 +117,33 @@ public sealed class SqliteReceiveHistoryStore : IReceiveHistoryStore
         command.Parameters.AddWithValue("$linkedQsoId", (object?)entry.LinkedQsoId ?? DBNull.Value);
 
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+        await TrimToRetentionLimitAsync(connection, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Legacy's real retention behavior (verified: see <see cref="ReceiveHistorySettings.DefaultMaxEntries"/>'s
+    /// own doc comment for the exact source citations) is a fixed-size ring buffer — the oldest
+    /// image's on-disk slot is physically overwritten once the buffer is full. This keeps the same
+    /// "newest N survive" semantics for the queryable index (oldest rows beyond the limit are
+    /// deleted here), but deliberately does <b>not</b> delete the corresponding image files from
+    /// disk — legacy's single fixed-size history.bin blob has no equivalent to this port's
+    /// separate real image files, and unsupervised automatic file deletion is a materially
+    /// different risk than trimming a database index. Orphaned files beyond the retention window
+    /// are a real, known follow-up (not a silent gap), not a bug in this method.</summary>
+    private async Task TrimToRetentionLimitAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        var maxEntries = await ReceiveHistorySettings.ResolveMaxEntriesAsync(_settingsStore, ct).ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM ReceiveHistory
+            WHERE Id NOT IN (
+                SELECT Id FROM ReceiveHistory ORDER BY ReceivedAt DESC LIMIT $maxEntries
+            )
+            """;
+        command.Parameters.AddWithValue("$maxEntries", maxEntries);
+
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
     public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => ReceiveHistorySettings.ResolveDirectoryAsync(_settingsStore, ct);
