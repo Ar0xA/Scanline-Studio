@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Application;
@@ -14,6 +15,7 @@ namespace ScanlineStudio.UI.ViewModels;
 public partial class MainViewModel : ViewModelBase
 {
     private readonly IServiceProvider _services;
+    private readonly ILogger<MainViewModel> _logger;
 
     [ObservableProperty]
     private TxImageEditorPaneViewModel? _activeEditor;
@@ -26,9 +28,12 @@ public partial class MainViewModel : ViewModelBase
         IRadioSessionService radioSession,
         ISstvSessionService sstvSession,
         ILocalizationService localization,
-        IServiceProvider services)
+        IServiceProvider services,
+        ILogger<MainViewModel> logger,
+        ILogger<RadioStatusViewModel> radioStatusLogger)
     {
         _services = services;
+        _logger = logger;
 
         Waterfall = waterfall;
         RxImage = rxImage;
@@ -40,7 +45,7 @@ public partial class MainViewModel : ViewModelBase
         txControls.EditorOpened += editor => ActiveEditor = editor;
         txControls.EditorClosed += () => ActiveEditor = null;
 
-        RadioStatus = new RadioStatusViewModel(radioSession, sstvSession, localization);
+        RadioStatus = new RadioStatusViewModel(radioSession, sstvSession, localization, radioStatusLogger);
     }
 
     public WaterfallPaneViewModel Waterfall { get; }
@@ -60,5 +65,15 @@ public partial class MainViewModel : ViewModelBase
     public event Action<OptionsWindowViewModel>? OptionsRequested;
 
     [RelayCommand]
-    private void OpenOptions() => OptionsRequested?.Invoke(_services.GetRequiredService<OptionsWindowViewModel>());
+    private void OpenOptions()
+    {
+        Log.OpenOptionsInvoked(_logger);
+        OptionsRequested?.Invoke(_services.GetRequiredService<OptionsWindowViewModel>());
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOptions command invoked")]
+        public static partial void OpenOptionsInvoked(ILogger logger);
+    }
 }

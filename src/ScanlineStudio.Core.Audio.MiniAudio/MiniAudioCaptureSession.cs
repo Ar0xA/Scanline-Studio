@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace ScanlineStudio.Core.Audio.MiniAudio;
 
 /// <summary>
@@ -13,8 +15,10 @@ namespace ScanlineStudio.Core.Audio.MiniAudio;
 /// (drop-newest when the ring fills, never block, never corrupt/reorder -- already the ring's own
 /// behavior from piece Audio 3, reused here unchanged).
 /// </summary>
-internal sealed unsafe class MiniAudioCaptureSession : IDisposable
+internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
 {
+    private readonly ILogger _logger;
+
     // Read granularity for the drain loop -- not the ring's own capacity, just how much this class
     // asks for per poll.
     private const int DrainBufferFrames = 4096;
@@ -48,8 +52,10 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
     /// handles resample/downmix from whatever the device's real native format is.</param>
     /// <param name="ringCapacityFrames">Sizes the buffer between the real-time callback and this
     /// class's own drain thread.</param>
-    public MiniAudioCaptureSession(string deviceId, int sampleRate, int ringCapacityFrames = 16384)
+    public MiniAudioCaptureSession(string deviceId, int sampleRate, ILogger logger, int ringCapacityFrames = 16384)
     {
+        _logger = logger;
+
         // Opus-review fix: this session never held its own reference to the native context --
         // only MiniAudioDeviceEnumerator did, so a live capture session's continued correctness
         // depended entirely on some unrelated enumerator instance happening to still be
@@ -267,7 +273,19 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
                         catch (Exception ex)
                         {
                             _lastSubscriberException = ex;
-                            Interlocked.Increment(ref _subscriberExceptionCount);
+                            var count = Interlocked.Increment(ref _subscriberExceptionCount);
+
+                            // Hot path (real-time drain thread, docs/logging-guidelines.md) --
+                            // logged at the first occurrence, then only a periodic summary, never
+                            // per-callback, to avoid turning a logging change into dropped RX audio.
+                            if (count == 1)
+                            {
+                                Log.SubscriberThrew(_logger, ex);
+                            }
+                            else if (count % 100 == 0)
+                            {
+                                Log.SubscriberThrewRepeated(_logger, count);
+                            }
                         }
                     }
                 }
@@ -354,5 +372,14 @@ internal sealed unsafe class MiniAudioCaptureSession : IDisposable
         {
             _lifetimeLock.ExitWriteLock();
         }
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Error, Message = "A SamplesAvailable subscriber threw on the capture drain thread")]
+        public static partial void SubscriberThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "A SamplesAvailable subscriber has now thrown {Count} times on the capture drain thread")]
+        public static partial void SubscriberThrewRepeated(ILogger logger, int count);
     }
 }

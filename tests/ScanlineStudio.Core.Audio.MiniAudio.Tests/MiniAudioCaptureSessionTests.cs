@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 using ScanlineStudio.Core.Audio.MiniAudio;
 
@@ -24,7 +25,7 @@ public class MiniAudioCaptureSessionTests
         Process? toneProcess = null;
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
@@ -43,7 +44,7 @@ public class MiniAudioCaptureSessionTests
             // fix belongs here too rather than relying solely on that guard.
             var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            using var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100);
+            using var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100, NullLogger.Instance);
             session.SamplesAvailable += chunk =>
             {
                 lock (receivedChunks)
@@ -107,7 +108,7 @@ public class MiniAudioCaptureSessionTests
         Process? toneProcess = null;
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
@@ -117,7 +118,7 @@ public class MiniAudioCaptureSessionTests
             var disposeReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var alreadyDisposedFromCallback = 0;
 
-            using var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100);
+            using var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100, NullLogger.Instance);
             session.SamplesAvailable += chunk =>
             {
                 if (chunk.Length > 0 && Interlocked.Exchange(ref alreadyDisposedFromCallback, 1) == 0)
@@ -166,7 +167,7 @@ public class MiniAudioCaptureSessionTests
         Process? toneProcess = null;
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
             Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
@@ -177,7 +178,7 @@ public class MiniAudioCaptureSessionTests
             var enoughInvocations = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var thrownException = new InvalidOperationException("Deliberate test exception from a SamplesAvailable subscriber.");
 
-            using var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100);
+            using var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100, NullLogger.Instance);
             session.SamplesAvailable += _ => throw thrownException;
             session.SamplesAvailable += chunk =>
             {

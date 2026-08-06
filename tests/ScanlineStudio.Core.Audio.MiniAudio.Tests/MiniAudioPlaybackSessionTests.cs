@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
 using ScanlineStudio.Core.Audio.MiniAudio;
 
@@ -24,7 +25,7 @@ public class MiniAudioPlaybackSessionTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
 
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
@@ -42,7 +43,7 @@ public class MiniAudioPlaybackSessionTests
             // of this; found via this exact test hanging during an opus-review fix pass.
             var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            using var captureSession = new MiniAudioCaptureSession(monitor!.Id, SampleRate);
+            using var captureSession = new MiniAudioCaptureSession(monitor!.Id, SampleRate, NullLogger.Instance);
             captureSession.SamplesAvailable += chunk =>
             {
                 lock (receivedChunks)
@@ -117,7 +118,7 @@ public class MiniAudioPlaybackSessionTests
 
         try
         {
-            using var enumerator = new MiniAudioDeviceEnumerator();
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
             await enumerator.RefreshAsync();
             var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
             Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");

@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Audio;
 
 namespace ScanlineStudio.Core.Audio.MiniAudio.Tests;
@@ -26,6 +28,8 @@ public class MiniAudioEngineDiRegistrationTests
     public async Task IAudioEngine_And_IAudioDeviceEnumerator_ResolveAndDisposeCleanly()
     {
         var services = new ServiceCollection();
+        services.AddSingleton<ILogger<MiniAudioEngine>>(NullLogger<MiniAudioEngine>.Instance);
+        services.AddSingleton<ILogger<MiniAudioDeviceEnumerator>>(NullLogger<MiniAudioDeviceEnumerator>.Instance);
         services.AddSingleton<IAudioEngine, MiniAudioEngine>();
         services.AddSingleton<IAudioDeviceEnumerator, MiniAudioDeviceEnumerator>();
 
@@ -60,6 +64,7 @@ public class MiniAudioEngineDiRegistrationTests
     public void SynchronousDispose_OnServiceProviderWithResolvedAudioEngine_Throws()
     {
         var services = new ServiceCollection();
+        services.AddSingleton<ILogger<MiniAudioEngine>>(NullLogger<MiniAudioEngine>.Instance);
         services.AddSingleton<IAudioEngine, MiniAudioEngine>();
 
         // Deliberately not `await using`/disposed at all: provider.Dispose() below throws before

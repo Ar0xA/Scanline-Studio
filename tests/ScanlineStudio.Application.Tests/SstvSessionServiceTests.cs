@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
@@ -48,7 +49,7 @@ public sealed class SstvSessionServiceTests
         var receivedImage = new FakeReceivedImageBuffer();
         var radioSession = new FakeRadioSessionService();
 
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, decoder, encoder, waterfall, receivedImage, radioSession);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, decoder, encoder, waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
         return (service, audioEngine, decoder, waterfall, radioSession, settingsStore);
     }
 
@@ -218,7 +219,7 @@ public sealed class SstvSessionServiceTests
         };
         var service = new SstvSessionService(
             audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(),
-            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService());
+            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
 
         var percent = await service.GetTxVolumePercentAsync();
 

@@ -1,5 +1,6 @@
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.UI.ViewModels;
 
@@ -8,7 +9,7 @@ namespace ScanlineStudio.UI.Tests;
 public sealed class RadioStatusViewModelTests
 {
     private static RadioStatusViewModel CreateViewModel(FakeRadioSessionService? radioSession = null, FakeSstvSessionService? sstvSession = null)
-        => new(radioSession ?? new FakeRadioSessionService(), sstvSession ?? new FakeSstvSessionService(), new FakeLocalizationService());
+        => new(radioSession ?? new FakeRadioSessionService(), sstvSession ?? new FakeSstvSessionService(), new FakeLocalizationService(), NullLogger<RadioStatusViewModel>.Instance);
 
     [AvaloniaFact]
     public void Constructor_LoadsPersistedPresetsAndTxVolume()

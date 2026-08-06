@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Settings;
@@ -25,22 +26,24 @@ namespace ScanlineStudio.Core.Logbook;
 /// defaulted the unlearned step to <c>ImageHeight</c> itself, which made the very first event of
 /// *every* image look complete; caught by <c>ReceiveHistoryRecorderTests</c>, not by
 /// review.</summary>
-public sealed class ReceiveHistoryRecorder
+public sealed partial class ReceiveHistoryRecorder
 {
     private readonly IReceivedImageBuffer _receivedImage;
     private readonly IReceiveHistoryStore _historyStore;
     private readonly ISettingsStore _settingsStore;
+    private readonly ILogger<ReceiveHistoryRecorder> _logger;
 
     private SstvModeDefinition? _currentMode;
     private int? _previousLine;
     private int? _observedStep;
     private bool _recordedForCurrentImage;
 
-    public ReceiveHistoryRecorder(ISstvDecoder decoder, IReceivedImageBuffer receivedImage, IReceiveHistoryStore historyStore, ISettingsStore settingsStore)
+    public ReceiveHistoryRecorder(ISstvDecoder decoder, IReceivedImageBuffer receivedImage, IReceiveHistoryStore historyStore, ISettingsStore settingsStore, ILogger<ReceiveHistoryRecorder> logger)
     {
         _receivedImage = receivedImage;
         _historyStore = historyStore;
         _settingsStore = settingsStore;
+        _logger = logger;
 
         decoder.ModeDetected += OnModeDetected;
         decoder.LineDecoded += OnLineDecoded;
@@ -101,10 +104,13 @@ public sealed class ReceiveHistoryRecorder
             {
                 await RecordCompletedImageAsync(modeId).ConfigureAwait(false);
             }
-            catch
+            catch (Exception ex)
             {
-                // Deliberately swallowed -- same reasoning as SstvSessionService's fan-out handlers:
-                // a failed history save must never surface into/interrupt the live decode path.
+                // Not rethrown -- same reasoning as SstvSessionService's fan-out handlers: a failed
+                // history save must never surface into/interrupt the live decode path. Now logged
+                // (previously fully silent) -- this is exactly the "it didn't record my image" bug
+                // class a user would otherwise have no way to diagnose.
+                Log.RecordCompletedImageFailed(_logger, modeId, ex);
             }
         });
     }
@@ -122,7 +128,18 @@ public sealed class ReceiveHistoryRecorder
 
         var entry = new ReceiveHistoryEntry(Guid.NewGuid().ToString(), receivedAt, modeId, filePath, LinkedQsoId: null);
         await _historyStore.RecordAsync(entry).ConfigureAwait(false);
+
+        Log.ImageSaved(_logger, filePath);
     }
 
     private Task<string> ResolveImagesDirectoryAsync() => ReceiveHistorySettings.ResolveDirectoryAsync(_settingsStore);
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to save completed RX image (mode={ModeId})")]
+        public static partial void RecordCompletedImageFailed(ILogger logger, string modeId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX image saved: {FilePath}")]
+        public static partial void ImageSaved(ILogger logger, string filePath);
+    }
 }

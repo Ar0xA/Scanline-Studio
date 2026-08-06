@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Radio;
 
 namespace ScanlineStudio.Core.Radio.Hamlib;
@@ -29,7 +31,7 @@ namespace ScanlineStudio.Core.Radio.Hamlib;
 /// SWR/ALC/RFPOWER_METER meter reads are gated in -- see <see cref="PollAsync"/> -- or a full
 /// connect+probe sequence on the very first poll), not just the poll cadence.
 /// </summary>
-public sealed class HamlibRadioProtocol : IRadioProtocol
+public sealed partial class HamlibRadioProtocol : IRadioProtocol
 {
     // RIG_MODE_* bit-flag values (hamlib/include/hamlib/rig.h, CONSTANT_64BIT_FLAG(n) = 1UL << n) --
     // exact-value equality only: rig_get_mode always returns exactly one flag despite the bitmask
@@ -121,6 +123,7 @@ public sealed class HamlibRadioProtocol : IRadioProtocol
     private readonly string? _serialPort;
     private readonly int? _baudRate;
     private readonly string? _pttType;
+    private readonly ILogger _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     private nint _rig;
@@ -131,7 +134,7 @@ public sealed class HamlibRadioProtocol : IRadioProtocol
     // outside this assembly). HamlibProtocolFactory (public, same assembly) is the only intended way
     // to obtain an instance from outside; tests construct this directly via InternalsVisibleTo.
     internal HamlibRadioProtocol(
-        IHamlibNative native, uint model, string? serialPort = null, int? baudRate = null, string? pttType = null)
+        IHamlibNative native, uint model, string? serialPort = null, int? baudRate = null, string? pttType = null, ILogger? logger = null)
     {
         if (pttType is not null && !KnownPttTypes.Contains(pttType))
         {
@@ -144,6 +147,7 @@ public sealed class HamlibRadioProtocol : IRadioProtocol
         _serialPort = serialPort;
         _baudRate = baudRate;
         _pttType = pttType;
+        _logger = logger ?? NullLogger.Instance;
     }
 
     public string RigId => "hamlib-native";
@@ -305,8 +309,12 @@ public sealed class HamlibRadioProtocol : IRadioProtocol
 
                 ThrowIfError(_native.RigOpen(_rig));
             }
-            catch
+            catch (Exception ex)
             {
+                // rig_open (or one of the rig_set_conf calls before it) failed -- clean up the handle
+                // rig_init allocated and rethrow. The real failure is logged by RadioController, which
+                // owns the retry/backoff decision; this just attributes it to this connect step.
+                Log.ConnectStepFailed(_logger, _model, ex);
                 _native.RigCleanup(_rig);
                 _rig = nint.Zero;
                 throw;
@@ -315,6 +323,7 @@ public sealed class HamlibRadioProtocol : IRadioProtocol
 
         Capabilities = await CallAsync(ProbeCapabilities).ConfigureAwait(false);
         _connected = true;
+        Log.Connected(_logger, _model, Capabilities);
     }
 
     private void ApplyConf(string tokenName, string? value)
@@ -470,5 +479,14 @@ public sealed class HamlibRadioProtocol : IRadioProtocol
             _lock.Release();
             _lock.Dispose();
         }
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Hamlib connect step failed for model {Model}")]
+        public static partial void ConnectStepFailed(ILogger logger, uint model, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Hamlib rig connected: model={Model}, capabilities={Capabilities}")]
+        public static partial void Connected(ILogger logger, uint model, RadioCapabilities capabilities);
     }
 }

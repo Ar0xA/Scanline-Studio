@@ -1,5 +1,6 @@
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
@@ -23,7 +24,7 @@ public sealed class PaneViewModelTests
     public void RadioStatusViewModel_PushedState_UpdatesDisplayOnUiThread()
     {
         var radioSession = new FakeRadioSessionService();
-        var vm = new RadioStatusViewModel(radioSession, new FakeSstvSessionService(), new FakeLocalizationService());
+        var vm = new RadioStatusViewModel(radioSession, new FakeSstvSessionService(), new FakeLocalizationService(), NullLogger<RadioStatusViewModel>.Instance);
 
         radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
@@ -88,7 +89,7 @@ public sealed class PaneViewModelTests
             ColorEncoding: ColorEncoding.RgbSequential,
             LineSegments: [new ScanSegment("R", 138.24)]);
         var sstvSession = new FakeSstvSessionService { AvailableModes = [scottie1] };
-        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService());
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<TxControlsPaneViewModel>.Instance);
 
         var row = Assert.Single(vm.ModeTimingRows);
         Assert.Equal("Scottie 1", row.ModeName);
@@ -103,7 +104,7 @@ public sealed class PaneViewModelTests
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
         var filePicker = new FakeFilePickerService();
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService());
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<TxControlsPaneViewModel>.Instance);
 
         Assert.False(vm.TransmitCommand.CanExecute(null));
 
@@ -123,7 +124,7 @@ public sealed class PaneViewModelTests
     public void TxControlsPaneViewModel_SelectingANewMode_ClearsAlreadyLoadedImage()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService());
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<TxControlsPaneViewModel>.Instance);
 
         vm.SelectedMode = TestMode with { Id = "other" };
 
@@ -141,7 +142,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [stockEntry],
             FullImageToReturn = new ArrayImageSource(1, 1, [new Rgb24(4, 5, 6)]),
         };
-        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), stockLibrary, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService());
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), stockLibrary, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<TxControlsPaneViewModel>.Instance);
 
         var editor = await OpenEditorAsync(vm, () => vm.SelectStockImageCommand.ExecuteAsync(stockEntry));
         editor.ApplyCommand.Execute(null);
@@ -162,7 +163,7 @@ public sealed class PaneViewModelTests
         // and hands it to an editor instead -- CanTransmit must NOT flip true until Apply happens.
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService());
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<TxControlsPaneViewModel>.Instance);
 
         await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
 
@@ -177,7 +178,7 @@ public sealed class PaneViewModelTests
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
         var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService());
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<TxControlsPaneViewModel>.Instance);
 
         var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
         firstEditor.ApplyCommand.Execute(null);
@@ -201,7 +202,7 @@ public sealed class PaneViewModelTests
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var imageFileLoader = new FakeImageFileLoader { UseManualGating = true };
         var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService());
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<TxControlsPaneViewModel>.Instance);
         var editorOpenedCount = 0;
         vm.EditorOpened += _ => editorOpenedCount++;
 
@@ -228,7 +229,7 @@ public sealed class PaneViewModelTests
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
         var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService());
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<TxControlsPaneViewModel>.Instance);
 
         var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
         editor.ApplyCommand.Execute(null);
@@ -274,7 +275,7 @@ public sealed class PaneViewModelTests
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
 
-        var vm = new RxHistoryPaneViewModel(historyStore);
+        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -297,7 +298,7 @@ public sealed class PaneViewModelTests
         // all (unlike RxImagePaneViewModel, which takes ISstvSessionService specifically for that
         // live binding) -- a live-buffer interaction is structurally impossible here, not just
         // unobserved, so there is nothing to fake/assert against for that half of the guarantee.
-        var vm = new RxHistoryPaneViewModel(historyStore);
+        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -312,7 +313,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_DefaultsToTodayOnly_MatchingTheMock2DraftsOwnDefaultSelection()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore);
+        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.ShowTodayOnly);
@@ -325,7 +326,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_TogglingToAll_ReQueriesWithNoDateFilter()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore);
+        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         vm.ShowTodayOnly = false;
@@ -341,7 +342,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_Constructed_LoadsImagesDirectory_ForTheGalleryTabsStorageCard()
     {
         var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "/tmp/scanlinestudio-history" };
-        var vm = new RxHistoryPaneViewModel(historyStore);
+        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("/tmp/scanlinestudio-history", vm.ImagesDirectory);

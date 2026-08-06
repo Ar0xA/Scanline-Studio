@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\ScanlineStudio.Abstractions\ScanlineStudio.Abstractions.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Settings\ScanlineStudio.Settings.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Radio\ScanlineStudio.Core.Radio.csproj" />

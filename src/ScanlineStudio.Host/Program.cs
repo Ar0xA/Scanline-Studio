@@ -26,7 +26,7 @@ namespace ScanlineStudio.Host;
 
 // Composition root — see spec/01-architecture.md. This is the only place allowed to call `new`
 // on concrete infrastructure types or register services with the DI container.
-internal static class Program
+internal static partial class Program
 {
     // Initialization code. Don't use any Avalonia, third-party APIs or any
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
@@ -35,7 +35,58 @@ internal static class Program
     public static void Main(string[] args)
     {
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(args);
-        hostBuilder.Services.AddSingleton<ISettingsStore>(new JsonSettingsStore());
+
+        // File provider alongside the console provider CreateApplicationBuilder already registers
+        // by default -- see FileLoggerProvider's own doc comment for why. Fixed, predictable path
+        // (not per-run-timestamped) so it can always be read directly without hunting for the
+        // latest file.
+        var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ScanlineStudio", "logs", "app.log");
+
+        // Debug is the default floor while this project is in active development/debugging (see
+        // docs/logging-guidelines.md) -- deliberately verbose, not the intended shipped default.
+        // Overridable via `--log-level <Level>` (any Microsoft.Extensions.Logging.LogLevel name,
+        // e.g. Information/Warning/Error) so verbosity is a launch-argument change, not a rebuild,
+        // once this flips to Information at the first real release tag.
+        var minimumLevel = LogLevel.Debug;
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i] != "--log-level")
+            {
+                continue;
+            }
+
+            // Enum.TryParse alone accepts out-of-range numeric strings too (e.g. "99" -> (LogLevel)99,
+            // which SetMinimumLevel then treats as "louder than Critical" -- silently disabling every
+            // log). IsDefined guards that. A value that fails to parse at all must not be swallowed
+            // silently either -- no logger exists yet at this point, so Console.Error is the only
+            // way this is ever visible.
+            if (Enum.TryParse<LogLevel>(args[i + 1], ignoreCase: true, out var parsedLevel) && Enum.IsDefined(parsedLevel))
+            {
+                minimumLevel = parsedLevel;
+            }
+            else
+            {
+                Console.Error.WriteLine($"Ignoring invalid --log-level value '{args[i + 1]}'; using {minimumLevel}. Valid values: {string.Join(", ", Enum.GetNames<LogLevel>())}.");
+            }
+
+            break;
+        }
+
+        hostBuilder.Logging.SetMinimumLevel(minimumLevel);
+
+        // An unwritable log directory (e.g. a read-only profile, a permissions issue) must not
+        // crash the app before a single log line exists -- fall back to console-only in that case,
+        // via the console provider CreateApplicationBuilder already registered above.
+        try
+        {
+            hostBuilder.Logging.AddProvider(new FileLoggerProvider(logPath));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to open log file at '{logPath}': {ex}. Continuing with console logging only.");
+        }
+
+        hostBuilder.Services.AddSingleton<ISettingsStore>(sp => new JsonSettingsStore(sp.GetRequiredService<ILogger<JsonSettingsStore>>()));
         hostBuilder.Services.AddTransient<MainViewModel>();
 
         // Options dialog -- transient so each open/close cycle gets a fresh OptionsSettingsService
@@ -113,7 +164,7 @@ internal static class Program
         // happens later, if the user actually selects Hamlib and tries to connect.
         hostBuilder.Services.AddSingleton<IRadioProtocolFactory, NoneRadioProtocolFactory>();
         hostBuilder.Services.AddSingleton<IRadioProtocolFactory, RigctldProtocolFactory>();
-        hostBuilder.Services.AddSingleton<IRadioProtocolFactory>(_ => HamlibProtocolFactory.Create());
+        hostBuilder.Services.AddSingleton<IRadioProtocolFactory>(sp => HamlibProtocolFactory.Create(loggerFactory: sp.GetRequiredService<ILoggerFactory>()));
         hostBuilder.Services.AddSingleton<IRadioController, RadioController>();
 
         // ScanlineStudio.Application services -- the only things ScanlineStudio.UI is allowed to depend on
@@ -121,45 +172,86 @@ internal static class Program
         hostBuilder.Services.AddSingleton<IRadioSessionService, RadioSessionService>();
         hostBuilder.Services.AddSingleton<ISstvSessionService, SstvSessionService>();
 
-        var host = hostBuilder.Build();
+        // A DI-graph error (a missing registration, a bad factory lambda) here is otherwise an
+        // unlogged crash before the window ever appears -- there is no logger to report through
+        // yet at this exact point (the host that would provide one failed to build), so this one
+        // site genuinely has to fall back to Console.Error rather than the file log.
+        Microsoft.Extensions.Hosting.IHost host;
+        try
+        {
+            host = hostBuilder.Build();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[CRITICAL] Host failed to build: {ex}");
+            throw;
+        }
+
         App.Services = host.Services;
+
+        var logger = host.Services.GetRequiredService<ILogger<App>>();
+        Log.Starting(logger, logPath, minimumLevel);
+
+        // Process-wide safety net: an exception that would otherwise crash the process with no
+        // trace at all now at least gets one line in the log file first. These fire from arbitrary
+        // threads, so they're wired as soon as a logger exists, before any further service is
+        // resolved or the UI starts.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.UnhandledException(logger, e.ExceptionObject, e.IsTerminating);
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            Log.UnobservedTaskException(logger, e.Exception);
+            e.SetObserved();
+        };
 
         // Eagerly resolved so its constructor's ISstvDecoder event subscriptions actually happen --
         // see the registration comment above for why this can't just rely on being a constructor
-        // dependency somewhere else the way ReceivedImageBuffer's own subscription does.
-        host.Services.GetRequiredService<ReceiveHistoryRecorder>();
+        // dependency somewhere else the way ReceivedImageBuffer's own subscription does. Guarded
+        // (previously wasn't) -- a failure here used to be an unlogged crash before the window ever
+        // appeared; logged and continued, matching every other startup step's own defensive shape.
+        try
+        {
+            host.Services.GetRequiredService<ReceiveHistoryRecorder>();
+        }
+        catch (Exception ex)
+        {
+            Log.ReceiveHistoryRecorderResolveFailed(logger, ex);
+        }
 
         // Auto-connect from persisted settings at startup -- the radio status strip (step 9) is a
         // fixed, read-only label, not an interactive "Connect" button (Phase 3 plan decision), so
         // this is the only place the initial connection attempt happens. A missing/unset radio
         // section resolves to NoneConnectionSpec (a first-class, always-valid state,
-        // spec/02-radio-layer.md) -- swallowed here defensively so a real connect failure can never
+        // spec/02-radio-layer.md) -- caught here defensively so a real connect failure can never
         // prevent the UI itself from starting; IRadioController's own reconnect/backoff machinery
-        // takes over from here via its ConnectionEvents/StateChanges streams.
+        // takes over from here via its ConnectionEvents/StateChanges streams. Logged, not silently
+        // swallowed, now that a logger exists.
         try
         {
             host.Services.GetRequiredService<IRadioSessionService>().ConnectUsingSettingsAsync().GetAwaiter().GetResult();
         }
-        catch
+        catch (Exception ex)
         {
+            Log.RadioAutoConnectFailed(logger, ex);
         }
 
         // Same reasoning as the radio auto-connect above: Phase 3 has no "Start Receiving" button
         // anywhere in the UI (the walking skeleton's own demo target is a session that's simply
         // listening once the app is up), so this is the only place capture starts. A missing/unset
-        // audio-device section throws InvalidOperationException from StartReceivingAsync -- swallowed
+        // audio-device section throws InvalidOperationException from StartReceivingAsync -- caught
         // here the same way, so a machine with no configured capture device still gets a working UI
         // (waterfall/RX image just stay empty) instead of failing to start at all.
         try
         {
             host.Services.GetRequiredService<ISstvSessionService>().StartReceivingAsync().GetAwaiter().GetResult();
         }
-        catch
+        catch (Exception ex)
         {
+            Log.StartReceivingFailed(logger, ex);
         }
 
         var lifetime = new ClassicDesktopStyleApplicationLifetime { Args = args };
         BuildAvaloniaApp().SetupWithLifetime(lifetime);
+        Log.AvaloniaLifetimeStarted(logger);
 
         // IAudioEngine is IAsyncDisposable-only (no IDisposable) -- the built-in ServiceProvider's
         // synchronous Dispose() throws for a singleton shaped that way ("type only implements
@@ -176,9 +268,9 @@ internal static class Program
         // all if a SamplesCaptured subscriber never returns -- that class's own doc comment
         // documents this as a known hazard), so an unbounded wait here could hang the whole
         // shutdown sequence; and DisposeAsync can throw (e.g. MiniAudioContext.Release() on a
-        // refcount imbalance). Bounded and swallowed here -- there is no logger in this project
-        // yet to report through, and a teardown failure at process exit must not prevent the
-        // process from actually exiting.
+        // refcount imbalance). Bounded and logged (not silently swallowed) here -- a teardown
+        // failure at process exit must not prevent the process from actually exiting, but should
+        // still be visible in the log file for a later "why didn't X clean up" investigation.
         //
         // Round-2-engine-review fix: Task.WhenAny's own result never rethrows the winning task's
         // fault -- a faulted DisposeAsync used to be silently discarded by WhenAny itself, never
@@ -188,6 +280,7 @@ internal static class Program
         // the catch below -- on fault, actually giving the try/catch something to do.
         lifetime.Exit += (_, _) =>
         {
+            Log.ShuttingDown(logger);
             try
             {
                 var disposeTask = ((IAsyncDisposable)host).DisposeAsync().AsTask();
@@ -196,14 +289,64 @@ internal static class Program
                 {
                     disposeTask.GetAwaiter().GetResult();
                 }
+                else
+                {
+                    Log.TeardownTimedOut(logger);
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                Log.TeardownThrew(logger, ex);
             }
         };
-        lifetime.Start(args);
+
+        try
+        {
+            lifetime.Start(args);
+        }
+        catch (Exception ex)
+        {
+            Log.LifetimeStartThrew(logger, ex);
+            throw;
+        }
     }
 
     // Avalonia configuration, don't remove; also used by the visual designer.
     public static AppBuilder BuildAvaloniaApp() => App.BuildAvaloniaApp();
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Information, Message = "Scanline Studio starting; logging to {LogPath} (minimum level {MinimumLevel})")]
+        public static partial void Starting(ILogger logger, string logPath, LogLevel minimumLevel);
+
+        [LoggerMessage(Level = LogLevel.Critical, Message = "Unhandled exception (IsTerminating={IsTerminating}): {ExceptionObject}")]
+        public static partial void UnhandledException(ILogger logger, object exceptionObject, bool isTerminating);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Unobserved task exception")]
+        public static partial void UnobservedTaskException(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to resolve ReceiveHistoryRecorder; RX images will not be auto-saved to history")]
+        public static partial void ReceiveHistoryRecorderResolveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Avalonia lifetime started")]
+        public static partial void AvaloniaLifetimeStarted(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Shutting down")]
+        public static partial void ShuttingDown(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Critical, Message = "ApplicationLifetime.Start threw")]
+        public static partial void LifetimeStartThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Initial radio auto-connect failed; continuing without a radio connection")]
+        public static partial void RadioAutoConnectFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Initial StartReceivingAsync failed; continuing without an active capture device")]
+        public static partial void StartReceivingFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Host teardown (DisposeAsync) did not complete within 10s; exiting anyway")]
+        public static partial void TeardownTimedOut(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Host teardown (DisposeAsync) threw; exiting anyway")]
+        public static partial void TeardownThrew(ILogger logger, Exception ex);
+    }
 }

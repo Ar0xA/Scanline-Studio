@@ -1,4 +1,6 @@
 using System.Net.Sockets;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Radio;
 
 namespace ScanlineStudio.Core.Radio;
@@ -22,12 +24,13 @@ namespace ScanlineStudio.Core.Radio;
 /// not a silent end of enumeration, so <c>RadioController</c>'s backoff/reconnect logic actually
 /// sees it.
 /// </summary>
-public sealed class TcpTransport : IRadioTransport
+public sealed partial class TcpTransport : IRadioTransport
 {
     private const int ReadBufferSize = 4096;
 
     private readonly string _host;
     private readonly int _port;
+    private readonly ILogger _logger;
     private readonly byte[] _readBuffer = new byte[ReadBufferSize];
     private int _readOffset;
     private int _readLength;
@@ -36,10 +39,13 @@ public sealed class TcpTransport : IRadioTransport
     private NetworkStream? _stream;
     private bool _disposed;
 
-    public TcpTransport(string host, int port)
+    // Optional, defaulting to a no-op logger: constructed via `new` in RigctldProtocolFactory,
+    // not through DI. RigctldProtocolFactory does pass its own real ILogger through today.
+    public TcpTransport(string host, int port, ILogger? logger = null)
     {
         _host = host;
         _port = port;
+        _logger = logger ?? NullLogger.Instance;
     }
 
     public bool IsOpen => _stream is not null;
@@ -57,8 +63,11 @@ public sealed class TcpTransport : IRadioTransport
         {
             await client.ConnectAsync(_host, _port, ct).ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
+            // Cleanup-and-rethrow, not a swallow -- the real failure is logged by RadioController,
+            // which owns the retry/backoff decision. Debug here just attributes it to this step.
+            Log.ConnectFailed(_logger, _host, _port, ex);
             client.Dispose();
             throw;
         }
@@ -67,6 +76,7 @@ public sealed class TcpTransport : IRadioTransport
         _stream = client.GetStream();
         _readOffset = 0;
         _readLength = 0;
+        Log.Connected(_logger, _host, _port);
     }
 
     public Task CloseAsync()
@@ -127,5 +137,14 @@ public sealed class TcpTransport : IRadioTransport
 
         _disposed = true;
         await CloseAsync().ConfigureAwait(false);
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TCP connect failed: {Host}:{Port}")]
+        public static partial void ConnectFailed(ILogger logger, string host, int port, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TCP connected: {Host}:{Port}")]
+        public static partial void Connected(ILogger logger, string host, int port);
     }
 }

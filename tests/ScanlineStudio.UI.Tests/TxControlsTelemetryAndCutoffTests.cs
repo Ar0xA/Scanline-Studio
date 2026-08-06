@@ -1,5 +1,6 @@
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
@@ -27,7 +28,8 @@ public sealed class TxControlsTelemetryAndCutoffTests
             new FakeFilePickerService { PathToReturn = "/tmp/a.png" },
             new FakeLocalizationService(),
             new FakeSettingsStore(),
-            radioSession);
+            radioSession,
+            NullLogger<TxControlsPaneViewModel>.Instance);
 
     [AvaloniaFact]
     public void MeterVisibility_RefreshesFromLatestCapabilities_NotJustAtConstruction()

@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Settings.Tests;
@@ -20,7 +21,7 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
     [Fact]
     public async Task SaveThenLoad_RoundTripsSchemaVersion()
     {
-        var store = new JsonSettingsStore(_settingsFilePath);
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
         var saved = new AppSettings();
 
         await store.SaveAsync(saved);
@@ -32,7 +33,7 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
     [Fact]
     public async Task LoadAsync_WhenFileDoesNotExist_ReturnsDefaultSettings()
     {
-        var store = new JsonSettingsStore(_settingsFilePath);
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
 
         var loaded = await store.LoadAsync();
 
@@ -43,7 +44,7 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
     [Fact]
     public async Task SaveThenLoad_RoundTripsAModuleSectionViaGenericExtensions()
     {
-        var store = new JsonSettingsStore(_settingsFilePath);
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
         var section = new SampleSection("hello", 42);
         var saved = new AppSettings().WithSection(SampleSection.SectionKey, section, SampleSectionJsonContext.Default.SampleSection);
 
