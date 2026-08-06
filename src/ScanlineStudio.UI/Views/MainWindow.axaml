@@ -280,13 +280,12 @@
                     <!-- Centre: Spectrum & waterfall + Incoming frame, both restyled in place
                          (Border Classes="plot" now lives inside WaterfallPaneView.axaml/
                          RxImagePaneView.axaml themselves); no new PlotView abstraction. Row 0 is
-                         184px, not mock2's own 154: our real NumericUpDown needed a taller 28px
-                         Height to stop clipping its own digits (a genuine Avalonia control-theme
-                         bug, not a mock-fidelity choice - see the NumericUpDown style override
-                         in Cards.axaml), so the 6-row settings column (Bins/px through the
-                         Both/Spec/WF segment) needs a bit more room than the mock's own reference
-                         value assumed. An earlier 220px guess here was too generous either way. -->
-                    <Grid Grid.Column="1" RowDefinitions="180,*,150" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
+                         mock2's own 154 (was bumped to 180 earlier this pass to work around a
+                         NumericUpDown clipping bug - that bug is now fixed at its root by
+                         ChromeOverrides.axaml's TextControlThemeMinHeight/Padding resources, so
+                         the workaround is no longer needed and the card was rendering visibly
+                         taller than mock2 as a result, per direct user feedback). -->
+                    <Grid Grid.Column="1" RowDefinitions="154,*,150" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
                         <!-- Spectrum & waterfall: WaterfallPaneView is the one real plot this app
                              has (a combined FFT/waterfall control, RxImage.DetectedModeText's own
                              sibling); there is no separate spectrum-only PlotView component, so
@@ -953,36 +952,45 @@
         </TabControl>
 
         <!-- Bottom status bar (mock2's own persistent readout row): a slim flat bar (top border
-             only, no full card chrome), not part of any tab or header card. RX uses mock2's own
-             accent-pill treatment (real IsReceiving); TX-inhibit stays an LED dot: it's a
-             distinct alert state, not a mode indicator, and mock2 doesn't show it at all. TX-
-             inhibit lights up when the last transmit attempt ended in an error/SWR-cutoff
-             (TxControls.ErrorMessage); this app has no persistent transmit-lockout state to
-             reflect more literally than that; see TxControlsPaneViewModel's own SWR-cutoff
-             design for why. DetectedMode reuses the real RxImagePaneViewModel.DetectedModeText;
-             LineProgress/SNR/Slant/Buffer/FramesToday/LogSize have no backing property anywhere
-             in the app (see RxImagePaneViewModel.DetectedMode's own doc comment on why per-line
-             SNR/slant tracking doesn't exist) and are literal placeholders, matching the same
-             precedent as the Receive tab's own scaffolding cards. -->
+             only, no full card chrome), not part of any tab or header card. Left/right split via
+             DockPanel matches mock2's own layout exactly - "frames today/log" pinned to the far
+             right edge, everything else flowing left. Receiving uses mock2's own accent-pill
+             treatment (real IsReceiving, text "Receiving" not "RX" to match mock2's literal
+             wording); TX-inhibit stays an LED dot + label - a distinct alert state, not a mode
+             indicator; mock2's own static render doesn't happen to show a not-inhibited state but
+             the concept/wiring is real and kept per direct user request. TX-inhibit lights up when
+             the last transmit attempt ended in an error/SWR-cutoff (TxControls.ErrorMessage); this
+             app has no persistent transmit-lockout state to reflect more literally than that; see
+             TxControlsPaneViewModel's own SWR-cutoff design for why. Frequency/Mode/DetectedMode
+             are real (RadioStatus.FrequencyDisplay/ModeDisplay, RxImage.DetectedModeText); M1/
+             LineProgress/SNR/Slant/Buffer/FramesToday/LogSize have no backing property anywhere in
+             the app (see RxImagePaneViewModel.DetectedMode's own doc comment on why per-line SNR/
+             slant tracking doesn't exist) and are literal placeholders matching mock2's own exact
+             values/wording, same precedent as the Receive tab's own scaffolding cards. -->
         <Border Grid.Row="3" Height="24" Background="{DynamicResource ScanlineStudioPanelBackgroundColor}" BorderBrush="{DynamicResource ScanlineStudioCardBorderColor}" BorderThickness="0,1,0,0">
-            <StackPanel Orientation="Horizontal" Spacing="9" Margin="12,0">
-                <Border Classes="pill" Classes.accentPill="{Binding RadioStatus.IsReceiving}" VerticalAlignment="Center">
-                    <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" />
-                </Border>
-                <StackPanel Orientation="Horizontal" Spacing="4">
-                    <Ellipse Classes="led" Classes.alert="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readoutSmall" Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxInhibit.Help}" VerticalAlignment="Center" />
+            <DockPanel Margin="12,0">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="9">
+                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.FramesTodayValue}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.LogSizeValue}" VerticalAlignment="Center" />
                 </StackPanel>
-                <TextBlock Classes="readout" Text="{Binding RadioStatus.FrequencyDisplay}" VerticalAlignment="Center" />
-                <TextBlock Classes="readout" Text="{Binding RadioStatus.ModeDisplay}" VerticalAlignment="Center" />
-                <TextBlock Classes="readout" Text="{Binding RxImage.DetectedModeText}" VerticalAlignment="Center" />
-                <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.LineProgressValue}" VerticalAlignment="Center" />
-                <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.SnrValue}" VerticalAlignment="Center" />
-                <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.SlantValue}" VerticalAlignment="Center" />
-                <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.BufferValue}" VerticalAlignment="Center" />
-                <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.FramesTodayValue}" VerticalAlignment="Center" />
-                <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.LogSizeValue}" VerticalAlignment="Center" />
-            </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="9">
+                    <Border Classes="pill" Classes.accentPill="{Binding RadioStatus.IsReceiving}" VerticalAlignment="Center">
+                        <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" />
+                    </Border>
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <Ellipse Classes="led" Classes.alert="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
+                        <TextBlock Classes="readoutSmall" Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxInhibit.Help}" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Classes="readout" Text="{Binding RadioStatus.FrequencyDisplay}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{Binding RadioStatus.ModeDisplay}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.MemoryTag}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{Binding RxImage.DetectedModeText}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.LineProgressValue}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.SnrValue}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.SlantValue}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.BufferValue}" VerticalAlignment="Center" />
+                </StackPanel>
+            </DockPanel>
         </Border>
     </Grid>
 
