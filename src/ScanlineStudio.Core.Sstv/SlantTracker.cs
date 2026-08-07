@@ -98,9 +98,13 @@ internal sealed class SlantTracker
 
         if (_totalLinesObserved >= FitPoints)
         {
-            // Main.cpp:3971-3981: jitter gate over the last 5 consecutive deltas.
+            // Main.cpp:3971-3981: jitter gate over the last 5 consecutive deltas (indices 15 down to
+            // 10 inclusive -- 5 deltas, one further back than the 5-point fit window below).
+            // ultracode audit finding #7: the loop bound used to be `i > HistorySize - FitPoints`
+            // (11), an off-by-one that checked only 4 deltas (indices 15..12) instead of legacy's 5,
+            // making this gate a strict superset-permissive subset of legacy's real check.
             var maxDelta = 0.0;
-            for (var i = HistorySize - 1; i > HistorySize - FitPoints; i--)
+            for (var i = HistorySize - 1; i > HistorySize - FitPoints - 1; i--)
             {
                 maxDelta = Math.Max(maxDelta, Math.Abs(_history[i] - _history[i - 1]));
             }
@@ -198,9 +202,38 @@ internal sealed class SlantTracker
         _currentSampleRate = correctedRate;
         _nominalSamplesPerLine = _lineDurationMs / 1000.0 * correctedRate;
 
+        // ultracode audit finding #9: legacy's UpdateSampFreq calls InitAutoStop (Main.cpp:3801-3810)
+        // immediately after every commit, fully reinitializing baseline/history/average/bitmask
+        // before the next correction is computed. An earlier version of this method left all of that
+        // stale, so a second correction was computed against a biased pre-correction baseline and a
+        // moving average still mixing pre/post-correction-rate samples -- and the bitmask latched
+        // permanently instead of re-arming, blocking a second large drift from ever being corrected.
+        Reset();
+
         return correctedRate;
+    }
+
+    /// <summary>Resets all per-baseline state to legacy's <c>InitAutoStop</c> defaults
+    /// (`Main.cpp:3801-3810`), called immediately after every correction commits (see
+    /// <see cref="TryComputeCorrection"/>) -- ultracode audit finding #9. Deliberately does NOT
+    /// touch <see cref="_currentSampleRate"/>/<see cref="_nominalSamplesPerLine"/>: those are the
+    /// evolving corrected rate itself, not per-baseline bookkeeping.</summary>
+    private void Reset()
+    {
+        Array.Clear(_history);
+        _totalLinesObserved = 0;
+        _linesSinceBaseline = 0;
+        _hasBaseline = false;
+        _baselinePosition = double.MaxValue;
+        _bitMask = 0;
+        _correctionAverage.Clear();
     }
 
     /// <summary><c>NormalSampFreq</c> (`ComLib.cpp:203-207`) -- rounds to the nearest 1/m fraction.</summary>
     private static double NormalSampleRate(double value, double precision) => (int)(value * precision + 0.5) / precision;
+
+    /// <summary>Test-only visibility into whether a baseline has been established yet -- lets a test
+    /// directly observe the jitter gate's pass/fail outcome (ultracode audit finding #7) without
+    /// waiting the further 3 lines a resulting correction would need.</summary>
+    internal bool HasBaselineForTests => _hasBaseline;
 }

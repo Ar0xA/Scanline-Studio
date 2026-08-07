@@ -10,12 +10,26 @@ internal sealed class YCbCrSequentialScanlineEncoder : IScanlineEncoder
 {
     public IEnumerable<(double FrequencyHz, double DurationMs)> GenerateLine(SstvModeDefinition mode, IImageSource image, int lineIndex)
     {
+        // ultracode audit finding #24: MR/ML's three 0.1ms inter-channel gaps hold the LAST
+        // TRANSMITTED PIXEL'S FREQUENCY (Main.cpp:6766-6782's `short d;` hoisted out of all 3 scan
+        // loops specifically to reuse it), not a fixed tone -- a fixed 1900Hz literal (this class's
+        // pre-fix behavior) is worse than "non-information-bearing": 1900Hz is itself an in-band
+        // mid-gray luma value, so it can pull an RX integration window straddling the gap toward
+        // gray, whereas legacy's hold is non-disturbing by construction. 1900.0 is only a fallback
+        // for the structurally-unreachable case of a hold segment appearing before any real tone.
+        var lastFrequencyHz = 1900.0;
+
         foreach (var lineSegment in mode.LineSegments)
         {
             switch (lineSegment)
             {
                 case SyncSegment sync:
+                    lastFrequencyHz = sync.FrequencyHz;
                     yield return (sync.FrequencyHz, sync.DurationMs);
+                    break;
+
+                case HoldPreviousFrequencySegment hold:
+                    yield return (lastFrequencyHz, hold.DurationMs);
                     break;
 
                 case ScanSegment scan:
@@ -31,7 +45,8 @@ internal sealed class YCbCrSequentialScanlineEncoder : IScanlineEncoder
                             "BY" => bMinusY,
                             _ => throw new NotSupportedException($"Unknown channel '{scan.ChannelName}'."),
                         };
-                        yield return (YCbCr.ColorToFreq(value, mode.LuminanceMinHz, mode.LuminanceMaxHz), perPixelDurationMs);
+                        lastFrequencyHz = YCbCr.ColorToFreq(value, mode.LuminanceMinHz, mode.LuminanceMaxHz);
+                        yield return (lastFrequencyHz, perPixelDurationMs);
                     }
 
                     break;

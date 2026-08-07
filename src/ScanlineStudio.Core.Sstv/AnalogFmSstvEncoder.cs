@@ -58,6 +58,14 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
         var phase = 0.0;
 
+        // ultracode audit finding #26: legacy's TX output bandpass filter is applied to EVERY emitted
+        // sample, unconditionally, as the last step of CSSTVMOD::Do() -- constructed locally, not as
+        // a field, so every EncodeAsync call gets fresh (zeroed) filter state, matching legacy's own
+        // per-transmission InitTXBuf -> m_BPF.Clear() reset (this encoder is a DI singleton; a
+        // ctor-field filter would leak state across calls). See TxOutputBandpassFilter's own doc
+        // comment for why this can't just reuse SearchBandpassFilter.
+        var bandpassFilter = new TxOutputBandpassFilter(SampleRate);
+
         // Running accumulator, not "round(durationMs -> samples) per segment": with ~245,000
         // individual per-pixel segments in a full image, independently rounding each one's sample
         // count biases every pixel the same direction and the error accumulates linearly (over a
@@ -71,7 +79,13 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
             ct.ThrowIfCancellationRequested();
 
             idealSamplesSoFar += durationMs / 1000.0 * SampleRate;
-            var targetEmitted = (long)Math.Round(idealSamplesSoFar);
+            // ultracode audit finding #25: legacy's CSSTVMOD::Do uses `for (; m_iPos < int(m_dPos); ...)`
+            // on an equivalent running accumulator -- floor/truncation, not round-to-nearest. Both are
+            // bounded (non-cumulative, +/-1 sample per segment boundary) and Math.Round is arguably
+            // more accurate (zero-mean vs legacy's 0.5-sample lag) -- this is a knowing parity trade
+            // for future sample-exact diffing against a legacy TX capture, not a "legacy is more
+            // correct" claim. Comment left here so a future reader doesn't "fix" this back to Round.
+            var targetEmitted = (long)idealSamplesSoFar;
             var samplesToEmit = targetEmitted - emittedSamples;
             emittedSamples = targetEmitted;
 
@@ -85,7 +99,10 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                     phase -= 2 * Math.PI;
                 }
 
-                yield return (float)Math.Sin(phase);
+                // Filtered in double, narrowed to float only here -- legacy's whole chain
+                // (CSSTVMOD::Do's `d`) is double; narrowing before filtering would lose precision
+                // the filter itself doesn't need to lose.
+                yield return (float)bandpassFilter.ProcessSample(Math.Sin(phase));
             }
         }
 

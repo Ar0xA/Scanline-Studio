@@ -362,9 +362,8 @@ public static class SstvModeRegistry
     // read from TMmsstv::LineMR (Main.cpp). Uses the two-byte "extended VIS" mechanism (escape
     // 0x23 + a second raw byte — see VisHeader.GenerateExtendedSegments), not a normal VIS code.
     // The three 0.1ms "hold last frequency" segments after each scan (analog PLL settling in real
-    // hardware) are approximated here as brief 1900Hz pulses rather than modeling the actual
-    // repeated-last-sample behavior — negligible at 0.1ms out of a 200-700ms line, and not
-    // information-bearing, but noted as a simplification rather than silently assumed identical.
+    // hardware) genuinely hold the last transmitted pixel's frequency in legacy (ultracode audit
+    // finding #24) -- ported via HoldPreviousFrequencySegment, not a fixed-tone approximation.
     private static SstvModeDefinition CreateMrFamilyMode(string id, string displayName, int extendedCode, int width, int height, double scanDurationMs) => new(
         Id: id,
         DisplayName: displayName,
@@ -378,11 +377,11 @@ public static class SstvModeRegistry
             new SyncSegment(DurationMs: 9.0, FrequencyHz: 1200),
             new SyncSegment(DurationMs: 1.0, FrequencyHz: 1500), // porch
             new ScanSegment(ChannelName: "Y", DurationMs: scanDurationMs),
-            new SyncSegment(DurationMs: 0.1, FrequencyHz: 1900), // hold, see note above
+            new HoldPreviousFrequencySegment(DurationMs: 0.1),
             new ScanSegment(ChannelName: "RY", DurationMs: scanDurationMs / 2),
-            new SyncSegment(DurationMs: 0.1, FrequencyHz: 1900), // hold
+            new HoldPreviousFrequencySegment(DurationMs: 0.1),
             new ScanSegment(ChannelName: "BY", DurationMs: scanDurationMs / 2),
-            new SyncSegment(DurationMs: 0.1, FrequencyHz: 1900), // hold
+            new HoldPreviousFrequencySegment(DurationMs: 0.1),
         ]);
 
     public static readonly SstvModeDefinition Mr73 = CreateMrFamilyMode("mr73", "MR73", 0x45, 320, 256, 138.0);
@@ -860,6 +859,17 @@ public static class SstvModeRegistry
         if (mode == P7)
         {
             return [64, 128, 220, 280];
+        }
+
+        // ultracode audit finding #8: PD120/PD180/PD240 are YCbCrLinePaired (2 image rows per
+        // transmission line, CreatePdMode's `ImageHeight: transmissionUnits * 2`), so the default
+        // formula below (which assumes 1 row/line, matching legacy's own default-branch modes) would
+        // use the doubled ImageHeight (496) instead of legacy's real transmitted line count `m_L`
+        // (248 for all three, Main.cpp:792/812/822) -- permanently placing the finest-tier threshold
+        // (212, not 460) out of reach for a mode that only ever transmits 248 lines.
+        if (mode == Pd120 || mode == Pd180 || mode == Pd240)
+        {
+            return [64, 128, 160, mode.ImageHeight / 2 - 36];
         }
 
         return [64, 128, 160, mode.ImageHeight - 36];

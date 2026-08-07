@@ -12,6 +12,16 @@ public class VisLockStateMachineTests
     private const int SampleRate = 11025;
 
     [Fact]
+    public void MsToSamples_30MsAt11025Hz_TruncatesTo330_NotRoundsTo331()
+    {
+        // ultracode audit finding #11: legacy assigns `30 * SampFreq/1000` (a double expression)
+        // directly to an int field, truncating (330.75 -> 330), not rounding (which would give 331).
+        var machine = new VisLockStateMachine(SampleRate, AnalogFmSstvDecoder.SLvl, AnalogFmSstvDecoder.SLvl2);
+
+        Assert.Equal(330, machine.MsToSamplesForTests(30.0));
+    }
+
+    [Fact]
     public void CleanNormalVisHeader_LocksTheRightMode()
     {
         var mode = SstvModeRegistry.MartinM1;

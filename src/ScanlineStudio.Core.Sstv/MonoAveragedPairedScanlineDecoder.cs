@@ -63,7 +63,8 @@ internal sealed class MonoAveragedPairedScanlineDecoder : IScanlineDecoder
                     * SstvModeRegistry.GetPixelPitchTrimFactor(mode, scan.ChannelName);
                 for (var x = 0; x < mode.ImageWidth; x++)
                 {
-                    var startSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
+                    // ultracode audit finding #29: ceiling, not round-to-nearest.
+                    var startSample = lineStartSample + (int)Math.Ceiling(idealSamplesSoFar);
                     idealSamplesSoFar += perPixelDurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(idealSamplesSoFar);
 

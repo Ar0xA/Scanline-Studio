@@ -44,8 +44,18 @@ namespace ScanlineStudio.Core.Sstv;
 /// filters internally in the scaled domain and converts to Hz only on <see cref="ProcessSample"/>'s
 /// return value.</item>
 /// <item><b>Decimation tiering</b> (`SetWidth`, `sstv.cpp:3022-3051`): tap count and phase-diff lag
-/// (`m_df`) tier on sample rate (`SampBase`, confirmed to mean the same thing as this port's own
-/// `sampleRate` parameter -- both are "the actual DSP sample rate," `ComLib.cpp:48-192`). Lag = 2^df
+/// (`m_df`) tier on sample rate. <b>Correction (ultracode audit finding #15):</b> the claim that
+/// `SampBase` "means the same thing as this port's own `sampleRate` parameter" is inaccurate.
+/// `SampBase` (`ComLib.cpp:48-192`) is the QUANTIZED nominal device rate (snapped to a fixed table);
+/// `SampFreq` is the actual, clock-calibrated rate, and it's `SampFreq` legacy feeds to
+/// `MakeHilbert`/`m_OFF`/`m_OUT` (`sstv.cpp:3014,3025-3030`) while tier SELECTION uses `SampBase`
+/// (`sstv.cpp:3032,3038`) -- two distinct globals for two distinct purposes. This port collapses both
+/// into one `sampleRate` parameter, which is currently harmless: this port has no clock calibration
+/// and only ever constructs at table-valued rates (11025/22050/44100), so the two legacy values would
+/// coincide anyway. This becomes a real divergence only if clock calibration (or a non-table device
+/// rate) is ever added -- at that point, tier selection should use the quantized nominal rate while
+/// `MakeHilbert`/`m_OFF`/`m_OUT` should use the calibrated rate, matching legacy's actual split.
+/// Lag = 2^df
 /// (1/2/4 samples), derived by hand-simulating the `m_A[0..3]` shift-register switch across several
 /// calls and independently re-confirmed by a second reviewer doing the same simulation fresh from
 /// source. The per-tier `m_OFF`/`m_OUT` multipliers (x2/x0.5 at df=1, x4/x0.25 at df=2) exist

@@ -101,11 +101,62 @@ public class SlantTests
     [InlineData("p3", 64, 200, 360, 448)]
     [InlineData("p5", 64, 200, 300, 380)]
     [InlineData("p7", 64, 128, 220, 280)]
+    // ultracode audit finding #8: PD120/180/240 are YCbCrLinePaired (2 image rows per transmission
+    // line), so the correct 4th threshold uses legacy's real transmitted line count `m_L` = 248 for
+    // all three (Main.cpp:792/812/822), i.e. 248-36=212 -- NOT the doubled ImageHeight (496-36=460,
+    // permanently unreachable for a mode that only ever transmits 248 lines).
+    [InlineData("pd120", 64, 128, 160, 212)]
+    [InlineData("pd180", 64, 128, 160, 212)]
+    [InlineData("pd240", 64, 128, 160, 212)]
     public void GetAutoSlantThresholdPositions_MatchesLegacyPerModeGrouping(string modeId, int p0, int p1, int p2, int p3)
     {
         var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
 
         Assert.Equal(new[] { p0, p1, p2, p3 }, SstvModeRegistry.GetAutoSlantThresholdPositions(mode));
+    }
+
+    [Fact]
+    public void SlantTracker_JitterGate_RejectsOnASpuriousReadingFiveLinesBack_NotJustFourLinesBack()
+    {
+        // ultracode audit finding #7: legacy's jitter gate checks 5 consecutive deltas (indices
+        // 15..10), not 4 (15..11). Feed 4 lines with a large spurious position (well above the
+        // mult*8 jitter threshold), then a 5th line whose delta from the 4th is small -- the BUGGY
+        // (4-delta) gate never looks back far enough to see the big jump into that spurious run, so
+        // it would incorrectly accept and set a baseline at line 5; the FIXED (5-delta) gate does see
+        // it (as |history[11]-history[10]|, history[10] still its zero-initialized default) and
+        // correctly rejects, matching legacy's real requirement of one more line of confirmation.
+        const double nominalSamplesPerLine = SampleRate * 0.15; // mult = (int)(6615/320) = 20, threshold = 8*20 = 160
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+
+        const double spuriousPosition = 1000.0; // >> 160
+        for (var line = 0; line < 4; line++)
+        {
+            tracker.ProcessLine(spuriousPosition);
+        }
+
+        tracker.ProcessLine(spuriousPosition); // 5th line: near-zero delta from the 4th, but a huge one from history[10]'s zero default
+
+        Assert.False(tracker.HasBaselineForTests, "Baseline was set on line 5 -- the jitter gate only checked 4 deltas instead of legacy's 5, missing the spurious jump into history[10]'s zero default.");
+    }
+
+    [Fact]
+    public void SlantTracker_JitterGate_AcceptsOnceTheSpuriousReadingAgesOutOfTheFiveDeltaWindow()
+    {
+        const double nominalSamplesPerLine = SampleRate * 0.15;
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+
+        const double spuriousPosition = 1000.0;
+        tracker.ProcessLine(spuriousPosition); // line 1 -- this is the one reading that must age out
+
+        // The 5-delta window (indices 15..10) reaches history[10] via its last delta -- a value fed
+        // at line 1 (starting at index 15) shifts one index left per subsequent line, so it only
+        // clears index 10 (moves to index 9) once 6 more lines have been fed (lines 2-7, 7 total).
+        for (var line = 0; line < 6; line++)
+        {
+            tracker.ProcessLine(0.0); // lines 2-7, all consistent with each other
+        }
+
+        Assert.True(tracker.HasBaselineForTests, "Baseline still not set by line 7 -- the spurious line-1 reading should have aged out of the 5-delta window by now.");
     }
 
     [Fact]
@@ -211,6 +262,83 @@ public class SlantTests
         // well under half that, even though legacy's own design means it won't reach the normal <=10
         // round-trip tolerance for a mismatch this severe.
         Assert.True(averageDelta < 60.0, $"Average per-channel delta {averageDelta:F2} -- expected meaningfully better than an uncorrected decode (~100+) even though full correction isn't expected for a mismatch this severe.");
+    }
+
+    [Fact]
+    public void SlantTracker_AfterACommit_BaselineResetsInsteadOfStayingStale()
+    {
+        // ultracode audit finding #9: legacy's UpdateSampFreq calls InitAutoStop immediately after
+        // every commit (Main.cpp:5600->3801-3810), fully reinitializing baseline/history/bitmask --
+        // the fixed baseline reset must be visible on the very same call that returns a correction,
+        // not lag a call behind.
+        const double nominalSamplesPerLine = SampleRate * 0.15;
+        const double trueSamplesPerLine = nominalSamplesPerLine * 1.01; // large enough to commit quickly
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+
+        double? result = null;
+        var trueCumulative = 0.0;
+        var assumedCumulative = 0.0;
+        var assumedSamplesPerLine = nominalSamplesPerLine;
+        for (var line = 0; line < 300 && result is null; line++)
+        {
+            trueCumulative += trueSamplesPerLine;
+            assumedCumulative += assumedSamplesPerLine;
+            result = tracker.ProcessLine(trueCumulative - assumedCumulative);
+        }
+
+        Assert.NotNull(result); // sanity: a correction actually happened within 300 lines
+        Assert.False(tracker.HasBaselineForTests, "Baseline was still set immediately after a commit -- Reset() should have cleared it (a fresh baseline is only re-established on the NEXT eligible line, matching legacy's InitAutoStop).");
+    }
+
+    [Fact]
+    public async Task AnalogFmSstvDecoder_SevereClockMismatch_SlantAccumulatorNeverExceedsOneLine_AcrossACommit()
+    {
+        // ultracode audit finding #10: on the line a correction commits, the within-line accumulator
+        // must carry against the OLD samples-per-line, not whatever the correction just changed it
+        // to -- otherwise a rate-change line produces a one-time jump of |old-new| samples instead of
+        // staying in [0, effectiveSamplesPerLine). Uses the same severe (1%) mismatch as
+        // AnalogFmSstvDecoder_SevereClockMismatch_ConvergesButDoesNotFullyCorrect specifically because
+        // its own doc comment confirms this converges quickly (i.e. commits at least once early),
+        // making a reintroduced jump easy to catch via this bound.
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(230, 230, 230));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = 44100;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.01);
+
+        var encoder = new AnalogFmSstvEncoder(trueSampleRate);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate);
+        var violated = false;
+        decoder.LineDecoded += _ =>
+        {
+            // Milestone-audit note: a milestone-audit suggestion to tighten this bound to strictly
+            // [0,1) was tried and reverted -- that invariant only holds immediately AFTER a
+            // slant-tracker line boundary commits, but this handler samples state at LineDecoded
+            // time (driven by PIXEL-decode progress, a different cursor than the slant tracker's own
+            // raw-sample cursor), so the carry can legitimately be anywhere in [0, effectiveSamplesPerLine)
+            // at the moment this fires, not just [0,1). Confirmed by testing: tightening this to
+            // >= 1.0 made a previously-passing (and still-correct) run fail. [0, effectiveSamplesPerLine)
+            // is the right bound for THIS sampling point; it still catches this test's own
+            // rate-increasing regression case (carry goes negative), which is what it was written for.
+            var carry = decoder.SlantIdealSamplesSoFarInLineForTests;
+            var bound = decoder.EffectiveSamplesPerLineForTests;
+            if (carry < 0.0 || carry >= bound)
+            {
+                violated = true;
+            }
+        };
+
+        decoder.PushSamples(samples.ToArray());
+
+        Assert.False(violated, "Slant accumulator left its valid [0, effectiveSamplesPerLine) range on some line -- likely a reintroduced boundary-jump bug on a rate-change commit.");
     }
 
     private static double ComputeAveragePerChannelDelta(IImageSource expected, IImageSource actual)

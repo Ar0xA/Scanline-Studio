@@ -57,12 +57,20 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
                 var pixelWalk = 0.0;
                 for (var x = 0; x < mode.ImageWidth; x++)
                 {
-                    var startSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
+                    // ultracode audit finding #29: ceiling, not round-to-nearest -- matches legacy's
+                    // real first-sample-at-or-after-boundary selection. Only startSample; endSample is
+                    // unused by ReadBare/ReadPeakPicked.
+                    var startSample = lineStartSample + (int)Math.Ceiling(segmentStartSample + pixelWalk);
                     pixelWalk += perPixelDurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
 
                     var freq = read(startSample, endSample);
                     var value = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+
+                    // ultracode audit finding #28: truncate in the RAW zero-centered domain, before
+                    // the +128 bias -- see RobotScanlineDecoder.cs's DecodePixels for the full
+                    // rationale (a truncate-after-shift would truncate in the wrong domain).
+                    value = Math.Truncate(value - 128.0) + 128.0;
                     destination[x] = clamp ? Math.Clamp(value, 0, 255) : value;
                 }
 
