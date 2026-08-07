@@ -152,7 +152,9 @@ internal static partial class Program
             var appSettings = sp.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult();
             var decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
                 ?? new SstvDecoderSettings();
-            return new RestartableSstvDecoder(afcEnabled: decoderSettings.AfcEnabled ?? true);
+            return new RestartableSstvDecoder(
+                afcEnabled: decoderSettings.AfcEnabled ?? true,
+                syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true);
         });
         hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
         hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));

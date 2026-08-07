@@ -73,6 +73,52 @@ public class MidReceptionRestartTests
         Assert.True(delta <= 14.0, $"Second (real) transmission average per-channel delta {delta:F2} exceeded tolerance.");
     }
 
+    [Fact]
+    public async Task TruncatedFirstTransmission_WithSyncRestartDisabled_NeverAbandonsOrRestarts()
+    {
+        // Same scenario as TruncatedFirstTransmission_AbandonsAndDecodesTheSecond above, but with the
+        // new SyncRestart toggle (port of legacy's real m_SyncRestart, sstv.cpp:1486, default 1) set
+        // to false -- the mid-reception restart trigger this test's sibling exercises (TryVisLockState
+        // Machine's own MID-reception, still-locked scan) must not run at all. The first (truncated)
+        // image is instead decoded straight through as (corrupted) garbage past the real truncation
+        // point until its own ImageHeight is reached normally -- no abandonment, so DecodeRestarted
+        // must never fire. Once that first image completes and _mode goes null again, ordinary
+        // pre-lock header detection is free to find the second transmission's still-undetected real
+        // header in whatever buffer remains -- so a second ModeDetected is still expected; the
+        // discriminating assertion is restartCount, not how many ModeDetected events fire.
+        var mode = SstvModeRegistry.MartinM1;
+        var sourceImage1 = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight, offset: 0);
+        var sourceImage2 = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight, offset: 64);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var samples1 = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage1))
+        {
+            samples1.Add(sample);
+        }
+
+        var truncatedSamples1 = samples1.Take(samples1.Count * 3 / 10).ToArray();
+
+        var samples2 = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage2))
+        {
+            samples2.Add(sample);
+        }
+
+        var combined = truncatedSamples1.Concat(samples2).ToArray();
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate, syncRestartEnabled: false);
+        var detectedModeCount = 0;
+        var restartCount = 0;
+        decoder.ModeDetected += _ => detectedModeCount++;
+        decoder.DecodeRestarted += _ => restartCount++;
+
+        decoder.PushSamples(combined);
+
+        Assert.Equal(0, restartCount); // the discriminating assertion -- see this test's own doc comment
+        Assert.True(detectedModeCount >= 1, "Never even detected the first transmission -- test setup problem.");
+    }
+
     private static ArrayImageSource CreateGradientTestImage(int width, int height, int offset)
     {
         var pixels = new Rgb24[width * height];

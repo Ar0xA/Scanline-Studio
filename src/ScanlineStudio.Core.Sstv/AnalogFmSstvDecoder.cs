@@ -472,10 +472,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // setting takes effect on the next app launch, not live.
     private readonly bool _afcEnabled;
 
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true)
+    // Port of legacy's real m_SyncRestart (default 1, sstv.cpp:1486, toggled via the "Lock" toolbar
+    // button, Main.cpp:10907/11887's SBLKClick) -- see the mid-reception restart call site in
+    // TryProcessBuffer for the full citation trail on why this port previously hard-wired it on.
+    // Restart-only, same reasoning as _afcEnabled above.
+    private readonly bool _syncRestartEnabled;
+
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true)
     {
         _sampleRate = sampleRate;
         _afcEnabled = afcEnabled;
+        _syncRestartEnabled = syncRestartEnabled;
         _demodulator = new HilbertFmDemodulator(sampleRate);
         _searchBandpassFilter = new SearchBandpassFilter(sampleRate);
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
@@ -1522,9 +1529,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // defaults: the whole switch only runs while locked because the enclosing gate at
                 // sstv.cpp:1889, `!m_Sync || m_SyncRestart || m_SyncAVT`, is satisfied by
                 // m_SyncRestart defaulting to 1 (sstv.cpp:1486), a real user-toggleable option
-                // (spec/14-roadmap.md) this port hard-wires on with no way to disable -- round-2-review
-                // correction, an earlier version of this comment said "ungated" without that
-                // qualification. Checked once per decoded line, not once per TryProcessBuffer
+                // now exposed as `_syncRestartEnabled` (see that field's own doc comment) -- this port
+                // no longer hard-wires it on with no way to disable. `_syncRestartEnabled` stands in
+                // for the whole `!m_Sync || m_SyncRestart || m_SyncAVT` gate at this call site
+                // specifically: `!m_Sync` is always false here (this branch only runs while locked)
+                // and this port has no `m_SyncAVT`-equivalent gating this particular call site today
+                // (unverified as a further gap, not silently assumed absent -- no such flag exists
+                // anywhere else in this class). Checked once per decoded line, not once per TryProcessBuffer
                 // call: for a bulk-pushed buffer containing a whole (possibly truncated)
                 // transmission followed immediately by a second one, the loop above would otherwise
                 // just keep decoding every available sample as if it were more lines of the *first*
@@ -1539,7 +1550,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // own gates, sstv.cpp:1949/1959, by mistake). Bounded to
                 // _consumedSamples (the current decode position), NOT the whole buffer -- see
                 // TryVisLockStateMachine's own doc comment for the bulk-vs-streaming bug this bound fixes.
-                if (TryVisLockStateMachine(_consumedSamples))
+                if (_syncRestartEnabled && TryVisLockStateMachine(_consumedSamples))
                 {
                     restarted = true;
                     // The abandoned (local `mode`, captured at the top of this outer-loop iteration),
@@ -2474,9 +2485,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // the whole switch (sstv.cpp:1897) only runs at all while m_Sync is set because of the
         // enclosing gate at sstv.cpp:1889, `if(!m_Sync || m_SyncRestart || m_SyncAVT)`, which is
         // satisfied by m_SyncRestart defaulting to 1 (sstv.cpp:1486) -- a real, user-toggleable option
-        // (Option.cpp:611, Main.cpp:1857/10907/11887, already logged at spec/14-roadmap.md) that this
-        // port hard-wires on with no way to disable. So "the same way legacy does" means "at legacy's
-        // shipped defaults," not "unconditionally in every configuration." That framing correction
+        // (Option.cpp:611, Main.cpp:1857/10907/11887) now exposed as `_syncRestartEnabled` (see that
+        // field's own doc comment) -- this port no longer hard-wires it on with no way to disable. So
+        // "the same way legacy does" means "at legacy's shipped defaults," not "unconditionally in
+        // every configuration." That framing correction
         // doesn't change the substance: this remains a genuine improvement in fidelity relative to
         // this port's own prior (accidentally-inert) behavior, but one that extends
         // VisLockStateMachine's own already-documented, already-accepted false-positive risk (see its

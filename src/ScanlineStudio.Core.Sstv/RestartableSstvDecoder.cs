@@ -51,6 +51,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     internal const long DefaultCriticalThresholdSamples = 13L * 3600 * ProductionSampleRate;
 
     private readonly bool _afcEnabled;
+    private readonly bool _syncRestartEnabled;
     private readonly long _warningThresholdSamples;
     private readonly long _criticalThresholdSamples;
     private readonly object _gate = new();
@@ -84,17 +85,18 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    public RestartableSstvDecoder(bool afcEnabled = true)
-        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples)
+    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true)
+        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples, syncRestartEnabled)
     {
     }
 
     /// <summary>Test-only seam for injecting short thresholds instead of the real 12h/13h ones --
     /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
     /// trigger is sample-count-based, not wall-clock-based.</summary>
-    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples)
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true)
     {
         _afcEnabled = afcEnabled;
+        _syncRestartEnabled = syncRestartEnabled;
         _warningThresholdSamples = warningThresholdSamples;
         _criticalThresholdSamples = criticalThresholdSamples;
         _inner = CreateInner();
@@ -211,7 +213,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private AnalogFmSstvDecoder CreateInner()
     {
-        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled);
+        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled);
         decoder.LineDecoded += OnLineDecoded;
         decoder.ModeDetected += OnModeDetected;
         decoder.DecodeRestarted += OnDecodeRestarted;
