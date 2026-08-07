@@ -333,5 +333,15 @@ internal sealed class VisLockStateMachine
         return null;
     }
 
-    private int MsToSamples(double ms) => (int)Math.Round(ms / 1000.0 * _sampleRate);
+    // ultracode audit finding #11: legacy assigns a `double` ms-expression directly to an `int`
+    // (sstv.cpp e.g. `m_SyncTime = 30 * sys.m_SampFreq/1000`), which truncates toward zero in C++ --
+    // not a deliberate quantization choice, just what implicit double->int narrowing does. Math.Round
+    // matched neither that nor intuitive rounding (it's MidpointRounding.ToEven, a third distinct
+    // rule) and can only ever make a window LONGER than the signal it measures. Kept as truncation
+    // purely for golden-vector parity/tractability against a legacy capture, not because legacy's
+    // truncation is itself more "correct" -- real decode impact is <=1 sample per ~330-sample window.
+    private int MsToSamples(double ms) => (int)(ms / 1000.0 * _sampleRate);
+
+    /// <summary>Test-only visibility into <see cref="MsToSamples"/> (ultracode audit finding #11).</summary>
+    internal int MsToSamplesForTests(double ms) => MsToSamples(ms);
 }

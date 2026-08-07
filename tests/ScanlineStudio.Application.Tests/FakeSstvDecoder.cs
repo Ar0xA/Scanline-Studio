@@ -14,6 +14,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public event Action<SstvModeDefinition>? DecodeRestarted;
 
+    public int ResetAgcCallCount { get; private set; }
+
+    public void ResetAgc() => ResetAgcCallCount++;
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
         PushedSamples.Add(samples);

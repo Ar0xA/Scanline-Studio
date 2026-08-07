@@ -83,4 +83,32 @@ public class LevelAgcTests
         Assert.Equal(oncePerWindow.CurMax, perSample.CurMax);
         Assert.Equal(oncePerWindow.Agc(1.0), perSample.Agc(1.0));
     }
+
+    [Fact]
+    public void Init_ResetsToPowerOnDefaults_EvenAfterAdaptingToALoudWindow()
+    {
+        // ultracode audit finding #6: legacy resets CLVL at every TX<->RX transition
+        // (Sound.cpp:398,443) -- Init() must fully undo whatever gain/peak state a prior RX session
+        // adapted to, not just partially.
+        var agc = new LevelAgc(SampleRate);
+        var cntMax = (int)(SampleRate * 100 / 1000.0);
+        for (var i = 0; i < cntMax; i++)
+        {
+            agc.Do(10000.0);
+            agc.Fix();
+        }
+
+        Assert.Equal(10000.0, agc.CurMax); // sanity: it really did adapt first
+
+        agc.Init();
+
+        Assert.Equal(0.0, agc.CurMax);
+        Assert.Equal(5.0, agc.Agc(5.0)); // m_agc back to 1.0
+
+        // A subsequent quiet window must behave exactly as it would on a freshly-constructed
+        // instance -- not carry over any trace of the pre-Init _max accumulator.
+        agc.Do(20.0);
+        agc.Fix();
+        Assert.Equal(0.0, agc.CurMax); // one sample is nowhere near cntMax -- Fix() still no-ops
+    }
 }

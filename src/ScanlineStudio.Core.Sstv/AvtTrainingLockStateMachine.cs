@@ -230,5 +230,11 @@ internal sealed class AvtTrainingLockStateMachine
         return null;
     }
 
-    private int MsToSamples(double ms) => (int)Math.Round(ms / 1000.0 * _sampleRate);
+    // ultracode audit finding #11 -- see VisLockStateMachine.MsToSamples' doc comment for the full
+    // rationale: legacy's int assignment truncates (C narrowing), not rounds; kept as truncation here
+    // purely for golden-vector parity, not because it's more "correct" than rounding.
+    private int MsToSamples(double ms) => (int)(ms / 1000.0 * _sampleRate);
+
+    /// <summary>Test-only visibility into <see cref="MsToSamples"/> (ultracode audit finding #11).</summary>
+    internal int MsToSamplesForTests(double ms) => MsToSamples(ms);
 }

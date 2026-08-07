@@ -24,6 +24,74 @@ public class PixelPitchSegmentBoundaryTests
     private const int SampleRate = 11025;
 
     [Fact]
+    public void RgbSequentialScanlineDecoder_PixelStartSample_UsesCeiling_NotRoundToNearest()
+    {
+        // ultracode audit finding #29: legacy's real pixel-boundary selection (the first integer
+        // sample index where the mapped pixel index changes, given a monotone walk + "first wins"
+        // gate) is effectively a CEILING, not round-to-nearest -- round-to-nearest can read up to
+        // half a pixel into the PREVIOUS pixel's territory. Searches for a sample rate where
+        // Math.Ceiling and Math.Round(MidpointRounding.ToEven) actually disagree for this mode's real
+        // per-pixel step (avoiding a fragile hand-picked constant), then drives the real decoder and
+        // asserts it used the CEILING value, not the round value, at that exact pixel.
+        var mode = SstvModeRegistry.ScottieS1;
+        var scan = mode.LineSegments.OfType<ScanSegment>().First();
+        var trimFactor = SstvModeRegistry.GetPixelPitchTrimFactor(mode, scan.ChannelName);
+
+        // segmentStartSample must match the REAL decoder's accumulation: the sum (in samples, at
+        // whatever candidateRate is being tried) of every LineSegment's FULL duration before this
+        // scan segment -- Scottie's real per-line order has a leading separator before its first
+        // scan (G), so this is NOT 0.
+        double SegmentStartSample(int rate) => mode.LineSegments.TakeWhile(s => s != scan).Sum(s => s.DurationMs / 1000.0 * rate);
+
+        int? discriminatingPixelIndex = null;
+        int sampleRate = 0;
+        double expectedCeilBoundary = 0;
+        double expectedRoundBoundary = 0;
+
+        for (var candidateRate = 11025; candidateRate < 11225 && discriminatingPixelIndex is null; candidateRate++)
+        {
+            var segmentStartSample = SegmentStartSample(candidateRate);
+            var perPixelDurationMs = scan.DurationMs / mode.ImageWidth * trimFactor;
+            var pixelWalk = 0.0;
+            for (var x = 1; x < mode.ImageWidth; x++)
+            {
+                pixelWalk += perPixelDurationMs / 1000.0 * candidateRate;
+                var ceilBoundary = Math.Ceiling(segmentStartSample + pixelWalk);
+                var roundBoundary = Math.Round(segmentStartSample + pixelWalk);
+                if (ceilBoundary != roundBoundary)
+                {
+                    discriminatingPixelIndex = x;
+                    sampleRate = candidateRate;
+                    expectedCeilBoundary = ceilBoundary;
+                    expectedRoundBoundary = roundBoundary;
+                    break;
+                }
+            }
+        }
+
+        Assert.NotNull(discriminatingPixelIndex); // sanity: the search itself must find a real discriminating case
+        Assert.NotEqual(expectedCeilBoundary, expectedRoundBoundary); // sanity: the two candidates really do differ
+
+        var decoder = new RgbSequentialScanlineDecoder();
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        var recordedStartSamples = new List<int>();
+        double RecordingStub(int index)
+        {
+            recordedStartSamples.Add(index);
+            return 1900.0;
+        }
+
+        var reader = new PixelSampleReader(RecordingStub, ksbSamples: 1, lineEndSampleExclusive: int.MaxValue, luminanceMinHz: mode.LuminanceMinHz, neverPeakPicks: true);
+        decoder.DecodeLine(mode, sampleRate, lineStartSample: 0, lineIndex: 0, reader, pixels);
+
+        // The first scan segment's calls are recorded first, one per pixel, in order -- index
+        // discriminatingPixelIndex (0-based pixel x) is recordedStartSamples[discriminatingPixelIndex].
+        var actualStartSample = recordedStartSamples[discriminatingPixelIndex!.Value];
+        Assert.Equal((int)expectedCeilBoundary, actualStartSample);
+        Assert.NotEqual((int)expectedRoundBoundary, actualStartSample);
+    }
+
+    [Fact]
     public async Task MartinM1_RChannel_StepEdgeLandsAtCorrectColumn_NotShiftedByAccumulatedDrift()
     {
         // Martin M1's real per-line channel order is G, B, R (TX-verified this session's own

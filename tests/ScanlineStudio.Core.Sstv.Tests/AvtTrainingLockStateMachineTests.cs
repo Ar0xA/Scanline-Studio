@@ -12,6 +12,16 @@ public class AvtTrainingLockStateMachineTests
     private const int SampleRate = 11025;
 
     [Fact]
+    public void MsToSamples_BitWindowAt11025Hz_TruncatesTo107_NotRoundsTo108()
+    {
+        // ultracode audit finding #11: legacy assigns `9.7646 * SampFreq/1000` (107.654) directly to
+        // an int field, truncating to 107, not rounding to 108.
+        var machine = new AvtTrainingLockStateMachine(SampleRate);
+
+        Assert.Equal(107, machine.MsToSamplesForTests(9.7646));
+    }
+
+    [Fact]
     public void FullTrainingSequence_CompletesWithinExpectedBudget()
     {
         var demodulated = RenderTrainingSequenceAsDemodulatedHz(SstvModeRegistry.Avt.VisCode);

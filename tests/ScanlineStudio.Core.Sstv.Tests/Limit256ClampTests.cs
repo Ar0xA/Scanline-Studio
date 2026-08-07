@@ -40,8 +40,8 @@ public class Limit256ClampTests
 
         // Deviation from the tone-selector's own 1900Hz midpoint is +800Hz (decisive, >= 200Hz
         // threshold) -> Main.cpp:4291's `d>=0` branch -> B-Y selected, R-Y stays at its unwritten
-        // default (0.0).
-        var (expectedR, expectedG, expectedB) = YCbCr.ToRgb(255, 0, ExpectedRawValue);
+        // default -- 128.0 (neutral chroma), not 0.0, since ultracode audit finding #27's fix.
+        var (expectedR, expectedG, expectedB) = YCbCr.ToRgb(255, 128, ExpectedRawValue);
         var actualPixel = pixels[0];
         Assert.Equal(expectedR, actualPixel.R);
         Assert.Equal(expectedG, actualPixel.G);

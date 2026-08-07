@@ -116,4 +116,25 @@ public sealed class WaterfallSourceTests
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new WaterfallSource(sampleRate: 8000, windowSize: 64, hopSize: hopSize));
     }
+
+    [Theory]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    [InlineData(float.NaN)]
+    public void PushSamples_NonFiniteSample_EmittedFrameHasNoNonFiniteBins(float nonFiniteValue)
+    {
+        // ultracode audit finding #18: legacy clamps input to +-32768 before windowing; this port had
+        // no equivalent guard, and _hannWindow[0]==0f means Inf*0=NaN corrupts the WHOLE frame
+        // (windowing alone doesn't isolate the damage to just the one bad sample's own bin).
+        using var source = new WaterfallSource(sampleRate: 8000, windowSize: 64);
+        var frames = new List<WaterfallFrame>();
+        source.Frames.Subscribe(frames.Add);
+
+        var samples = new float[64];
+        samples[10] = nonFiniteValue;
+        source.PushSamples(samples);
+
+        Assert.Single(frames);
+        Assert.All(frames[0].MagnitudesDb, db => Assert.True(float.IsFinite(db), $"Non-finite bin value {db} -- a single non-finite input sample corrupted the whole frame."));
+    }
 }

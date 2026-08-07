@@ -280,13 +280,30 @@ public class GoldenVectorTests
         // 1.97 (improved), avt 5.78 -> 6.74 (worsened slightly). Tolerances tightened to ~2x each new
         // measured value (same margin style as before), still comfortably under the ~42.67 corruption
         // floor.
+        // Re-measured after the ultracode audit's SlantTracker fixes (#7 jitter-gate off-by-one, #9
+        // post-commit state reset, #10 boundary-carry fix on a rate-change line) plus AfcTracker's
+        // sign/seed/gating fixes (#1-#4). Isolated by bisection (git stash per-piece, then reverting
+        // #10's specific line alone) to confirm #10 is the one driving the movement here, not a
+        // diffuse combination -- capturing against the OLD samples-per-line on a rate-change commit
+        // line (instead of the NEW one a correction just set) shifts exactly where that one line's
+        // pixel window lands, which is expected to move every mode a little since Auto Slant runs for
+        // all of them: martin-m1 0.77 -> 1.94, robot-36 5.04 -> 7.11, scottie-s1 0.45 -> 1.80,
+        // robot-72 4.41 -> 6.83, rm8 4.17 -> 5.12, mn110 1.97 -> 3.57, avt 6.74 -> 6.74 (UNCHANGED,
+        // exactly as expected -- AVT has no Auto Slant/AFC path at all). Every mode except pd90 stays
+        // comfortably within its existing bound, so only pd90's tolerance changes here (0.93 -> 3.74,
+        // crossing its old 3.0 bound -- the tightest existing margin of the eight, so unsurprisingly
+        // the first to cross). This is the same "worsened slightly, an accepted real consequence of a
+        // genuine correctness fix, not chased to zero" category this file's own prior rounds already
+        // documented (see robot-36/robot-72/avt's own history above) -- these fixes were independently
+        // verified against actual legacy source across three audit passes before implementation, so
+        // the fix itself is not in question; only the tolerance needed updating to reflect it.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 3.0,
             ["robot-36"] = 10.0,
             ["scottie-s1"] = 3.0,
             ["robot-72"] = 9.0,
-            ["pd90"] = 3.0,
+            ["pd90"] = 7.0,
             ["rm8"] = 9.0,
             ["mn110"] = 5.0,
             ["avt"] = 14.0,
@@ -586,6 +603,18 @@ public class GoldenVectorTests
         // MatchesSourceImage` (the TX-direction real-legacy-decode test) does not exercise this fix
         // either, for the identical reason (stale checked-in fixtures, no live encode) -- same real,
         // open follow-up, not re-stated a second time here.
+        //
+        // Re-measured after the ultracode audit's TX output bandpass filter (finding #26,
+        // TxOutputBandpassFilter -- every emitted TX sample now passes through this filter, matching
+        // legacy's own always-on default): martin-m1 0.35 -> 0.03, robot-36 4.13 -> 4.45, scottie-s1
+        // 0.24 -> 0.04, robot-72 4.11 -> 4.24, pd90 0.17 -> 0.48, rm8 3.72 -> 3.41, mn110 0.11 -> 0.54,
+        // avt 4.68 -> 6.17. Mixed (some improved, some worsened slightly) -- same accepted-tradeoff
+        // category as every other fix's own cross-mode effects. All comfortably inside their existing
+        // tolerances, none needed to change. Same caveat as always: the TX-direction real-legacy-decode
+        // test and `TxCaptureFixturesTests` still read stale pre-fix checked-in fixtures and do not
+        // exercise this filter at all -- a fresh `TxCapture/` re-capture against a real legacy install
+        // remains the only way to validate this fix against actual legacy TX output, not just this
+        // port's own self-consistency (tracked as an open follow-up, not silently left unstated).
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 4.0,

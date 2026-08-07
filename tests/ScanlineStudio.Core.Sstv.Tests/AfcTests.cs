@@ -1,3 +1,5 @@
+using ScanlineStudio.Core.Imaging;
+
 namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
@@ -37,17 +39,17 @@ public class AfcTests
     [Fact]
     public void AfcTracker_ExactSyncFrequency_LocksWithCalibrationOffsetOnly()
     {
-        // SyncFreq's `d -= 128` (sstv.cpp:2347) is a small fixed calibration nudge applied to every
-        // reading before it's used, ported as-is (see AfcTracker's constructor comment) rather than
-        // dropped as presumed-insignificant -- so even a perfectly on-frequency reading locks a
-        // small nonzero correction, not exactly 0: 128 in legacy's x16384/BWH scale is
-        // 128*400/16384 = 3.125Hz here. correction = syncTarget - (input - calibrationOffset) =
-        // (syncTarget - input) + calibrationOffset = 0 + 3.125.
+        // SyncFreq's `d -= 128` (sstv.cpp:2347), translated out of legacy's inverted/scaled x16384/BWH
+        // domain, corresponds to ADDING 128*BWH/16384 real Hz to the measured reading before it's used
+        // (ultracode audit finding #2 -- an earlier version of this had the sign backwards, which this
+        // test's own then-expected value of +3.125 baked in as a regression-locking bug). 128 in that
+        // scale is 128*400/16384 = 3.125Hz here. correction = syncTarget - (measured + calibrationOffset)
+        // = (syncTarget - measured) - calibrationOffset = 0 - 3.125.
         var tracker = new AfcTracker(SampleRate, syncTargetHz: 1200, bandLowHz: 1000, bandHighHz: 1325, afcBeginMs: 1.5, afcWidthMs: 3.0, bandwidthHalfHz: 400);
 
         var correction = FeedConstantReading(tracker, 1200.0, durationMs: 50);
 
-        Assert.Equal(3.125, correction, tolerance: 0.01);
+        Assert.Equal(-3.125, correction, tolerance: 0.01);
     }
 
     [Fact]
@@ -55,15 +57,15 @@ public class AfcTests
     {
         // If the sync tone actually measures at 1210Hz instead of the expected 1200Hz, the
         // correction that AfcTracker.ProcessSample returns (and that AnalogFmSstvDecoder adds to
-        // every subsequent demodulated sample) is (syncTarget - measured) + calibrationOffset =
-        // (1200 - 1210) + 3.125 = -6.875, per CSSTVDEM::SyncFreq's
+        // every subsequent demodulated sample) is (syncTarget - measured) - calibrationOffset =
+        // (1200 - 1210) - 3.125 = -13.125, per CSSTVDEM::SyncFreq's
         // `m_AFCDiff = m_AFC_SyncVal - m_AFCLock` (sstv.cpp:2360) plus the same calibration nudge as
-        // the exact-frequency case above.
+        // the exact-frequency case above (ultracode audit finding #2 -- corrected sign).
         var tracker = new AfcTracker(SampleRate, syncTargetHz: 1200, bandLowHz: 1000, bandHighHz: 1325, afcBeginMs: 1.5, afcWidthMs: 3.0, bandwidthHalfHz: 400);
 
         var correction = FeedConstantReading(tracker, 1210.0, durationMs: 50);
 
-        Assert.Equal(-6.875, correction, tolerance: 0.01);
+        Assert.Equal(-13.125, correction, tolerance: 0.01);
     }
 
     [Fact]
@@ -84,12 +86,57 @@ public class AfcTests
         // MN/MC ("narrow") family: NARROW_SYNC=1900, NARROW_AFCLOW=1800, NARROW_AFCHIGH=1950,
         // NARROW_BWH=128 (sstv.h) -- a much smaller calibration offset here (128*128/16384 = 1.0Hz)
         // since it scales with BWH. A tone measured 5Hz high (1905 instead of 1900) locks
-        // (1900-1905)+1.0 = -4.0Hz.
+        // (1900-1905)-1.0 = -6.0Hz (ultracode audit finding #2 -- corrected sign; the pre-fix value
+        // was -4.0).
         var tracker = new AfcTracker(SampleRate, syncTargetHz: 1900, bandLowHz: 1800, bandHighHz: 1950, afcBeginMs: 1.5, afcWidthMs: 3.0, bandwidthHalfHz: 128);
 
         var correction = FeedConstantReading(tracker, 1905.0, durationMs: 50);
 
-        Assert.Equal(-4.0, correction, tolerance: 0.01);
+        Assert.Equal(-6.0, correction, tolerance: 0.01);
+    }
+
+    [Fact]
+    public void AfcTracker_GuardTimeoutBeforeFirstLock_LockAverageSeededWithSyncTarget_NotZero()
+    {
+        // ultracode audit finding #3: legacy's InitAFC pre-seeds m_AFCLock/m_AFCData to the nominal
+        // sync-tone-equivalent value (sstv.cpp:1662/1665) before the 15-tap lock average has ever
+        // filled. 10 near-miss cycles (each a stable in-band run that never reaches _afcEndSamples --
+        // expired early by toggling out of band right after arming) exhaust _gardRemaining (starts
+        // at 10, sstv.cpp:1659) and trigger `_lockAverage.Reset(_lockedFrequencyHz)`. With this fix,
+        // _lockedFrequencyHz is still its seeded syncTargetHz (1200) at that point (none of the
+        // near-miss cycles ever locked), so the 15-tap average is now full of 1200s. A subsequent
+        // genuine dead-on-target lock takes the OTHER branch (_lockAverage.Add, since gard is now 0),
+        // blending in just ONE new ~1203.125 sample against 14 seeded 1200s:
+        // (14*1200 + 1203.125)/15 = 1200.2083, correction = 1200 - 1200.2083 = -0.2083 -- small, as
+        // AFC correcting an on-frequency signal should be. Contrast the pre-fix bug: seeding with 0
+        // instead would give (14*0 + 1203.125)/15 = 80.21, correction = 1200 - 80.21 = +1119.79 -- a
+        // grossly wrong ~1120Hz correction, matching the audit's measured figure.
+        var tracker = new AfcTracker(SampleRate, syncTargetHz: 1200, bandLowHz: 1000, bandHighHz: 1325, afcBeginMs: 1.5, afcWidthMs: 3.0, bandwidthHalfHz: 400);
+
+        for (var i = 0; i < 10; i++)
+        {
+            FeedNearMissCycle(tracker);
+        }
+
+        var correction = FeedConstantReading(tracker, 1200.0, durationMs: 50);
+
+        Assert.Equal(-0.2083, correction, tolerance: 0.01);
+        Assert.True(Math.Abs(correction) < 50.0, $"Correction {correction} is nowhere near the seeded-with-syncTarget expectation -- looks like the pre-fix zero-seeded bug.");
+    }
+
+    /// <summary>Feeds an in-band run just long enough to pass <c>_afcBeginSamples</c> (arming the
+    /// guard-timeout countdown) but drops out of band before <c>_afcEndSamples</c> (never actually
+    /// locking) -- one iteration of the "stable but never quite locks" pattern that exhausts
+    /// <c>_gardRemaining</c>.</summary>
+    private static void FeedNearMissCycle(AfcTracker tracker)
+    {
+        var beginSamples = (int)(1.5 / 1000.0 * SampleRate);
+        for (var i = 0; i < beginSamples + 1; i++)
+        {
+            tracker.ProcessSample(1200.0);
+        }
+
+        tracker.ProcessSample(1900.0); // drop out of band -- never reaches _afcEndSamples
     }
 
     [Fact]
@@ -112,6 +159,58 @@ public class AfcTests
         decoder.InitializeAfcForTests(SstvModeRegistry.Robot36);
 
         Assert.False(decoder.HasAfcTrackerForTests);
+    }
+
+    [Fact]
+    public async Task AnalogFmSstvDecoder_RealMistunedDecode_RetunesSyncEnvelopeDetector_ButNotVisTimeDetector()
+    {
+        // ultracode audit finding #1: legacy's InitTone retunes the Auto-Slant sync-envelope
+        // resonator on every AFC lock update, but must NOT retune the separate VIS-time tone
+        // detectors legacy never retunes this way. Uses the same real encode-at-a-mistuned-rate,
+        // decode-at-the-declared-rate pattern as NarrowModeAfcTests (a genuine carrier offset a
+        // same-process synthetic round-trip otherwise has none of) so this exercises the real
+        // production call path (ApplyAfcCorrections), not a hand-rolled test-only substitute for it.
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new ScanlineStudio.Abstractions.Imaging.Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new ScanlineStudio.Abstractions.Imaging.Rgb24(200, 120, 60));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = 44100;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.0005); // same 500ppm mismatch SlantTests/NarrowModeAfcTests use
+
+        var encoder = new AnalogFmSstvEncoder(trueSampleRate);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate);
+
+        // Snapshot on every LineDecoded, not after PushSamples returns: EndOfImage nulls
+        // _syncEnvelopeDetector once the whole (single-frame) image finishes decoding within this
+        // one PushSamples call, so a post-call read would always see null.
+        double? lastSyncEnvelopeFrequency = null;
+        double? lastBypassFrequency = null;
+        decoder.LineDecoded += _ =>
+        {
+            lastSyncEnvelopeFrequency = decoder.SyncEnvelopeDetectorForTests?.AppliedCenterFrequencyHzForTests;
+            lastBypassFrequency = decoder.SyncBypass1200DetectorForTests.AppliedCenterFrequencyHzForTests;
+        };
+
+        decoder.PushSamples(samples.ToArray());
+
+        Assert.NotNull(lastSyncEnvelopeFrequency);
+        // Milestone-audit fix: the ORIGINAL assertion (NotEqual(1200.0, ...)) passed for either sign
+        // of the retune direction, so it never actually caught a real sign-inversion bug the
+        // milestone audit found. True sample rate is HIGHER than declared, so the decoder's own
+        // sample clock measures the sync tone as slightly BELOW 1200Hz (~1199.4Hz -- decoder thinks
+        // each sample spans more time than it really does). Legacy's InitTone retunes the resonator
+        // to track the MEASURED tone plus the +3.125Hz calibration nudge (finding #2) -- landing
+        // slightly ABOVE 1200Hz (~1202.5Hz) here, not below it. A sign-inverted implementation would
+        // retune to ~1197.5Hz instead (verified: this is exactly what the pre-fix code computed).
+        Assert.True(lastSyncEnvelopeFrequency!.Value > 1200.0, $"Expected the resonator to retune ABOVE 1200Hz (tracking the measured tone + calibration nudge), got {lastSyncEnvelopeFrequency.Value} -- looks like the retune direction is sign-inverted.");
+        Assert.Equal(1200.0, lastBypassFrequency!.Value, tolerance: 0.01);
     }
 
     [Fact]

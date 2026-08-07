@@ -59,17 +59,27 @@ internal sealed class YCbCrLinePairedScanlineDecoder : IScanlineDecoder
                 // (fourth segment) measured up to ~4px of drift from this before the fix -- the worst
                 // case among the 4 affected decoders, since it compounds across the most segments.
                 var segmentStartSample = idealSamplesSoFar;
+                // ultracode audit finding #32: legacy's PD/MP/MN chroma segments (R-Y/B-Y) use `m_KSS`
+                // -- the LUMA trim factor -- not `m_KS2S` (Main.cpp:4393/4402), unlike
+                // YCbCrSequentialScanlineDecoder's chroma (which genuinely does use m_KS2S/Ks2sTrimFactor
+                // for its own MR/ML family). GetPixelPitchTrimFactor(mode, scan.ChannelName) would
+                // route this decoder's chroma through Ks2sTrimFactor instead -- wrong family's rule.
                 var perPixelDurationMs = scan.DurationMs / mode.ImageWidth
-                    * SstvModeRegistry.GetPixelPitchTrimFactor(mode, scan.ChannelName);
+                    * SstvModeRegistry.GetPeakPickParameters(mode).KssTrimFactor;
                 var pixelWalk = 0.0;
                 for (var x = 0; x < mode.ImageWidth; x++)
                 {
-                    var startSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
+                    // ultracode audit finding #29: ceiling, not round-to-nearest.
+                    var startSample = lineStartSample + (int)Math.Ceiling(segmentStartSample + pixelWalk);
                     pixelWalk += perPixelDurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
 
                     var freq = read(startSample, endSample);
                     var value = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+
+                    // ultracode audit finding #28: truncate in the RAW zero-centered domain, before
+                    // the +128 bias -- see RobotScanlineDecoder.cs's DecodePixels for the full rationale.
+                    value = Math.Truncate(value - 128.0) + 128.0;
                     destination[x] = clamp ? Math.Clamp(value, 0, 255) : value;
                 }
 
