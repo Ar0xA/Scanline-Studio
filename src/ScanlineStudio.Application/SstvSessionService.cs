@@ -212,6 +212,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     public event Action? MaintenanceCriticalStopRaised;
 
+    /// <summary>See <see cref="ISstvSessionService.RequestReSync"/>.</summary>
+    public void RequestReSync()
+    {
+        Log.ReSyncRequested(_logger);
+        _decoder.RequestReSync();
+    }
+
     // These three run synchronously on the audio drain thread, inside the same call stack as
     // ISstvDecoder.PushSamples -- _decoderHandler's own try/catch (constructor, above) wraps the
     // PushSamples call itself, but an exception thrown by one of THESE handlers would otherwise be
@@ -587,6 +594,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Waterfall PushSamples threw ({Count} occurrences so far)")]
         public static partial void WaterfallPushSamplesFailed(ILogger logger, int count, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Manual ReSync requested")]
+        public static partial void ReSyncRequested(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX started: device={DeviceId}, sampleRate={SampleRate}Hz")]
         public static partial void RxStarted(ILogger logger, string deviceId, int sampleRate);

@@ -4072,9 +4072,6 @@ QRZ.com/cty.dat scope — these are the deltas found):
   third-party loggers.
 - Duplicate-QSO detection (by callsign, or callsign+band) — real legacy feature
   (`LogSet.cpp`/`LogFile.h`'s `m_CheckBand`), not in the current plan. Small.
-- Contest serial-number exchange (STX/SRX) and 5 configurable contest run-macros — real legacy
-  features, likely low priority for an SSTV-first (not contest-first) audience; flag for an
-  explicit include/exclude decision rather than silently adding or dropping.
 
 **TX macros / CW-ID** (legacy's "macro" is a token-picker popup, not a saved template — shared
 across the overlay editor, CW-ID text, and repeater auto-answer via one substitution function,
@@ -4108,8 +4105,20 @@ this; the items below are a complete inventory, not a priority push):
 **RX/TX quality-of-life** (excludes the already-deliberately-dropped DSP tunables — PLL VCO
 gain, zero-crossing params, RxBPF width, squelch level, calibration wizard, differentiator, LMS
 filter — those are a known exclusion, not rediscovered here):
-- Manual "ReSync" button — real, verified; applies an already-computed sync-skip correction, not
-  new DSP math. Small-medium.
+- ~~Manual "ReSync" button~~ — **done** (2026-08-07): the roadmap's own original framing ("applies
+  an already-computed sync-skip correction") pointed at the wrong legacy feature — traced the real
+  click handler (`TMmsstv::KRFSClick`, `Main.cpp:14004-14020`) and found `ReSyncSSTV` (the 32-line
+  envelope fold this entry originally meant) is only ever called by two "high-precision sync" MENU
+  items, never the button. The real button is much simpler: live per-line sync-peak tracking
+  (`m_SyncPos`/`m_SyncRPos`) plus a forward-only sample skip (`m_Skip`), no fold/cache. New
+  `AnalogFmSstvDecoder.RequestReSync()` → `PerformReSync()`/`DrainPendingSkip()` (the skip is applied
+  incrementally, spanning `PushSamples` calls, since an atomic apply can read past the end of the
+  received stream on the common path), plus a two-scope suppression in `ApplySlantTracking` matching
+  legacy's own `m_SyncPos != -1` (one line, no history push) vs `m_AutoSyncCount` (rest of the image,
+  history keeps flowing via new `SlantTracker.ProcessLineHistoryOnly`, only the correction is
+  skipped) gates. Full `ISstvDecoder`/`ISstvSessionService` plumbing, backend-only — no UI button
+  wired yet. 3 design-review rounds + a final code-level auditor review (EQUIVALENT-WITH-RISKS, no
+  blockers) before/after implementation. See `PROJECT_BRIEF.md` for the full account.
 - ~~AFC on/off toggle~~ — **done** (2026-08-07): new `SstvDecoderSettings.AfcEnabled` (nullable,
   STJ-default-loss-safe, same pattern as `ReceiveHistorySettings.MaxEntries`), threaded into
   `AnalogFmSstvDecoder`'s ctor and `InitializeAfc`'s existing AVT-exclusion guard (AFC-off now
@@ -4152,9 +4161,13 @@ wired everything real, these had no real data behind them today):
 - Manual "lock to a specific mode" RX decode override + the mock2 Mode card's quick-mode-button
   grid — `ISstvDecoder` always auto-detects via the VIS header; there is no force-a-mode decode
   path to wire an "Auto/Locked" toggle to. Medium — would need a real decoder change, not just UI.
-- Live decode "Remaining time" / per-line progress readout — `IReceivedImageBuffer` only exposes
-  `Current`/`Updated`, no line-index or ETA. Medium (needs a new progress field threaded from
-  `ISstvDecoder.LineDecoded`).
+- ~~Live decode "Remaining time" / per-line progress readout~~ — **backing data done** (2026-08-07):
+  new `IReceivedImageBuffer.Progress` (`double?`, `null` when idle, `[0,1]` fraction while decoding,
+  snapped to exactly `1.0` on the completing scanline group), computed in `ReceivedImageBuffer.cs`
+  by reusing `ReceiveHistoryRecorder`'s own step-learning technique for the same
+  paired-line/RowsPerTransmissionLine problem. Backend-only — no ETA/remaining-time computation or
+  UI binding yet; a future ViewModel can derive "remaining time" from `Progress` + its own elapsed-
+  time tracking with no further backend change needed.
 - RX frame actions (Abort/Re-decode/Copy-to-TX/Log QSO) and a completion progress bar — no
   abandon-current-frame, re-decode, or QSO-log-linking primitive exists yet. Medium-large,
   several independent features.

@@ -29,9 +29,20 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
 
     private readonly object _gate = new();
     private IImageSource _current = EmptyImage;
+    private double? _progress;
+
+    // Completion-detection state -- same technique, same field shapes as
+    // ReceiveHistoryRecorder.cs's own (independently-solved) version of this exact problem: the
+    // scanline-group step size (1 row per event for most families, 2 for PD/MP/RM8/RM12 per
+    // IScanlineDecoder.RowsPerTransmissionLine, not exposed on the public SstvModeDefinition) isn't
+    // known up front, so it's learned from the first two DecodedImageUpdate.Line deltas rather than
+    // guessed.
+    private int? _previousLine;
+    private int? _observedStep;
 
     public ReceivedImageBuffer(ISstvDecoder decoder)
     {
+        decoder.ModeDetected += OnModeDetected;
         decoder.LineDecoded += OnLineDecoded;
         decoder.DecodeRestarted += OnDecodeRestarted;
     }
@@ -43,6 +54,17 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
             lock (_gate)
             {
                 return _current;
+            }
+        }
+    }
+
+    public double? Progress
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _progress;
             }
         }
     }
@@ -74,15 +96,61 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
             ct);
     }
 
+    private void OnModeDetected(SstvModeDefinition mode)
+    {
+        lock (_gate)
+        {
+            _previousLine = null;
+            _observedStep = null;
+            _progress = 0.0;
+        }
+
+        Updated?.Invoke();
+    }
+
     private void OnLineDecoded(DecodedImageUpdate update)
     {
         var snapshot = Snapshot(update.Image);
         lock (_gate)
         {
             _current = snapshot;
+            _progress = ComputeProgress(update, snapshot.Height);
         }
 
         Updated?.Invoke();
+    }
+
+    // Unlike ReceiveHistoryRecorder's own version of this same step-learning technique (which only
+    // needs a boolean "is this complete" and so can safely defer any check until the step is known),
+    // a progress FRACTION is read continuously, including before the step is learned -- so the first
+    // event of an image (no step yet) falls back to a plain Line/Height estimate rather than
+    // returning nothing. That fallback has no false-100% risk the way ReceiveHistoryRecorder's
+    // boolean check would (a fraction being slightly off for one frame is harmless), so it doesn't
+    // need that class's own extra guard against checking too early.
+    private double ComputeProgress(DecodedImageUpdate update, int imageHeight)
+    {
+        if (_previousLine is int previousLine && _observedStep is null)
+        {
+            _observedStep = update.Line - previousLine;
+        }
+
+        _previousLine = update.Line;
+
+        if (_observedStep is not int step)
+        {
+            return Math.Clamp((double)update.Line / imageHeight, 0.0, 1.0);
+        }
+
+        // Snap to exactly 1.0 on the completing event -- Line + step alone asymptotes to
+        // (Height - step) / Height and would never actually reach 1.0 for multi-row-per-event
+        // families (PD/MP/RM8/RM12), which would leave a live progress readout stuck just under
+        // 100% for the rest of the image's on-screen lifetime.
+        if (update.Line + step >= imageHeight)
+        {
+            return 1.0;
+        }
+
+        return Math.Clamp((double)(update.Line + step) / imageHeight, 0.0, 1.0);
     }
 
     private void OnDecodeRestarted(SstvModeDefinition abandonedMode)
@@ -90,6 +158,7 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
         lock (_gate)
         {
             _current = EmptyImage;
+            _progress = null;
         }
 
         Updated?.Invoke();

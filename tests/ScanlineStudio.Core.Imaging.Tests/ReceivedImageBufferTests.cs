@@ -80,6 +80,101 @@ public sealed class ReceivedImageBufferTests
     }
 
     [Fact]
+    public void Progress_FreshBuffer_IsNull()
+    {
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder);
+
+        Assert.Null(buffer.Progress);
+    }
+
+    [Fact]
+    public void Progress_AfterModeDetected_IsZero()
+    {
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder);
+
+        decoder.RaiseModeDetected(TestMode);
+
+        Assert.Equal(0.0, buffer.Progress);
+    }
+
+    [Fact]
+    public void Progress_FirstLineDecoded_StepNotYetLearned_FallsBackToLineOverHeight()
+    {
+        // 10-row image, single-row-per-event family (step unknowable from just one event).
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder);
+        decoder.RaiseModeDetected(TestMode);
+        var image = new MutableTestImageSource(1, 10, new Rgb24[10]);
+
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(3, image));
+
+        Assert.Equal(3.0 / 10.0, buffer.Progress);
+    }
+
+    [Fact]
+    public void Progress_SecondLineDecoded_StepLearned_UsesLinePlusStep()
+    {
+        // Single-row-per-event family: step = 1.
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder);
+        decoder.RaiseModeDetected(TestMode);
+        var image = new MutableTestImageSource(1, 10, new Rgb24[10]);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image));
+
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(1, image));
+
+        Assert.Equal(2.0 / 10.0, buffer.Progress);
+    }
+
+    [Fact]
+    public void Progress_PairedLineFamily_StepLearnedAsTwo_ComputesCorrectly()
+    {
+        // PD/MP/RM8/RM12-shaped: Line advances by 2 per event.
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder);
+        decoder.RaiseModeDetected(TestMode);
+        var image = new MutableTestImageSource(1, 10, new Rgb24[10]);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image));
+
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(2, image));
+
+        Assert.Equal(4.0 / 10.0, buffer.Progress);
+    }
+
+    [Fact]
+    public void Progress_FinalCompletingEvent_SnapsToExactlyOne()
+    {
+        // 10-row image, step-1 family: events at 0,1,2,...,9. The Line=9 event (Line+step=10>=10)
+        // must read exactly 1.0, not 10.0/10.0's own asymptotic near-miss for paired families --
+        // this pins the snap-to-1.0 behavior directly, not just that it happens to equal 1.0 here.
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder);
+        decoder.RaiseModeDetected(TestMode);
+        var image = new MutableTestImageSource(1, 10, new Rgb24[10]);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(1, image));
+
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(9, image));
+
+        Assert.Equal(1.0, buffer.Progress);
+    }
+
+    [Fact]
+    public void Progress_DecodeRestarted_ResetsToNull()
+    {
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder);
+        decoder.RaiseModeDetected(TestMode);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, new MutableTestImageSource(1, 10, new Rgb24[10])));
+
+        decoder.RaiseDecodeRestarted(TestMode);
+
+        Assert.Null(buffer.Progress);
+    }
+
+    [Fact]
     public async Task SaveAsync_WritesARealPngFileMatchingCurrentPixels()
     {
         var decoder = new FakeSstvDecoder();

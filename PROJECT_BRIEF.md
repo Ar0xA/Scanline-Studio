@@ -2,6 +2,78 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
+## Resume here (2026-08-07, latest, ACTIVE) — ultracode audit fully closed (entry below, committed
+`1d82a33`). Working a DSP/backend backlog, explicitly ordered by GUI leverage (user's own
+instruction: "DSP items first, prioritized by things we need on the GUI side at some point") — full
+priority list in `spec/14-roadmap.md`'s Phase 4+ backlog. **Item 1 (Decode progress/line-index
+field) DONE**: new `IReceivedImageBuffer.Progress` (`double?`, backend-only, no UI wired yet) — see
+`~/.claude/plans/fuzzy-yawning-melody.md` for that design (reuses `ReceiveHistoryRecorder`'s own
+step-learning technique for the same paired-line-family problem). 3 fakes updated
+(`Application.Tests`/`Core.Logbook.Tests`/`UI.Tests`), 7 new tests in
+`ReceivedImageBufferTests.cs`, full solution build + all 4 touched test projects green.
+
+**Item 2 (Manual ReSync button) DONE.** Same plan file (`~/.claude/plans/fuzzy-yawning-melody.md`,
+overwritten — holds the full ReSync design now, not the Progress-field one). **Feature-identity
+correction mid-design, the main thing worth remembering if this needs re-explaining**: the roadmap's
+own stated approach ("reuse `ReSyncSSTV`") was WRONG — traced the actual legacy click handler
+(`TMmsstv::KRFSClick`, `Main.cpp:14004-14020`) and found `ReSyncSSTV` (a 32-line envelope fold) is
+only ever called by two "high-precision sync" MENU items, never the button; the real button uses
+live per-line sync-peak tracking (`m_SyncPos`/`m_SyncRPos`) + a forward-only sample skip (`m_Skip`),
+much simpler, no fold/cache needed. User explicitly chose "go for the legacy implementation" once
+this was found, so the whole design was rebuilt around `KRFSClick`, not the original `ReSyncSSTV`
+approximation.
+
+Design went through 3 full review rounds before implementation (each found a real bug: phase-
+alignment math, a buffer-overread crash on the common path in the original atomic-apply approach —
+fixed by making the skip an incremental drain (`DrainPendingSkip`) across `PushSamples` calls,
+mirroring legacy's own per-sample drain — and a state-corruption bug where "call
+`SlantTracker.ProcessLine` and discard the result" for the widened per-image suppression would still
+trigger `Reset()` and wipe history). After round 3, per explicit user instruction, asked the auditor
+to draft the exact fix code directly rather than another self-drafted-then-critiqued round — worked
+well, now a standing preferred pattern for this kind of thing
+(`feedback_ask_auditor_for_code_fixes.md`). Implemented, then independently verified myself (also
+per explicit instruction) that `SlantTracker.Reset()` really does wipe history and is reachable from
+the path the fix protects against.
+
+**Implementation**: `AnalogFmSstvDecoder.RequestReSync()` (fire-and-forget, `volatile bool` flag
+consumed at the top of `PushSamples`) → `PerformReSync()` (deadband check, skip computation,
+forward-only wrap) → `DrainPendingSkip()` (incremental, spans multiple `PushSamples` calls for a
+skip bigger than one chunk). Two suppression scopes in `ApplySlantTracking`, matching legacy's two
+distinct gates: `_suppressNextSlantProcessLine` (one line only, no history push at all — legacy's
+`m_SyncPos != -1` gating `AutoStopJob()` out entirely) vs `_slantCorrectionsDisabledForRestOfImage`
+(rest of the image, history keeps flowing via new `SlantTracker.ProcessLineHistoryOnly`, only the
+correction branch is skipped — legacy's `m_AutoSyncCount`). Full `ISstvDecoder` →
+`RestartableSstvDecoder` → `ISstvSessionService`/`SstvSessionService` plumbing, 4 test-double stubs.
+Backend-only, no UI button wired yet.
+
+**Tests** (`tests/ScanlineStudio.Core.Sstv.Tests/RequestReSyncTests.cs`, new, 8 tests + 1 more in
+`SlantTests.cs` for `ProcessLineHistoryOnly`): no-lock/no-line/AVT no-ops, deadband both directions,
+an exact hand-computed-skip assertion, forward-only wrap, second-click idempotence, a drain-crash
+regression (tiny chunks spanning many `PushSamples` calls), and the widened-suppression behavior
+with a negative control. **Two real test-writing traps hit and fixed, worth remembering**: (1)
+`LineDecoded` fires BEFORE `ApplySlantTracking` catches up for that same line — a test that
+synchronizes off `LineDecoded` observes a one-line-STALE peak/state; poll the decoder's own
+diagnostic properties directly in the outer loop after `PushSamples` returns instead. (2) Large
+`PushSamples` chunks let a same-call backlog build up, so `DrainPendingSkip` can fully drain (and
+`TryProcessBuffer` can ALSO advance `_consumedSamples` via ordinary decode) within the very same call
+that also fired the request — contaminating an exact-equality assertion with no way to observe the
+boundary from outside; keep chunks small (32 samples) throughout tests that need to bracket the drain
+precisely. Final auditor code-level review: EQUIVALENT-WITH-RISKS, no blockers — two deliberate,
+already-documented divergences from legacy's literal (racy) semantics (this port's single capture
+field correctly serves two roles legacy keeps as two separate variables; the one-line suppression is
+deterministic here vs. legacy's own probabilistic mid-line click timing — both confirmed as the
+correct, safer choice, not bugs). Applied its two small nits: added the missing citation for
+`KRFSClick`'s 4 unported writes (why they're moot, not missed), and added a decoder-level test
+pinning that the one-line-suppress branch contributes ZERO history entries (distinct from the
+whole-image branch, which contributes exactly one per line via `ProcessLineHistoryOnly`).
+
+**Full verification**: full solution build clean (0 warnings/errors). `Core.Sstv.Tests` full suite
+608/608 (was 599 before — 9 net new tests, includes every real legacy-captured golden vector,
+confirmed unaffected). `Application.Tests` 48/48, `Core.Imaging.Tests` 24/24, `Core.Logbook.Tests`
+47/47, `UI.Tests` 78/78 all green.
+
+**NOT YET COMMITTED.** Next up per the priority list: force-a-specific-mode decode override.
+
 ## Resume here (2026-08-07, latest, ACTIVE) — ultracode audit follow-up: the 19 MATCH_LEGACY fixes (entry below) are COMMITTED AND PUSHED (`4f6c7b6`). #36/#37/#38 (WavFile.cs) DONE. #34 (int-overflow) is now ALSO DONE, tested, code-reviewed. NOTHING FROM THIS SESSION IS COMMITTED YET.
 
 **#34 fix — final design, not the widening plan**: widening every affected `int` field (the approach queued in the entry directly below) went through plan-readiness review and came back **NOT READY** — the coordinate space turned out to escape into `IScanlineDecoder`/`PixelSampleReader`/5 scanline decoders, a second dangerous unbounded cast existed that the first pass missed, and `VisLockStateMachine` has its own internal unbounded counter. User proposed the actual shipped fix instead: periodically discard and reconstruct the whole `AnalogFmSstvDecoder` object graph (same effect as restarting the app, confirmed to trivially fix this since `ISstvDecoder` is a DI singleton) rather than keep the same instance alive and correct forever. New `RestartableSstvDecoder` (`src/ScanlineStudio.Core.Sstv/`) wraps a mutable inner decoder; on every `PushSamples` call it evaluates (before forwarding the chunk) a 3-step state machine using the decoder's own `TotalSamplesReceived` (bumped `private`→`internal`, NOT widened) as the trigger: (1) past a 13h-worth critical threshold → force-swap **unconditionally regardless of idle state** (the actual overflow-safety guarantee — self-clearing, can't wedge); (2) idle + past a 12h-worth warning threshold → normal swap (the common path); (3) not idle + past warning → raise a one-shot `RestartOverdue` warning. New `ISstvDecoderMaintenance` interface (3 events: `RestartOverdue`/`RestartCriticallyOverdue`/`Restarted`) — deliberately **not** on `ISstvDecoder` itself (would force `AnalogFmSstvDecoder` to declare events it never raises → CS0067 under `TreatWarningsAsErrors`). `SstvSessionService` subscribes via an `is ISstvDecoderMaintenance` check, calls `StopReceivingAsync()` on the critical signal, and exposes 3 new events on `ISstvSessionService` that `RadioStatusViewModel` maps to a **new dedicated `MaintenanceMessage` property** (deliberately not reusing `ErrorMessage`, which has 5 write sites with no priority order and a traced clobber path). New `internal bool IsIdle => _mode is null && !_avtTrainingPending;` on `AnalogFmSstvDecoder` (verified via a full field sweep that `_avtTrainingPending` — a confirmed-but-not-yet-committed AVT detection — is the only pre-lock flag `_mode is null` alone misses).

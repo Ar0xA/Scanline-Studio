@@ -51,6 +51,37 @@ public class SlantTests
     }
 
     [Fact]
+    public void SlantTracker_ProcessLineHistoryOnly_RecordsHistoryButNeverEstablishesABaseline()
+    {
+        // Manual ReSync's port of legacy's m_AutoSyncCount gate (Main.cpp:3968): AutoStopJob's
+        // unconditional history/counter bookkeeping keeps running while it's set, but the whole
+        // fit/baseline/correction branch never executes -- confirmed here directly against
+        // SlantTracker, independent of the decoder, so this pins the class's own real behavior rather
+        // than inferring it from a decoder-level symptom.
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine: SampleRate * 0.15, thresholdLinePositions: [64, 128, 160, 220]);
+
+        // Distinctive, increasing, non-zero values -- a plain all-default double[] would trivially
+        // satisfy an "equals 0.0" assertion without recording anything, so this specifically checks
+        // that these EXACT fed values (not just "something non-default") landed in history in order.
+        for (var line = 0; line < 10; line++)
+        {
+            tracker.ProcessLineHistoryOnly(line + 1.0);
+        }
+
+        // (a) Baseline capture is part of the gated fit/correction branch -- must never fire, even
+        // though 10 lines is comfortably past FitPoints (5), where a normal ProcessLine call would
+        // have established one.
+        Assert.False(tracker.HasBaselineForTests);
+
+        // (b) But it's not a no-op either -- history really was recorded, not inferred from (a) (which
+        // would stay false either way and so can't distinguish "recorded but disabled" from "nothing
+        // happened at all").
+        Assert.Equal(10, tracker.TotalLinesObservedForTests);
+        var history = tracker.HistoryForTests;
+        Assert.Equal(Enumerable.Range(1, 10).Select(v => (double)v), history[^10..]);
+    }
+
+    [Fact]
     public void SlantTracker_ConsistentDrift_LocksACorrectionCloseToTheTrueRate()
     {
         // Simulate a receiver whose true samples-per-line is 1% higher than assumed. This is a

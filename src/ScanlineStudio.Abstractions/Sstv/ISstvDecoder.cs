@@ -31,4 +31,13 @@ public interface ISstvDecoder
     /// (<c>CLVL::Init</c>) at every TX&lt;-&gt;RX transition (`Sound.cpp:398,443`) -- callers should
     /// invoke this at the same transition points (ultracode audit finding #6).</summary>
     void ResetAgc();
+
+    /// <summary>Requests a one-time manual sync correction — the port of legacy's real "ReSync" button
+    /// (<c>TMmsstv::KRFSClick</c>, `Main.cpp:14004-14020`, not <c>ReSyncSSTV</c>). Safe to call from
+    /// any thread; the request is deferred and applied on whichever thread next calls
+    /// <see cref="PushSamples"/>. A no-op if not currently locked, if the current mode has no Auto
+    /// Slant tracking (AVT), or if no line has completed since the last lock/successful correction.
+    /// Deliberately fire-and-forget (no return value) — the actual application is asynchronous
+    /// relative to this call.</summary>
+    void RequestReSync();
 }
