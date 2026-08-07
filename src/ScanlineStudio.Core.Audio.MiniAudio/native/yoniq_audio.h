@@ -116,11 +116,45 @@ YONIQ_AUDIO_API int yoniq_audio_ring_available_read(yoniq_audio_ring *ring);
 
 typedef struct yoniq_audio_capture_session yoniq_audio_capture_session;
 
-/* Opens and starts capturing from the named device. ring_capacity_frames sizes the internal
- * buffer between the real-time callback and the managed drain side -- if the drain side falls
- * behind and this fills, the real-time callback drops the newest incoming frames (never blocks,
- * matching IAudioEngine's documented overrun policy, piece Audio 2). Returns NULL on failure. */
-YONIQ_AUDIO_API yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device_id, int sample_rate, int ring_capacity_frames);
+/* Shared by both yoniq_audio_capture_session_open and yoniq_audio_playback_session_open --
+ * identical fields, one type rather than two structurally-identical ones. period_size_in_frames
+ * and periods are new (sound-FIFO-buffer-size backlog item): 0 in either means "leave miniaudio's
+ * own default period/backend heuristic alone" -- the exact behavior every caller got before these
+ * two fields existed, so a zero-initialized options struct is always safe-by-construction. Only
+ * set on ma_device_config when non-zero (see both _open functions' bodies).
+ *
+ * channels/channel_select are new (stereo-capture-source/stereo-TX backlog item -- NOT a
+ * confirmed legacy port, see MiniAudioCaptureSession/PlaybackSession's own doc comments on their
+ * matching constructor params for the explicit assumption flag). channels is 1 (mono, today's
+ * only pre-existing behavior, zero-initialized default) or 2 (stereo device open -- required for
+ * either a real Left/Right capture split, or duplicating a mono TX signal to both output
+ * channels). channel_select only matters for CAPTURE when channels==2: 0 = unused/ignored,
+ * 1 = Left (even sample indices of the interleaved input), 2 = Right (odd indices). Ignored
+ * entirely for playback opens -- stereo TX always duplicates the same mono ring content to both
+ * channels, there is no "which channel" choice on the output side. This shim's own ring buffers
+ * (yoniq_audio_ring) and everything on the managed side of the boundary
+ * (IAudioEngine.SamplesCaptured/EnqueuePlaybackSamples) stay mono always -- channels only ever
+ * exist between the native device and this shim's own callbacks; see capture_session_data_callback
+ * and playback_session_data_callback for exactly where the stereo<->mono conversion happens. */
+typedef struct yoniq_audio_open_options
+{
+    int sample_rate;
+    int ring_capacity_frames;
+    int period_size_in_frames;
+    int periods;
+    int channels;       /* 1 or 2 */
+    int channel_select; /* 0=unused, 1=Left, 2=Right -- capture-only, see doc comment above */
+} yoniq_audio_open_options;
+
+/* Opens and starts capturing from the named device. options->ring_capacity_frames sizes the
+ * internal buffer between the real-time callback and the managed drain side -- if the drain side
+ * falls behind and this fills, the real-time callback drops the newest incoming frames (never
+ * blocks, matching IAudioEngine's documented overrun policy, piece Audio 2).
+ * options->period_size_in_frames/periods (0 = miniaudio's own default) additionally tune the
+ * underlying hardware/backend buffer size -- a separate, lower-level knob from
+ * ring_capacity_frames, which only sizes this shim's own managed-drain-side ring. Returns NULL on
+ * failure. */
+YONIQ_AUDIO_API yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device_id, const yoniq_audio_open_options *options);
 
 /* Stops and destroys the session. Safe to call on a session that failed to fully start (i.e. a
  * partially-initialized state yoniq_audio_capture_session_open itself cleans up on its own error
@@ -160,9 +194,12 @@ YONIQ_AUDIO_API int yoniq_audio_capture_session_overrun_count(yoniq_audio_captur
 
 typedef struct yoniq_audio_playback_session yoniq_audio_playback_session;
 
-/* Opens and starts playing to the named device. ring_capacity_frames sizes the buffer between
- * managed writes and the real-time pull callback. Returns NULL on failure. */
-YONIQ_AUDIO_API yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *device_id, int sample_rate, int ring_capacity_frames);
+/* Opens and starts playing to the named device. options->ring_capacity_frames sizes the buffer
+ * between managed writes and the real-time pull callback; options->period_size_in_frames/periods
+ * tune the underlying hardware/backend buffer size (0 = miniaudio's own default) -- see
+ * yoniq_audio_open_options' own doc comment and yoniq_audio_capture_session_open's identical
+ * shape. Returns NULL on failure. */
+YONIQ_AUDIO_API yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *device_id, const yoniq_audio_open_options *options);
 
 YONIQ_AUDIO_API void yoniq_audio_playback_session_close(yoniq_audio_playback_session *session);
 

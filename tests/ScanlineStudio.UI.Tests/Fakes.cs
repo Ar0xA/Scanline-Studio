@@ -156,17 +156,28 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         return Task.CompletedTask;
     }
 
-    public List<(double FrequencyHz, TimeSpan Duration)> TuneCalls { get; } = [];
+    public List<(double FrequencyHz, TimeSpan Duration, bool LeaveKeyedAfterTune)> TuneCalls { get; } = [];
 
-    public Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default)
+    public Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default)
     {
-        TuneCalls.Add((frequencyHz, duration));
+        TuneCalls.Add((frequencyHz, duration, leaveKeyedAfterTune));
         return Task.CompletedTask;
     }
 
     public int TxVolumePercent { get; set; } = 100;
 
     public Task<int> GetTxVolumePercentAsync(CancellationToken ct = default) => Task.FromResult(TxVolumePercent);
+
+    public bool IsPttLocked { get; private set; }
+
+    public List<bool> PttLockCalls { get; } = [];
+
+    public Task SetPttLockAsync(bool locked, CancellationToken ct = default)
+    {
+        PttLockCalls.Add(locked);
+        IsPttLocked = locked;
+        return Task.CompletedTask;
+    }
 
     public Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
     {

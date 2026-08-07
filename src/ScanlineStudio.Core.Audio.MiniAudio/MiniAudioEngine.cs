@@ -142,7 +142,10 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     /// own doc comment for the same reasoning.</summary>
     public int PlaybackUnderrunCount => _playbackSession?.UnderrunCount ?? 0;
 
-    public async Task StartCaptureAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
+    public async Task StartCaptureAsync(
+        AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+        int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+        CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
@@ -163,7 +166,7 @@ public sealed partial class MiniAudioEngine : IAudioEngine
             // starts a managed drain thread) -- confirmed by reading it, not assumed. Task.Run
             // keeps that off the caller's thread, matching CLAUDE.md's "all hardware communication
             // must be asynchronous" rule.
-            var session = await Task.Run(() => OpenCaptureSession(device, sampleRate), ct).ConfigureAwait(false);
+            var session = await Task.Run(() => OpenCaptureSession(device, sampleRate, drainThreadPriority, periodSizeInFrames, periods, channelSource), ct).ConfigureAwait(false);
             session.SamplesAvailable += OnCaptureSamplesAvailable;
             _captureSession = session;
             Log.CaptureOpened(_logger, device.Id, sampleRate);
@@ -303,12 +306,16 @@ public sealed partial class MiniAudioEngine : IAudioEngine
         Log.CaptureStopped(_logger);
     }
 
-    private MiniAudioCaptureSession OpenCaptureSession(AudioDeviceInfo device, int sampleRate)
+    private MiniAudioCaptureSession OpenCaptureSession(
+        AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority, int periodSizeInFrames,
+        int periods, AudioChannelSource channelSource)
     {
         try
         {
             var sessionLogger = _loggerFactory?.CreateLogger<MiniAudioCaptureSession>() ?? (ILogger)_logger;
-            return new MiniAudioCaptureSession(device.Id, sampleRate, sessionLogger);
+            return new MiniAudioCaptureSession(
+                device.Id, sampleRate, sessionLogger, drainThreadPriority: drainThreadPriority,
+                periodSizeInFrames: periodSizeInFrames, periods: periods, channelSource: channelSource);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or DllNotFoundException or EntryPointNotFoundException)
         {
@@ -343,7 +350,9 @@ public sealed partial class MiniAudioEngine : IAudioEngine
 
     private volatile MiniAudioPlaybackSession? _playbackSession;
 
-    public async Task StartPlaybackAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
+    public async Task StartPlaybackAsync(
+        AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+        bool stereoTx = false, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
@@ -359,7 +368,7 @@ public sealed partial class MiniAudioEngine : IAudioEngine
 
             // MiniAudioPlaybackSession's constructor blocks synchronously (opens the native
             // device), confirmed by reading it -- same reasoning as StartCaptureAsync's Task.Run.
-            var session = await Task.Run(() => OpenPlaybackSession(device, sampleRate), ct).ConfigureAwait(false);
+            var session = await Task.Run(() => OpenPlaybackSession(device, sampleRate, periodSizeInFrames, periods, stereoTx), ct).ConfigureAwait(false);
             _playbackSession = session;
             Log.PlaybackOpened(_logger, device.Id, sampleRate);
         }
@@ -463,11 +472,13 @@ public sealed partial class MiniAudioEngine : IAudioEngine
         Log.PlaybackStopped(_logger);
     }
 
-    private MiniAudioPlaybackSession OpenPlaybackSession(AudioDeviceInfo device, int sampleRate)
+    private MiniAudioPlaybackSession OpenPlaybackSession(
+        AudioDeviceInfo device, int sampleRate, int periodSizeInFrames, int periods, bool stereoTx)
     {
         try
         {
-            return new MiniAudioPlaybackSession(device.Id, sampleRate);
+            return new MiniAudioPlaybackSession(
+                device.Id, sampleRate, periodSizeInFrames: periodSizeInFrames, periods: periods, stereoTx: stereoTx);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or DllNotFoundException or EntryPointNotFoundException)
         {

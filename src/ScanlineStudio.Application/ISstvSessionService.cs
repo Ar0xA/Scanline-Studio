@@ -49,11 +49,33 @@ public interface ISstvSessionService : IAsyncDisposable
     /// <summary>Keys PTT, plays a steady sine tone at <paramref name="frequencyHz"/> for
     /// <paramref name="duration"/> (WSJT-X/legacy-Tune-style AFC-lock aid), then un-keys PTT --
     /// same pause-RX/key-PTT/resume-RX guarantee shape as <see cref="TransmitAsync"/>.</summary>
-    Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default);
+    /// <param name="leaveKeyedAfterTune"><b>Unverified against legacy YONIQ source</b> -- a direct
+    /// citation for the exact post-tune-tone transition (e.g. legacy's own Tune button/`CtrBtn.cpp`)
+    /// was not found; this parameter name deliberately does not claim legacy parity. When
+    /// <see langword="true"/>, PTT is left keyed once the tone finishes (skipping the normal
+    /// un-key/resume-RX step) instead of returning to RX -- intended for a "tune into satellite
+    /// pass-through" workflow where the operator wants to go straight from a tune tone into
+    /// transmitting. A subsequent <see cref="TransmitAsync"/> or <see cref="TuneAsync"/> call still
+    /// keys PTT itself as normal (this flag only affects what happens at the END of THIS call, not
+    /// any later one) -- callers wanting PTT held across multiple calls should use
+    /// <see cref="SetPttLockAsync"/> instead, which is a distinct, independently-toggled
+    /// mechanism.</param>
+    Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default);
 
     /// <summary>Current post-encode playback gain (0-100), read fresh from
     /// <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent</c>.</summary>
     Task<int> GetTxVolumePercentAsync(CancellationToken ct = default);
 
     Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default);
+
+    /// <summary>Whether <see cref="SetPttLockAsync"/>'s lock is currently engaged.</summary>
+    bool IsPttLocked { get; }
+
+    /// <summary>Manual-keying diagnostic aid: holds PTT keyed independent of any
+    /// <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> call, until unlocked. Idempotent both
+    /// ways. See the implementation's own doc comment for the exact failure-handling and
+    /// concurrency contract -- in short: a failure here is NOT swallowed (unlike this service's
+    /// internal best-effort cleanup paths), and <see cref="IsPttLocked"/> only changes after
+    /// <c>IRadioSessionService.SetPttAsync</c> actually confirms the requested state.</summary>
+    Task SetPttLockAsync(bool locked, CancellationToken ct = default);
 }

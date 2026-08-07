@@ -48,7 +48,7 @@ public class FakeAudioEngineRoundTripTests
         // contract MiniAudioEngine does, so this call is required, not optional -- see
         // FakeAudioEngine's own doc comment for why the fake was tightened rather than left
         // permissive.
-        await engine.StartPlaybackAsync(FakeDevice, encoder.SampleRate, CancellationToken.None);
+        await engine.StartPlaybackAsync(FakeDevice, encoder.SampleRate, ct: CancellationToken.None);
 
         // TX side: the encoder's own output is what a real caller would hand to
         // EnqueuePlaybackSamples for the engine to play out. Verifies that path is a faithful
@@ -67,7 +67,7 @@ public class FakeAudioEngineRoundTripTests
         decoder.LineDecoded += update => decodedImage = update.Image;
         engine.SamplesCaptured += chunk => decoder.PushSamples(chunk);
 
-        await engine.StartCaptureAsync(FakeDevice, encoder.SampleRate, CancellationToken.None);
+        await engine.StartCaptureAsync(FakeDevice, encoder.SampleRate, ct: CancellationToken.None);
         for (var offset = 0; offset < samples.Count; offset += CallbackBufferSize)
         {
             var length = Math.Min(CallbackBufferSize, samples.Count - offset);

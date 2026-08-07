@@ -34,7 +34,20 @@ public sealed class FakeAudioEngine : IAudioEngine
 
     public IReadOnlyList<float> PlaybackSamples => _playbackSamples;
 
-    public Task StartCaptureAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
+    /// <summary>Records <paramref name="drainThreadPriority"/> in <see cref="LastRequestedDrainThreadPriority"/>
+    /// for test assertions -- this fake has no real drain thread of its own to apply it to.</summary>
+    public ThreadPriority? LastRequestedDrainThreadPriority { get; private set; }
+
+    public int? LastRequestedCapturePeriodSizeInFrames { get; private set; }
+
+    public int? LastRequestedCapturePeriods { get; private set; }
+
+    public AudioChannelSource? LastRequestedChannelSource { get; private set; }
+
+    public Task StartCaptureAsync(
+        AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+        int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+        CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (IsCapturing)
@@ -42,6 +55,10 @@ public sealed class FakeAudioEngine : IAudioEngine
             throw new InvalidOperationException("Capture is already started -- call StopCaptureAsync first.");
         }
 
+        LastRequestedDrainThreadPriority = drainThreadPriority;
+        LastRequestedCapturePeriodSizeInFrames = periodSizeInFrames;
+        LastRequestedCapturePeriods = periods;
+        LastRequestedChannelSource = channelSource;
         IsCapturing = true;
         return Task.CompletedTask;
     }
@@ -52,7 +69,15 @@ public sealed class FakeAudioEngine : IAudioEngine
         return Task.CompletedTask;
     }
 
-    public Task StartPlaybackAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default)
+    public int? LastRequestedPeriodSizeInFrames { get; private set; }
+
+    public int? LastRequestedPeriods { get; private set; }
+
+    public bool? LastRequestedStereoTx { get; private set; }
+
+    public Task StartPlaybackAsync(
+        AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+        bool stereoTx = false, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (IsPlaying)
@@ -60,6 +85,9 @@ public sealed class FakeAudioEngine : IAudioEngine
             throw new InvalidOperationException("Playback is already started -- call StopPlaybackAsync first.");
         }
 
+        LastRequestedPeriodSizeInFrames = periodSizeInFrames;
+        LastRequestedPeriods = periods;
+        LastRequestedStereoTx = stereoTx;
         IsPlaying = true;
         return Task.CompletedTask;
     }
