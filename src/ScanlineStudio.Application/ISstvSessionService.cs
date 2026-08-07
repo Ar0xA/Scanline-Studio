@@ -54,6 +54,12 @@ public interface ISstvSessionService : IAsyncDisposable
     /// <see cref="StartReceivingAsync"/> again.</summary>
     event Action? MaintenanceCriticalStopRaised;
 
+    /// <summary>Requests a one-time manual sync correction from the decoder — see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestReSync"/> for the full contract
+    /// (the port of legacy's real "ReSync" button). Safe to call from any thread; a no-op if not
+    /// currently receiving a locked image.</summary>
+    void RequestReSync();
+
     Task StartReceivingAsync(CancellationToken ct = default);
 
     Task StopReceivingAsync();

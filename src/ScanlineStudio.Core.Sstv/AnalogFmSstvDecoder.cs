@@ -221,7 +221,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // OTHER site that assigns _consumedSamples (Commit -- including via TryDecodeNarrowModeHeader's
     // own assignment immediately followed by a Commit call, TryResolveSyncAnchorCorrection,
     // EndOfImage's dead-time skip) -- it only diverges from the rounded _consumedSamples during the
-    // per-line loop's own fractional accumulation, never across an image boundary.
+    // per-line loop's own fractional accumulation, never across an image boundary. DrainPendingSkip is
+    // a further site that assigns _consumedSamples; it advances this field by exactly 1.0 per drained
+    // sample specifically so the invariant holds at every step, not only at the drain's end.
     private double _idealLineStartSample;
 
     private SstvModeDefinition? _mode;
@@ -286,6 +288,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private double _slantIdealSamplesSoFarInLine;
     private double _slantLineMaxEnvelope;
     private double _slantLinePeakPosition;
+
+    // Manual ReSync (legacy's KRFSClick/m_Skip, Main.cpp:14004-14020 -- NOT ReSyncSSTV) state. See
+    // RequestReSync/PerformReSync/DrainPendingSkip and ApplySlantTracking's own capture point.
+    private volatile bool _reSyncRequested;
+    private int _pendingSkipSamples; // port-equivalent of legacy's own m_Skip field
+    private double? _lastLineSyncPeakPosition; // port-equivalent of m_SyncRPos (see ApplySlantTracking's capture point for why one field also stands in for m_SyncPos at this port's granularity)
+    private bool _suppressNextSlantProcessLine;
+    private bool _slantCorrectionsDisabledForRestOfImage; // port of m_AutoSyncCount's gate on AutoStopJob's correction branch
 
     // m_sint1 (sstv.cpp:1899-1904/1946-1972, sstv.h:700, isNarrow:false -- SyncCheckSub's own
     // m_fNarrow gating restricts it to non-narrow candidates, same as m_sint2) -- piece 7d, the last
@@ -815,13 +825,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// <summary>See <see cref="ISstvDecoder.ResetAgc"/>.</summary>
     public void ResetAgc() => _levelAgc.Init();
 
+    /// <summary>See <see cref="ISstvDecoder.RequestReSync"/>. A single volatile write, safe from any
+    /// thread -- consumed at the top of the next <see cref="PushSamples"/> call, on whichever thread
+    /// actually calls that (matching this class's own established single-caller-thread contract).</summary>
+    public void RequestReSync() => _reSyncRequested = true;
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
+        if (_reSyncRequested)
+        {
+            _reSyncRequested = false;
+            PerformReSync();
+        }
+
         var span = samples.Span;
         for (var i = 0; i < span.Length; i++)
         {
             _rawSamples.Add(span[i]);
         }
+
+        DrainPendingSkip(); // must run AFTER the append loop above, BEFORE TryProcessBuffer() below --
+                             // see that method's own doc comment for why the ordering matters.
 
         // Band-1 item 4a: _demodulatedFrequencies is no longer filled eagerly here -- see
         // DemodulatedFrequencyAt's own doc comment for why (this used to race the shared bandpass
@@ -832,6 +856,132 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         TryProcessBuffer();
         AdvanceAgcThroughDeadZone();
         TrimBuffers();
+    }
+
+    // Manual ReSync (legacy's KRFSClick, Main.cpp:14004-14020 -- ported line-for-line, not
+    // ReSyncSSTV): m_SyncPos/m_SyncRPos coincide at this port's per-line observation granularity (see
+    // this class's own field doc comments), so _lastLineSyncPeakPosition alone serves both the
+    // deadband check and the skip computation below.
+    private void PerformReSync()
+    {
+        if (_mode is null || _slantTracker is null || !_lastLineSyncPeakPosition.HasValue)
+        {
+            return;
+        }
+
+        var ofp = ComputeSyncPeakOffsetSamples(_mode); // matches legacy's literal int(SSTVSET.m_OFP)
+        var syncPos = (int)_lastLineSyncPeakPosition!.Value;
+
+        if (Math.Abs(syncPos - ofp) < 5)
+        {
+            return; // the deadband -- Main.cpp:14006
+        }
+
+        var skip = syncPos - ofp;
+        var lineWidthSamples = (int)_effectiveSamplesPerLine; // this port's live, slant-corrected SSTVSET.m_TW equivalent
+        if (skip < 0)
+        {
+            skip += lineWidthSamples; // Main.cpp:14009-14010 -- forward-only
+        }
+
+        _pendingSkipSamples = skip; // do NOT apply it here -- see DrainPendingSkip's own doc comment
+
+        // Main.cpp:14012 (m_SyncPos = m_SyncRPos = -1) plus the two-flag suppression scheme ported in
+        // ApplySlantTracking for m_AutoSyncCount++ (Main.cpp:14017) -- see that method's own comments.
+        //
+        // KRFSClick's other four writes -- m_AutoSyncPos = 0x7fffffff (:14013), m_AutoStopCnt = 0
+        // (:14014), m_AutoStopACnt = 0 (:14015), m_AutoSyncDis = 6 (:14016) -- are deliberately NOT
+        // ported, not missed: m_AutoSyncPos/m_AutoStopCnt/m_AutoSyncDis only ever gate Auto Sync/Auto
+        // Stop, neither of which this port implements (SlantTracker.cs's own class doc). m_AutoStopACnt
+        // has one ported consumer (SlantTracker._totalLinesObserved, read at the >=5-lines-observed
+        // gate) but resetting it here would be unobservable anyway: _slantCorrectionsDisabledForRestOfImage
+        // permanently routes every future line through ProcessLineHistoryOnly, which never reads that
+        // gate again for the rest of this image -- exactly as legacy's own !m_AutoSyncCount check
+        // (Main.cpp:3968) is already false for the same reason, making its own m_AutoStopACnt = 0 (:14015)
+        // equally moot.
+        _lastLineSyncPeakPosition = null;
+        _suppressNextSlantProcessLine = true;
+        _slantCorrectionsDisabledForRestOfImage = true;
+    }
+
+    // Same derivation TryResolveSyncAnchorCorrection already has (:2337-2354 area) -- duplicated
+    // deliberately, not refactored into a shared helper with THAT method (small, read-only,
+    // already-audited computation; touching that sibling method carries more risk than a few
+    // duplicated lines). Extracted to its own method only so PerformReSync and
+    // SyncPeakOffsetSamplesForTests (below) share one implementation instead of two copies of this
+    // one's own math -- narrower reuse than the sibling-method case above.
+    private int ComputeSyncPeakOffsetSamples(SstvModeDefinition mode)
+    {
+        var targetToneHz = mode.NarrowModeCode is not null ? 1900.0 : 1200.0;
+        var preSyncSegmentOffsetMs = 0.0;
+        foreach (var segment in mode.LineSegments)
+        {
+            if (segment is SyncSegment syncSegment && syncSegment.FrequencyHz == targetToneHz)
+            {
+                break;
+            }
+
+            preSyncSegmentOffsetMs += segment.DurationMs;
+        }
+
+        var syncPeakOffsetSamples = (preSyncSegmentOffsetMs + SstvModeRegistry.GetSyncPeakOffsetMs(mode)) / 1000.0 * _sampleRate;
+        return (int)syncPeakOffsetSamples;
+    }
+
+    // Legacy's m_Skip drain (sstv.cpp:2271-2274): while m_Skip > 0 it decrements once per INCOMING
+    // sample and drops that sample, so a skip larger than one audio callback's worth of samples
+    // inherently spans several callbacks. This port advances the READ cursor instead of dropping
+    // write-side samples (see PerformReSync), so the drain has to be incremental for the same reason:
+    // at the top of a PushSamples call, TotalSamplesReceived - _consumedSamples is normally LESS than
+    // one line (exactly why TryProcessBuffer's own per-line guard returns early), while `skip` can be
+    // nearly a full line -- applying it in one shot would call AgcSampleAt past the end of the
+    // received stream and throw on the audio thread, on the common path.
+    //
+    // Every cursor moves in exact lockstep, one sample per iteration:
+    //  * _consumedSamples      -- the decode read cursor; the actual correction.
+    //  * _idealLineStartSample -- kept round()-consistent with _consumedSamples at EVERY step, not
+    //    just once the drain finishes. Advancing it only on completion would leave _consumedSamples >
+    //    round(_idealLineStartSample) for the whole partial-drain window, shrinking the per-line
+    //    loop's own line-sample-count by however much has drained so far. `+= 1.0` rather than a final
+    //    `= _consumedSamples` also keeps the accumulated fractional residue MUST-4 exists to preserve.
+    //  * _slantProcessedUpTo   -- so ApplySlantTracking's catch-up loop never re-walks the skipped span
+    //    through its NORMAL per-sample path, which would let those samples count toward
+    //    _slantIdealSamplesSoFarInLine and reopen the non-convergence this correction exists to fix.
+    //
+    // _slantIdealSamplesSoFarInLine is DELIBERATELY not advanced: leaving it at its pre-jump value is
+    // precisely what shifts the in-line mapping back by `skip` and lands the next measured peak on
+    // m_OFP.
+    //
+    // The envelope detector IS still fed every skipped sample, with the result discarded and
+    // deliberately NOT compared against _slantLineMaxEnvelope: legacy computes d12/d19 and runs them
+    // into m_iir12/m_iir19 BEFORE the m_Skip check (sstv.cpp:1841-1853 vs :2271) but only writes m_B12
+    // in the non-skip branch (sstv.cpp:2284-2293) -- filter state advances, the peak tracker never
+    // sees the dropped samples. AFC still covers this span too, just lazily, via its own existing
+    // catch-up loop on the next decoded line (matching legacy, whose SyncFreq/m_hill also run before
+    // the m_Skip check).
+    //
+    // Bounded by TotalSamplesReceived; AgcSampleAt reads no further ahead than the index requested, so
+    // strict `<` is exactly right here -- `<=` would throw.
+    private void DrainPendingSkip()
+    {
+        // _syncEnvelopeDetector is non-null whenever _pendingSkipSamples can be (PerformReSync
+        // requires a live _slantTracker, and the two are created and destroyed together,
+        // InitializeSlant/EndOfImage) -- captured into a local for the nullable-reference contract,
+        // not because the field can actually change mid-loop.
+        var detector = _syncEnvelopeDetector;
+        if (_pendingSkipSamples <= 0 || detector is null)
+        {
+            return;
+        }
+
+        while (_pendingSkipSamples > 0 && _consumedSamples < TotalSamplesReceived)
+        {
+            detector.ProcessSample(AgcSampleAt(_consumedSamples)); // history continuity only; return value deliberately discarded
+            _consumedSamples++;
+            _idealLineStartSample += 1.0;
+            _slantProcessedUpTo = _consumedSamples;
+            _pendingSkipSamples--;
+        }
     }
 
     // See _agcDeadZoneCatchUpTarget's own doc comment for why this is deferred instead of running
@@ -1370,6 +1520,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _afcTracker = null;
         _syncEnvelopeDetector = null;
         _slantTracker = null;
+        ResetReSyncState(); // legacy's Stop()-side m_Skip = 0, sstv.cpp:1789
 
         _avtTrainingPending = false;
         _avtTrainingLock = null;
@@ -2142,6 +2293,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // callers don't need would be validating a scenario that can't currently happen -- flagged so a
     // FUTURE new call site's author checks this coupling explicitly instead of discovering it via a
     // hard-to-diagnose spurious restart.
+    //
+    // Also clears the manual-ReSync state (ResetReSyncState) -- legacy zeroes m_Skip in Start()
+    // (sstv.cpp:1725) as well as Stop(), and this method is the Start()-side teardown for both its
+    // call sites (Commit and S7's AVT hand-off), so Commit needs no separate clear of its own.
     private void AbandonInProgressImage()
     {
         _mode = null;
@@ -2149,6 +2304,26 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _pixels = null;
         _nextLine = 0;
         _bandpassLockedFromSample = int.MaxValue; // matches EndOfImage's own "no lock" convention
+        ResetReSyncState(); // legacy's Start()-side m_Skip = 0, sstv.cpp:1725
+    }
+
+    // Legacy clears m_Skip at both ends of a reception: Start() (sstv.cpp:1725) and Stop()
+    // (sstv.cpp:1789). Same for the click-handler state KRFSClick sets -- m_SyncPos/m_SyncRPos are
+    // reset per line either way, and m_AutoSyncCount/m_AutoSyncDis are cleared once per reception
+    // (Main.cpp:4994). Called from AbandonInProgressImage (legacy's Start() side -- covers BOTH
+    // Commit() and the S7 AVT hand-off) and from EndOfImage (legacy's Stop() side).
+    //
+    // Dropping a partially-drained skip rather than finishing it across the boundary is deliberate and
+    // matches legacy exactly (m_Skip = 0, not "let it finish"). _consumedSamples/_idealLineStartSample
+    // stay consistent through such a partial drain: both callers reassign both of them together, and
+    // _slantProcessedUpTo is resynced by InitializeSlant before ApplySlantTracking can run again.
+    private void ResetReSyncState()
+    {
+        _reSyncRequested = false;
+        _pendingSkipSamples = 0;
+        _lastLineSyncPeakPosition = null;
+        _suppressNextSlantProcessLine = false;
+        _slantCorrectionsDisabledForRestOfImage = false;
     }
 
     private void Commit(SstvModeDefinition matched, int lineStartSample)
@@ -3054,6 +3229,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// retune (ultracode audit finding #1's scope correction).</summary>
     internal SyncEnvelopeDetector SyncBypass1200DetectorForTests => _syncBypass1200Detector;
 
+    /// <summary>Test-only visibility into the Auto-Slant tracker itself -- needed to distinguish
+    /// manual ReSync's two suppression scopes from the outside: the one-line gate
+    /// (<see cref="_suppressNextSlantProcessLine"/>) must leave <see cref="SlantTracker.TotalLinesObservedForTests"/>
+    /// completely untouched for that one line, while the whole-image gate
+    /// (<see cref="_slantCorrectionsDisabledForRestOfImage"/>) still advances it by exactly one per
+    /// line via <see cref="SlantTracker.ProcessLineHistoryOnly"/>. Null until <see cref="InitializeSlant"/>
+    /// runs for a non-AVT mode.</summary>
+    internal SlantTracker? SlantTrackerForTests => _slantTracker;
+
     /// <summary>Test-only visibility into the within-line sample accumulator Auto Slant advances --
     /// should always satisfy 0 &lt;= this &lt; <see cref="EffectiveSamplesPerLineForTests"/> even
     /// across a rate-change commit (ultracode audit finding #10).</summary>
@@ -3061,6 +3245,28 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
     /// <summary>Test-only visibility into the current (possibly Auto-Slant-corrected) samples-per-line.</summary>
     internal double EffectiveSamplesPerLineForTests => _effectiveSamplesPerLine;
+
+    /// <summary>Test-only visibility into the current decode read cursor -- manual ReSync
+    /// (<see cref="RequestReSync"/>) is the first feature that shifts this outside the normal per-line
+    /// loop's own advancement, so tests need to observe it directly.</summary>
+    internal int ConsumedSamplesForTests => _consumedSamples;
+
+    /// <summary>Test-only visibility into the captured last-completed-line sync-peak position manual
+    /// ReSync reads from -- <see langword="null"/> once a correction has applied (or before any line
+    /// has completed since lock). Read this BEFORE the <see cref="PushSamples"/> call that triggers a
+    /// pending <see cref="RequestReSync"/> request, not after -- it's nulled as part of applying the
+    /// correction.</summary>
+    internal double? LastLineSyncPeakPositionForTests => _lastLineSyncPeakPosition;
+
+    /// <summary>Test-only visibility into the same "ofp" (<c>SSTVSET.m_OFP</c>) value
+    /// <see cref="PerformReSync"/> computes internally, so tests can hand-derive an expected skip from
+    /// <see cref="LastLineSyncPeakPositionForTests"/> without re-deriving that computation a second,
+    /// independently-fallible time. <see langword="null"/> before any mode is locked.</summary>
+    internal int? SyncPeakOffsetSamplesForTests => _mode is null ? null : ComputeSyncPeakOffsetSamples(_mode);
+
+    /// <summary>Test-only visibility into the in-progress manual-ReSync skip still left to drain --
+    /// reaches 0 exactly when <see cref="DrainPendingSkip"/> has fully applied a correction.</summary>
+    internal int PendingSkipSamplesForTests => _pendingSkipSamples;
 
     // Legacy applies AFC in the same single per-sample pass as the main demod ("if(m_Sync) d +=
     // m_AFCDiff" right after m_hill.Do(...), sstv.cpp:2255-2270 -- case 2/Hilbert, this port's real
@@ -3229,6 +3435,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // mirrors legacy's own m_AutoStopPos wraparound, needed so a peak that lands just before
             // vs. just after the line boundary isn't reported as a huge spurious jump.
             var relative = _slantLinePeakPosition - _syncSegmentOffsetSamples;
+
+            // Manual ReSync's capture point (legacy's m_SyncRPos = m_SyncPos at its own line-boundary
+            // point, Main.cpp:4193-4194) -- MUST stay here, before the two-flag suppression block
+            // below, not moved down next to the _slantLineMaxEnvelope/_slantLinePeakPosition resets.
+            // The one-line-suppress branch's own `_lastLineSyncPeakPosition = null;` only has any
+            // effect because this capture already ran earlier in this same pass; placing it after
+            // that block would silently overwrite the null and make the suppression dead code.
+            _lastLineSyncPeakPosition = _slantLinePeakPosition;
+
             var half = _effectiveSamplesPerLine / 2.0;
             if (relative > half)
             {
@@ -3249,10 +3464,38 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // SlantTracker's own doc comment).
             var completedLineSamples = _effectiveSamplesPerLine;
 
-            var correctedSampleRate = _slantTracker.ProcessLine(relative);
-            if (correctedSampleRate is not null)
+            if (_suppressNextSlantProcessLine)
             {
-                _effectiveSamplesPerLine = _mode!.LineDurationMs / 1000.0 * correctedSampleRate.Value;
+                _suppressNextSlantProcessLine = false;
+
+                // Legacy's AutoStopJob() doesn't run AT ALL for this one line: Main.cpp:4190 gates the
+                // call on `m_SyncPos != -1`, and KRFSClick set m_SyncPos = -1. So no history push, no
+                // m_AutoStopACnt++/m_ASCurY++, no correction -- nothing.
+                //
+                // Also undo this line's own capture above: legacy's :4194 (`m_SyncRPos = m_SyncPos`)
+                // propagates that same -1 across this boundary, so legacy has no valid m_SyncRPos to
+                // ReSync from either. Load-bearing, not tidiness: this is the one line whose peak
+                // straddles the jump AND whose skipped span never entered the _slantLineMaxEnvelope
+                // comparison (see DrainPendingSkip), so the captured value is meaningless -- leaving it
+                // set would let an immediate second ReSync click apply a bogus second skip from it.
+                _lastLineSyncPeakPosition = null;
+            }
+            else if (_slantCorrectionsDisabledForRestOfImage)
+            {
+                // m_AutoSyncCount (Main.cpp:3968), set by a successful ReSync and cleared only at the
+                // next reception's start (:4994): the history/counter bookkeeping legacy runs
+                // unconditionally keeps running, the whole correction branch does not. Deliberately NOT
+                // `ProcessLine(relative)`-and-discard -- see ProcessLineHistoryOnly's own doc comment
+                // (SlantTracker.cs) for what that would additionally (and wrongly) mutate.
+                _slantTracker.ProcessLineHistoryOnly(relative);
+            }
+            else
+            {
+                var correctedSampleRate = _slantTracker.ProcessLine(relative);
+                if (correctedSampleRate is not null)
+                {
+                    _effectiveSamplesPerLine = _mode!.LineDurationMs / 1000.0 * correctedSampleRate.Value;
+                }
             }
 
             _slantIdealSamplesSoFarInLine -= completedLineSamples; // carry remainder against the OLD samples-per-line -- keeps line boundaries from drifting

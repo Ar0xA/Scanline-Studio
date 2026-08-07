@@ -28,6 +28,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance
 
     public void ResetAgc() => ResetAgcCallCount++;
 
+    public int RequestReSyncCallCount { get; private set; }
+
+    public void RequestReSync() => RequestReSyncCallCount++;
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
         PushedSamples.Add(samples);
