@@ -37,9 +37,24 @@ public static class WavFile
         foreach (var sample in samples)
         {
             var clamped = Math.Clamp(sample, -1f, 1f);
-            writer.Write((short)(clamped * short.MaxValue));
+            // Scale by 32768 (this port's internal DSP convention, not 32767) so it matches the
+            // decoder/AGC/demodulator's own scale. At clamped==1.0f this multiplies to exactly
+            // 32768f, one past short.MaxValue; (short)32768f is NOT saturation -- it wraps to
+            // short.MinValue (confirmed empirically), which would silently flip a full-scale
+            // positive sample to full-scale negative. Clamp the scaled value into short's range
+            // before narrowing.
+            var scaled = Math.Clamp(clamped * 32768f, short.MinValue, short.MaxValue);
+            writer.Write((short)scaled);
         }
     }
+
+    private const short AudioFormatPcm = 1;
+    private const short AudioFormatExtensible = unchecked((short)0xFFFE);
+
+    // KSDATAFORMAT_SUBTYPE_PCM -- the WAVE_FORMAT_EXTENSIBLE SubFormat GUID that means "still PCM."
+    // .NET's Guid(byte[16]) constructor expects the same mixed-endian layout Windows GUIDs are stored
+    // in on the wire, so the 16 raw extension bytes can be handed to it directly, no manual re-ordering.
+    private static readonly Guid PcmSubFormat = new("00000001-0000-0010-8000-00AA00389B71");
 
     public static (float[] Samples, int SampleRate) Read(string path)
     {
@@ -60,28 +75,54 @@ public static class WavFile
         short bitsPerSample = 16;
         short numChannels = 1;
         float[]? samples = null;
+        var sawFmt = false;
 
         while (reader.BaseStream.Position < reader.BaseStream.Length)
         {
             var chunkId = Encoding.ASCII.GetString(reader.ReadBytes(4));
             var chunkSize = reader.ReadInt32();
+            var remainingInStream = reader.BaseStream.Length - reader.BaseStream.Position;
+            if (chunkSize < 0 || chunkSize > remainingInStream)
+            {
+                throw new InvalidDataException(
+                    $"Chunk '{chunkId}' declares size {chunkSize}, but only {remainingInStream} bytes remain in the file.");
+            }
 
             if (chunkId == "fmt ")
             {
-                reader.ReadInt16(); // audio format
+                var audioFormat = reader.ReadInt16();
                 numChannels = reader.ReadInt16();
                 sampleRate = reader.ReadInt32();
                 reader.ReadInt32(); // byte rate
                 reader.ReadInt16(); // block align
                 bitsPerSample = reader.ReadInt16();
                 var remaining = chunkSize - 16;
-                if (remaining > 0)
+                var extension = remaining > 0 ? reader.ReadBytes(remaining) : [];
+
+                if (audioFormat == AudioFormatExtensible)
                 {
-                    reader.ReadBytes(remaining);
+                    // Extension layout: cbSize (2) + validBitsPerSample (2) + channelMask (4) +
+                    // SubFormat GUID (16) = 24 bytes; the GUID itself starts at offset 8.
+                    if (extension.Length < 24 || new Guid(extension[8..24]) != PcmSubFormat)
+                    {
+                        throw new NotSupportedException(
+                            "WAVE_FORMAT_EXTENSIBLE with a non-PCM SubFormat is not supported.");
+                    }
                 }
+                else if (audioFormat != AudioFormatPcm)
+                {
+                    throw new NotSupportedException($"Unsupported WAV audio format tag {audioFormat}.");
+                }
+
+                sawFmt = true;
             }
             else if (chunkId == "data")
             {
+                if (!sawFmt)
+                {
+                    throw new InvalidDataException("'data' chunk encountered before 'fmt ' chunk.");
+                }
+
                 if (bitsPerSample != 16 || numChannels != 1)
                 {
                     throw new NotSupportedException("Only 16-bit mono PCM WAV is supported.");
@@ -91,12 +132,18 @@ public static class WavFile
                 samples = new float[sampleCount];
                 for (var i = 0; i < sampleCount; i++)
                 {
-                    samples[i] = reader.ReadInt16() / (float)short.MaxValue;
+                    samples[i] = reader.ReadInt16() / 32768f;
                 }
             }
             else
             {
                 reader.ReadBytes(chunkSize);
+            }
+
+            // RIFF pads every sub-chunk to an even byte boundary.
+            if (chunkSize % 2 != 0 && reader.BaseStream.Position < reader.BaseStream.Length)
+            {
+                reader.ReadByte();
             }
         }
 

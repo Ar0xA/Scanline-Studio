@@ -50,6 +50,8 @@
   "RadioStatus.Error.NoRadioConnected": "No radio connected -- configure CAT control in Options first.",
   "RadioStatus.Error.TuneFailed": "Tune failed. Check your radio and audio device settings.",
   "RadioStatus.Error.ReceivingFailed": "Could not start/stop receiving. Check your audio device settings.",
+  "RadioStatus.Warning.RxMaintenanceApproaching": "RX has been continuously active for a long time without a pause -- it will restart automatically once idle, or be force-stopped soon if it never idles.",
+  "RadioStatus.Error.RxMaintenanceRequired": "RX was stopped for required internal maintenance. Click Receiving to resume.",
   "RadioStatus.VfoCaption": "VFO A · RX · M1",
   "RadioStatus.SidebandUsb": "USB",
   "RadioStatus.SidebandLsb": "LSB",

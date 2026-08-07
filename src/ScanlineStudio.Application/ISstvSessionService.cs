@@ -37,6 +37,23 @@ public interface ISstvSessionService : IAsyncDisposable
 
     event Action<SstvModeDefinition>? ModeDetected;
 
+    /// <summary>Ultracode audit finding #34's automatic-restart mechanism (see
+    /// <c>ScanlineStudio.Core.Sstv.RestartableSstvDecoder</c>) has gone past its warning threshold
+    /// without an opportunity to swap yet -- fires at most once per restart cycle, cleared by
+    /// <see cref="MaintenanceWarningCleared"/>. Fires synchronously on the audio drain thread, same
+    /// contract as <see cref="ModeDetected"/>.</summary>
+    event Action? MaintenanceWarningRaised;
+
+    /// <summary>The condition <see cref="MaintenanceWarningRaised"/> warned about has resolved (a
+    /// restart happened before the critical threshold was reached).</summary>
+    event Action? MaintenanceWarningCleared;
+
+    /// <summary>The critical threshold was reached -- the decoder has already force-restarted
+    /// unconditionally (this is a notification, not a request), and by the time this fires RX has
+    /// already been stopped via <see cref="StopReceivingAsync"/>. The user must manually call
+    /// <see cref="StartReceivingAsync"/> again.</summary>
+    event Action? MaintenanceCriticalStopRaised;
+
     Task StartReceivingAsync(CancellationToken ct = default);
 
     Task StopReceivingAsync();
