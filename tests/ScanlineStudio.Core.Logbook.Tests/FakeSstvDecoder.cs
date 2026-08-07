@@ -18,6 +18,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     {
     }
 
+    public void ForceMode(SstvModeDefinition mode)
+    {
+    }
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
     }

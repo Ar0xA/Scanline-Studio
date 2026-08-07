@@ -12,6 +12,20 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 public class RestartableSstvDecoderTests
 {
     [Fact]
+    public void ForceMode_ForwardsToTheCurrentInner()
+    {
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue);
+        SstvModeDefinition? detectedMode = null;
+        decoder.ModeDetected += m => detectedMode = m;
+
+        decoder.ForceMode(SstvModeRegistry.Avt);
+        decoder.PushSamples(new float[64]);
+
+        Assert.NotNull(detectedMode);
+        Assert.Equal(SstvModeRegistry.Avt.Id, detectedMode!.Id);
+    }
+
+    [Fact]
     public void PushSamples_IdlePastWarningThreshold_SwapsInner_AndEventForwardingSurvives()
     {
         var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000);

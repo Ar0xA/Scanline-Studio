@@ -219,6 +219,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.RequestReSync();
     }
 
+    /// <summary>See <see cref="ISstvSessionService.ForceMode"/>.</summary>
+    public void ForceMode(SstvModeDefinition mode)
+    {
+        Log.ModeForced(_logger, mode.Id);
+        _decoder.ForceMode(mode);
+    }
+
     // These three run synchronously on the audio drain thread, inside the same call stack as
     // ISstvDecoder.PushSamples -- _decoderHandler's own try/catch (constructor, above) wraps the
     // PushSamples call itself, but an exception thrown by one of THESE handlers would otherwise be
@@ -597,6 +604,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual ReSync requested")]
         public static partial void ReSyncRequested(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Decode mode forced to {ModeId}")]
+        public static partial void ModeForced(ILogger logger, string modeId);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX started: device={DeviceId}, sampleRate={SampleRate}Hz")]
         public static partial void RxStarted(ILogger logger, string deviceId, int sampleRate);
