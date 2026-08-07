@@ -168,6 +168,21 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         current.ResetAgc();
     }
 
+    /// <summary>Forwards to whichever inner instance is current. A request racing a restart is
+    /// silently dropped if the swap wins (the fresh inner has nothing to ReSync yet, matching legacy's
+    /// own reception-start reset of this same state) -- not queued, same fire-and-forget contract
+    /// <see cref="ISstvDecoder.RequestReSync"/> already documents.</summary>
+    public void RequestReSync()
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            current = _inner;
+        }
+
+        current.RequestReSync();
+    }
+
     private void Swap()
     {
         UnsubscribeFrom(_inner);

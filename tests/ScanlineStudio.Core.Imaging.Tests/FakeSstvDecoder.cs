@@ -14,6 +14,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     {
     }
 
+    public void RequestReSync()
+    {
+    }
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
     }

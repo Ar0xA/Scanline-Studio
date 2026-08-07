@@ -16,10 +16,15 @@ namespace ScanlineStudio.Core.Sstv;
 /// "Auto Stop" (<c>sys.m_AutoStop</c>, stops the recording when the sync position looks stable,
 /// i.e. the image looks finished) and "Auto Sync" (<c>sys.m_AutoSync</c>, snaps the read pointer to
 /// recover from a sync glitch/jump) -- both left out here as separate concerns, not slant
-/// correction. Also not ported: the <c>!SBTX-&gt;Down</c>/echo/TX-sample-offset gate and the
-/// <c>m_AutoSyncCount</c> re-entrancy guard, both trivially satisfied for a pure RX decoder with no
-/// simultaneous-TX concept (this port's decoder never has <c>SBTX-&gt;Down</c> true), so they're
-/// correctly omitted rather than silently dropped.
+/// correction. Also not ported: the <c>!SBTX-&gt;Down</c>/echo/TX-sample-offset gate, trivially
+/// satisfied for a pure RX decoder with no simultaneous-TX concept (this port's decoder never has
+/// <c>SBTX-&gt;Down</c> true), so it's correctly omitted rather than silently dropped.
+/// <c>m_AutoSyncCount</c>, the third condition on that same line (<c>Main.cpp:3968</c>), IS modeled --
+/// not in this class but in its caller: a manual ReSync sets it (<c>Main.cpp:14017</c>) and it stays
+/// set until the next reception starts (<c>Main.cpp:4994</c>), which the caller ports by calling
+/// <see cref="ProcessLineHistoryOnly"/> instead of <see cref="ProcessLine"/> for every subsequent
+/// line of that image. An earlier version of this comment called that guard "trivially satisfied,"
+/// which was true only before manual ReSync existed.
 ///
 /// Scope note on what "applying" the correction means here: legacy retroactively re-decodes the
 /// *entire* image received so far at the corrected rate once a correction commits
@@ -130,6 +135,34 @@ internal sealed class SlantTracker
         return result;
     }
 
+    /// <summary>Records one line's peak position into the history WITHOUT running the jitter gate, the
+    /// fit, the baseline capture, or the correction ladder — the caller's port of legacy's
+    /// <c>m_AutoSyncCount</c> gate (<c>Main.cpp:3968</c>: <c>if( KRSA-&gt;Checked &amp;&amp;
+    /// !m_AutoSyncCount &amp;&amp; ... )</c>), which a manual ReSync sets and which stays set for the
+    /// rest of the reception. While that gate is closed legacy still runs <c>AutoStopJob</c>'s own
+    /// unconditional bookkeeping — the history shift/push and <c>m_AutoStopACnt++</c>
+    /// (<c>Main.cpp:3964-3966</c>) plus <c>m_ASCurY++</c> (<c>Main.cpp:4032</c>, verified by brace
+    /// count to sit OUTSIDE the <c>:3968</c> gate but inside <c>:3886</c>'s outer one) — and skips
+    /// everything from <c>:3968</c> through <c>:4031</c>.
+    ///
+    /// Calling <see cref="ProcessLine"/> and discarding its return value is NOT equivalent to this:
+    /// that would still set <see cref="_baselinePosition"/>/<see cref="_hasBaseline"/>, feed
+    /// <see cref="_correctionAverage"/>, latch <see cref="_bitMask"/>, advance
+    /// <see cref="_currentSampleRate"/>/<see cref="_nominalSamplesPerLine"/>, and — via
+    /// <see cref="Reset"/> on any committed correction — <c>Array.Clear</c> the very history it is
+    /// supposed to be preserving.</summary>
+    public void ProcessLineHistoryOnly(double relativePositionSamples)
+    {
+        // Main.cpp:3964-3966 -- byte-for-byte ProcessLine's own first three statements.
+        Array.Copy(_history, 1, _history, 0, HistorySize - 1);
+        _history[HistorySize - 1] = relativePositionSamples;
+        _totalLinesObserved++;
+
+        // Main.cpp:4032's m_ASCurY++ -- ProcessLine's own trailing `_linesSinceBaseline++`, which
+        // legacy also runs regardless of the :3968 gate.
+        _linesSinceBaseline++;
+    }
+
     /// <summary><c>GetSqerrPos(5)</c> (`Main.cpp:3867-3880`) — least-squares linear fit's value at
     /// i=0 (the most recent sample) over the last 5 history entries.</summary>
     private double GetSqerrPos()
@@ -236,4 +269,15 @@ internal sealed class SlantTracker
     /// directly observe the jitter gate's pass/fail outcome (ultracode audit finding #7) without
     /// waiting the further 3 lines a resulting correction would need.</summary>
     internal bool HasBaselineForTests => _hasBaseline;
+
+    /// <summary>Test-only visibility into how many lines have been recorded via <see cref="ProcessLine"/>
+    /// or <see cref="ProcessLineHistoryOnly"/> combined -- lets a test confirm history recording
+    /// actually happened via <see cref="ProcessLineHistoryOnly"/> without relying on
+    /// <see cref="HasBaselineForTests"/>, which stays false in that mode by design and so can't
+    /// distinguish "history recorded, corrections disabled" from "nothing happened at all".</summary>
+    internal int TotalLinesObservedForTests => _totalLinesObserved;
+
+    /// <summary>Test-only visibility into the raw recorded-position history buffer -- a defensive
+    /// copy, since the real field is mutated in place by every subsequent call.</summary>
+    internal double[] HistoryForTests => (double[])_history.Clone();
 }
