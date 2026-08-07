@@ -143,12 +143,16 @@ internal static partial class Program
         // Factory, not an eagerly-constructed instance (unlike ISstvEncoder/IWaterfallSource below) --
         // needs to read SstvDecoderSettings.AfcEnabled from ISettingsStore (registered above) before
         // constructing, so this must defer until first resolution rather than running at this line.
+        // Ultracode audit finding #34: RestartableSstvDecoder (not AnalogFmSstvDecoder directly)
+        // periodically discards/reconstructs the whole decoder object graph to avoid an int-overflow
+        // after ~13.5h of continuous streaming @44100Hz -- see that class's own doc comment. Every
+        // consumer only ever holds ISstvDecoder, so this swap is fully transparent.
         hostBuilder.Services.AddSingleton<ISstvDecoder>(sp =>
         {
             var appSettings = sp.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult();
             var decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
                 ?? new SstvDecoderSettings();
-            return new AnalogFmSstvDecoder(afcEnabled: decoderSettings.AfcEnabled ?? true);
+            return new RestartableSstvDecoder(afcEnabled: decoderSettings.AfcEnabled ?? true);
         });
         hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
         hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));

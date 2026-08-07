@@ -205,5 +205,12 @@
                      Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
                      TextWrapping="Wrap"
                      IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <!-- Ultracode audit finding #34's automatic-restart mechanism: deliberately a separate
+               binding from ErrorMessage above, not sharing it (see MaintenanceMessage's own doc
+               comment on the ViewModel for why reusing ErrorMessage would be unsafe here). -->
+          <TextBlock Text="{Binding MaintenanceMessage}"
+                     Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
+                     TextWrapping="Wrap"
+                     IsVisible="{Binding MaintenanceMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
         </StackPanel>
 </UserControl>

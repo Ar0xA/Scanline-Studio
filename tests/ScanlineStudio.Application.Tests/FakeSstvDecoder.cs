@@ -1,8 +1,12 @@
 using ScanlineStudio.Abstractions.Sstv;
+using ScanlineStudio.Core.Sstv;
 
 namespace ScanlineStudio.Application.Tests;
 
-internal sealed class FakeSstvDecoder : ISstvDecoder
+// Implements ISstvDecoderMaintenance (unlike the two other FakeSstvDecoders in Core.Imaging.Tests/
+// Core.Logbook.Tests, which have no need for it) so SstvSessionServiceTests can drive the ultracode
+// audit finding #34 maintenance-signal wiring without a real RestartableSstvDecoder.
+internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance
 {
     public List<ReadOnlyMemory<float>> PushedSamples { get; } = [];
 
@@ -13,6 +17,12 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     public event Action<SstvModeDefinition>? ModeDetected;
 
     public event Action<SstvModeDefinition>? DecodeRestarted;
+
+    public event Action? RestartOverdue;
+
+    public event Action? RestartCriticallyOverdue;
+
+    public event Action? Restarted;
 
     public int ResetAgcCallCount { get; private set; }
 
@@ -32,4 +42,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     public void RaiseLineDecoded(DecodedImageUpdate update) => LineDecoded?.Invoke(update);
 
     public void RaiseDecodeRestarted(SstvModeDefinition abandonedMode) => DecodeRestarted?.Invoke(abandonedMode);
+
+    public void RaiseRestartOverdue() => RestartOverdue?.Invoke();
+
+    public void RaiseRestartCriticallyOverdue() => RestartCriticallyOverdue?.Invoke();
+
+    public void RaiseRestarted() => Restarted?.Invoke();
 }
