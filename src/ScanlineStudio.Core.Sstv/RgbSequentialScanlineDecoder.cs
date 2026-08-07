@@ -43,7 +43,9 @@ internal sealed class RgbSequentialScanlineDecoder : IScanlineDecoder
                 var pixelWalk = 0.0;
                 for (var x = 0; x < mode.ImageWidth; x++)
                 {
-                    var startSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
+                    // ultracode audit finding #29: ceiling, not round-to-nearest -- matches legacy's
+                    // real first-sample-at-or-after-boundary pixel selection.
+                    var startSample = lineStartSample + (int)Math.Ceiling(segmentStartSample + pixelWalk);
                     pixelWalk += perPixelDurationMs / 1000.0 * sampleRate;
                     var endSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
 

@@ -14,16 +14,17 @@ namespace ScanlineStudio.Core.Sstv;
 /// arithmetic) — every threshold below is legacy's own real-Hz constant, not a derived one, except
 /// the small calibration nudge noted at its own declaration.
 ///
-/// Not ported: legacy also calls <c>InitTone</c> on every lock update, re-tuning several *other*
-/// fixed-frequency tone-detector IIR filters (VIS-bit/tick/FSK amplitude detectors,
-/// `Main.cpp`/`sstv.cpp`'s `m_iir11`/`12`/`13`/`19`/`fsk`) so they track the same drift. This port
-/// doesn't model that separate detector subsystem for any mode (VIS bits are decoded via direct
-/// frequency thresholding on the continuous PLL output instead — see <c>AnalogFmSstvDecoder</c>) so
-/// there is nothing for that side effect to retune here; only the correction this class returns is
-/// relevant. Also not ported: the `m_lvl.m_CurMax > 16` signal-level gate at the call site — a
-/// squelch/noise-immunity gate this port's noise-free synthetic round-trip pipeline has no
-/// equivalent for, and a real "is there a signal at all" concept this port doesn't model for any
-/// mode yet.
+/// Correction (ultracode audit findings #1/#4): two earlier claims in this comment were wrong.
+/// (1) legacy's <c>InitTone</c> retune IS modeled — <see cref="SyncEnvelopeDetector.Retune"/>, called
+/// from <c>AnalogFmSstvDecoder</c> using <see cref="CorrectionHz"/> below, mirrors it exactly for the
+/// Auto-Slant sync-envelope detector (the one legacy path whose loss was actually measurable; the
+/// port never modeled the *other* four VIS-bit/FSK tone detectors <c>InitTone</c> also retunes, since
+/// VIS bits are decoded via direct frequency thresholding on the continuous demodulator output
+/// instead, which has no equivalent fixed-frequency resonator to retune). (2) the `m_CurMax > 16`
+/// gate IS ported, at the <see cref="CorrectionHz"/> call site in <c>AnalogFmSstvDecoder</c> — it
+/// gates the call to <see cref="ProcessSample"/> (matching legacy's `SyncFreq(d)` update), while the
+/// standing correction itself is applied to every sample unconditionally (matching legacy's separate,
+/// unconditional `d += m_AFCDiff`, `sstv.cpp:2270`).
 /// </summary>
 internal sealed class AfcTracker
 {
@@ -74,18 +75,37 @@ internal sealed class AfcTracker
         _cooldownSamples = (int)(100.0 / 1000.0 * sampleRate); // m_AFCInt = 100ms, sstv.cpp:1478
 
         // SyncFreq's `d -= 128` (sstv.cpp:2347), translated out of legacy's x16384/BWH scale: 128 in
-        // that scale is 128*BWH/16384 real Hz -- a small (~1-3Hz) fixed nudge, not independently
-        // explained in source, ported faithfully rather than dropped as presumed-insignificant.
+        // that scale is 128*BWH/16384 real Hz. Confirmed deliberate, not incidental (ultracode audit
+        // finding #2): 128 scaled units is *exactly* one luma level in both wide (400/3.125Hz) and
+        // narrow (128/1.0Hz) bandwidth modes -- too dimensionally precise across two unrelated
+        // constants to be accidental. In legacy's own inverted/scaled domain, `d -= 128` corresponds
+        // to `f_eff = f + 128*BWH/16384`, i.e. the offset must be ADDED to the measured frequency
+        // here, not subtracted (an earlier version of this line had the sign backwards, net error
+        // +6.25Hz wide / +2.0Hz narrow vs legacy).
         _calibrationOffsetHz = 128.0 * bandwidthHalfHz / 16384.0;
 
         _shortAverage = new MovingAverage((int)(2.5 / 1000.0 * sampleRate)); // m_Avg, sstv.cpp:1475
+
+        // InitAFC pre-seeds m_AFCLock/m_AFCData to the nominal sync-tone-equivalent value
+        // (sstv.cpp:1662/1665) before the lock average has ever filled -- without this, the 15-tap
+        // lock average's guard-timeout reset path (see the `_gardRemaining == 0` branch below) mixes
+        // a real measured frequency with 14 slots of an unseeded default, producing a grossly wrong
+        // correction (ultracode audit finding #3: ~1120Hz/~1773Hz wrong vs legacy's ~0Hz on that path).
+        _lockedFrequencyHz = syncTargetHz;
     }
 
+    /// <summary>The current persistent correction (Hz, 0 until the first lock) -- mirrors legacy's
+    /// standing <c>m_AFCDiff</c>, which is applied to every sample unconditionally once synced
+    /// (`sstv.cpp:2270`), independent of whatever gated <see cref="ProcessSample"/> most recently.</summary>
+    public double CorrectionHz => _correctionHz;
+
     /// <summary>Feeds one zero-crossing-based frequency reading (Hz); returns the current persistent
-    /// correction (Hz, 0 until the first lock) to add to the main demodulator's output.</summary>
+    /// correction (Hz, 0 until the first lock) to add to the main demodulator's output. Callers that
+    /// need the correction applied to every sample (not just gated ones) should read
+    /// <see cref="CorrectionHz"/> separately -- see <c>AnalogFmSstvDecoder.ApplyAfcCorrections</c>.</summary>
     public double ProcessSample(double measuredFrequencyHz)
     {
-        var d = measuredFrequencyHz - _calibrationOffsetHz;
+        var d = measuredFrequencyHz + _calibrationOffsetHz;
 
         if (d >= _bandLowHz && d <= _bandHighHz)
         {

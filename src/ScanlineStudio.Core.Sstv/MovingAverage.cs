@@ -44,4 +44,15 @@ internal sealed class MovingAverage
         _count = _buffer.Length;
         return value;
     }
+
+    /// <summary><c>CSmooz::SetCount(n)</c> when <c>n</c> equals the existing capacity -- legacy's
+    /// real "clear to genuinely empty" path (`sstv.h:125-127`'s <c>else</c> branch: <c>Cnt = Wp =
+    /// 0</c>). Distinct from <see cref="Reset"/>, which instantly seeds every slot with one value;
+    /// this instead makes the average restart from scratch, refilling gradually via
+    /// <see cref="Add"/> as legacy's own post-InitAutoStop average does (`Main.cpp:3810`).</summary>
+    public void Clear()
+    {
+        _writeIndex = 0;
+        _count = 0;
+    }
 }

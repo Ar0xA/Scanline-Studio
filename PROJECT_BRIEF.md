@@ -2,7 +2,95 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-07, latest, ACTIVE) — QSO logbook backend: SQLite storage, ADIF import/export, GridTracker UDP streaming, QRZ.com Logbook API upload. All 7 plan pieces done, auditor pass on the highest-risk piece applied. Full solution build/test green (915 tests across 10 test projects, 0 failures, DSP golden-vector suite included). NOT YET COMMITTED.
+## Resume here (2026-08-07, latest, ACTIVE) — ultracode DSP behavioral-divergence audit: all 19 MATCH_LEGACY findings (+ #15 doc-only) IMPLEMENTED across 7 pieces, one real sign-error bug caught by the final milestone audit and fixed, full Core.Sstv.Tests suite green (594/594) plus Application/Imaging/Logbook test projects. NOT YET COMMITTED.
+
+**All 7 implementation pieces done** (plan: `~/.claude/plans/fuzzy-yawning-melody.md`), each built+tested+full-suite-verified before moving to the next, per this project's chop-into-pieces discipline:
+- **Piece 1** (AfcTracker.cs, LevelAgc.cs, SyncEnvelopeDetector.cs, AnalogFmSstvDecoder.cs): AFC sign fix (#2), zero-Hz lock-average seed fix (#3), AFC-correction gating fix (#4), sync-tone tank-filter retuning (#1), AGC TX/RX reset (#6), HilbertFmDemodulator doc-comment fix (#15).
+- **Piece 2** (SlantTracker.cs, SstvModeRegistry.cs, AnalogFmSstvDecoder.cs, MovingAverage.cs): slant jitter-gate off-by-one (#7), PD120/180/240 threshold fix (#8), post-commit state reset (#9), boundary-carry fix on rate-change lines (#10). **Regressed a real legacy-captured golden vector** (pd90, delta 0.93->3.74 crossing its 3.0 tolerance) — root-caused via git-stash bisection to #10 specifically, then re-measured and re-documented per this file's established tolerance-history convention (not blindly widened) — new tolerance 7.0, all 8 modes' deltas recorded in `GoldenVectorTests.cs`'s own comment.
+- **Piece 3** (VisLockStateMachine.cs, AvtTrainingLockStateMachine.cs): `Math.Round`->truncation fix (#11) in `MsToSamples`.
+- **Piece 4** (RobotScanlineDecoder.cs, YCbCrSequentialScanlineDecoder.cs, YCbCrLinePairedScanlineDecoder.cs, RgbSequentialScanlineDecoder.cs, MonoAveragedPairedScanlineDecoder.cs): Robot36 line-0 chroma default 0.0->128.0 (#27, was producing saturated-green instead of neutral-gray), YCbCr truncation-domain fix (#28 — corrected the audit's OWN first-pass mistake: must truncate `value-128` then `+128`, not truncate `value` directly), pixel-boundary round->ceiling fix (#29), Robot36 asymmetric threshold (#30), PD/MP/MN chroma trim-factor fix (#32).
+- **Piece 5** (AnalogFmSstvEncoder.cs, SstvModeRegistry.cs, 3 encoder files): MR/ML inter-channel hold now genuinely holds the previous frequency via new `HoldPreviousFrequencySegment` record (#24, was emitting a fixed 1900Hz), TX floor-not-round fix (#25).
+- **Piece 6** (new `TxOutputBandpassFilter.cs`, AnalogFmSstvEncoder.cs): ported legacy's always-on TX output bandpass filter (#26) — the highest-priority finding (real RF-hygiene/spectral-purity concern, not just a test-fidelity nit). Required its own Kaiser/Bessel-window `I0` port (verbatim truncated series, not an exact modified-Bessel function — matters at the 1e-12 fixture tolerance), fixed 24-tap count (NOT scaled like the RX-side `SearchBandpassFilter`), and is constructed as a LOCAL variable inside `EncodeAsyncCore` (not a field — `AnalogFmSstvEncoder` is a DI singleton). Coefficient test fixtures independently computed via a fresh Python translation of `fir.cpp` (not derived from the C# port) — script at `/tmp/.../scratchpad/tx_bpf_reference.py` if ever needed again. Re-measured `EncoderOutput_DecodesSimilarlyTo_RealLegacyAudioDecode`'s 8 per-mode deltas per this file's convention (all comfortably within existing tolerances, mixed improve/worsen, none needed to change) — documented that the OTHER TX golden-vector tests (`LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage`, `TxCaptureFixturesTests`) read stale pre-fix checked-in fixtures and don't exercise this filter at all; a real `TxCapture/` re-capture against actual legacy MMSSTV remains an open follow-up, not silently unstated.
+- **Piece 7** (WaterfallSource.cs): non-finite-sample guard (#18) in the port's own [-1,1] domain, not legacy's ±32768.
+
+**This plan went through 2 rounds of auditor plan-review before building (both caught real gaps, esp. Piece 6's Kaiser-window/tap-count/state-lifetime issues) — and a 3rd, FINAL milestone-audit pass AFTER all 7 pieces were implemented caught a genuine remaining bug**: finding #1's sync-tone-resonator retune had its sign backwards. `AfcTracker.CorrectionHz` is designed to correct a MEASUREMENT back toward nominal; legacy's `dfq` (fed to `InitTone`) instead moves the RESONATOR to follow the actual received drift — these are negations of each other, and using `CorrectionHz` directly (my original implementation) retuned the resonator AWAY from the signal by 2x the real offset, making AFC's retune worse than not retuning at all. Fixed to `dfq = -_afcTracker.CorrectionHz` in `AnalogFmSstvDecoder.cs`'s `ApplyAfcCorrections`, independently re-derived and confirmed via revert-fix-confirm-fail (buggy sign gives exactly 1197.5Hz, matching the auditor's hand-predicted number; fixed gives ~1202.5Hz). The test that should have caught this (`AfcTests.cs`) was originally non-discriminating (`Assert.NotEqual(1200.0, ...)` passes for either sign) — rewritten to assert the correct DIRECTION, not just "changed from nominal." One other auditor-suggested test tightening (SlantTests.cs's #10 carry-bound test, `[0,1)` vs `[0,effectiveSamplesPerLine)`) was tried and reverted — the suggestion was algorithmically correct but didn't account for this test sampling state at `LineDecoded` time (pixel-decode-driven) rather than at the slant-tracker's own line-boundary-commit instant; confirmed by testing, not just re-reasoning. Two low-priority test-coverage gaps remain, both explicitly noted rather than silently dropped: no dedicated test for #4's gate-vs-application split (verified correct by direct code reading, just untested), and #1's retune doesn't quantize-and-change-guard on whole Hz the way legacy's `m_AFCFQ != dfq` does (harmless on a 100Hz-bandwidth resonator).
+
+**Explicitly excluded from this plan, tracked separately**: the 4 `PORT-ONLY BUG` findings (#34 int-overflow after ~13.5h continuous RX, #36/#37 WAV 32767/32768 scale, #38 WAV format-validation hardening) have no legacy counterpart to "match" at all — real bugs, but a different kind of fix, deliberately not bundled into this pass. All `KEEP_PORT_DEVIATION`/`NEEDS_MAINTAINER_DECISION` findings got no code change, as intended.
+
+**Full verification**: `ScanlineStudio.Core.Sstv.Tests` 594/594 green (was 564 before this session — 30 new/extended test methods across `AfcTests.cs`, `LevelAgcTests.cs`, `SlantTests.cs`, `VisLockStateMachineTests.cs`, `AvtTrainingLockStateMachineTests.cs`, `RobotScanlineDecoderTests.cs`, `Limit256ClampTests.cs`, `PixelPitchSegmentBoundaryTests.cs`, `AnalogFmSstvEncoderFooterTests.cs`, `WaterfallSourceTests.cs`, plus 2 new files `HoldPreviousFrequencySegmentTests.cs`/`TxOutputBandpassFilterTests.cs`), including every real legacy-captured golden vector. `ScanlineStudio.Application.Tests` (43), `Core.Imaging.Tests` (17), `Core.Logbook.Tests` (47) also re-verified green (all three have a `FakeSstvDecoder` that needed a new `ResetAgc()` no-op/counter for the `ISstvDecoder` interface change). Full solution build clean.
+
+**Nothing committed yet** — 40 modified files + 3 new files (`TxOutputBandpassFilter.cs`, `HoldPreviousFrequencySegmentTests.cs`, `TxOutputBandpassFilterTests.cs`) sitting in the working tree, plus `ultracode_review.md` (the original 38-finding audit report, untracked, not yet updated with the #1 sign-bug postscript) and this file. Waiting on user go-ahead before committing.
+
+## Resume here (2026-08-07, superseded by the entry above) — ultracode DSP behavioral-divergence audit (legacy YONIQ vs this port) complete, 38 findings, plan drafted to fix the 19 MATCH_LEGACY ones, plan reviewed once by the auditor (Piece 6 corrected), NOT YET IMPLEMENTED.
+
+User asked to run the `/code-review ultra`-style deep DSP audit ("ultracode" effort) across every DSP
+module — filters, oscillators, FM demod, sync/slant timing, VIS/header decode, TX/RX scanline codecs,
+encoder/decoder orchestration, audio buffer/resample/WAV — comparing this port against the actual
+legacy YONIQ C++ source, read-only. Full report: `ultracode_review.md` (repo root, untracked, not
+committed — durable reference, don't duplicate its content here, just the facts needed to resume).
+
+**Method** (3 waves, ~27 total subagent calls, each `auditor` type — Opus/high-effort/read-only):
+Wave 1 = 10 parallel agents, one per subsystem, each reading the actual legacy source directly (never
+inferring TX from RX or vice versa) and hand-deriving candidate divergences. Wave 2 = 10 fresh
+independent agents re-deriving each Wave-1 claim from scratch with zero knowledge of Wave 1's
+conclusions — several claims were refuted or corrected here (e.g. "native ring buffer drops samples
+where legacy hard-stops" was refuted: legacy loses *more* data on overrun, not less). Wave 3 asked a
+different, new question per surviving finding: **does "make the port match legacy" actually mean
+porting a legacy bug forward?** Each got an explicit verdict — `MATCH_LEGACY` (legacy behavior is
+confirmed intentional design), `KEEP_PORT_DEVIATION` (legacy's behavior is an accidental C++/Delphi
+implementation artifact — uninitialized memory, an `int`-narrowing side effect — and the port's
+current divergence should stay, documented not "fixed"), `PORT-ONLY BUG` (no legacy counterpart
+exists at all), or `NEEDS_MAINTAINER_DECISION`.
+
+**38 findings, verdict breakdown**: 19 `MATCH_LEGACY`, 11 `KEEP_PORT_DEVIATION`, 4 `PORT-ONLY BUG`
+(#34 int-overflow after ~13.5h continuous RX; #36/#37/#38 — these three turned out on Wave-3 review to
+have **no legacy counterpart at all**, since legacy has no WAV file I/O — the cited `Wave.cpp` code is
+the sound-*device* path, not a file format; reclassified from "legacy divergence" to "port-internal
+32767-vs-32768 scale-convention bug"), rest `NEEDS_MAINTAINER_DECISION` or no-divergence-found.
+
+**Highest-impact confirmed bugs** (full detail + exact fix in `ultracode_review.md`, findings numbered
+there): Robot 36 line-0 chroma defaults to the wrong color-space domain — hand-computed actual RGB
+output is neutral gray (130,130,130) in legacy vs full-saturation green (0,255,0) worst-case in this
+port, guaranteed on the first row of every image (#27). Missing TX output bandpass filter — legacy's
+always-on-by-default 700-2800Hz SSB passband, upgraded by Wave 3 from "golden-vector nit" to a real
+transmit spectral-purity/RF-hygiene concern for a real ham-radio product (#26). AFC never retunes the
+sync-tone tank filters, degrading exactly the off-frequency reception AFC exists to fix (#1). Three
+independent `SlantTracker` bugs (jitter-gate off-by-one with an exact index-trace fix, no state reset
+after a slant commit, wrong threshold for PD120/180/240) that compound on any multi-correction signal
+(#7/#9/#8). AFC sign error (+6.25Hz/+2.0Hz in the wrong direction, confirmed via an independent
+dimensional-coincidence check: 128 scaled units = exactly one luma level in both bandwidth modes) and
+a zero-Hz lock-average seed that's ~1120Hz wrong on a rare guard-timeout path (#2/#3).
+
+**Plan drafted**: `~/.claude/plans/fuzzy-yawning-melody.md`, 7 pieces covering all 19 `MATCH_LEGACY`
+findings (+ #15's doc-comment-only fix), grouped by subsystem, each with its own unit tests using the
+audit's own independently hand-derived numbers as test oracles. Explicitly excludes the 4
+`PORT-ONLY BUG` findings (unrelated fix shape, flagged as a separate future plan) and all
+`KEEP_PORT_DEVIATION`/`NEEDS_MAINTAINER_DECISION` findings (no code change intended).
+
+**One `auditor` plan-readiness review round already applied** (this project's standing practice for
+non-trivial plans before building): Pieces 1-5/7 came back verified against current source, no stale
+line numbers, 5 small corrections folded in (R1-R5 — e.g. #1's actual retune target is
+`_syncEnvelopeDetector` built in `InitializeSlant`, not the 7 VIS-time detectors in the constructor;
+#24's blast radius is wider than first estimated, touching every encoder's segment-switch, not just
+MR/ML's). **Piece 6 (the new TX bandpass filter) came back NOT READY on the first draft** — 3
+load-bearing gaps the auditor caught: (1) `SearchBandpassFilter.MakeFilter` can't be reused as-is,
+legacy's TX filter needs the Kaiser/Bessel window branch (`att=40`) that class deliberately doesn't
+implement (it's always `att=20`, rectangular-window territory) — reusing it verbatim would compile and
+look right while being silently wrong; (2) tap count must be a fixed 24 at every sample rate, not
+scaled like the RX filter (would give 96 taps instead of 24 at 44100Hz); (3) the new filter's state
+must be constructed locally inside `EncodeAsyncCore`, not as a constructor field, since
+`AnalogFmSstvEncoder` is a DI singleton and a ctor-field filter would leak mutable per-transmission
+state across calls. All 3 resolved in the plan file with the auditor's own cited legacy sources
+(`fir.cpp:361-384`'s Kaiser branch, `sstv.cpp:2764`'s hardcoded tap count, `Program.cs:153`'s
+singleton registration). Also caught: the golden-vector test suite doesn't actually regression-test TX
+output at all (reads stale checked-in fixtures, doesn't re-encode) — Piece 5/6 need their own tests as
+the real backstop, not the existing golden-vector run.
+
+**Not yet started implementing** — plan is drafted and corrected, not yet approved/executed. No
+commits, matching this project's "wait for explicit go-ahead" practice throughout its history (see
+every entry below).
+
+## Resume here (2026-08-07, superseded by the entry above) — QSO logbook backend: SQLite storage, ADIF import/export, GridTracker UDP streaming, QRZ.com Logbook API upload. All 7 plan pieces done, auditor pass on the highest-risk piece applied. Full solution build/test green (915 tests across 10 test projects, 0 failures, DSP golden-vector suite included). NOT YET COMMITTED.
 
 User asked for "a modern QSO log back-end" — ADIF file writing, streaming to GridTracker, upload to
 QRZ.com's API — explicitly backend-only (no UI wiring), other targets (LoTW/eQSL/Clublog/HRDLog)

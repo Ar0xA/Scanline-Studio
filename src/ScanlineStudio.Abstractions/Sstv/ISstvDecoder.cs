@@ -26,4 +26,9 @@ public interface ISstvDecoder
     /// discards on this event needs the abandoned mode here specifically, not the new one it just
     /// allocated for.</summary>
     event Action<SstvModeDefinition>? DecodeRestarted;
+
+    /// <summary>Resets AGC/level-tracking state to its power-on defaults. Legacy calls its equivalent
+    /// (<c>CLVL::Init</c>) at every TX&lt;-&gt;RX transition (`Sound.cpp:398,443`) -- callers should
+    /// invoke this at the same transition points (ultracode audit finding #6).</summary>
+    void ResetAgc();
 }

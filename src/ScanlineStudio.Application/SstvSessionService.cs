@@ -205,6 +205,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured += _decoderHandler;
         _audioEngine.SamplesCaptured += _waterfallHandler;
         _isReceiving = true;
+
+        // ultracode audit finding #6: legacy resets its AGC (CLVL::Init) at every TX<->RX transition
+        // (Sound.cpp:398,443) -- this is that transition point on the RX-resuming side.
+        _decoder.ResetAgc();
         Log.RxStarted(_logger, device.Id, settings.SampleRate);
     }
 
@@ -219,6 +223,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured -= _waterfallHandler;
         await _audioEngine.StopCaptureAsync().ConfigureAwait(false);
         _isReceiving = false;
+
+        // ultracode audit finding #6: the RX-halting (entering-TX) side of the same transition.
+        _decoder.ResetAgc();
         Log.RxStopped(_logger);
     }
 

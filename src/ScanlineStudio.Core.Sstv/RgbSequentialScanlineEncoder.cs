@@ -9,12 +9,23 @@ internal sealed class RgbSequentialScanlineEncoder : IScanlineEncoder
 {
     public IEnumerable<(double FrequencyHz, double DurationMs)> GenerateLine(SstvModeDefinition mode, IImageSource image, int lineIndex)
     {
+        // No mode using this encoder has a HoldPreviousFrequencySegment today (only MR/ML do, via
+        // YCbCrSequentialScanlineEncoder) -- this case exists defensively so a future mode reusing
+        // this segment kind with this encoder gets correct behavior automatically, not a silent
+        // duration-only skip (ultracode audit finding #24).
+        var lastFrequencyHz = 1900.0;
+
         foreach (var lineSegment in mode.LineSegments)
         {
             switch (lineSegment)
             {
                 case SyncSegment sync:
+                    lastFrequencyHz = sync.FrequencyHz;
                     yield return (sync.FrequencyHz, sync.DurationMs);
+                    break;
+
+                case HoldPreviousFrequencySegment hold:
+                    yield return (lastFrequencyHz, hold.DurationMs);
                     break;
 
                 case ScanSegment scan:
@@ -33,7 +44,8 @@ internal sealed class RgbSequentialScanlineEncoder : IScanlineEncoder
                         // (`Main.cpp:6837/6840/6843`) instead of plain `ColorToFreq` -- covered by
                         // `YCbCr.ColorToFreq`'s own (min,max) generalization, not a separate call here
                         // (the mode's own LuminanceMinHz/MaxHz select which band applies).
-                        yield return (YCbCr.ColorToFreq(value, mode.LuminanceMinHz, mode.LuminanceMaxHz), perPixelDurationMs);
+                        lastFrequencyHz = YCbCr.ColorToFreq(value, mode.LuminanceMinHz, mode.LuminanceMaxHz);
+                        yield return (lastFrequencyHz, perPixelDurationMs);
                     }
 
                     break;
