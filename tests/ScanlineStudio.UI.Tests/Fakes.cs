@@ -114,6 +114,12 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public event Action<SstvModeDefinition>? ModeDetected;
 
+    public event Action? MaintenanceWarningRaised;
+
+    public event Action? MaintenanceWarningCleared;
+
+    public event Action? MaintenanceCriticalStopRaised;
+
     public Task StartReceivingAsync(CancellationToken ct = default)
     {
         if (ThrowOnStartReceiving)
@@ -188,6 +194,12 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     public void RaiseModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
+
+    public void RaiseMaintenanceWarningRaised() => MaintenanceWarningRaised?.Invoke();
+
+    public void RaiseMaintenanceWarningCleared() => MaintenanceWarningCleared?.Invoke();
+
+    public void RaiseMaintenanceCriticalStopRaised() => MaintenanceCriticalStopRaised?.Invoke();
 }
 
 internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposable

@@ -44,6 +44,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private string? _errorMessage;
 
+    /// <summary>Ultracode audit finding #34's automatic-restart mechanism -- deliberately a SEPARATE
+    /// property from <see cref="ErrorMessage"/>, not a reuse of it: <see cref="ErrorMessage"/> already
+    /// has 5 write sites with no priority order, 3 of which null it unconditionally on entry to an
+    /// unrelated action (editing the frequency box, applying a preset, hitting Tune), and
+    /// <see cref="SetReceivingSafeAsync"/>'s own success path nulls it too -- reusing it here would let
+    /// any of those silently wipe a maintenance message the user hasn't acted on yet.</summary>
+    [ObservableProperty]
+    private string? _maintenanceMessage;
+
     [ObservableProperty]
     private RadioMode _selectedRadioMode = RadioMode.Usb;
 
@@ -91,6 +100,10 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         {
             OnStateChanged(state);
         }
+
+        sstvSession.MaintenanceWarningRaised += OnMaintenanceWarningRaised;
+        sstvSession.MaintenanceWarningCleared += OnMaintenanceWarningCleared;
+        sstvSession.MaintenanceCriticalStopRaised += OnMaintenanceCriticalStopRaised;
 
         _ = LoadPresetsSafeAsync();
         _ = LoadTxVolumeSafeAsync();
@@ -264,6 +277,37 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             Log.TuneFailed(_logger, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.TuneFailed"));
         }
+    }
+
+    // ISstvSessionService's own doc comment states these three fire synchronously on the audio drain
+    // thread (same contract as ModeDetected) -- marshal to the UI thread before touching any
+    // [ObservableProperty] or the _suppressReceivingCommand guard, same as every other cross-thread
+    // handler in this class (e.g. OnStateChanged above).
+    private void OnMaintenanceWarningRaised()
+    {
+        Log.MaintenanceWarningRaised(_logger);
+        Dispatcher.UIThread.Post(() => MaintenanceMessage = _localization.GetString("RadioStatus.Warning.RxMaintenanceApproaching"));
+    }
+
+    private void OnMaintenanceWarningCleared()
+    {
+        Log.MaintenanceWarningCleared(_logger);
+        Dispatcher.UIThread.Post(() => MaintenanceMessage = null);
+    }
+
+    private void OnMaintenanceCriticalStopRaised()
+    {
+        // By the time this fires, ISstvSessionService.StopReceivingAsync has already completed (see
+        // that event's own doc comment) -- this only needs to reflect the already-stopped state to
+        // the UI, not request the stop itself.
+        Log.MaintenanceCriticalStopRaised(_logger);
+        Dispatcher.UIThread.Post(() =>
+        {
+            MaintenanceMessage = _localization.GetString("RadioStatus.Error.RxMaintenanceRequired");
+            _suppressReceivingCommand = true;
+            IsReceiving = false;
+            _suppressReceivingCommand = false;
+        });
     }
 
     partial void OnIsReceivingChanged(bool value)
@@ -449,6 +493,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetMode({Value}) failed")]
         public static partial void SetModeFailed(ILogger logger, RadioMode value, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX maintenance warning received from session service")]
+        public static partial void MaintenanceWarningRaised(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX maintenance warning cleared")]
+        public static partial void MaintenanceWarningCleared(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "RX critical maintenance stop received from session service")]
+        public static partial void MaintenanceCriticalStopRaised(ILogger logger);
     }
 }
 

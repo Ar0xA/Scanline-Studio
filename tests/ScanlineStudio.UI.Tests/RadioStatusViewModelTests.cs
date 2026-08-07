@@ -220,6 +220,58 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
+    public void SessionMaintenanceWarningRaised_SetsMaintenanceMessage()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        sstvSession.RaiseMaintenanceWarningRaised();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(vm.MaintenanceMessage);
+    }
+
+    [AvaloniaFact]
+    public void SessionMaintenanceWarningCleared_ClearsMaintenanceMessage()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+        sstvSession.RaiseMaintenanceWarningRaised();
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(vm.MaintenanceMessage);
+
+        sstvSession.RaiseMaintenanceWarningCleared();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.MaintenanceMessage);
+    }
+
+    [AvaloniaFact]
+    public void SessionMaintenanceCriticalStopRaised_SetsMaintenanceMessage_AndUnchecksReceivingWithoutReenteringStop()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsReceiving = true;
+        Dispatcher.UIThread.RunJobs();
+
+        // The real SstvSessionService has already called StopReceivingAsync by the time this event
+        // fires -- the fake's IsReceiving is flipped here to mirror that, and this handler must set
+        // the toggle off via the _suppressReceivingCommand guard, not by calling StopReceivingAsync a
+        // second time (which ThrowOnStopReceiving would catch if it were re-entered).
+        sstvSession.IsReceiving = false;
+        sstvSession.ThrowOnStopReceiving = true;
+        sstvSession.RaiseMaintenanceCriticalStopRaised();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsReceiving);
+        Assert.NotNull(vm.MaintenanceMessage);
+        Assert.Null(vm.ErrorMessage); // must not go through the ordinary SetReceivingSafeAsync failure path
+    }
+
+    [AvaloniaFact]
     public void CatLinked_TracksConnectionEvents_ConnectedTrueDisconnectedFalse()
     {
         var radioSession = new FakeRadioSessionService();

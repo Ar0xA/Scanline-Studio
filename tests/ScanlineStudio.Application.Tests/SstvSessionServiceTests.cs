@@ -132,6 +132,85 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public void DecoderRestartOverdue_RaisesMaintenanceWarningRaised()
+    {
+        // Ultracode audit finding #34's warning layer: FakeSstvDecoder implements
+        // ISstvDecoderMaintenance, so SstvSessionService's constructor wires this up automatically.
+        var (service, _, decoder, _, _, _) = CreateService();
+        var warningRaised = 0;
+        service.MaintenanceWarningRaised += () => warningRaised++;
+
+        decoder.RaiseRestartOverdue();
+
+        Assert.Equal(1, warningRaised);
+    }
+
+    [Fact]
+    public void DecoderRestarted_AfterAWarningWasRaised_RaisesMaintenanceWarningCleared()
+    {
+        var (service, _, decoder, _, _, _) = CreateService();
+        var cleared = 0;
+        service.MaintenanceWarningCleared += () => cleared++;
+
+        decoder.RaiseRestartOverdue();
+        decoder.RaiseRestarted();
+
+        Assert.Equal(1, cleared);
+    }
+
+    [Fact]
+    public void DecoderRestarted_WithNoActiveWarning_DoesNotRaiseMaintenanceWarningCleared()
+    {
+        var (service, _, decoder, _, _, _) = CreateService();
+        var cleared = 0;
+        service.MaintenanceWarningCleared += () => cleared++;
+
+        // A normal, unremarkable swap while idle -- no warning was ever active, so nothing to clear.
+        decoder.RaiseRestarted();
+
+        Assert.Equal(0, cleared);
+    }
+
+    [Fact]
+    public async Task DecoderRestartCriticallyOverdue_StopsReceiving_AndRaisesMaintenanceCriticalStopRaised()
+    {
+        var (service, audioEngine, decoder, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+        Assert.True(service.IsReceiving);
+
+        var criticalStopRaised = 0;
+        service.MaintenanceCriticalStopRaised += () => criticalStopRaised++;
+
+        // Raised synchronously, same as the real RestartableSstvDecoder would from inside a live
+        // SamplesCaptured invocation on the drain thread -- must not throw or deadlock.
+        decoder.RaiseRestartCriticallyOverdue();
+
+        Assert.False(service.IsReceiving);
+        Assert.False(audioEngine.IsCapturing);
+        Assert.Equal(1, criticalStopRaised);
+
+        // Confirms the capture handler was actually unsubscribed (StopReceivingAsync's real effect),
+        // not just that IsReceiving flipped -- pushing further samples must not reach the decoder.
+        var pushedBefore = decoder.PushedSamples.Count;
+        audioEngine.PushCapturedSamples(TwoSamplePush);
+        Assert.Equal(pushedBefore, decoder.PushedSamples.Count);
+    }
+
+    [Fact]
+    public void DecoderRestartCriticallyOverdue_WhileNotReceiving_DoesNotThrow()
+    {
+        // The real decoder can only cross the critical threshold while PushSamples is being called,
+        // which only happens while receiving -- but a fake can raise the event at any time, and this
+        // must still degrade gracefully (StopReceivingAsync already no-ops when not receiving).
+        var (service, _, decoder, _, _, _) = CreateService();
+        Assert.False(service.IsReceiving);
+
+        decoder.RaiseRestartCriticallyOverdue();
+
+        Assert.False(service.IsReceiving);
+    }
+
+    [Fact]
     public async Task PushSamples_DecoderThrows_WaterfallStillReceivesTheSamples()
     {
         var (service, audioEngine, decoder, waterfall, _, _) = CreateService();
