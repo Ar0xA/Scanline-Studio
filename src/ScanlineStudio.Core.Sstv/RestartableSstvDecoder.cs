@@ -183,6 +183,24 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         current.RequestReSync();
     }
 
+    /// <summary>Forwards to whichever inner instance is current. A request racing a restart is
+    /// silently dropped if the swap wins (the fresh inner has no in-progress decode to redirect,
+    /// matching legacy's own reception-start reset) -- same fire-and-forget contract
+    /// <see cref="ISstvDecoder.ForceMode"/> already documents. Unlike <see cref="RequestReSync"/>'s
+    /// best-effort framing, this is a deliberate user command, so a drop here is worth surfacing to a
+    /// caller that cares (not attempted here -- ForceMode has no return value by design, matching the
+    /// interface).</summary>
+    public void ForceMode(SstvModeDefinition mode)
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            current = _inner;
+        }
+
+        current.ForceMode(mode);
+    }
+
     private void Swap()
     {
         UnsubscribeFrom(_inner);

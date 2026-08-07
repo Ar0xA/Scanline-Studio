@@ -2,7 +2,93 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-07, latest, ACTIVE) — ultracode audit fully closed (entry below, committed
+## Resume here (2026-08-08, latest, ACTIVE) — RX force-mode decode override (Item 3 of the DSP/backend
+backlog, `spec/14-roadmap.md`'s Phase 4+ backlog). Implemented, full solution build clean, all
+touched test projects green. **NOT YET COMMITTED.**
+
+Roadmap's own framing ("lock to a specific mode... would need a real decoder change") was
+deliberately vague pending research. Traced the actual legacy click handler: `TMmsstv::SBMClick`
+(`Main.cpp:6096-6122`) calling `CSSTVDEM::Start(mode, TRUE)` (`sstv.cpp:1749-1767` -> `Start(void)`,
+`sstv.cpp:1717-1747`). **Feature-identity finding, the main thing worth remembering if this needs
+re-explaining**: confirmed via `UpdateModeBtn` (`Main.cpp:5988`, `SBAuto->Down = (pDem->m_SyncMode
+>= 0)`) that this is a ONE-SHOT "start decoding as mode X right now" kick (same spirit as the
+ReSync button), **not a persistent lock** — `Start(void)` unconditionally ends at `m_SyncMode=0`,
+the same value normal VIS auto-detect uses, so once the forced image ends, ordinary auto-detect
+resumes for the next transmission automatically. mock2's "Auto/Locked" wording is a UI framing
+choice, not a literal persistent decoder state to replicate. The `f=false` de-select branch (a
+genuine pause/arm-without-starting state, `m_SyncMode=-1`) was deliberately NOT ported — obscure
+secondary interaction, VCL `SpeedButton`/`GroupIndex` click-toggle semantics this port has no
+equivalent widget for.
+
+Legacy's `Start()` is shared between the VIS-auto path and the force-mode path, which confirmed
+reusing this port's own existing `Commit()`/`_pendingAnchorCorrectionMode`/
+`TryResolveSyncAnchorCorrection`/`FinalizeAnchorAndStartDecoding` pipeline (the one VIS auto-detect
+itself uses) for force-mode too — legacy-faithful, not an invented shortcut.
+
+**Design went through 2 rounds of auditor plan-readiness review before implementation** (plan file
+`~/.claude/plans/flickering-locking-falcon.md`, full detail there). Round 1 found a real blocker: the
+original draft anchored `Commit(mode, _consumedSamples)` — but pre-lock, `_consumedSamples` is a
+frozen header-search start that `TrimBuffers` stops protecting once `_fixedWindowExhausted` is set,
+so on any decoder idle long enough, `_consumedSamples` can sit behind `_bufferBase` — committing
+there reads already-trimmed-away buffer and throws `InvalidOperationException` **on the audio
+thread**, for the ordinary "idle app, click a mode button" flow. Fixed: anchor at
+`TotalSamplesReceived` instead (always within `TrimBuffers`' retained window in both the pre-lock
+and already-locked cases; matches legacy's actual reset target, `sstv.cpp:1726-1730`'s
+`m_wBase/m_wPage/m_rPage/m_rBase = 0`, not the `m_wBgn=2` buffered-lines-gate flag the first draft
+cited). Round 1 also required: explicitly tearing down AVT training state
+(`_avtTrainingPending`/`_avtTrainingLock`/`_avtPllDemodulator`) in the force-mode path itself (not
+inside `AbandonInProgressImage()`, which the S7 AVT hand-off relies on surviving); gating
+`DecodeRestarted` on the old mode having actually reached `ModeDetected` already (post-piece-8c,
+`Commit()` only fires `ModeDetected` immediately for AVT — every other mode defers it, so an
+unresolved mode was never announced and firing `DecodeRestarted` for it would violate the event's
+own documented contract); an atomic `Interlocked.Exchange`-based field instead of a plain volatile
+bool (payload, not just a bit); consuming ForceMode before the existing ReSync flag at the top of
+`PushSamples`; and `RestartableSstvDecoder` forwarding (missed entirely in the first draft). Round 2
+re-verified all of round 1's fixes against current source (all confirmed correct) but found one more
+real gap: `_pendingAnchorCorrectionMode` is cleared in exactly one place today and every existing
+caller provably can't reach `Commit()` while it's set — an invariant ForceMode is the first to
+break. Forcing AVT while a *different* mode's anchor correction was still unresolved would leave
+that stale entry behind, later resolving against AVT's own `_lineDecoder`/`_consumedSamples` and
+firing a spurious second `ModeDetected` for a mode that isn't `_mode` anymore. Fixed: cleared
+alongside the AVT teardown in the same step, ordered after capturing (not before) the
+`DecodeRestarted` gate's own pre-clear read.
+
+**Implementation**: `ISstvDecoder.ForceMode(SstvModeDefinition)` (fire-and-forget, mirrors
+`RequestReSync`'s contract exactly) → `AnalogFmSstvDecoder.PerformForceMode` (captures old
+mode/pending-anchor state, tears down AVT training + stale pending anchor, calls
+`Commit(mode, TotalSamplesReceived)`, fires `DecodeRestarted` only when warranted) →
+`RestartableSstvDecoder.ForceMode` (thin forwarder under the swap gate, same drop-on-race contract
+`RequestReSync` already has) → `ISstvSessionService.ForceMode`/`SstvSessionService.ForceMode` (thin
+pass-through + `[LoggerMessage]`). Backend-only, no UI button/dropdown wired yet (roadmap's mock2
+quick-mode-grid + Locked-segment is the eventual consumer).
+
+**Tests** (`tests/ScanlineStudio.Core.Sstv.Tests/ForceModeTests.cs`, new, 9 tests + 1 more in
+`RestartableSstvDecoderTests.cs` for the forwarder): idle force of a non-AVT mode (deferred
+`ModeDetected`, no `DecodeRestarted`), idle force of AVT (immediate `ModeDetected`), mid-reception
+force (`DecodeRestarted` with the correct old mode), force during an unresolved pending anchor (no
+spurious `DecodeRestarted`), force-AVT-while-a-different-mode's-anchor-still-pending (round-2's own
+regression — exactly one `ModeDetected`, stale entry cleared, AVT decoding not stalled), force
+during real in-flight AVT training (teardown verified, using real encoded AVT audio same as
+`AvtTrainingLockDecoderTests`), second request superseding a first before either resolves, the
+round-1 blocker regression itself (idle decoder pushed well past every fixed-window search ceiling,
+then forced — asserts no exception and the correct `TotalSamplesReceived` anchor), and the
+trimming-suspension window (round-1 item 7 — forced long-line mode keeps `TrimBuffers` suspended
+until the anchor resolves, then recovers). 4 test doubles updated for the `ISstvDecoder`/
+`ISstvSessionService` interface changes (`Core.Logbook.Tests`/`Core.Imaging.Tests`/
+`Application.Tests`'s three `FakeSstvDecoder`s, `UI.Tests`'s `FakeSstvSessionService`) — one more
+than the plan's own first-draft checklist estimated (round-2 auditor correction).
+
+**Full verification, CONFIRMED COMPLETE**: full solution build clean (0 warnings/errors).
+`Core.Sstv.Tests` full suite 618/618 (was 608 before this session — 10 net new tests, includes every
+real legacy-captured golden vector, confirmed unaffected, ~8m20s runtime). `Application.Tests`
+48/48, `UI.Tests` 78/78, `Core.Imaging.Tests` 24/24, `Core.Logbook.Tests` 47/47 all green.
+
+**NOT YET COMMITTED.** Next up per the priority list once this lands: continue down the roadmap's
+"RX/TX quality-of-life" backlog (RX buffer mode + high-precision replay actions, auto-stop-at-
+end-of-signal/auto-resync toggles, or one of the telemetry/SNR-adjacent items) — see
+`spec/14-roadmap.md`'s Phase 4+ backlog for the full list.
+
+## Resume here (2026-08-07, superseded by the entry above) — ultracode audit fully closed (entry below, committed
 `1d82a33`). Working a DSP/backend backlog, explicitly ordered by GUI leverage (user's own
 instruction: "DSP items first, prioritized by things we need on the GUI side at some point") — full
 priority list in `spec/14-roadmap.md`'s Phase 4+ backlog. **Item 1 (Decode progress/line-index
