@@ -19,7 +19,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private readonly ILogger<SstvSessionService> _logger;
     private readonly Action<ReadOnlyMemory<float>> _decoderHandler;
     private readonly Action<ReadOnlyMemory<float>> _waterfallHandler;
-    private bool _isReceiving;
+    // Ultracode audit finding #34's OnDecoderRestartCriticallyOverdue can now call StopReceivingAsync
+    // (which writes this) from the audio drain thread, not just from a UI-thread-initiated
+    // StartReceivingAsync/StopReceivingAsync call -- volatile for the same reason _pttLocked below
+    // already is (this field's own reads/writes now span more than one caller thread with no lock
+    // between them).
+    private volatile bool _isReceiving;
+    private bool _maintenanceWarningActive;
 
     // See SetPttLockAsync's own doc comment for the full concurrency reasoning. volatile (not a
     // plain bool) since this is written from whatever thread calls SetPttLockAsync and read from
@@ -100,6 +106,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 }
             }
         };
+
+        // Ultracode audit finding #34: ISstvDecoderMaintenance is an optional side-channel only
+        // RestartableSstvDecoder implements (not on ISstvDecoder itself -- see that interface's own
+        // doc comment for why). Real decoders wire this up; the various FakeSstvDecoders used by
+        // other test projects don't implement it, so this is a no-op there.
+        if (_decoder is ISstvDecoderMaintenance maintenance)
+        {
+            maintenance.RestartOverdue += OnDecoderRestartOverdue;
+            maintenance.Restarted += OnDecoderRestarted;
+            maintenance.RestartCriticallyOverdue += OnDecoderRestartCriticallyOverdue;
+        }
     }
 
     public IWaterfallSource Waterfall { get; }
@@ -187,6 +204,70 @@ public sealed partial class SstvSessionService : ISstvSessionService
     {
         add => _decoder.ModeDetected += value;
         remove => _decoder.ModeDetected -= value;
+    }
+
+    public event Action? MaintenanceWarningRaised;
+
+    public event Action? MaintenanceWarningCleared;
+
+    public event Action? MaintenanceCriticalStopRaised;
+
+    // These three run synchronously on the audio drain thread, inside the same call stack as
+    // ISstvDecoder.PushSamples -- _decoderHandler's own try/catch (constructor, above) wraps the
+    // PushSamples call itself, but an exception thrown by one of THESE handlers would otherwise be
+    // caught there too and mis-logged as "decoder PushSamples threw" instead of attributing it to the
+    // actual maintenance handler that failed. Each gets its own try/catch for that reason.
+    private void OnDecoderRestartOverdue()
+    {
+        try
+        {
+            _maintenanceWarningActive = true;
+            Log.MaintenanceWarningRaised(_logger);
+            MaintenanceWarningRaised?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestartOverdue), ex);
+        }
+    }
+
+    private void OnDecoderRestarted()
+    {
+        try
+        {
+            if (_maintenanceWarningActive)
+            {
+                _maintenanceWarningActive = false;
+                Log.MaintenanceWarningCleared(_logger);
+                MaintenanceWarningCleared?.Invoke();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestarted), ex);
+        }
+    }
+
+    private void OnDecoderRestartCriticallyOverdue()
+    {
+        try
+        {
+            // The decoder has ALREADY force-restarted unconditionally by the time this fires (see
+            // ISstvDecoderMaintenance's own doc comment) -- this only needs to tear down capture and
+            // notify the user, not request another swap. Confirmed safe to call synchronously here
+            // (round-3 plan review traced the full MiniAudioEngine/MiniAudioCaptureSession shutdown
+            // chain): RestartableSstvDecoder raises this event strictly after releasing its own
+            // swap lock, so ResetAgc() re-entering it from inside StopReceivingAsync below never
+            // contends for anything already held.
+            StopReceivingAsync().GetAwaiter().GetResult();
+            _maintenanceWarningActive = false;
+            Log.MaintenanceCriticalStop(_logger);
+            MaintenanceCriticalStopRaised?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestartCriticallyOverdue), ex);
+        }
     }
 
     public async Task StartReceivingAsync(CancellationToken ct = default)
@@ -545,5 +626,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Configured {Kind} device '{DeviceId}' not found among {AvailableCount} available devices")]
         public static partial void ConfiguredDeviceNotFound(ILogger logger, string kind, string deviceId, int availableCount);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX maintenance warning raised (approaching automatic restart threshold)")]
+        public static partial void MaintenanceWarningRaised(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX maintenance warning cleared")]
+        public static partial void MaintenanceWarningCleared(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "RX force-stopped for required maintenance restart")]
+        public static partial void MaintenanceCriticalStop(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Maintenance handler '{HandlerName}' threw")]
+        public static partial void MaintenanceHandlerFailed(ILogger logger, string handlerName, Exception ex);
     }
 }

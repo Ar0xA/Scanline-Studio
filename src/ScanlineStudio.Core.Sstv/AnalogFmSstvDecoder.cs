@@ -169,13 +169,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
     // Code-review finding (Band-1 S2 fix, pre-Phase-2 audit): TrimBuffers bounds MEMORY but not this
     // absolute sample-index space, which is `int` -- _bufferBase + _rawSamples.Count overflows after
-    // ~13.5h of continuous streaming @44100Hz (~54h @11025Hz). Explicitly out of scope for this fix
-    // (a session that long is well beyond anything this port's test suite or any near-term real usage
-    // exercises) rather than silently fixed -- widening every one of this class's absolute-index
-    // fields to `long` would be a much larger, separately-scoped change. Flagged here, not hidden,
-    // for whenever a genuinely long-running production caller (e.g. an always-on Phase-2 receiver)
-    // makes this a real constraint instead of a theoretical one.
-    private int TotalSamplesReceived => _bufferBase + _rawSamples.Count;
+    // ~13.5h of continuous streaming @44100Hz (~54h @11025Hz). Widening every one of this class's
+    // absolute-index fields to `long` was tried as a fix (ultracode audit finding #34) and rejected --
+    // plan-readiness review found the coordinate space escapes into IScanlineDecoder/PixelSampleReader
+    // and VisLockStateMachine has its own internal unbounded counter, a much larger blast radius than
+    // this class alone. Fixed instead by RestartableSstvDecoder (same project), which periodically
+    // discards and reconstructs the whole object graph while IsIdle -- a fresh instance can never
+    // overflow, by construction, without needing to enumerate every absolute-index field anywhere in
+    // the pipeline. Bumped to `internal` (stays `int`) so that wrapper can read it directly instead of
+    // tracking a second, parallel counter that could desync from this one.
+    internal int TotalSamplesReceived => _bufferBase + _rawSamples.Count;
 
     private int Rel(int absoluteIndex)
     {
@@ -225,6 +228,25 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private IScanlineDecoder? _lineDecoder;
     private Rgb24[]? _pixels;
     private int _nextLine;
+
+    // RestartableSstvDecoder's swap-safety gate (ultracode audit finding #34) -- "no image currently
+    // locked or confirmed-but-not-yet-committed" is the only safe moment to discard this instance's
+    // whole object graph. `_mode is null` alone is NOT sufficient: `_avtTrainingPending` (AVT's own
+    // training window, up to ~7.1s) is a CONFIRMED detection that hasn't reached Commit() yet, unlike
+    // every other pre-lock flag in this class (e.g. `_syncBypass1PrimaryHeld`,
+    // `_syncBypassNarrowPhaseActive`), which are speculative scan state only -- every OTHER confirmed
+    // match commits synchronously within the same PushSamples call that found it, so `_mode is null`
+    // alone already excludes them. Verified via a full field sweep (round-2 plan review) that this is
+    // the only other such flag. `_pendingAnchorCorrectionMode` does NOT need its own term here: Commit()
+    // sets `_mode` before that flag, so it can never be non-null while `_mode` is null.
+    //
+    // Final code-level review (post-implementation) found one accepted, bounded gap: this is also
+    // true during EndOfImage's own 0.5s dead-time skip, so a swap landing in that exact window hands
+    // the just-finished image's tail audio to the fresh instance as header-search input -- precisely
+    // what the skip exists to suppress. Bounded to once per restart cycle (~12h+), worst case one
+    // spurious false-start detection; consistent with this whole mechanism's "fresh instance == app
+    // restart" framing, not a correctness regression worth gating on.
+    internal bool IsIdle => _mode is null && !_avtTrainingPending;
 
     // Band-1 item 4b (pre-Phase-2 audit): the absolute sample index BandpassFilteredSampleAt's H1/H2
     // selection switches at -- captured once, in Commit(), NOT read live off _mode. Auditor code-level

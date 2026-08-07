@@ -1,0 +1,200 @@
+using ScanlineStudio.Abstractions.Sstv;
+
+namespace ScanlineStudio.Core.Sstv;
+
+/// <summary>Fixes ultracode audit finding #34 (AnalogFmSstvDecoder's absolute sample-index space is
+/// `int`, wrapping after ~13.5h of continuous streaming @44100Hz) by periodically discarding and
+/// reconstructing the whole <see cref="AnalogFmSstvDecoder"/> object graph instead of widening every
+/// affected field -- a fresh instance gives every field a correct starting value by construction, the
+/// same effect as a user restarting the application (already the case today, since
+/// <see cref="ISstvDecoder"/> is a DI singleton rebuilt fresh per process), but automatic and
+/// in-process. A widen-every-field plan was drafted first and rejected by plan-readiness review: the
+/// coordinate space escapes into <c>IScanlineDecoder</c>/<c>PixelSampleReader</c> and
+/// <see cref="VisLockStateMachine"/> has its own internal unbounded counter -- a much larger blast
+/// radius than enumerating fields in this one class.
+///
+/// <b>State machine</b> (evaluated on every <see cref="PushSamples"/> call, BEFORE forwarding the
+/// incoming chunk to whichever inner instance ends up current -- so <see cref="AnalogFmSstvDecoder.IsIdle"/>
+/// and the sample count always reflect settled state as of the end of the previous call, and a swap
+/// never splits one chunk across old/new):
+/// <list type="number">
+/// <item>`n &gt;= criticalThreshold` (regardless of idle): force the swap UNCONDITIONALLY. This is the
+/// actual overflow-safety guarantee -- it never waits for idle, so it can never wedge and can never
+/// fail to happen. Self-clearing: the swap resets `n` back to ~0, so this can't re-fire on the very
+/// next call.</item>
+/// <item>Else if idle and `n &gt;= warningThreshold`: normal swap (the common path in real usage,
+/// since real receiving has gaps).</item>
+/// <item>Else if not idle and `n &gt;= warningThreshold`: raise <see cref="RestartOverdue"/> once
+/// (guarded so it doesn't fire on every subsequent call for the rest of the window).</item>
+/// </list>
+/// This makes the swap itself (case 1) unconditional and independent of the visibility layer (cases
+/// 2-3) -- even a bug in whatever consumes <see cref="RestartOverdue"/>/<see cref="RestartCriticallyOverdue"/>
+/// can't let the counter actually overflow.
+///
+/// <b>Locking</b>: the swap happens under <c>lock (_gate)</c> (plain <c>Monitor</c>, chosen
+/// specifically for re-entrancy -- a critical-path consumer's response to
+/// <see cref="RestartCriticallyOverdue"/> can call back into <see cref="ResetAgc"/> on the same
+/// thread). All three events are raised strictly AFTER releasing the lock: a round-3 plan review found
+/// a rare shutdown-timing path where raising inside the lock could let a handler's continuation resume
+/// on a different thread and then contend for `_gate` against the (still-lock-holding) original
+/// thread -- a genuine deadlock. Raising outside the lock removes the whole class, since the swap has
+/// already fully happened by the time any handler runs.</summary>
+public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance
+{
+    // Sized against AnalogFmSstvDecoder's own constructor default (11025) -- this class never passes
+    // a different sampleRate (matching Program.cs's actual registration today), so these constants
+    // really do mean 12h/13h in production. If the decoder's sample rate is ever made configurable
+    // to match the capture device's actual rate (a separate, pre-existing, unrelated mismatch), these
+    // must be recomputed against THAT rate, not left as a raw sample count sized for 11025.
+    internal const int ProductionSampleRate = 11025;
+    internal const long DefaultWarningThresholdSamples = 12L * 3600 * ProductionSampleRate;
+    internal const long DefaultCriticalThresholdSamples = 13L * 3600 * ProductionSampleRate;
+
+    private readonly bool _afcEnabled;
+    private readonly long _warningThresholdSamples;
+    private readonly long _criticalThresholdSamples;
+    private readonly object _gate = new();
+
+    private AnalogFmSstvDecoder _inner;
+    private bool _warningRaised;
+
+    public event Action<DecodedImageUpdate>? LineDecoded;
+    public event Action<SstvModeDefinition>? ModeDetected;
+    public event Action<SstvModeDefinition>? DecodeRestarted;
+    public event Action? RestartOverdue;
+    public event Action? RestartCriticallyOverdue;
+    public event Action? Restarted;
+
+    /// <summary>Diagnostic-only: how many times the inner decoder has been swapped (initial
+    /// construction does not count). Test infrastructure for pinning the self-clearing property.</summary>
+    internal long RestartCountForTests { get; private set; }
+
+    /// <summary>Diagnostic-only: whether the CURRENT inner instance is idle right now. Test
+    /// infrastructure for proving a chunked push actually observed a non-idle decoder at some point
+    /// (not just "no swap happened," which a single bulk push would satisfy vacuously without
+    /// exercising anything).</summary>
+    internal bool IsIdleForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.IsIdle;
+            }
+        }
+    }
+
+    public RestartableSstvDecoder(bool afcEnabled = true)
+        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples)
+    {
+    }
+
+    /// <summary>Test-only seam for injecting short thresholds instead of the real 12h/13h ones --
+    /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
+    /// trigger is sample-count-based, not wall-clock-based.</summary>
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples)
+    {
+        _afcEnabled = afcEnabled;
+        _warningThresholdSamples = warningThresholdSamples;
+        _criticalThresholdSamples = criticalThresholdSamples;
+        _inner = CreateInner();
+    }
+
+    /// <summary>Not safe to call concurrently from multiple threads -- `_gate` only protects the swap
+    /// itself (so a same-thread re-entrant call, e.g. from a critical-stop handler's <see cref="ResetAgc"/>,
+    /// can't deadlock), not general thread-safety: <c>current</c> is dereferenced OUTSIDE the lock
+    /// (matching <see cref="AnalogFmSstvDecoder"/>'s own single-caller assumption), and two concurrent
+    /// callers could both read a stale `current` or interleave against the same inner instance. Today's
+    /// sole caller (<c>ScanlineStudio.Abstractions.Audio.IAudioEngine.SamplesCaptured</c>'s drain thread) already
+    /// satisfies this.</summary>
+    public void PushSamples(ReadOnlyMemory<float> samples)
+    {
+        AnalogFmSstvDecoder current;
+        var raiseWarning = false;
+        var raiseCritical = false;
+        var raiseRestarted = false;
+
+        lock (_gate)
+        {
+            var n = _inner.TotalSamplesReceived;
+
+            if (n >= _criticalThresholdSamples)
+            {
+                Swap();
+                raiseCritical = true;
+                raiseRestarted = true;
+            }
+            else if (_inner.IsIdle && n >= _warningThresholdSamples)
+            {
+                Swap();
+                raiseRestarted = true;
+            }
+            else if (!_inner.IsIdle && n >= _warningThresholdSamples && !_warningRaised)
+            {
+                _warningRaised = true;
+                raiseWarning = true;
+            }
+
+            current = _inner;
+        }
+
+        current.PushSamples(samples);
+
+        // Raised strictly after releasing _gate -- see this class' own doc comment.
+        if (raiseCritical)
+        {
+            RestartCriticallyOverdue?.Invoke();
+        }
+
+        if (raiseRestarted)
+        {
+            Restarted?.Invoke();
+        }
+
+        if (raiseWarning)
+        {
+            RestartOverdue?.Invoke();
+        }
+    }
+
+    public void ResetAgc()
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            current = _inner;
+        }
+
+        current.ResetAgc();
+    }
+
+    private void Swap()
+    {
+        UnsubscribeFrom(_inner);
+        _inner = CreateInner();
+        _warningRaised = false;
+        RestartCountForTests++;
+    }
+
+    private AnalogFmSstvDecoder CreateInner()
+    {
+        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled);
+        decoder.LineDecoded += OnLineDecoded;
+        decoder.ModeDetected += OnModeDetected;
+        decoder.DecodeRestarted += OnDecodeRestarted;
+        return decoder;
+    }
+
+    private void UnsubscribeFrom(AnalogFmSstvDecoder decoder)
+    {
+        decoder.LineDecoded -= OnLineDecoded;
+        decoder.ModeDetected -= OnModeDetected;
+        decoder.DecodeRestarted -= OnDecodeRestarted;
+    }
+
+    private void OnLineDecoded(DecodedImageUpdate update) => LineDecoded?.Invoke(update);
+
+    private void OnModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
+
+    private void OnDecodeRestarted(SstvModeDefinition mode) => DecodeRestarted?.Invoke(mode);
+}
