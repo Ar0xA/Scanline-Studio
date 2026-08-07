@@ -74,12 +74,17 @@ internal sealed class LevelAgc
 
     /// <summary><c>CLVL::Fix</c> (`sstv.h:262-294`), <c>m_agcfast</c>-only branch. Self-throttled --
     /// no-ops until <see cref="_cntMax"/> samples have been fed via <see cref="Do"/> since the last
-    /// time this actually ran, so it's safe (and a faithful, if slightly finer-grained, adaptation) to
-    /// call this every sample from a DSP-clock-driven loop, unlike legacy's own UI-paint-driven call
-    /// site (`Main.cpp:6161`, effectively a ~200ms cadence via `Main.dfm`'s <c>Timer.Interval</c>, vs.
-    /// this port's ~100ms <see cref="_cntMax"/> window -- a real, if minor, documented deviation:
-    /// legacy's peak-measurement window is usually 200ms, this port's is 100ms, updating the gain
-    /// twice as often).</summary>
+    /// time this actually ran, so it's safe to call this every sample from a DSP-clock-driven loop.
+    /// <see cref="_cntMax"/> (100ms, `sstv.h:242`'s <c>SampFreq*100/1000</c>) is legacy's own
+    /// *designed* window -- legacy's real call site (`Main.cpp:6161`, the GUI paint timer) only
+    /// advances this DSP state whenever a paint happens to fire, which stretches the *effective*
+    /// window to some UI-paint-cadence-dependent multiple of 100ms. That real interval isn't
+    /// statically determinable (`Main.dfm` is a compiled binary resource, not inspectable from
+    /// source) -- an earlier version of this comment cited an unverified "~200ms" figure for it, which
+    /// should not be read as a value to replicate. This port's per-sample cadence uses legacy's own
+    /// designed 100ms value directly, which is the more faithful choice, not merely a documented
+    /// deviation (ultracode audit finding #5: confirmed a legacy UI-paint-cadence artifact, not a
+    /// design worth copying).</summary>
     public void Fix()
     {
         if (_cnt < _cntMax)
@@ -95,4 +100,18 @@ internal sealed class LevelAgc
 
     /// <summary><c>CLVL::AGC</c> (`sstv.h:295-297`).</summary>
     public double Agc(double d) => d * _agc;
+
+    /// <summary>Resets to <c>Init()</c>'s defaults (`sstv.h:245-255`: <c>m_agc=1.0</c>,
+    /// <c>m_Max=m_CurMax=m_Cnt=0</c>). Legacy calls this at every TX&lt;-&gt;RX transition
+    /// (<c>Sound.cpp:398,443</c>) -- confirmed deliberate state hygiene (an explicit reset block
+    /// alongside other resets and a bandpass-filter flush at both transition directions), not an
+    /// artifact (ultracode audit finding #6). Callers should invoke this at the same transition
+    /// point.</summary>
+    public void Init()
+    {
+        _max = 0;
+        _curMax = 0;
+        _agc = 1.0;
+        _cnt = 0;
+    }
 }

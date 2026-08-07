@@ -254,6 +254,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private AfcTracker? _afcTracker;
     private int _afcProcessedUpTo;
     private int _afcBoundSample; // see Commit -- never correct past this image's own generous nominal extent
+    private double? _lastAppliedAfcRetuneHz; // last offset applied to _syncEnvelopeDetector; null = never retuned this lock cycle
 
     private SyncEnvelopeDetector? _syncEnvelopeDetector;
     private SlantTracker? _slantTracker;
@@ -788,6 +789,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     public event Action<SstvModeDefinition>? ModeDetected;
 
     public event Action<SstvModeDefinition>? DecodeRestarted;
+
+    /// <summary>See <see cref="ISstvDecoder.ResetAgc"/>.</summary>
+    public void ResetAgc() => _levelAgc.Init();
 
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
@@ -2995,6 +2999,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         if (mode == SstvModeRegistry.Avt || !_afcEnabled)
         {
             _afcTracker = null;
+            _lastAppliedAfcRetuneHz = null;
             return;
         }
 
@@ -3005,6 +3010,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var (afcBeginMs, afcWidthMs) = SstvModeRegistry.IsFastAfcGroup(mode) ? (1.0, 2.0) : (1.5, 3.0);
 
         _afcTracker = new AfcTracker(_sampleRate, syncTargetHz, bandLowHz, bandHighHz, afcBeginMs, afcWidthMs, bandwidthHalfHz);
+        _lastAppliedAfcRetuneHz = null; // fresh lock cycle -- see ApplyAfcCorrections' retune step
     }
 
     /// <summary>Test-only: directly invokes <see cref="InitializeAfc"/> (normally only reached via a
@@ -3016,6 +3022,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// <summary>Test-only visibility into whether AFC is currently active for the mode last passed to
     /// <see cref="InitializeAfc"/> -- production code has no need to read this back.</summary>
     internal bool HasAfcTrackerForTests => _afcTracker is not null;
+
+    /// <summary>Test-only visibility into the Auto-Slant sync-envelope detector -- the one AFC
+    /// retunes (ultracode audit finding #1). Null until <see cref="InitializeSlant"/> runs for a
+    /// non-AVT mode.</summary>
+    internal SyncEnvelopeDetector? SyncEnvelopeDetectorForTests => _syncEnvelopeDetector;
+
+    /// <summary>Test-only visibility into one of the seven VIS-time tone detectors AFC must NOT
+    /// retune (ultracode audit finding #1's scope correction).</summary>
+    internal SyncEnvelopeDetector SyncBypass1200DetectorForTests => _syncBypass1200Detector;
+
+    /// <summary>Test-only visibility into the within-line sample accumulator Auto Slant advances --
+    /// should always satisfy 0 &lt;= this &lt; <see cref="EffectiveSamplesPerLineForTests"/> even
+    /// across a rate-change commit (ultracode audit finding #10).</summary>
+    internal double SlantIdealSamplesSoFarInLineForTests => _slantIdealSamplesSoFarInLine;
+
+    /// <summary>Test-only visibility into the current (possibly Auto-Slant-corrected) samples-per-line.</summary>
+    internal double EffectiveSamplesPerLineForTests => _effectiveSamplesPerLine;
 
     // Legacy applies AFC in the same single per-sample pass as the main demod ("if(m_Sync) d +=
     // m_AFCDiff" right after m_hill.Do(...), sstv.cpp:2255-2270 -- case 2/Hilbert, this port's real
@@ -3066,29 +3089,49 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // not case 0/PLL as an earlier version of this method modeled (case 0 feeds SyncFreq from
             // a SEPARATE zero-crossing counter, m_fqc.Do(...), independent of the picture
             // demodulator's own output; case 2 feeds SyncFreq from the SAME `d` already used for the
-            // picture stream: `d = m_hill.Do(m_lvl.m_Cur); ...; SyncFreq(d);`). The `m_CurMax > 16`
-            // gate's own rationale differs from before too, though the CODE shape stays the same:
-            // under case 0 the gate wraps the frequency counter's own read; under case 2 the
-            // demodulator (HilbertFmDemodulator) already ran unconditionally as part of the main
-            // per-sample demodulation pass in PushSamples -- only feeding AfcTracker is gated here,
-            // matching legacy's real case-2 shape (`m_afc && m_CurMax>16 && mode!=AVT`, wrapping only
-            // the SyncFreq call, not the m_hill.Do() call before it). `m_afc` itself is legacy's own
-            // always-on default (sstv.cpp:1471 -- no separate toggle to model; AVT's exclusion is
-            // already handled by _afcTracker staying null, see InitializeAfc).
+            // picture stream: `d = m_hill.Do(m_lvl.m_Cur); ...; SyncFreq(d);`). `m_afc` itself is
+            // legacy's own always-on default (sstv.cpp:1471 -- no separate toggle to model; AVT's
+            // exclusion is already handled by _afcTracker staying null, see InitializeAfc).
+            //
+            // Corrected (ultracode audit finding #4): the `m_CurMax > 16` gate wraps ONLY the
+            // SyncFreq(d) *update* (sstv.cpp:2258/2263/2267) -- the standing correction itself,
+            // `d += m_AFCDiff` (sstv.cpp:2270), is a SEPARATE, unconditional statement applied to
+            // every sample regardless of gate state. An earlier version of this method applied the
+            // correction inside the gate too, so a low-signal-level sample got no correction at all
+            // instead of the last-known standing one -- a discontinuity legacy never has.
             //
             // Reads _demodulatedFrequencies BEFORE this same iteration's own correction is added to
             // it below -- matching legacy's exact sequencing, where SyncFreq(d) is called with the
             // pre-correction `d`, and `d += m_AFCDiff` happens afterward (sstv.cpp:2270).
+            var measuredFrequencyHz = DemodulatedFrequencyAt(_afcProcessedUpTo);
             if (AgcCurMaxAt(_afcProcessedUpTo) > 16.0)
             {
-                // Band-1 item 4a: DemodulatedFrequencyAt (not direct indexing) ensures this index is
-                // actually filled before reading it -- the eager per-sample fill this used to rely on
-                // is gone. The in-place mutation below stays direct indexing: the accessor call above
-                // already guarantees the slot exists.
-                var measuredFrequencyHz = DemodulatedFrequencyAt(_afcProcessedUpTo);
-                var correctionHz = _afcTracker.ProcessSample(measuredFrequencyHz);
-                _demodulatedFrequencies[Rel(_afcProcessedUpTo)] += correctionHz;
+                _afcTracker.ProcessSample(measuredFrequencyHz);
+
+                // ultracode audit finding #1: legacy's InitTone retunes the sync-envelope tone
+                // resonator (m_iir12/19) on every SyncFreq lock update (sstv.cpp:1695-1705, called
+                // from sstv.cpp:2362) -- only while synced, which this whole per-line decode loop
+                // already implies (ApplyAfcCorrections only runs while a mode is locked and being
+                // decoded). Retune only when the correction actually changed, matching legacy's own
+                // call cadence (InitTone fires once per lock event, not once per gated sample).
+                //
+                // Milestone-audit fix: legacy's dfq = m_AFCDiff * m_AFC_BWH moves the resonator ONTO
+                // the actually-received tone (SetFreq(1200+dfq) ~= measured frequency) -- the
+                // opposite direction from CorrectionHz, which is designed to pull a MEASUREMENT back
+                // toward nominal (added to the demodulated stream below). Using CorrectionHz directly
+                // here retuned the resonator away from the signal by twice the real offset. dfq is
+                // the negation of CorrectionHz: verified by hand (measured=1210Hz, syncTarget=1200Hz
+                // -> CorrectionHz=-13.125, so the resonator should move to 1200+13.125=1213.125 (the
+                // real received frequency, +3.125's calibration nudge) -- i.e. 1200 + (-CorrectionHz).
+                var dfq = -_afcTracker.CorrectionHz;
+                if (_lastAppliedAfcRetuneHz != dfq)
+                {
+                    _lastAppliedAfcRetuneHz = dfq;
+                    _syncEnvelopeDetector?.Retune(dfq);
+                }
             }
+
+            _demodulatedFrequencies[Rel(_afcProcessedUpTo)] += _afcTracker.CorrectionHz;
         }
     }
 
@@ -3174,13 +3217,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 relative += _effectiveSamplesPerLine;
             }
 
+            // ultracode audit finding #10: capture the OLD samples-per-line before a correction below
+            // can overwrite _effectiveSamplesPerLine. The accumulator reached (was >=) the OLD value,
+            // not whatever a same-line correction just changed it to -- subtracting the NEW value
+            // instead produces a one-time boundary jump of |old-new| samples on the very line a
+            // correction commits (a bug this port introduced; legacy has no equivalent because its
+            // own rate-change path rebases and re-decodes the whole image from an absolute sample
+            // count, a retroactive-re-decode mechanism this port deliberately doesn't have -- see
+            // SlantTracker's own doc comment).
+            var completedLineSamples = _effectiveSamplesPerLine;
+
             var correctedSampleRate = _slantTracker.ProcessLine(relative);
             if (correctedSampleRate is not null)
             {
                 _effectiveSamplesPerLine = _mode!.LineDurationMs / 1000.0 * correctedSampleRate.Value;
             }
 
-            _slantIdealSamplesSoFarInLine -= _effectiveSamplesPerLine; // carry remainder, don't reset to 0 -- keeps line boundaries from drifting
+            _slantIdealSamplesSoFarInLine -= completedLineSamples; // carry remainder against the OLD samples-per-line -- keeps line boundaries from drifting
             _slantLineMaxEnvelope = double.NegativeInfinity;
             _slantLinePeakPosition = 0;
         }

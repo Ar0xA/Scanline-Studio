@@ -21,11 +21,16 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
     // GetPixelLevel's raw output is zero-centered on the 1900Hz free-running frequency, scaled by
     // m_DemWhite=m_DemBlack=128/16384 (Main.cpp:876-877) -- i.e. GetPixelLevel(freq) =
     // (freq-1900)*128/400 (400 = half the tone-selector's 1500-2300Hz span, matching the +/-128
-    // domain GetRY/ColorToFreq use elsewhere -- see YCbCr's doc comment). Solving d=64 for freq
-    // gives the 200Hz half-width below: this exact number isn't a literal Hz constant anywhere in
-    // legacy source, it's derived from the 128/16384 scale factor that is, so it's flagged as
-    // derived rather than presented as a directly-read value.
-    private const double AmbiguityHalfWidthHz = 200.0;
+    // domain GetRY/ColorToFreq use elsewhere -- see YCbCr's doc comment).
+    //
+    // ultracode audit finding #30: legacy's threshold check is on the TRUNCATED `d`, an int -- not on
+    // the raw Hz deviation this port used to compare directly against a symmetric +/-200Hz (200 =
+    // solving d=64 for freq, i.e. deviation*0.32=64). Because truncation is toward zero, the
+    // effective Hz thresholds are actually ASYMMETRIC: `d >= 64` <=> `deviation >= 200.0` exactly,
+    // but `d < -64` <=> `trunc(deviation*0.32) <= -65` <=> `deviation <= -203.125` (not -200.0) -- a
+    // real, if narrow, legacy quirk this port now reproduces by truncating before comparing, instead
+    // of comparing the untruncated Hz value against a symmetric bound.
+    private const double PixelLevelScaleFactor = 0.32; // 128/400, GetPixelLevel's scale factor
 
     // SHOULD item 12 (spec/14-roadmap.md): legacy's tone-selector decode branch is NOT gated by the
     // segment's own full nominal span -- round-1-review correction, an earlier version of this fix
@@ -74,8 +79,18 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
         PixelSampleReader reader,
         Rgb24[] pixels)
     {
-        _rMinusY ??= new double[mode.ImageWidth];
-        _bMinusY ??= new double[mode.ImageWidth];
+        if (_rMinusY is null)
+        {
+            // ultracode audit finding #27: legacy's zero-centered m_D36 arrays default to 0 (neutral
+            // chroma) on a cold start; this port's chroma domain is 128-centered (YCbCr.ToRgb
+            // subtracts 128), so the equivalent neutral default is 128.0, not 0.0 -- a 0.0 default
+            // (this port's original allocation) is full-negative chroma, producing a saturated wrong
+            // color on the first decoded row of every image instead of neutral gray.
+            _rMinusY = new double[mode.ImageWidth];
+            _bMinusY = new double[mode.ImageWidth];
+            Array.Fill(_rMinusY, 128.0);
+            Array.Fill(_bMinusY, 128.0);
+        }
 
         var idealSamplesSoFar = 0.0;
         var y = new double[mode.ImageWidth];
@@ -124,8 +139,9 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
                     var freq = reader.ReadBare(decisiveWindowEndSample, decisiveWindowEndSample + 1);
                     var midpoint = (selector.LowFrequencyHz + selector.HighFrequencyHz) / 2;
                     var deviation = freq - midpoint;
-                    isEvenLine = deviation >= AmbiguityHalfWidthHz || deviation < -AmbiguityHalfWidthHz
-                        ? deviation < 0 // decisive: closer to LowFrequencyHz (R-Y) => even line
+                    var d = Math.Truncate(deviation * PixelLevelScaleFactor); // ultracode audit finding #30
+                    isEvenLine = d >= 64.0 || d < -64.0
+                        ? d < 0 // decisive: closer to LowFrequencyHz (R-Y) => even line
                         : !_lastSelectionIsEvenLine; // ambiguous: toggle, Main.cpp:4294
                     _lastSelectionIsEvenLine = isEvenLine;
                     break;
@@ -189,13 +205,27 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
         var pixelWalk = 0.0;
         for (var x = 0; x < mode.ImageWidth; x++)
         {
-            var startSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
+            // ultracode audit finding #29: legacy's real pixel-boundary selection (the first integer
+            // sample index where the mapped pixel index changes) is effectively a CEILING, not
+            // round-to-nearest -- round-to-nearest can read up to half a pixel into the PREVIOUS
+            // pixel's territory. Only startSample changes; endSample is unused by ReadBare/
+            // ReadPeakPicked so its rounding doesn't matter.
+            var startSample = lineStartSample + (int)Math.Ceiling(segmentStartSample + pixelWalk);
             pixelWalk += perPixelDurationMs / 1000.0 * sampleRate;
             var endSample = lineStartSample + (int)Math.Round(segmentStartSample + pixelWalk);
 
             var freq = read(startSample, endSample);
             // Inverse of ColorToFreq, not "+1500" -- uses the mode's own LuminanceMinHz/MaxHz.
             var value = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+
+            // ultracode audit finding #28: legacy truncates Y/R-Y/B-Y to int in the RAW ZERO-CENTERED
+            // domain (GetPixelLevel's own `int d`), BEFORE the +128 bias YCtoRGB's callers add -- not
+            // after. Truncating the already-128-shifted `value` directly would truncate in the wrong
+            // domain and introduce a NEW 1-level error (this was an early, corrected mistake in the
+            // audit itself -- see ultracode_review.md finding #28's writeup for the wrong-vs-right
+            // domain distinction). Applies to BOTH luma and chroma -- legacy's GetPictureLevel (luma)
+            // just delegates to GetPixelLevel, so it truncates too.
+            value = Math.Truncate(value - 128.0) + 128.0;
             destination[x] = clamp ? Math.Clamp(value, 0, 255) : value;
         }
 

@@ -73,7 +73,14 @@ public sealed class WaterfallSource : IWaterfallSource, IDisposable
         Span<float> imag = new float[_windowSize];
         for (var i = 0; i < _windowSize; i++)
         {
-            real[i] = _accumulator[i] * _hannWindow[i];
+            // ultracode audit finding #18: legacy clamps input to +-32768 before windowing
+            // (Fft.cpp:667-675), so a non-finite raw sample can never reach its FFT. This port has no
+            // equivalent guard, and windowing alone doesn't help -- _hannWindow[0] is exactly 0f, so
+            // Inf*0=NaN corrupts the frame regardless of which sample was non-finite. Guarded in this
+            // port's own [-1,1] domain, not legacy's +-32768 (a display-only class, no legacy sample
+            // scale to match here).
+            var sample = _accumulator[i];
+            real[i] = float.IsFinite(sample) ? sample * _hannWindow[i] : 0f;
         }
 
         RadixTwoFft.Forward(real, imag);

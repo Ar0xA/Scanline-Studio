@@ -12,12 +12,21 @@ internal sealed class MonoAveragedPairedScanlineEncoder : IScanlineEncoder
 
     public IEnumerable<(double FrequencyHz, double DurationMs)> GenerateLine(SstvModeDefinition mode, IImageSource image, int lineIndex)
     {
+        // Defensive-only, see RgbSequentialScanlineEncoder's own copy of this comment (ultracode
+        // audit finding #24) -- no mode using THIS encoder has a HoldPreviousFrequencySegment today.
+        var lastFrequencyHz = 1900.0;
+
         foreach (var lineSegment in mode.LineSegments)
         {
             switch (lineSegment)
             {
                 case SyncSegment sync:
+                    lastFrequencyHz = sync.FrequencyHz;
                     yield return (sync.FrequencyHz, sync.DurationMs);
+                    break;
+
+                case HoldPreviousFrequencySegment hold:
+                    yield return (lastFrequencyHz, hold.DurationMs);
                     break;
 
                 case ScanSegment scan:
@@ -36,7 +45,8 @@ internal sealed class MonoAveragedPairedScanlineEncoder : IScanlineEncoder
                         // non-negative), so Math.Floor reproduces C++'s truncate-toward-zero exactly
                         // here too.
                         var averagedY = Math.Floor((y1 + y2) / 2.0);
-                        yield return (YCbCr.ColorToFreq(averagedY, mode.LuminanceMinHz, mode.LuminanceMaxHz), perPixelDurationMs);
+                        lastFrequencyHz = YCbCr.ColorToFreq(averagedY, mode.LuminanceMinHz, mode.LuminanceMaxHz);
+                        yield return (lastFrequencyHz, perPixelDurationMs);
                     }
 
                     break;

@@ -61,6 +61,13 @@ public sealed record ScanSegment(string ChannelName, double DurationMs) : LineSe
 /// RY=1500, BY=2300</c> — both frequencies below are the real, traced legacy TX values.</summary>
 public sealed record ToneSelectorSegment(double DurationMs, double LowFrequencyHz, double HighFrequencyHz) : LineSegment(DurationMs);
 
+/// <summary>MR/ML family's three inter-channel gaps: legacy holds the LAST TRANSMITTED PIXEL'S
+/// FREQUENCY for this duration (<c>TMmsstv::LineMR</c>, `Main.cpp:6766-6782`'s `short d;` hoisted
+/// out of all 3 scan loops specifically to reuse it on the gap immediately after), not a fixed
+/// tone (ultracode audit finding #24). Carries no frequency of its own -- the encoder resolves it
+/// from whatever frequency it most recently emitted.</summary>
+public sealed record HoldPreviousFrequencySegment(double DurationMs) : LineSegment(DurationMs);
+
 /// <summary>
 /// Data-driven mode description — see spec/06-sstv-dsp.md: "Mode timing/frequency tables are data,
 /// not code." Adding a mode is adding a new <see cref="SstvModeDefinition"/>, not a new class.

@@ -117,6 +117,21 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public async Task StartAndStopReceivingAsync_BothResetDecoderAgc()
+    {
+        // ultracode audit finding #6: legacy resets AGC (CLVL::Init) at BOTH TX<->RX transition
+        // directions (Sound.cpp:398,443) -- RX start (entering RX) and RX stop (entering TX) are
+        // this port's equivalent transition points.
+        var (service, _, decoder, _, _, _) = CreateService();
+
+        await service.StartReceivingAsync();
+        Assert.Equal(1, decoder.ResetAgcCallCount);
+
+        await service.StopReceivingAsync();
+        Assert.Equal(2, decoder.ResetAgcCallCount);
+    }
+
+    [Fact]
     public async Task PushSamples_DecoderThrows_WaterfallStillReceivesTheSamples()
     {
         var (service, audioEngine, decoder, waterfall, _, _) = CreateService();
