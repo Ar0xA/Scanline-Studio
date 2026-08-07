@@ -60,6 +60,13 @@ public interface ISstvSessionService : IAsyncDisposable
     /// currently receiving a locked image.</summary>
     void RequestReSync();
 
+    /// <summary>Requests an immediate decode restart into <paramref name="mode"/>, bypassing VIS
+    /// header detection — see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.ForceMode"/> for the full contract
+    /// (the port of legacy's real RX quick-mode-button click). Safe to call from any thread; a
+    /// one-shot request applied on the next decoded chunk, not a persistent lock.</summary>
+    void ForceMode(SstvModeDefinition mode);
+
     Task StartReceivingAsync(CancellationToken ct = default);
 
     Task StopReceivingAsync();

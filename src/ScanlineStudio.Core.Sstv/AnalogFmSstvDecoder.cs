@@ -297,6 +297,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private bool _suppressNextSlantProcessLine;
     private bool _slantCorrectionsDisabledForRestOfImage; // port of m_AutoSyncCount's gate on AutoStopJob's correction branch
 
+    // Force-mode (legacy's RX quick-mode-button click, Main.cpp:6096-6122 -> CSSTVDEM::Start(mode,
+    // TRUE), sstv.cpp:1749-1767/1717-1747) request state. Reference-type field, not a plain volatile
+    // bool like _reSyncRequested above -- the payload (which mode) must survive to consumption
+    // without a lost-update race, so consumption uses Interlocked.Exchange for an atomic
+    // read-and-clear (last-request-wins) rather than a separate test-then-clear pair. See
+    // ForceMode/PushSamples's own consumption point for why this is checked BEFORE _reSyncRequested.
+    private SstvModeDefinition? _forcedMode;
+
     // m_sint1 (sstv.cpp:1899-1904/1946-1972, sstv.h:700, isNarrow:false -- SyncCheckSub's own
     // m_fNarrow gating restricts it to non-narrow candidates, same as m_sint2) -- piece 7d, the last
     // of the 7-piece VIS/preamble-lock breakdown. Same CSYNCINT class as m_sint2/m_sint3, but wired
@@ -830,8 +838,25 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// actually calls that (matching this class's own established single-caller-thread contract).</summary>
     public void RequestReSync() => _reSyncRequested = true;
 
+    /// <summary>See <see cref="ISstvDecoder.ForceMode"/>. A single atomic exchange, safe from any
+    /// thread -- consumed at the top of the next <see cref="PushSamples"/> call, on whichever thread
+    /// actually calls that (matching this class's own established single-caller-thread contract; no
+    /// thread marshaling, no synchronization context, no background dispatch).</summary>
+    public void ForceMode(SstvModeDefinition mode) => Interlocked.Exchange(ref _forcedMode, mode);
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
+        // Consumed before _reSyncRequested below: legacy resolves the same simultaneous-command
+        // question by having Start() unconditionally zero m_Skip (sstv.cpp:1725), i.e. a forced start
+        // wins over a pending ReSync. PerformForceMode's own Commit() -> AbandonInProgressImage() ->
+        // ResetReSyncState() chain clears _reSyncRequested/_pendingSkipSamples as a side effect, so no
+        // separate interaction code is needed here beyond this ordering.
+        var forcedMode = Interlocked.Exchange(ref _forcedMode, null);
+        if (forcedMode is not null)
+        {
+            PerformForceMode(forcedMode);
+        }
+
         if (_reSyncRequested)
         {
             _reSyncRequested = false;
@@ -902,6 +927,65 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _lastLineSyncPeakPosition = null;
         _suppressNextSlantProcessLine = true;
         _slantCorrectionsDisabledForRestOfImage = true;
+    }
+
+    // Force-mode (legacy's RX quick-mode-button click, Main.cpp:6096-6122 -> CSSTVDEM::Start(mode,
+    // TRUE), sstv.cpp:1749-1767 -> Start(void), sstv.cpp:1717-1747). Reuses the exact same
+    // Commit()/_pendingAnchorCorrectionMode/TryResolveSyncAnchorCorrection/
+    // FinalizeAnchorAndStartDecoding pipeline VIS auto-detect itself uses -- legacy-faithful, not an
+    // invented shortcut: legacy's own Start() is shared between the VIS-auto path (sstv.cpp:1902-1903)
+    // and the force-mode path.
+    private void PerformForceMode(SstvModeDefinition mode)
+    {
+        // Captured BEFORE anything below mutates them. previousMode: DecodeRestarted must report the
+        // OLD mode, matching every other restart call site's convention. hadPendingAnchor: whether
+        // previousMode ever actually reached ModeDetected -- Commit() fires ModeDetected immediately
+        // only for AVT (FinalizeAnchorAndStartDecoding called inline); every other mode defers it
+        // until TryResolveSyncAnchorCorrection succeeds, via _pendingAnchorCorrectionMode. A mode still
+        // sitting in that field was never announced, so DecodeRestarted must not fire for it either --
+        // see this method's own DecodeRestarted call below.
+        var previousMode = _mode;
+        var hadPendingAnchor = _pendingAnchorCorrectionMode is not null;
+
+        // Aborts any in-progress AVT training. Legacy basis: Start(void) unconditionally lands on
+        // m_SyncMode=0 (sstv.cpp:1744), and AVT training lives entirely in m_SyncMode states 4-8 (see
+        // TryResolveAvtTraining's own doc comment for that state list) -- a forced start unambiguously
+        // aborts in-flight training. Matches EndOfImage's own AVT cleanup exactly (same three fields).
+        // Deliberately done HERE, not inside AbandonInProgressImage() -- the S7 AVT hand-off call site
+        // relies on _avtTrainingPending surviving through that method (see its own doc comment).
+        _avtTrainingPending = false;
+        _avtTrainingLock = null;
+        _avtPllDemodulator = null;
+
+        // Also clears any OTHER mode's still-unresolved anchor correction. _pendingAnchorCorrectionMode
+        // is otherwise cleared in exactly one place (TryResolveSyncAnchorCorrection's own success path)
+        // -- every existing caller provably can't reach Commit() while it's already set, an invariant
+        // ForceMode is the first to break. Left stale, forcing (say) AVT while a different mode's
+        // anchor correction is still pending would leave that stale mode's entry behind: the next
+        // TryProcessBuffer call would block AVT decoding until the stale mode's own 3-4-line window
+        // fills, then resolve it against AVT's _lineDecoder/_consumedSamples and fire a spurious second
+        // ModeDetected for a mode that isn't _mode anymore. hadPendingAnchor above is captured before
+        // this clear, so the DecodeRestarted gate below still sees the pre-clear value.
+        _pendingAnchorCorrectionMode = null;
+
+        // Anchor at TotalSamplesReceived, NOT _consumedSamples -- pre-lock, _consumedSamples is a
+        // frozen header-search start that TrimBuffers stops protecting once _fixedWindowExhausted is
+        // set, so on a decoder idle long enough it can sit behind _bufferBase; committing there would
+        // read already-trimmed-away buffer and throw on this call's thread. TotalSamplesReceived is
+        // always within TrimBuffers' retained window in both the pre-lock and already-locked cases (see
+        // TrimBuffers' own watermark comments) and matches legacy's actual reset target -- Start(void)
+        // zeroes m_wBase/m_wPage/m_rPage/m_rBase (sstv.cpp:1726-1730), "begin buffering from now", not
+        // the m_wBgn=2 buffered-lines-gate flag.
+        Commit(mode, TotalSamplesReceived);
+
+        // See this method's own top comment for why this is gated on !hadPendingAnchor: firing
+        // DecodeRestarted for a mode that never reached ModeDetected would violate the event's own
+        // documented contract (a caller that allocates on ModeDetected and discards on DecodeRestarted
+        // would discard a buffer it never allocated).
+        if (previousMode is not null && !hadPendingAnchor)
+        {
+            DecodeRestarted?.Invoke(previousMode);
+        }
     }
 
     // Same derivation TryResolveSyncAnchorCorrection already has (:2337-2354 area) -- duplicated
@@ -3267,6 +3351,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// <summary>Test-only visibility into the in-progress manual-ReSync skip still left to drain --
     /// reaches 0 exactly when <see cref="DrainPendingSkip"/> has fully applied a correction.</summary>
     internal int PendingSkipSamplesForTests => _pendingSkipSamples;
+
+    /// <summary>Test-only visibility into the currently-locked mode (<see langword="null"/> when
+    /// idle/between images) -- <see cref="ForceMode"/> is the first feature whose own test suite
+    /// needs to distinguish "idle" from "locked" independently of <see cref="ModeDetected"/> having
+    /// fired yet (a non-AVT commit can be locked with a pending, not-yet-announced anchor).</summary>
+    internal SstvModeDefinition? ModeForTests => _mode;
+
+    /// <summary>Test-only visibility into whether AVT training is currently in flight --
+    /// <see cref="ForceMode"/>'s own teardown is the first production code that needs to abort this
+    /// from outside <see cref="TryResolveAvtTraining"/>'s own exit points/<see cref="EndOfImage"/>.</summary>
+    internal bool AvtTrainingPendingForTests => _avtTrainingPending;
+
+    /// <summary>Test-only visibility into a still-unresolved, not-yet-<see cref="ModeDetected"/>
+    /// anchor-correction commit -- see <see cref="PerformForceMode"/>'s own doc comment for why a
+    /// stale entry here is the exact hazard its clear step exists to prevent.</summary>
+    internal SstvModeDefinition? PendingAnchorCorrectionModeForTests => _pendingAnchorCorrectionMode;
 
     // Legacy applies AFC in the same single per-sample pass as the main demod ("if(m_Sync) d +=
     // m_AFCDiff" right after m_hill.Do(...), sstv.cpp:2255-2270 -- case 2/Hilbert, this port's real

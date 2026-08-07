@@ -4158,9 +4158,18 @@ filter — those are a known exclusion, not rediscovered here):
 **New UI shell mock2 elements omitted for lack of real backing data** (found while building the
 fixed Menu/header/3-tab shell, see `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` —
 wired everything real, these had no real data behind them today):
-- Manual "lock to a specific mode" RX decode override + the mock2 Mode card's quick-mode-button
-  grid — `ISstvDecoder` always auto-detects via the VIS header; there is no force-a-mode decode
-  path to wire an "Auto/Locked" toggle to. Medium — would need a real decoder change, not just UI.
+- ~~Manual "lock to a specific mode" RX decode override + the mock2 Mode card's quick-mode-button
+  grid~~ — **backend done** (2026-08-08): the roadmap's own framing was deliberately vague pending
+  research. Traced the real legacy click handler (`TMmsstv::SBMClick`, `Main.cpp:6096-6122`, calling
+  `CSSTVDEM::Start(mode, TRUE)`, `sstv.cpp:1749-1767`) and found (via `UpdateModeBtn`,
+  `Main.cpp:5988`) it's a ONE-SHOT "start decoding as mode X right now" kick, not a persistent lock
+  — once the forced image ends, ordinary VIS auto-detect resumes automatically for the next
+  transmission. New `ISstvDecoder.ForceMode(SstvModeDefinition)`, fire-and-forget like
+  `RequestReSync`, reusing the exact same `Commit()`/anchor-correction pipeline VIS auto-detect
+  itself uses. Went through 2 rounds of auditor plan-readiness review (round 1 caught a real
+  audio-thread-crash blocker in the anchor choice; round 2 caught a stale-pending-anchor edge case
+  forcing AVT mid-another-mode's-resolution). Backend-only — no UI wired yet (mock2's Auto/Locked
+  segment + quick-mode grid is the eventual consumer). See `PROJECT_BRIEF.md` for the full account.
 - ~~Live decode "Remaining time" / per-line progress readout~~ — **backing data done** (2026-08-07):
   new `IReceivedImageBuffer.Progress` (`double?`, `null` when idle, `[0,1]` fraction while decoding,
   snapped to exactly `1.0` on the completing scanline group), computed in `ReceivedImageBuffer.cs`
