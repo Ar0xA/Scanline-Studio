@@ -20,11 +20,23 @@ public interface ISstvDecoder
     /// not just that a mode was (re-)identified.
     ///
     /// Argument is the *abandoned* mode (what was being decoded before the restart), not the newly-
-    /// detected one -- <see cref="ModeDetected"/> for the new mode always fires first, before this
-    /// event, since the implementation must already know the new mode to have decided a restart is
-    /// happening at all. A caller that allocates a display buffer on <see cref="ModeDetected"/> and
+    /// detected one -- a caller that allocates a display buffer on <see cref="ModeDetected"/> and
     /// discards on this event needs the abandoned mode here specifically, not the new one it just
-    /// allocated for.</summary>
+    /// allocated for.
+    ///
+    /// <b>Ordering relative to <see cref="ModeDetected"/> is NOT fixed</b> -- corrected here after an
+    /// earlier version of this doc wrongly claimed <see cref="ModeDetected"/> for the new mode always
+    /// fires first (true only through the "piece 6" implementation; piece 8c's deferred anchor-
+    /// correction pipeline changed this without the doc being updated, and a plan built on the old
+    /// claim was caught by auditor review before it shipped a real data-corruption bug). In the
+    /// dominant case (a non-AVT match, whether from a mid-reception restart or
+    /// <see cref="ForceMode"/>), this event fires FIRST, since the new mode's own
+    /// <see cref="ModeDetected"/> is deferred until its sync anchor resolves (possibly a later
+    /// <see cref="PushSamples"/> call entirely). Only when the new mode resolves immediately (AVT,
+    /// which has no anchor-correction step) does <see cref="ModeDetected"/> fire first. A caller that
+    /// needs to know "has the new mode's <see cref="ModeDetected"/> already fired by the time this
+    /// event arrives" must track that itself (e.g. by mode-identity comparison against its own last-
+    /// seen state), not assume either ordering.</summary>
     event Action<SstvModeDefinition>? DecodeRestarted;
 
     /// <summary>Resets AGC/level-tracking state to its power-on defaults. Legacy calls its equivalent
