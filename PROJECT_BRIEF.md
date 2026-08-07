@@ -2,7 +2,88 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-07, latest, ACTIVE) — 8-item small-backlog batch (data-model/logbook items dropped from scope, audio/radio-control items built) from `spec/14-roadmap.md`'s Phase 4+ backlog. Full solution build/test green (10 projects, all 554 `Core.Sstv.Tests` including the DSP golden-vector suite). Roadmap struck through for all 8. NOT YET COMMITTED.
+## Resume here (2026-08-07, latest, ACTIVE) — QSO logbook backend: SQLite storage, ADIF import/export, GridTracker UDP streaming, QRZ.com Logbook API upload. All 7 plan pieces done, auditor pass on the highest-risk piece applied. Full solution build/test green (915 tests across 10 test projects, 0 failures, DSP golden-vector suite included). NOT YET COMMITTED.
+
+User asked for "a modern QSO log back-end" — ADIF file writing, streaming to GridTracker, upload to
+QRZ.com's API — explicitly backend-only (no UI wiring), other targets (LoTW/eQSL/Clublog/HRDLog)
+deliberately "maybe later." `spec/08-logging.md` already designed the storage/ADIF shape
+(`QsoRecord`/`ILogbookRepository`/`IAdifExporter`/`IAdifImporter`) but had zero code
+(`project_logbook_not_implemented` memory, now stale — update/delete it). GridTracker
+streaming and direct QRZ upload are genuinely new (not a legacy port — legacy `qrzcom.cpp` was
+lookup-only, no GridTracker concept exists in YONIQ). Plan file:
+`~/.claude/plans/snazzy-jumping-phoenix.md`.
+
+**Research before building**: confirmed GridTracker's real-time ingestion is WSJT-X's own UDP
+network protocol (verified directly against WSJT-X's `NetworkMessage.hpp` source) — specifically
+the `LoggedADIF` message (type 12): a small binary header (magic `0xadbccbda`, schema, type) plus
+two Qt-`QByteArray`-framed UTF-8 strings (id, ADIF text). The ADIF text field is just a complete
+single-QSO ADIF file, so `IAdifExporter`'s own output feeds it directly — no separate protocol-level
+encoding needed. QRZ's Logbook API is a separate, independent `POST
+https://logbook.qrz.com/api` (`ACTION=INSERT`, form-urlencoded `KEY`/`ADIF`) — confirmed this
+does NOT get superseded by GridTracker's own QRZ-forwarding feature, since the user wants direct
+upload that works without GridTracker running.
+
+**7 pieces built in order, each with tests, matching the plan**:
+1. `QsoRecord`/`ILogbookRepository`/`SqliteLogbookRepository` (`Abstractions.Logbook` +
+   `Core.Logbook`) — same `history.db` file as RX history (`ReceiveHistoryEntry.LinkedQsoId`
+   already anticipated this table). `Id`/`ReceivedImageId` are `string` not `Guid`, matching
+   `ReceiveHistoryEntry`'s existing convention. `GridSquare` added beyond the spec's original
+   draft (trivial, needed for correct ADIF `GRIDSQUARE` + real GridTracker/QRZ interop) — the only
+   scope addition; QSL flags/dupe-detection/contest-exchange stayed out per the roadmap's own
+   "maybe later" framing.
+2. `AdifExporter`/`AdifImporter` — pure (`TextWriter`/`TextReader`, no file I/O). `SstvModeId` maps
+   to ADIF `MODE=SSTV` + `SUBMODE` + a non-standard `APP_SCANLINESTUDIO_SSTVMODE` field (lossless
+   round-trip); non-SSTV `RadioMode` falls back to a small shared `AdifRadioModeMapping` table.
+   Unmapped/unknown import fields preserved in `Notes` (spec's "raw-fields bag" requirement), not
+   dropped. Field lengths are UTF-8 **byte** counts (ADIF's actual `<name:length>` definition) —
+   see the auditor finding below for why this specifically matters.
+3. `GridTrackerStreamer` — UDP `LoggedADIF` datagram sender, gates on its own
+   `GridTrackerStreamingSettings` (off by default). **Got the CLAUDE.md §7 `auditor` pass this plan
+   called for** (byte-level protocol correctness — same "silent failure" risk class as DSP
+   buffer/encoding logic even though it isn't DSP): verdict EQUIVALENT-WITH-RISKS. Found and fixed
+   a real bug — `AdifExporter`/`AdifImporter` were using .NET `char` count for ADIF field lengths,
+   not the UTF-8 byte count ADIF's spec actually requires, which would silently corrupt any
+   non-ASCII `NAME`/`QTH`/`COMMENT`/`COUNTRY` field in exactly the GridTracker payload this audit
+   exists to protect (fixed by rewriting `AdifImporter` to parse on UTF-8 byte offsets instead of
+   char offsets — safe because ASCII delimiter bytes never collide with UTF-8 continuation bytes).
+   Also fixed: `GridTrackerStreamer.SendLoggedQsoAsync` only caught `SocketException`, letting a
+   corrupt-settings-file or invalid host/port throw straight through its own documented
+   "never throws" contract — widened to catch broadly except `OperationCanceledException`, plus
+   host/port validation before use. Applied the same fix proactively to `QrzLogbookUploader`
+   (sibling risk, same pattern, not separately audited). **Residual, unverifiable-in-sandbox risk**
+   the auditor flagged: no `Heartbeat` message is ever sent, so if some GridTracker version gates
+   `LoggedADIF` on a prior-registered client instance, datagrams could be silently discarded —
+   flagged as the highest-value thing to check against a real GridTracker instance before
+   shipping, not resolved further here (no real GridTracker available in this sandbox).
+4. `QrzLogbookUploader` — `IHttpClientFactory`-based (first `HttpClient` usage in this codebase),
+   fake-`HttpMessageHandler` tests covering `RESULT=OK`/`REPLACE`/`FAIL`/malformed responses.
+5. `GridTrackerStreamingSettings`/`QrzUploadSettings` — nullable-property-only, STJ-default-loss-safe
+   (this codebase's now-standard pattern), both opt-in/off-by-default.
+6. `ILogbookSessionService`/`LogbookSessionService` (`Application` layer, mirrors
+   `ISstvSessionService`'s facade role) — `LogQsoAsync` persists unconditionally first, then
+   best-effort pushes to GridTracker/QRZ if enabled, returns a `LogQsoResult` with per-target
+   success/error (no retry queue, a failed push is surfaced once). Also
+   `SearchAsync`/`ExportAdifFileAsync`/`ImportAdifFileAsync` (the last persists every parsed
+   record, not just a preview).
+7. `Program.cs` DI wiring — `AddHttpClient()` (new), all 5 new interfaces registered as singletons
+   alongside the existing RX-history block.
+
+**Full solution verified green** after the last piece (10 test projects, 915 tests total, DSP
+golden-vector suite run in the background since it alone takes ~7.5 min — confirmed unaffected, no
+`Core.Sstv` touch this pass).
+
+**Not yet done / explicitly deferred, not forgotten**: no UI controls wired to any of this yet
+(backend-only pass, per the user's own wording). LoTW/eQSL/Clublog/HRDLog uploads, QSL sent/received
+flags, duplicate-QSO detection, contest serial exchange, offline `ICallsignLookup`/QRZ.com *lookup*
+(spec's separate enrichment feature — untouched), GridTracker `Heartbeat`/`Status`/`Decode`
+live-tracking messages, automatic retry queue for failed pushes — all explicitly "maybe later" per
+the plan file, not silently dropped. Real-world verification against an actual GridTracker instance
+and a real QRZ subscription+API key is still outstanding (not available in this sandbox) — the
+auditor's Heartbeat/instance-registration concern in particular should be checked there.
+
+**Nothing from this session is committed yet.**
+
+## Resume here (2026-08-07, superseded by the entry above) — 8-item small-backlog batch (data-model/logbook items dropped from scope, audio/radio-control items built) from `spec/14-roadmap.md`'s Phase 4+ backlog. Full solution build/test green (10 projects, all 554 `Core.Sstv.Tests` including the DSP golden-vector suite). Roadmap struck through for all 8. NOT YET COMMITTED.
 
 User asked to start the small "data model/logbook" + "audio/radio-control" backlog items as one
 combined plan (no per-item plan/auditor cycles). 3 parallel `Explore` passes found the real scope

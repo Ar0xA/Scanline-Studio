@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
@@ -88,6 +89,10 @@ internal static partial class Program
 
         hostBuilder.Services.AddSingleton<ISettingsStore>(sp => new JsonSettingsStore(sp.GetRequiredService<ILogger<JsonSettingsStore>>()));
 
+        // First IHttpClientFactory consumer in this codebase (QrzLogbookUploader) -- no prior
+        // registration to match, this is the standard AddHttpClient() entry point.
+        hostBuilder.Services.AddHttpClient();
+
         // Singleton, not transient: resolved exactly once at startup (App.axaml.cs) as the app's
         // one root view-model, but a second resolve would silently fork
         // TxControlsPaneViewModel.RadioStatus (assigned once in this constructor, from a singleton
@@ -163,6 +168,15 @@ internal static partial class Program
         hostBuilder.Services.AddSingleton<IReceiveHistoryStore, SqliteReceiveHistoryStore>();
         hostBuilder.Services.AddSingleton<ReceiveHistoryRecorder>();
 
+        // QSO logbook backend (spec/08-logging.md + the accompanying plan file) -- SQLite storage
+        // (same history.db file as RX history above), ADIF import/export, GridTracker UDP
+        // streaming, and QRZ.com Logbook API upload. Backend-only this pass; no UI wired to it yet.
+        hostBuilder.Services.AddSingleton<ILogbookRepository, SqliteLogbookRepository>();
+        hostBuilder.Services.AddSingleton<IAdifExporter, AdifExporter>();
+        hostBuilder.Services.AddSingleton<IAdifImporter, AdifImporter>();
+        hostBuilder.Services.AddSingleton<IGridTrackerStreamer, GridTrackerStreamer>();
+        hostBuilder.Services.AddSingleton<IQrzLogbookUploader, QrzLogbookUploader>();
+
         // TX image editor (spec/07-image-pipeline.md's "TX image editor" section) -- the
         // Crop/Resize/ApplyOverlay pipeline both TxImageEditorPaneViewModel's live preview and
         // TxControlsPaneViewModel's mode-change reflow run against.
@@ -188,6 +202,7 @@ internal static partial class Program
         // (spec/01-architecture.md's layering rule); everything above is UI-invisible plumbing.
         hostBuilder.Services.AddSingleton<IRadioSessionService, RadioSessionService>();
         hostBuilder.Services.AddSingleton<ISstvSessionService, SstvSessionService>();
+        hostBuilder.Services.AddSingleton<ILogbookSessionService, LogbookSessionService>();
 
         // A DI-graph error (a missing registration, a bad factory lambda) here is otherwise an
         // unlogged crash before the window ever appears -- there is no logger to report through
