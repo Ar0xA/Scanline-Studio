@@ -80,6 +80,8 @@ internal sealed class FakeReceivedImageBuffer : IReceivedImageBuffer
 {
     public IImageSource Current { get; set; } = new ArrayImageSourceStub();
 
+    public double? Progress { get; set; }
+
     public event Action? Updated;
 
     public Task SaveAsync(string path, CancellationToken ct = default) => Task.CompletedTask;
@@ -119,6 +121,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public event Action? MaintenanceWarningCleared;
 
     public event Action? MaintenanceCriticalStopRaised;
+
+    public int RequestReSyncCallCount { get; private set; }
+
+    public void RequestReSync() => RequestReSyncCallCount++;
 
     public Task StartReceivingAsync(CancellationToken ct = default)
     {

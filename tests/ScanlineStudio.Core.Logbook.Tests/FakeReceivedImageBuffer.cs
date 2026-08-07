@@ -6,6 +6,8 @@ internal sealed class FakeReceivedImageBuffer : IReceivedImageBuffer
 {
     public IImageSource Current { get; } = new FixedSizeImageSource(1, 1);
 
+    public double? Progress { get; set; }
+
     public event Action? Updated;
 
     public Task SaveAsync(string path, CancellationToken ct = default) => Task.CompletedTask;
