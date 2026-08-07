@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Audio;
 
 namespace ScanlineStudio.Core.Audio.MiniAudio;
 
@@ -52,7 +53,26 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
     /// handles resample/downmix from whatever the device's real native format is.</param>
     /// <param name="ringCapacityFrames">Sizes the buffer between the real-time callback and this
     /// class's own drain thread.</param>
-    public MiniAudioCaptureSession(string deviceId, int sampleRate, ILogger logger, int ringCapacityFrames = 16384)
+    /// <param name="drainThreadPriority">OS scheduling priority for this class's own drain thread.
+    /// Null leaves it at the CLR default (<see cref="ThreadPriority.Normal"/>, whatever
+    /// <see cref="Thread"/>'s own constructor already gives it -- unchanged from before this
+    /// parameter existed). Does NOT affect the real-time native audio callback thread -- that one
+    /// runs entirely inside the C shim and is never exposed to managed code, so it has no
+    /// managed-settable priority at all; only this drain thread does.</param>
+    /// <param name="periodSizeInFrames">Requested native hardware/backend period size (0 =
+    /// miniaudio's own default -- unchanged from before this parameter existed). A separate,
+    /// lower-level knob from <paramref name="ringCapacityFrames"/>, which only sizes this shim's
+    /// own managed-drain-side ring, not the device's actual buffer.</param>
+    /// <param name="periods">Requested native period count (0 = miniaudio's own default).</param>
+    /// <param name="channelSource"><b>Not a confirmed legacy port</b> (see
+    /// <see cref="AudioChannelSource"/>'s own doc comment). <see cref="AudioChannelSource.Mono"/>
+    /// (default) reproduces today's exact pre-existing behavior -- the device opens with 1
+    /// channel, unchanged. <see cref="AudioChannelSource.Left"/>/<see cref="AudioChannelSource.Right"/>
+    /// open the device with 2 channels instead and extract only the named one.</param>
+    public MiniAudioCaptureSession(
+        string deviceId, int sampleRate, ILogger logger, int ringCapacityFrames = 16384,
+        ThreadPriority? drainThreadPriority = null, int periodSizeInFrames = 0, int periods = 0,
+        AudioChannelSource channelSource = AudioChannelSource.Mono)
     {
         _logger = logger;
 
@@ -65,7 +85,16 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
         try
         {
             var deviceIdBytes = NativeAudio.EncodeFixedString(deviceId, NativeAudio.IdSize);
-            _handle = NativeAudio.yoniq_audio_capture_session_open(deviceIdBytes, sampleRate, ringCapacityFrames);
+            var options = new NativeAudio.OpenOptions
+            {
+                SampleRate = sampleRate,
+                RingCapacityFrames = ringCapacityFrames,
+                PeriodSizeInFrames = periodSizeInFrames,
+                Periods = periods,
+                Channels = channelSource == AudioChannelSource.Mono ? 1 : 2,
+                ChannelSelect = (int)channelSource,
+            };
+            _handle = NativeAudio.yoniq_audio_capture_session_open(deviceIdBytes, ref options);
             if (_handle == IntPtr.Zero)
             {
                 throw new InvalidOperationException($"Failed to open capture device '{deviceId}' at {sampleRate}Hz.");
@@ -82,6 +111,10 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
             IsBackground = true,
             Name = "MiniAudioCaptureDrain",
         };
+        if (drainThreadPriority is { } priority)
+        {
+            _drainThread.Priority = priority;
+        }
         _drainThread.Start();
     }
 
@@ -149,6 +182,10 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
     /// same callback invocation. No lock needed -- <c>_drainThread</c> is assigned once in the
     /// constructor and never reassigned.</summary>
     internal bool IsRunningOnDrainThread => Thread.CurrentThread == _drainThread;
+
+    /// <summary>Test-only visibility into the drain thread's actual OS scheduling priority --
+    /// production code has no need to read this back, only to set it via the constructor.</summary>
+    internal ThreadPriority DrainThreadPriority => _drainThread.Priority;
 
     /// <summary>Piece Engine 0: cumulative count of real-time callbacks in which the ring could not
     /// hold everything captured (the managed drain side fell behind, and the newest incoming

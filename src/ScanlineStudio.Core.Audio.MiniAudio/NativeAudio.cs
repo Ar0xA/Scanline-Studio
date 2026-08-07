@@ -45,6 +45,27 @@ internal static class NativeAudio
         public int SampleRate; // 0 means "any sample rate supported"
     }
 
+    /// <summary>Mirrors <c>yoniq_audio_open_options</c> (native/yoniq_audio.h) field-for-field --
+    /// shared by both capture and playback session opens. <c>PeriodSizeInFrames</c>/<c>Periods</c>
+    /// (0 = miniaudio's own default, unchanged from before these two fields existed) additionally
+    /// tune the underlying hardware/backend buffer size, separate from
+    /// <c>RingCapacityFrames</c> (this shim's own managed-drain-side ring). <c>Channels</c>/
+    /// <c>ChannelSelect</c> are NOT a confirmed legacy port (stereo-capture-source/stereo-TX
+    /// backlog item) -- see the native struct's own doc comment for the full semantics:
+    /// <c>Channels</c> is 1 (mono, unchanged default) or 2; <c>ChannelSelect</c> only matters for
+    /// capture when <c>Channels==2</c> (0=unused, 1=Left, 2=Right) and is ignored for
+    /// playback.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct OpenOptions
+    {
+        public int SampleRate;
+        public int RingCapacityFrames;
+        public int PeriodSizeInFrames;
+        public int Periods;
+        public int Channels;
+        public int ChannelSelect;
+    }
+
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int yoniq_audio_context_init(byte[] backendNameOut);
 
@@ -77,7 +98,7 @@ internal static class NativeAudio
     internal static extern unsafe int yoniq_audio_ring_read(IntPtr ring, float* outData, int frameCount);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr yoniq_audio_capture_session_open(byte[] deviceId, int sampleRate, int ringCapacityFrames);
+    internal static extern IntPtr yoniq_audio_capture_session_open(byte[] deviceId, ref OpenOptions options);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void yoniq_audio_capture_session_close(IntPtr session);
@@ -92,7 +113,7 @@ internal static class NativeAudio
     internal static extern int yoniq_audio_capture_session_overrun_count(IntPtr session);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr yoniq_audio_playback_session_open(byte[] deviceId, int sampleRate, int ringCapacityFrames);
+    internal static extern IntPtr yoniq_audio_playback_session_open(byte[] deviceId, ref OpenOptions options);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void yoniq_audio_playback_session_close(IntPtr session);

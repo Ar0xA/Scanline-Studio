@@ -4110,8 +4110,16 @@ gain, zero-crossing params, RxBPF width, squelch level, calibration wizard, diff
 filter — those are a known exclusion, not rediscovered here):
 - Manual "ReSync" button — real, verified; applies an already-computed sync-skip correction, not
   new DSP math. Small-medium.
-- AFC on/off toggle — real and genuinely distinct from the demodulator-type choice (PLL/
-  zero-crossing/Hilbert); AFC is currently hardcoded always-on in this port. Trivial-small.
+- ~~AFC on/off toggle~~ — **done** (2026-08-07): new `SstvDecoderSettings.AfcEnabled` (nullable,
+  STJ-default-loss-safe, same pattern as `ReceiveHistorySettings.MaxEntries`), threaded into
+  `AnalogFmSstvDecoder`'s ctor and `InitializeAfc`'s existing AVT-exclusion guard (AFC-off now
+  lands on the identical "`_afcTracker` stays null" path every consumer already null-checks, no
+  other code changed). `Program.cs`'s `ISstvDecoder` registration switched from an eager instance
+  to a settings-reading factory. Real, not a legacy port (legacy's own AFC, `sstv.cpp:1471`, is
+  unconditionally always-on with no user-facing switch) — documented as such. Restart-only
+  (singleton, `readonly` field). Auditor-reviewed (`Core.Sstv` touch, CLAUDE.md §7) — verdict
+  EQUIVALENT-WITH-RISKS, no blockers; the two cheap risk fixes (settings-default test coverage,
+  restart-only doc note) applied.
 - ~~RX history retention limit (legacy default 32)~~ — **done** (2026-08-06): verified against
   actual legacy source (`Main.cpp:898`'s `sys.m_HistMax = 32`, applied unconditionally to
   `CBitmapHist::m_Head.m_Max` on every `Open()`, `ComLib.cpp:2658-2686` — the class's own
@@ -4176,9 +4184,11 @@ wired everything real, these had no real data behind them today):
 - TX output device name / TX sample-clock / occupied-bandwidth / monitor-audio-while-
   transmitting readouts — none of these are exposed anywhere in `ScanlineStudio.Core.Audio`
   today. Small-medium each.
-- Historical power/ALC-over-time TX meter plot — only instantaneous `SwrRatio`/`AlcLevel`/
-  `PowerPercent` are read per poll; no rolling sample history is kept. Small (a bounded ring
-  buffer, not new telemetry).
+- ~~Historical power/ALC-over-time TX meter plot~~ — **backing data done** (2026-08-07):
+  `TxControlsPaneViewModel.TelemetryHistory` (`ObservableCollection<TxTelemetrySample>`, 120-sample
+  cap, oldest-evicted-first), appended in `OnRadioStateChanged` under the identical
+  "actually transmitting" gate as the existing `LiveSwrRatio`/etc. readouts. Backend-only —
+  nothing renders it yet; a future chart binds directly, no translation step needed.
 - Whole Outgoing-metadata card (VIS code/FSK ID/CW ID/callsign/to-station/grid-beam/report/
   freq-mode/date burned into the picture) — blocked on the same missing operator-profile
   setting as Identification, plus a separate "to station"/report/QSO-context concept that
@@ -4219,20 +4229,62 @@ color" above; CW ID text/frequency/speed + FSK encode/decode — cross-reference
 CW-ID" above, same operator-profile blocker; OmniRig 4th CAT backend — already tracked in
 `spec/03-cat-layer.md` as speculative/undesigned) — no new notes for any of those. Genuinely new
 gaps found while doing this pass, not previously tracked anywhere:
-- Sound FIFO buffer size (RX/TX), sound-card thread priority, app process priority — no
-  buffer-size or OS-priority knob exists anywhere in `ScanlineStudio.Core.Audio.MiniAudio`. Small
-  each, mostly plumbing (MiniAudio's own buffer-size param + `Process.PriorityClass`).
-- Stereo capture source (Mono/Left/Right) + separate stereo-TX toggle — capture is always
-  whatever channel layout the device provides; no per-channel selection exists. Small-medium.
-- RTS-on-RX, PTT lock (hold PTT continuously, a manual-keying diagnostic aid) — no PTT-during-RX
-  control surface exists on `IRadioController`/`IRadioSessionService`. Small each.
+- ~~Sound FIFO buffer size (RX/TX)~~, ~~sound-card thread (capture-drain) priority~~,
+  ~~app process priority~~ — **done** (2026-08-07). Buffer size: new
+  `yoniq_audio_open_options.period_size_in_frames`/`periods` (native, `0` = miniaudio's own
+  default, unchanged), threaded through `NativeAudio.OpenOptions` →
+  `MiniAudioCaptureSession`/`PlaybackSession` → `MiniAudioEngine.Start*Async` →
+  `AudioDeviceSettings.PeriodSizeInFrames`/`Periods` (plain non-nullable, CLR-default-safe).
+  Verified via a real virtual-device round-trip test with non-default values. Capture-drain
+  thread priority: `AudioDeviceSettings.CaptureThreadPriority` (nullable, STJ-safe) →
+  `MiniAudioCaptureSession`'s drain `Thread.Priority`; the real-time native callback thread itself
+  has no managed-settable priority, out of scope by construction. App process priority: new
+  `ScanlineStudio.Application.AppPerformanceSettings.ProcessPriority` (nullable, STJ-safe), applied
+  in `Program.cs` via `Process.PriorityClass`, guarded (a failure must never block startup).
+- ~~Stereo capture source (Mono/Left/Right)~~ + ~~separate stereo-TX toggle~~ — **done**
+  (2026-08-07), explicitly **not a confirmed legacy port** (documented as such at every layer, not
+  traced against actual legacy source). New `AudioChannelSource` enum
+  (`ScanlineStudio.Abstractions.Audio`) + `AudioDeviceSettings.CaptureChannelSource`/
+  `StereoTxEnabled` (plain non-nullable, CLR-default-safe). Native: `capture_session_data_callback`
+  extracts the selected channel from a real 2-channel device open into the shim's own
+  ring (still always mono past that point — `IAudioEngine`'s "samples are always mono" contract is
+  unchanged); `playback_session_data_callback` duplicates mono to interleaved L/R when stereo TX is
+  on. Verified via real virtual-device tests: L/R content genuinely separates on capture, TX
+  signal genuinely duplicates to both output channels. **Real underrun-padding bug found and fixed
+  as part of this** (not pre-existing before this feature): a naive single-channel-width `memset`
+  would have only ever zeroed the Left channel's bytes on underrun with stereo TX on, leaving Right
+  with stale/garbage backend memory — fixed to zero both channels' worth, confirmed via a
+  revert-fix-confirm-fail regression test (reintroducing the naive version made the new
+  both-channels-silent test fail exactly as predicted).
+- ~~PTT lock (hold PTT continuously, a manual-keying diagnostic aid)~~ — **done** (2026-08-07,
+  safety-critical, auditor-reviewed). `ISstvSessionService.SetPttLockAsync`/`IsPttLocked`. An
+  initial implementation was audited and found to have real defects before shipping — all fixed:
+  an engaged lock could not be overridden by the SWR auto-cutoff/manual Stop TX (a lock must never
+  defeat a safety cutoff — fixed so any abnormal termination, not just a normal completion, always
+  force-unkeys and force-clears the lock); app shutdown while locked left the rig keyed
+  (`DisposeAsync` now force-unkeys); unlock could silently no-op on a still-keyed rig in exactly
+  the cases that mattered (`TuneAsync`'s `leaveKeyedAfterTune` leaves PTT keyed without setting the
+  lock flag) — fixed by removing the short-circuit entirely (every call now always issues the
+  command; confirmed idempotent-safe on every real protocol backend) and serializing via a
+  `SemaphoreSlim` (closes a real TOCTOU race the short-circuit version had); RX paused by a
+  lock-covered Transmit/Tune call now correctly resumes on unlock (`_rxPendingResumeAfterUnlock`
+  handoff). One documented, accepted residual race (unlock racing a Transmit/Tune's own entry) —
+  latent, no production caller wired yet, fixing it fully would make emergency-unlock less
+  responsive, a worse trade. RTS-on-RX (the other half of this original bullet) intentionally
+  dropped from this pass — no serial-control surface exists, may conflict with Hamlib's own
+  RTS-PTT-type ownership, needs a legacy re-check before deciding if/how it fits this port's CAT
+  architecture at all; still open.
 - Sound-file ID (a recorded `.mmv`-style audio clip played instead of a CW-keyed tone) — distinct
   from CW-ID above (which is real and already tracked); this is a second, separate ID method with
   its own file-path field. Small-medium once CW-ID's operator-profile blocker is resolved, since
   they'd likely share the same "ID method" selector.
-- Tune-satellite-trigger toggle (after the tune tone's duration elapses, switch to TX instead of
-  RX automatically) — the real Tune button/frequency/duration already exist (header strip); only
-  this one auto-switch-to-TX behavior is missing. Trivial once someone wants it.
+- ~~Tune-satellite-trigger toggle~~ — **done** (2026-08-07), explicitly **not a confirmed legacy
+  port** (a citation attempt against `CtrBtn.cpp` only found a UI-enablement guard, not the actual
+  post-tune state-transition logic — documented as an assumption, not verified). New
+  `ISstvSessionService.TuneAsync(..., bool leaveKeyedAfterTune = false)`: when true, skips the
+  normal un-key/resume-RX step for that one call, implemented as a separate, local flag inside
+  `PlayWithPttAsync` — deliberately not reusing the PTT-lock's own field, so `IsPttLocked` never
+  lies about what's actually holding PTT keyed.
 - QRZ.com lookup enable — narrower than the already-tracked "OCR/QRZ lookup" gap under Frame
   metadata above (that one covers OCR too); legacy's own QRZ integration also hardcoded a personal
   account password, which is not being resurrected in any form — a real implementation needs its

@@ -38,9 +38,22 @@ public interface IAudioDeviceEnumerator
 
 public interface IAudioEngine : IAsyncDisposable
 {
-    Task StartCaptureAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct);
+    // drainThreadPriority/periodSizeInFrames/periods/channelSource/stereoTx (2026-08-07,
+    // spec/14-roadmap.md's Phase 4+ backlog) are all-optional, default-preserving-prior-behavior
+    // knobs -- capture-drain-thread OS priority, native hardware/backend buffer period tuning
+    // (0 = miniaudio's own default), and stereo capture-source-select/TX-duplicate (NOT a
+    // confirmed legacy port -- documented as an assumption at every layer that touches it, see
+    // AudioChannelSource's own doc comment). Samples stay mono on both sides of this interface
+    // regardless -- stereo, where requested, only ever exists between the native device and
+    // ScanlineStudio.Core.Audio.MiniAudio's own ring buffers, never crossing this boundary.
+    Task StartCaptureAsync(
+        AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+        int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+        CancellationToken ct = default);
     Task StopCaptureAsync();
-    Task StartPlaybackAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct);
+    Task StartPlaybackAsync(
+        AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+        bool stereoTx = false, CancellationToken ct = default);
 
     // Blocks (asynchronously) until every previously-enqueued sample has actually played out --
     // not immediate. A caller that stopped mid-buffer would truncate the last scanlines of a real

@@ -550,19 +550,76 @@ struct yoniq_audio_capture_session
                                   * an event counter (incremented once per callback that dropped
                                   * frames), not a dropped-frame counter, for the same reason --
                                   * this is a raw signal for the caller to interpret, not a verdict. */
+    int channels;       /* 1 or 2, set once at open, read-only from the real-time callback --
+                          * stereo-capture-source backlog item, see yoniq_audio_open_options'
+                          * own doc comment. */
+    int channel_select; /* 0=unused, 1=Left, 2=Right -- only meaningful when channels==2. */
 };
+
+/* Bounded stack scratch for the stereo->mono channel-extraction path below -- no dynamic
+ * allocation in a real-time callback. frameCount is backend/caller-determined and not itself
+ * bounded, so extraction is chunked in slices of at most this many frames. */
+#define YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES 256
 
 static void capture_session_data_callback(ma_device *pDevice, void *pOutput, const void *pInput, ma_uint32 frameCount)
 {
     (void)pOutput;
     yoniq_audio_capture_session *session = (yoniq_audio_capture_session *)pDevice->pUserData;
 
-    /* Drop-newest-when-full is already yoniq_audio_ring_write's own behavior (never blocks, writes
-     * only as many frames as currently fit) -- exactly IAudioEngine's documented overrun policy
-     * (piece Audio 2): if the managed drain side has fallen behind, the newest incoming frames are
-     * dropped here, never corrupting or reordering what's already buffered. */
-    int frames_written = yoniq_audio_ring_write(session->ring, (const float *)pInput, (int)frameCount);
-    if (frames_written < 0 || (ma_uint32)frames_written < frameCount)
+    if (session->channels == 1)
+    {
+        /* Today's exact pre-existing path, byte-for-byte unchanged -- mono in, mono to the ring
+         * (this covers "Mono" channel-select too: miniaudio's own data converter already does
+         * whatever downmix the device's real native format needs, exactly as before this feature
+         * existed). Drop-newest-when-full is already yoniq_audio_ring_write's own behavior (never
+         * blocks, writes only as many frames as currently fit) -- exactly IAudioEngine's
+         * documented overrun policy (piece Audio 2): if the managed drain side has fallen behind,
+         * the newest incoming frames are dropped here, never corrupting or reordering what's
+         * already buffered. */
+        int frames_written = yoniq_audio_ring_write(session->ring, (const float *)pInput, (int)frameCount);
+        if (frames_written < 0 || (ma_uint32)frames_written < frameCount)
+        {
+            session->overrun_count++;
+        }
+        return;
+    }
+
+    /* Stereo capture (Left/Right channel select, stereo-capture-source backlog item): extract the
+     * selected channel from the interleaved LRLR... input into the bounded scratch buffer above,
+     * then feed the ring exactly the same way the mono path does -- the ring itself stays mono
+     * always (see yoniq_audio_open_options' own doc comment on where the stereo<->mono conversion
+     * happens). */
+    const float *input = (const float *)pInput;
+    int channel_index = (session->channel_select == 2) ? 1 : 0; /* Right=index 1, else (Left/unset)=index 0 */
+    float scratch[YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES];
+    ma_uint32 offset = 0;
+    int any_overrun = 0; /* incremented at most once per callback below, matching the mono path's
+                           * own "event counter, not a dropped-frame counter" semantics -- not once
+                           * per internal chunk, which would silently change what the counter means
+                           * between the mono and stereo paths. */
+    while (offset < frameCount)
+    {
+        ma_uint32 chunk = frameCount - offset;
+        if (chunk > YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES)
+        {
+            chunk = YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES;
+        }
+
+        for (ma_uint32 i = 0; i < chunk; i++)
+        {
+            scratch[i] = input[(offset + i) * 2 + (ma_uint32)channel_index];
+        }
+
+        int frames_written = yoniq_audio_ring_write(session->ring, scratch, (int)chunk);
+        if (frames_written < 0 || (ma_uint32)frames_written < chunk)
+        {
+            any_overrun = 1;
+        }
+
+        offset += chunk;
+    }
+
+    if (any_overrun)
     {
         session->overrun_count++;
     }
@@ -577,8 +634,11 @@ static void capture_session_notification_callback(const ma_device_notification *
     }
 }
 
-yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device_id, int sample_rate, int ring_capacity_frames)
+yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device_id, const yoniq_audio_open_options *options)
 {
+    int sample_rate = options->sample_rate;
+    int ring_capacity_frames = options->ring_capacity_frames;
+
     /* Third-opus-review fix: reverted to a single critical section spanning flag check, id
      * resolution, and ma_device_init, matching yoniq_audio_spike_capture_test's own (deliberately
      * single-section) shape exactly. A prior revision split this into two short sections (id
@@ -610,7 +670,9 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
 
     session->stopped = 0;
     session->overrun_count = 0;
-    session->ring = yoniq_audio_ring_create(ring_capacity_frames, 1);
+    session->channels = (options->channels == 2) ? 2 : 1;
+    session->channel_select = options->channel_select;
+    session->ring = yoniq_audio_ring_create(ring_capacity_frames, 1); /* ring is always mono -- see struct doc comment */
     if (session->ring == NULL)
     {
         yoniq_mutex_unlock(&g_context_mutex);
@@ -621,7 +683,7 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
     ma_device_config config = ma_device_config_init(ma_device_type_capture);
     config.capture.pDeviceID = &id;
     config.capture.format = ma_format_f32;
-    config.capture.channels = 1;
+    config.capture.channels = (ma_uint32)session->channels;
     config.sampleRate = (ma_uint32)sample_rate;
     config.dataCallback = capture_session_data_callback;
     /* Wired in here at device-init time, not bolted on later (piece Audio 8): miniaudio's
@@ -629,6 +691,18 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
      * no way to attach it to an already-initialized device. */
     config.notificationCallback = capture_session_notification_callback;
     config.pUserData = session;
+    /* Sound-FIFO-buffer-size backlog item: 0 (the struct's zero-value, and thus every existing
+     * caller's default) leaves miniaudio's own default period/backend heuristic alone -- only
+     * touch these ma_device_config fields when the caller actually asked for something specific,
+     * so a zero-initialized options struct reproduces today's exact pre-existing behavior. */
+    if (options->period_size_in_frames > 0)
+    {
+        config.periodSizeInFrames = (ma_uint32)options->period_size_in_frames;
+    }
+    if (options->periods > 0)
+    {
+        config.periods = (ma_uint32)options->periods;
+    }
 
     /* See g_context_mutex's doc comment: init's own source-info lookup touches the shared
      * context's mainloop, concurrently with any enumeration/probing/other session opens.
@@ -711,6 +785,9 @@ struct yoniq_audio_playback_session
     volatile int stopped;         /* see yoniq_audio_capture_session's own comment on this field --
                                     * same single-writer/single-reader reasoning applies here. */
     volatile int underrun_count;
+    int channels; /* 1 or 2, set once at open -- stereo-TX backlog item. No channel_select
+                   * equivalent here: stereo TX always duplicates the same mono ring content to
+                   * both output channels, see yoniq_audio_open_options' own doc comment. */
 };
 
 static void playback_session_data_callback(ma_device *pDevice, void *pOutput, const void *pInput, ma_uint32 frameCount)
@@ -718,19 +795,71 @@ static void playback_session_data_callback(ma_device *pDevice, void *pOutput, co
     (void)pInput;
     yoniq_audio_playback_session *session = (yoniq_audio_playback_session *)pDevice->pUserData;
 
-    int frames_read = yoniq_audio_ring_read(session->ring, (float *)pOutput, (int)frameCount);
-    if (frames_read < 0)
+    if (session->channels == 1)
     {
-        frames_read = 0;
+        /* Today's exact pre-existing path, byte-for-byte unchanged. */
+        int frames_read = yoniq_audio_ring_read(session->ring, (float *)pOutput, (int)frameCount);
+        if (frames_read < 0)
+        {
+            frames_read = 0;
+        }
+
+        if ((ma_uint32)frames_read < frameCount)
+        {
+            /* Underrun: not enough buffered data to fill this callback. Pad the remainder with
+             * silence -- never leave garbage/uninitialized samples in the device's own output
+             * buffer. */
+            float *output = (float *)pOutput;
+            memset(output + frames_read, 0, ((size_t)frameCount - (size_t)frames_read) * sizeof(float));
+            session->underrun_count++;
+        }
+        return;
     }
 
-    if ((ma_uint32)frames_read < frameCount)
+    /* Stereo TX (stereo-TX-toggle backlog item): read mono from the ring into the same bounded
+     * scratch buffer the capture side uses, then duplicate each sample into interleaved L/R
+     * output -- chunked, no dynamic allocation. Underrun padding zeroes BOTH channels' worth of
+     * bytes for the un-filled tail -- a real bug fixed as part of adding this path: a naive
+     * single-channel-width memset (the mono path's own shape above) would only ever zero the L
+     * channel's bytes on underrun here, leaving R with whatever the backend/miniaudio last left
+     * in that buffer -- garbage, not silence. */
+    float *output = (float *)pOutput;
+    float scratch[YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES];
+    ma_uint32 offset = 0;
+    int any_underrun = 0;
+    while (offset < frameCount)
     {
-        /* Underrun: not enough buffered data to fill this callback. Pad the remainder with
-         * silence -- never leave garbage/uninitialized samples in the device's own output
-         * buffer. Mono (1 channel), matching this session's own fixed config below. */
-        float *output = (float *)pOutput;
-        memset(output + frames_read, 0, ((size_t)frameCount - (size_t)frames_read) * sizeof(float));
+        ma_uint32 chunk = frameCount - offset;
+        if (chunk > YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES)
+        {
+            chunk = YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES;
+        }
+
+        int frames_read = yoniq_audio_ring_read(session->ring, scratch, (int)chunk);
+        if (frames_read < 0)
+        {
+            frames_read = 0;
+        }
+
+        for (int i = 0; i < frames_read; i++)
+        {
+            output[(offset + (ma_uint32)i) * 2 + 0] = scratch[i];
+            output[(offset + (ma_uint32)i) * 2 + 1] = scratch[i];
+        }
+
+        if ((ma_uint32)frames_read < chunk)
+        {
+            memset(
+                output + (offset + (ma_uint32)frames_read) * 2, 0,
+                ((size_t)chunk - (size_t)frames_read) * 2 * sizeof(float));
+            any_underrun = 1;
+        }
+
+        offset += chunk;
+    }
+
+    if (any_underrun)
+    {
         session->underrun_count++;
     }
 }
@@ -744,8 +873,11 @@ static void playback_session_notification_callback(const ma_device_notification 
     }
 }
 
-yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *device_id, int sample_rate, int ring_capacity_frames)
+yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *device_id, const yoniq_audio_open_options *options)
 {
+    int sample_rate = options->sample_rate;
+    int ring_capacity_frames = options->ring_capacity_frames;
+
     /* See yoniq_audio_capture_session_open's identical pattern and comment (third-opus-review
      * fix: single critical section, matching the spike test). */
     ma_device_id id;
@@ -771,7 +903,8 @@ yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *devi
 
     session->stopped = 0;
     session->underrun_count = 0;
-    session->ring = yoniq_audio_ring_create(ring_capacity_frames, 1);
+    session->channels = (options->channels == 2) ? 2 : 1;
+    session->ring = yoniq_audio_ring_create(ring_capacity_frames, 1); /* ring is always mono -- see struct doc comment */
     if (session->ring == NULL)
     {
         yoniq_mutex_unlock(&g_context_mutex);
@@ -782,13 +915,22 @@ yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *devi
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.pDeviceID = &id;
     config.playback.format = ma_format_f32;
-    config.playback.channels = 1;
+    config.playback.channels = (ma_uint32)session->channels;
     config.sampleRate = (ma_uint32)sample_rate;
     config.dataCallback = playback_session_data_callback;
     /* Same reasoning as the capture session: must be set here, at config/init time -- miniaudio
      * has no way to attach a notification callback to an already-initialized device. */
     config.notificationCallback = playback_session_notification_callback;
     config.pUserData = session;
+    /* See yoniq_audio_capture_session_open's identical comment. */
+    if (options->period_size_in_frames > 0)
+    {
+        config.periodSizeInFrames = (ma_uint32)options->period_size_in_frames;
+    }
+    if (options->periods > 0)
+    {
+        config.periods = (ma_uint32)options->periods;
+    }
 
     /* See g_context_mutex's doc comment. ma_device_start deliberately not covered -- see the
      * capture session's identical comment. */

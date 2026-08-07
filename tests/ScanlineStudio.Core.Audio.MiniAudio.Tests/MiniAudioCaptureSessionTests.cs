@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
+using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Core.Audio.MiniAudio;
 
 namespace ScanlineStudio.Core.Audio.MiniAudio.Tests;
@@ -207,6 +208,130 @@ public class MiniAudioCaptureSessionTests
 
             RunPactl($"unload-module {moduleId}", out _);
         }
+    }
+
+    [RequiresPipeWireFact]
+    public async Task Constructor_GivenDrainThreadPriority_AppliesItToTheDrainThread()
+    {
+        var sinkName = $"sstv_priority_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Priority_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            using var explicitPrioritySession = new MiniAudioCaptureSession(
+                monitor!.Id, sampleRate: 44100, NullLogger.Instance, drainThreadPriority: ThreadPriority.AboveNormal);
+            Assert.Equal(ThreadPriority.AboveNormal, explicitPrioritySession.DrainThreadPriority);
+
+            using var defaultPrioritySession = new MiniAudioCaptureSession(monitor.Id, sampleRate: 44100, NullLogger.Instance);
+            Assert.Equal(ThreadPriority.Normal, defaultPrioritySession.DrainThreadPriority);
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    // Stereo-capture-source backlog item: proves Left/Right channel selection actually routes
+    // distinct content, not just "opens without crashing" -- a stereo source with an audible tone
+    // on Left and silence on Right, captured once with AudioChannelSource.Left and once with
+    // .Right against the SAME monitor, must show opposite loud/silent results.
+    [RequiresPipeWireFact]
+    public async Task Constructor_ChannelSourceLeftVsRight_CapturesDistinctChannelContent()
+    {
+        var sinkName = $"sstv_stereo_capture_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Stereo_Capture_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        Process? sourceProcess = null;
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            sourceProcess = StartLeftLoudRightSilentStereoIntoSink(sinkName, durationSeconds: 8);
+
+            // Concurrent, not sequential -- both need to observe the same limited-duration source
+            // playing, so running them one after another would risk the source finishing before
+            // the second capture even starts.
+            var leftPeakTask = CapturePeakAsync(monitor!.Id, AudioChannelSource.Left);
+            var rightPeakTask = CapturePeakAsync(monitor.Id, AudioChannelSource.Right);
+            var leftPeak = await leftPeakTask;
+            var rightPeak = await rightPeakTask;
+
+            Assert.True(leftPeak > 0.1f, $"Left-selected capture should be loud (the audible source channel) -- got peak={leftPeak}.");
+            Assert.True(rightPeak < 0.01f, $"Right-selected capture should be near-silent (the silent source channel) -- got peak={rightPeak}.");
+        }
+        finally
+        {
+            if (sourceProcess is not null && !sourceProcess.HasExited)
+            {
+                sourceProcess.Kill(entireProcessTree: true);
+            }
+
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    private static async Task<float> CapturePeakAsync(string deviceId, AudioChannelSource channelSource)
+    {
+        var receivedChunks = new List<float[]>();
+        var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var session = new MiniAudioCaptureSession(deviceId, sampleRate: 44100, NullLogger.Instance, channelSource: channelSource);
+        session.SamplesAvailable += chunk =>
+        {
+            lock (receivedChunks)
+            {
+                receivedChunks.Add(chunk.ToArray());
+                if (receivedChunks.Sum(c => c.Length) > 44100) // >1 second captured
+                {
+                    allReceived.TrySetResult();
+                }
+            }
+        };
+
+        var completed = await Task.WhenAny(allReceived.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.Same(allReceived.Task, completed);
+
+        lock (receivedChunks)
+        {
+            var allSamples = receivedChunks.SelectMany(c => c).ToArray();
+            return allSamples.Length == 0 ? 0f : allSamples.Max(Math.Abs);
+        }
+    }
+
+    private static Process StartLeftLoudRightSilentStereoIntoSink(string sinkName, int durationSeconds)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "/bin/sh",
+            ArgumentList =
+            {
+                "-c",
+                $"ffmpeg -f lavfi -i \"sine=frequency=1000:duration={durationSeconds}\" " +
+                $"-f lavfi -i \"anullsrc=r=44100:cl=mono:d={durationSeconds}\" " +
+                "-filter_complex \"[0:a][1:a]amerge=inputs=2[a]\" -map \"[a]\" -f wav - 2>/dev/null " +
+                $"| paplay --device={sinkName}",
+            },
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start stereo source-generation process.");
+        Thread.Sleep(500); // let the pipeline actually start producing audio before the test proceeds
+        return process;
     }
 
     private static Process StartToneIntoSink(string sinkName, int durationSeconds)

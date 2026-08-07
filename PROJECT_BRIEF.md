@@ -2,7 +2,70 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-06, latest, ACTIVE) — RX history retention cap, done autonomously overnight (user asked for non-GUI backend work while away). Full solution build/test green (all projects, 548 DSP tests included). COMMITTING AND PUSHING THIS ENTRY.
+## Resume here (2026-08-07, latest, ACTIVE) — 8-item small-backlog batch (data-model/logbook items dropped from scope, audio/radio-control items built) from `spec/14-roadmap.md`'s Phase 4+ backlog. Full solution build/test green (10 projects, all 554 `Core.Sstv.Tests` including the DSP golden-vector suite). Roadmap struck through for all 8. NOT YET COMMITTED.
+
+User asked to start the small "data model/logbook" + "audio/radio-control" backlog items as one
+combined plan (no per-item plan/auditor cycles). 3 parallel `Explore` passes found the real scope
+differed from the roadmap's own "trivial/small" framing: the whole QSO logbook doesn't exist in
+code yet (only spec'd) so the 3 logbook/QSL/grid-locator items were **dropped from this batch**
+(need their own dedicated plan later); RTS-on-RX was **dropped** too (no serial-control surface
+exists, may conflict with Hamlib's own RTS-PTT-type ownership, needs a legacy re-check — CLAUDE.md's
+CAT-layer rule). Final scope, all 8 done: app process priority, capture-drain-thread priority,
+historical power/ALC ring buffer (backing data only, no chart), tune-satellite-trigger toggle, PTT
+lock, AFC on/off toggle, sound FIFO buffer size (native), stereo capture source + stereo-TX toggle
+(native). Plan file: `~/.claude/plans/rustling-wibbling-pike.md`.
+
+**PTT lock was the one genuinely safety-critical piece, and the audit pass caught real defects
+before shipping** (exactly why CLAUDE.md's audit-delegation rule exists) — an initial
+implementation was reviewed by the `auditor` subagent and came back NOT SAFE TO SHIP: SWR
+auto-cutoff/manual Stop TX couldn't force-unkey while a lock was engaged (the whole point of a
+safety cutoff, defeated); app shutdown while locked left the rig keyed (`DisposeAsync` didn't
+un-key); unlock could silently no-op on a still-keyed rig in exactly the cases that mattered
+(`TuneAsync`'s `leaveKeyedAfterTune` leaves PTT keyed without ever setting the lock flag, so the
+old short-circuit-on-same-state unlock logic did nothing); a TOCTOU race in the lock method itself
+could drop an overlapping lock/unlock command; RX paused by a lock-covered Transmit/Tune call never
+resumed after unlock. All fixed in `SstvSessionService.cs` (`PlayWithPttAsync`'s finally now
+distinguishes normal-vs-abnormal termination and force-overrides the lock on the latter;
+`SetPttLockAsync` removed the short-circuit entirely — always sends the command, confirmed
+idempotent-safe on every real protocol backend — and added a `SemaphoreSlim` gate;
+`_rxPendingResumeAfterUnlock` handoff added; `DisposeAsync` force-unkeys). Every fix has a
+dedicated regression test, and the single most severe one (SWR-cutoff-can't-override-lock) was
+verified via revert-fix-confirm-fail — reintroducing the bug made the new test fail exactly as
+predicted. One residual race is documented as accepted (unlock racing a Transmit/Tune's own entry)
+since fully closing it would make emergency-unlock less responsive, a worse trade — no production
+caller wired to either PTT-lock or `leaveKeyedAfterTune` yet, so this is latent, not exercised.
+
+**AFC toggle** also got an auditor pass (`Core.Sstv` touch, mandatory per CLAUDE.md §7 even for a
+small diff) — verdict EQUIVALENT-WITH-RISKS, no blockers (confirmed every `_afcTracker` read site
+already null-checks it, confirmed the AVT-null-safety net genuinely covers the new AFC-off case
+too). Two cheap risk fixes applied: a settings-default test that only proved half the real upgrade
+path, and an undocumented restart-only caveat on the ctor.
+
+**Native shim work (Group A) was the highest-risk piece structurally** (touches
+`native/yoniq_audio.c`/`.h`, not just C#) but turned out clean: sound FIFO buffer size
+(`yoniq_audio_open_options.period_size_in_frames`/`periods`, 0 = miniaudio's own default,
+safe-by-construction) and stereo capture/TX (`channels`/`channel_select`, explicitly **not a
+confirmed legacy port** — documented as an assumption at every layer, not traced against actual
+legacy source) both verified via real virtual-device (PipeWire/PulseAudio null-sink) round-trip
+tests, not mocks. **Found and fixed a real bug while adding stereo TX**: the pre-existing
+underrun-padding `memset` only ever zeroed one channel's width — with stereo TX on, that would
+leave the Right channel carrying stale/garbage backend memory on every underrun. Fixed to zero
+both channels' worth, verified via revert-fix-confirm-fail (a real virtual-device test with the
+naive version reintroduced failed with a measured peak of ~1.07 on the "should be silent" channel,
+confirming the test genuinely catches this class of bug, not just a plausible-looking assertion).
+`IAudioEngine`'s "samples are always mono" contract is unchanged either way — stereo only ever
+exists between the native device and this shim's own ring buffers.
+
+**Not yet done / explicitly deferred, not forgotten**: no UI controls wired to any of these 8
+settings yet (backend-only pass, by design — a future pass adds Options-window controls). Logbook
+items (QSL flags, grid locator, dup-detection) need their own plan once the QSO logbook itself
+exists. RTS-on-RX needs a legacy re-check before it's clear whether/how it fits this port's CAT
+architecture. `docs/removed-features.md`: no entries needed (nothing removed this pass).
+
+**Nothing from this session is committed yet** — full solution build/test is green, roadmap is
+updated, but committing/pushing hasn't been asked for or done.
+
+## Resume here (2026-08-06, superseded by the entry above) — RX history retention cap, done autonomously overnight (user asked for non-GUI backend work while away). Full solution build/test green (all projects, 548 DSP tests included). COMMITTING AND PUSHING THIS ENTRY.
 
 User picked this from a 4-option menu (`spec/14-roadmap.md`'s Phase 4+ backlog) as the safest
 non-GUI task to run unsupervised. **Verified against actual legacy source first** (CLAUDE.md §0/§3

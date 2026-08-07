@@ -21,6 +21,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private readonly Action<ReadOnlyMemory<float>> _waterfallHandler;
     private bool _isReceiving;
 
+    // See SetPttLockAsync's own doc comment for the full concurrency reasoning. volatile (not a
+    // plain bool) since this is written from whatever thread calls SetPttLockAsync and read from
+    // PlayWithPttAsync's entry/finally on the caller's own thread -- no dedicated background thread
+    // owns this class the way MiniAudioCaptureSession's drain thread does, but the two call paths
+    // are still logically concurrent callers with no lock between them.
+    private volatile bool _pttLocked;
+
+    // See PlayWithPttAsync's finally block (where this is set) and SetPttLockAsync (where it's
+    // consumed) for the full reasoning -- tracks "a lock-covered Transmit/Tune call paused RX and is
+    // relying on a later unlock to resume it" across the gap between those two independent calls.
+    // Same threading shape/reasoning as _pttLocked immediately above.
+    private volatile bool _rxPendingResumeAfterUnlock;
+
     // Hot-path exception rate-limiting (docs/logging-guidelines.md's "Hot-path rule") -- these
     // handlers run on the audio engine's own capture-forwarding path, once per captured chunk;
     // logging every occurrence would turn a logging change into dropped RX samples. First
@@ -97,6 +110,79 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     public bool IsReceiving => _isReceiving;
 
+    public bool IsPttLocked => _pttLocked;
+
+    /// <summary>Manual-keying diagnostic aid (e.g. a "PTT lock" button) -- keys PTT immediately and
+    /// holds it keyed independent of any <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> call,
+    /// until unlocked. Operates directly on the PTT line only -- unlike <see cref="PlayWithPttAsync"/>,
+    /// this method does NOT itself pause/resume RX capture; if a lock is engaged while a
+    /// Transmit/Tune call is skipping its own un-key because of this lock (see
+    /// <see cref="PlayWithPttAsync"/>'s own doc comment), THAT call's paused RX is what gets resumed
+    /// here on unlock (see <see cref="_rxPendingResumeAfterUnlock"/>) -- not a capture pause owned by
+    /// this method itself.
+    ///
+    /// <b>Idempotent in OUTCOME, not by skipping redundant calls</b> (an audit-fix correction from an
+    /// earlier version of this method that short-circuited when the requested state already matched
+    /// <see cref="_pttLocked"/> -- a real bug: <see cref="TuneAsync"/>'s <c>leaveKeyedAfterTune</c>
+    /// leaves PTT physically keyed without ever setting <see cref="_pttLocked"/>, and a failed
+    /// lock-engage leaves it false too -- either way, a subsequent unlock call would have silently
+    /// no-op'd on a still-keyed rig with no way to recover via this API at all). Every call now always
+    /// issues the underlying <see cref="IRadioSessionService.SetPttAsync"/> command -- confirmed
+    /// harmless: every shipped protocol backend's PTT set is an absolute, idempotent command, not a
+    /// read-modify-write. Serialized via <see cref="_pttLockGate"/> so two overlapping calls can never
+    /// interleave (a real TOCTOU an earlier check-then-act version had).
+    ///
+    /// <b>Failure behavior is deliberately asymmetric-by-outcome, not by direction</b>: the internal
+    /// "locked" flag is only updated AFTER <see cref="IRadioSessionService.SetPttAsync"/> actually
+    /// succeeds, in both directions -- so a failed lock-engage leaves <see cref="IsPttLocked"/> false
+    /// (correctly reflecting that PTT was never confirmed keyed), and a failed unlock leaves it TRUE
+    /// (correctly reflecting that PTT was never confirmed un-keyed, so a caller can safely retry
+    /// unlock rather than the lock silently "forgetting" a still-keyed rig). This call's own
+    /// <see cref="IRadioSessionService.SetPttAsync"/> failure is NOT swallowed here (unlike
+    /// <see cref="PlayWithPttAsync"/>'s best-effort cleanup steps) -- this is a direct, explicit
+    /// caller action, not an automatic cleanup path, so the caller needs to know if it failed. (RX
+    /// resume-after-unlock IS best-effort/swallowed, deliberately -- a failure to resume monitoring
+    /// must not be reported as "unlock failed" when PTT itself was genuinely un-keyed successfully.)
+    ///
+    /// <b>Known, accepted race (unchanged by this fix, documented not silently left implicit)</b>: an
+    /// unlock call racing a Transmit/Tune call's own entry (which already decided not to key because
+    /// the lock looked engaged) can un-key PTT out from under an in-flight transmission, sending the
+    /// rest of that frame into a dead carrier. No production caller exists yet for this method or
+    /// <c>leaveKeyedAfterTune: true</c> (unwired UI), so this is latent, not exercised -- fixing it
+    /// fully would need a single shared gate across <see cref="PlayWithPttAsync"/> AND this method,
+    /// which would also make an emergency unlock wait behind an in-flight transmission's own gate
+    /// hold -- a worse safety property than the current race for what unlock is meant to be (an
+    /// escape hatch). Revisit if/when a real caller actually needs this closed.</summary>
+    private readonly SemaphoreSlim _pttLockGate = new(1, 1);
+
+    public async Task SetPttLockAsync(bool locked, CancellationToken ct = default)
+    {
+        await _pttLockGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await _radioSession.SetPttAsync(locked, ct).ConfigureAwait(false);
+            _pttLocked = locked;
+            Log.PttLockChanged(_logger, locked);
+
+            if (!locked && _rxPendingResumeAfterUnlock)
+            {
+                _rxPendingResumeAfterUnlock = false;
+                try
+                {
+                    await StartReceivingAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Log.CleanupStepFailed(_logger, "Resume RX (after unlock)", ex);
+                }
+            }
+        }
+        finally
+        {
+            _pttLockGate.Release();
+        }
+    }
+
     public event Action<SstvModeDefinition>? ModeDetected
     {
         add => _decoder.ModeDetected += value;
@@ -112,7 +198,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         var device = await ResolveDeviceAsync(forCapture: true, ct).ConfigureAwait(false);
         var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
-        await _audioEngine.StartCaptureAsync(device, settings.SampleRate, ct).ConfigureAwait(false);
+        await _audioEngine.StartCaptureAsync(
+            device, settings.SampleRate, settings.CaptureThreadPriority,
+            settings.PeriodSizeInFrames, settings.Periods, settings.CaptureChannelSource, ct).ConfigureAwait(false);
 
         _audioEngine.SamplesCaptured += _decoderHandler;
         _audioEngine.SamplesCaptured += _waterfallHandler;
@@ -140,11 +228,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
         return PlayWithPttAsync(_encoder.EncodeAsync(mode, image, ct), _encoder.SampleRate, ct);
     }
 
-    public Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default)
+    public Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default)
     {
         const int sampleRate = 48_000;
         Log.TuneStarting(_logger, frequencyHz, duration);
-        return PlayWithPttAsync(GenerateTone(frequencyHz, duration, sampleRate, ct), sampleRate, ct);
+        return PlayWithPttAsync(GenerateTone(frequencyHz, duration, sampleRate, ct), sampleRate, ct, leaveKeyedAfterCall: leaveKeyedAfterTune);
     }
 
     public async Task<int> GetTxVolumePercentAsync(CancellationToken ct = default)
@@ -168,10 +256,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     /// <summary>Shared PTT-guarantee shape for both <see cref="TransmitAsync"/> and <see cref="TuneAsync"/>:
     /// pauses capture (resumed afterward only if RX was already running), keys PTT, plays
-    /// <paramref name="samples"/>, then un-keys PTT in a <c>finally</c> no matter how playback ends.</summary>
+    /// <paramref name="samples"/>, then un-keys PTT in a <c>finally</c> no matter how playback ends --
+    /// unless <paramref name="leaveKeyedAfterCall"/> is set (see <see cref="TuneAsync"/>'s own doc
+    /// comment for its one caller) or <see cref="SetPttLockAsync"/>'s lock is currently engaged, in
+    /// which case the un-key/resume-RX steps are skipped -- <b>but only on a NORMAL (successful)
+    /// completion</b>. A cancellation or fault (manual Stop TX, SWR auto-cutoff -- see
+    /// <c>TxControlsPaneViewModel</c>) ALWAYS un-keys PTT and force-clears the lock, even if it was
+    /// engaged: a safety cutoff/manual stop must never be overridable by "stay keyed" state (a real
+    /// defect an audit pass caught and this fix closes -- the lock existing at all must never be able
+    /// to defeat the SWR cutoff's whole reason for existing).
+    ///
+    /// Device resolution and the entry PTT-key now live INSIDE the guarded region (moved in during
+    /// the same audit-fix pass) -- previously a device-resolution failure (e.g. no playback device
+    /// configured) after RX had already been paused above left RX stopped forever, since the old
+    /// shape's <c>try</c>/<c>finally</c> didn't start until after those calls.</summary>
     private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
 
-    private async Task PlayWithPttAsync(IAsyncEnumerable<float> samples, int sampleRate, CancellationToken ct)
+    private async Task PlayWithPttAsync(IAsyncEnumerable<float> samples, int sampleRate, CancellationToken ct, bool leaveKeyedAfterCall = false)
     {
         var wasReceiving = _isReceiving;
         if (wasReceiving)
@@ -179,14 +280,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
             await StopReceivingAsync().ConfigureAwait(false);
         }
 
-        var device = await ResolveDeviceAsync(forCapture: false, ct).ConfigureAwait(false);
-        var gain = (await GetTxVolumePercentAsync(ct).ConfigureAwait(false)) / 100f;
-
-        await _radioSession.SetPttAsync(true, ct).ConfigureAwait(false);
-        Log.PttKeyed(_logger);
+        var abnormalTermination = false;
         try
         {
-            await _audioEngine.StartPlaybackAsync(device, sampleRate, ct).ConfigureAwait(false);
+            var device = await ResolveDeviceAsync(forCapture: false, ct).ConfigureAwait(false);
+            var gain = (await GetTxVolumePercentAsync(ct).ConfigureAwait(false)) / 100f;
+            var audioSettings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
+
+            if (!_pttLocked)
+            {
+                await _radioSession.SetPttAsync(true, ct).ConfigureAwait(false);
+                Log.PttKeyed(_logger);
+            }
+
+            await _audioEngine.StartPlaybackAsync(
+                device, sampleRate, audioSettings.PeriodSizeInFrames, audioSettings.Periods,
+                audioSettings.StereoTxEnabled, ct).ConfigureAwait(false);
             await PumpToPlaybackAsync(samples, gain, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -194,11 +303,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // Cancellation is a normal, expected way for this to end (manual Stop TX, SWR
             // auto-cutoff -- see TxControlsPaneViewModel for which one) -- this layer has no way to
             // tell which caused it, so it's logged generically at Information, not as a failure.
+            abnormalTermination = true;
             Log.PlaybackCancelled(_logger);
             throw;
         }
         catch (Exception ex)
         {
+            abnormalTermination = true;
             Log.PlaybackFailed(_logger, ex);
             throw;
         }
@@ -217,20 +328,50 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // prevent a sibling cleanup step from running.
             using var cleanupCts = new CancellationTokenSource(CleanupTimeout);
             await TryCleanupAsync("StopPlayback", () => _audioEngine.StopPlaybackAsync()).ConfigureAwait(false);
-            await TryCleanupAsync("PTT off", () => _radioSession.SetPttAsync(false, cleanupCts.Token)).ConfigureAwait(false);
-            Log.PttReleased(_logger);
+
+            // Only a NORMAL completion honors "stay keyed" (leaveKeyedAfterCall/lock) -- see this
+            // method's own doc comment for why an abnormal termination always overrides both.
+            var skipUnkeyAndRxResume = !abnormalTermination && (leaveKeyedAfterCall || _pttLocked);
+            if (!skipUnkeyAndRxResume)
+            {
+                if (await TryCleanupAsync("PTT off", () => _radioSession.SetPttAsync(false, cleanupCts.Token)).ConfigureAwait(false))
+                {
+                    // Force-release: whether or not a lock was engaged, PTT is now confirmed
+                    // physically off -- IsPttLocked must never report true once that's true.
+                    _pttLocked = false;
+                    Log.PttReleased(_logger);
+                }
+            }
+
             if (wasReceiving)
             {
-                await TryCleanupAsync("Resume RX", () => StartReceivingAsync(cleanupCts.Token)).ConfigureAwait(false);
+                if (!skipUnkeyAndRxResume)
+                {
+                    await TryCleanupAsync("Resume RX", () => StartReceivingAsync(cleanupCts.Token)).ConfigureAwait(false);
+                }
+                else if (!abnormalTermination && _pttLocked)
+                {
+                    // Specifically the lock case, not leaveKeyedAfterCall -- a lock can stay engaged
+                    // indefinitely with no automatic next step, unlike a Tune-into-satellite-pass
+                    // workflow where the very next action is expected to key PTT again anyway. RX
+                    // must resume once SetPttLockAsync(false) eventually un-keys, not be silently
+                    // forgotten -- consumed there.
+                    _rxPendingResumeAfterUnlock = true;
+                }
             }
         }
     }
 
-    private async Task TryCleanupAsync(string stepName, Func<Task> step)
+    /// <summary>Returns whether <paramref name="step"/> actually completed without throwing --
+    /// callers that need to know (e.g. only clearing <see cref="_pttLocked"/> once a PTT-off command
+    /// is confirmed sent, not just attempted) check this; callers that don't care can ignore it, same
+    /// as before this return value was added.</summary>
+    private async Task<bool> TryCleanupAsync(string stepName, Func<Task> step)
     {
         try
         {
             await step().ConfigureAwait(false);
+            return true;
         }
         catch (Exception ex)
         {
@@ -239,6 +380,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // logged at Warning (not swallowed silently) -- a failed "PTT off" step in particular
             // leaves the rig keyed, a safety-relevant condition a user needs to know about.
             Log.CleanupStepFailed(_logger, stepName, ex);
+            return false;
         }
     }
 
@@ -261,6 +403,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public async ValueTask DisposeAsync()
     {
         await StopReceivingAsync().ConfigureAwait(false);
+
+        // Audit-fix: app shutdown must never leave a locked rig keyed indefinitely just because
+        // nothing called SetPttLockAsync(false) first -- best-effort, bounded, and swallowed (like
+        // PlayWithPttAsync's own cleanup steps) since a failed shutdown-time PTT-off must not prevent
+        // the rest of teardown from completing.
+        if (_pttLocked)
+        {
+            using var cleanupCts = new CancellationTokenSource(CleanupTimeout);
+            if (await TryCleanupAsync("PTT off (shutdown)", () => _radioSession.SetPttAsync(false, cleanupCts.Token)).ConfigureAwait(false))
+            {
+                _pttLocked = false;
+            }
+        }
+
         if (Waterfall is IDisposable disposableWaterfall)
         {
             disposableWaterfall.Dispose();
@@ -364,6 +520,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "PTT released")]
         public static partial void PttReleased(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "PTT lock {Locked}")]
+        public static partial void PttLockChanged(ILogger logger, bool locked);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Playback cancelled")]
         public static partial void PlaybackCancelled(ILogger logger);

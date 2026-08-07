@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Diagnostics;
+using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Core.Audio.MiniAudio;
 
 namespace ScanlineStudio.Core.Audio.MiniAudio.Tests;
@@ -98,6 +99,214 @@ public class MiniAudioPlaybackSessionTests
         finally
         {
             RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    // Sound-FIFO-buffer-size backlog item: proves opening with a non-default period size/count
+    // doesn't break device open or the real audio round-trip -- the exact resulting hardware
+    // buffer size isn't reliably observable across backends (miniaudio's own docs say
+    // periodSizeInFrames/periodSizeInMilliseconds are hints, not guarantees), so "still opens,
+    // audio still flows" is the honest bar here, not byte-exact latency verification.
+    [RequiresPipeWireFact]
+    public async Task Write_WithNonDefaultPeriodSizeAndCount_StillOpensAndRoundTripsRealAudio()
+    {
+        var sinkName = $"sstv_playback_period_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Playback_Period_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+
+            var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
+            Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
+
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            var receivedChunks = new List<float[]>();
+            var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            using var captureSession = new MiniAudioCaptureSession(
+                monitor!.Id, SampleRate, NullLogger.Instance, periodSizeInFrames: 512, periods: 4);
+            captureSession.SamplesAvailable += chunk =>
+            {
+                lock (receivedChunks)
+                {
+                    receivedChunks.Add(chunk.ToArray());
+                    if (receivedChunks.Sum(c => c.Length) > SampleRate) // >1 second captured
+                    {
+                        allReceived.TrySetResult();
+                    }
+                }
+            };
+
+            using var playbackSession = new MiniAudioPlaybackSession(
+                sink!.Id, SampleRate, periodSizeInFrames: 512, periods: 4);
+
+            var tone = GenerateSineTone(frequencyHz: 1000, durationSeconds: 2, SampleRate);
+            var offset = 0;
+            while (offset < tone.Length)
+            {
+                var chunkLength = Math.Min(2048, tone.Length - offset);
+                var written = playbackSession.Write(new ReadOnlySpan<float>(tone, offset, chunkLength));
+                if (written == 0)
+                {
+                    await Task.Delay(5);
+                    continue;
+                }
+
+                offset += written;
+            }
+
+            var completed = await Task.WhenAny(allReceived.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+            Assert.Same(allReceived.Task, completed);
+
+            float[] allSamples;
+            lock (receivedChunks)
+            {
+                allSamples = receivedChunks.SelectMany(c => c).ToArray();
+            }
+
+            Assert.True(allSamples.Length > 0, "No samples were ever captured back from the monitor.");
+            var peak = allSamples.Max(Math.Abs);
+            Assert.True(peak > 0.1f, $"Captured-back audio was effectively silent (peak={peak}) -- non-default period size/count broke real audio flow.");
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    // Stereo-TX-toggle backlog item: proves a mono-written signal is genuinely duplicated to BOTH
+    // output channels, not just "opens without crashing" -- captures the sink's monitor once with
+    // AudioChannelSource.Left and once with .Right and requires both to be loud.
+    [RequiresPipeWireFact]
+    public async Task Write_WithStereoTxEnabled_DuplicatesMonoSignalToBothOutputChannels()
+    {
+        var sinkName = $"sstv_stereo_tx_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Stereo_Tx_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+
+            var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
+            Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
+
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            using var playbackSession = new MiniAudioPlaybackSession(sink!.Id, SampleRate, stereoTx: true);
+
+            var leftPeakTask = CapturePeakAsync(monitor!.Id, AudioChannelSource.Left);
+            var rightPeakTask = CapturePeakAsync(monitor.Id, AudioChannelSource.Right);
+
+            var tone = GenerateSineTone(frequencyHz: 1000, durationSeconds: 3, SampleRate);
+            var offset = 0;
+            while (offset < tone.Length)
+            {
+                var chunkLength = Math.Min(2048, tone.Length - offset);
+                var written = playbackSession.Write(new ReadOnlySpan<float>(tone, offset, chunkLength));
+                if (written == 0)
+                {
+                    await Task.Delay(5);
+                    continue;
+                }
+
+                offset += written;
+            }
+
+            var leftPeak = await leftPeakTask;
+            var rightPeak = await rightPeakTask;
+
+            Assert.True(leftPeak > 0.1f, $"Left channel should carry the duplicated mono TX signal -- got peak={leftPeak}.");
+            Assert.True(rightPeak > 0.1f, $"Right channel should carry the duplicated mono TX signal -- got peak={rightPeak}.");
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    // Audit-relevant regression test for the real underrun-padding bug fixed as part of adding
+    // stereo TX (see playback_session_data_callback's own comment in native/yoniq_audio.c): a
+    // naive mono-shaped memset would only ever zero the L channel's bytes on underrun, leaving R
+    // with stale/garbage backend memory. Opens stereo-TX playback and writes NOTHING at all, so
+    // every single callback underruns -- both captured channels must still read back silence.
+    [RequiresPipeWireFact]
+    public async Task Write_StereoTxWithNoDataWritten_UnderrunsSilentlyOnBothChannels()
+    {
+        var sinkName = $"sstv_stereo_tx_underrun_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Stereo_Tx_Underrun_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+
+            var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
+            Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
+
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            using var playbackSession = new MiniAudioPlaybackSession(sink!.Id, SampleRate, stereoTx: true);
+
+            // Deliberately never call Write -- give the real-time callback ample time to fire
+            // repeatedly against an empty ring (guaranteed underrun every time).
+            await Task.Delay(TimeSpan.FromSeconds(2));
+
+            Assert.True(playbackSession.UnderrunCount > 0, "Expected genuine underruns with nothing ever written -- test setup itself is wrong if this is 0.");
+
+            var leftPeak = await CapturePeakAsync(monitor!.Id, AudioChannelSource.Left, requiredSeconds: 1);
+            var rightPeak = await CapturePeakAsync(monitor.Id, AudioChannelSource.Right, requiredSeconds: 1);
+
+            Assert.True(leftPeak < 0.01f, $"Left channel should be silence on underrun, not garbage -- got peak={leftPeak}.");
+            Assert.True(rightPeak < 0.01f, $"Right channel should be silence on underrun, not garbage (the exact bug this fix closes) -- got peak={rightPeak}.");
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    private static async Task<float> CapturePeakAsync(string deviceId, AudioChannelSource channelSource, int requiredSeconds = 1)
+    {
+        var receivedChunks = new List<float[]>();
+        var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requiredSamples = SampleRate * requiredSeconds;
+
+        using var session = new MiniAudioCaptureSession(deviceId, SampleRate, NullLogger.Instance, channelSource: channelSource);
+        session.SamplesAvailable += chunk =>
+        {
+            lock (receivedChunks)
+            {
+                receivedChunks.Add(chunk.ToArray());
+                if (receivedChunks.Sum(c => c.Length) > requiredSamples)
+                {
+                    allReceived.TrySetResult();
+                }
+            }
+        };
+
+        var completed = await Task.WhenAny(allReceived.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.Same(allReceived.Task, completed);
+
+        lock (receivedChunks)
+        {
+            var allSamples = receivedChunks.SelectMany(c => c).ToArray();
+            return allSamples.Length == 0 ? 0f : allSamples.Max(Math.Abs);
         }
     }
 

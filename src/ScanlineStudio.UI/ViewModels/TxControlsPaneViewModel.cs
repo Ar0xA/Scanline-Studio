@@ -112,6 +112,22 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private float? _livePowerPercent;
 
+    /// <summary>Bounded (<see cref="TelemetryHistoryCapacity"/>-sample, oldest-evicted-first) history
+    /// of the same TX-only telemetry as <see cref="LiveSwrRatio"/>/<see cref="LiveAlcLevel"/>/
+    /// <see cref="LivePowerPercent"/> above, appended alongside them in <see cref="OnRadioStateChanged"/>
+    /// under the identical "actually transmitting" gate -- no history is recorded while idle/receiving.
+    /// Backend-only for now: nothing in this pass renders it, this just makes the data available for a
+    /// future historical power/ALC chart. An <see cref="ObservableCollection{T}"/> (not a plain
+    /// <see cref="Queue{T}"/>) so a future chart control can bind directly without a translation
+    /// step.</summary>
+    public ObservableCollection<TxTelemetrySample> TelemetryHistory { get; } = [];
+
+    /// <summary>~30s of history at the radio poll loop's default 250ms interval
+    /// (<c>RadioConnectionSpec.PollInterval</c>) -- not tied to that value exactly (this pane has no
+    /// visibility into the configured interval), just a reasonable fixed cap for a QoL feature with no
+    /// consumer yet.</summary>
+    private const int TelemetryHistoryCapacity = 120;
+
     /// <summary>Refreshed every <see cref="OnRadioStateChanged"/> callback, not a one-time computed
     /// property -- both rigctld and Hamlib backends connect lazily, so <c>Capabilities</c> is
     /// <see cref="RadioCapabilities.None"/> until the first successful poll; a plain computed property
@@ -364,6 +380,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 LiveSwrRatio = state.SwrRatio;
                 LiveAlcLevel = state.AlcLevel;
                 LivePowerPercent = state.PowerPercent;
+
+                if (TelemetryHistory.Count >= TelemetryHistoryCapacity)
+                {
+                    TelemetryHistory.RemoveAt(0);
+                }
+                TelemetryHistory.Add(new TxTelemetrySample(DateTimeOffset.UtcNow, state.SwrRatio, state.AlcLevel, state.PowerPercent));
             }
             else
             {
@@ -746,3 +768,7 @@ public sealed record FavoriteModeButtonViewModel(SstvModeDefinition Mode, System
 /// <summary>One row of the Mode-timing-reference table (mock2's own card) -- see
 /// <see cref="TxControlsPaneViewModel.ModeTimingRows"/>'s doc comment for how it's computed.</summary>
 public sealed record ModeTimingRowViewModel(string ModeName, int Lines, double LineMs, double FrameSeconds);
+
+/// <summary>One appended sample of <see cref="TxControlsPaneViewModel.TelemetryHistory"/> -- see that
+/// property's own doc comment.</summary>
+public sealed record TxTelemetrySample(DateTimeOffset Timestamp, float? SwrRatio, float? AlcLevel, float? PowerPercent);
