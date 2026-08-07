@@ -78,6 +78,44 @@ public sealed class TxControlsTelemetryAndCutoffTests
     }
 
     [AvaloniaFact]
+    public async Task TelemetryHistory_OnlyAppendsWhileActuallyTransmitting_AndCapsAtTheConfiguredLimit()
+    {
+        var radioSession = new FakeRadioSessionService { Capabilities = RadioCapabilities.SwrMeter };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], BlockUntilCancelled = true };
+        var vm = CreateViewModel(radioSession, sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        // Not transmitting yet -- must not append.
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow, SwrRatio: 1.5f));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Empty(vm.TelemetryHistory);
+
+        await StartBlockingTransmitAsync(vm);
+
+        const int capacity = 120;
+        for (var i = 0; i < capacity + 10; i++)
+        {
+            radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow, SwrRatio: i));
+            Dispatcher.UIThread.RunJobs();
+        }
+
+        Assert.Equal(capacity, vm.TelemetryHistory.Count);
+        // Oldest-evicted-first: the surviving samples are the most recent `capacity` of the
+        // `capacity + 10` pushed above, i.e. SwrRatio 10..129, in order.
+        Assert.Equal(10f, vm.TelemetryHistory.First().SwrRatio);
+        Assert.Equal((float)(capacity + 9), vm.TelemetryHistory.Last().SwrRatio);
+
+        vm.StopTransmitCommand.Execute(null);
+        await WaitUntilNotTransmittingAsync(vm);
+
+        // Stopping does not clear history -- only gates further appends.
+        Assert.Equal(capacity, vm.TelemetryHistory.Count);
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow, SwrRatio: 999f));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(capacity, vm.TelemetryHistory.Count);
+    }
+
+    [AvaloniaFact]
     public async Task SwrCutoff_TripsOnlyAfterTwoConsecutiveOverThresholdSamples_NotASingleGlitch()
     {
         var radioSession = new FakeRadioSessionService

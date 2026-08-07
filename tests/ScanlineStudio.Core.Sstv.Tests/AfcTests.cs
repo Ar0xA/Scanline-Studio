@@ -92,6 +92,40 @@ public class AfcTests
         Assert.Equal(-4.0, correction, tolerance: 0.01);
     }
 
+    [Fact]
+    public void AnalogFmSstvDecoder_DefaultConstructor_AfcTrackerIsActiveForANonAvtMode()
+    {
+        // Regression guard for the new afcEnabled toggle's default: unchanged from before this
+        // feature existed (matches legacy's own always-on behavior).
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+
+        decoder.InitializeAfcForTests(SstvModeRegistry.Robot36);
+
+        Assert.True(decoder.HasAfcTrackerForTests);
+    }
+
+    [Fact]
+    public void AnalogFmSstvDecoder_AfcEnabledFalse_AfcTrackerStaysNullForANonAvtMode()
+    {
+        var decoder = new AnalogFmSstvDecoder(SampleRate, afcEnabled: false);
+
+        decoder.InitializeAfcForTests(SstvModeRegistry.Robot36);
+
+        Assert.False(decoder.HasAfcTrackerForTests);
+    }
+
+    [Fact]
+    public void AnalogFmSstvDecoder_AfcEnabledTrue_AvtStillExcludedRegardlessOfTheToggle()
+    {
+        // AVT's own exclusion (real legacy behavior) must survive this new toggle unchanged --
+        // afcEnabled: true must NOT force a tracker onto AVT.
+        var decoder = new AnalogFmSstvDecoder(SampleRate, afcEnabled: true);
+
+        decoder.InitializeAfcForTests(SstvModeRegistry.Avt);
+
+        Assert.False(decoder.HasAfcTrackerForTests);
+    }
+
     private static double SampleSineWaveFrequency(ZeroCrossingFrequencyCounter counter, double targetHz, double durationMs)
     {
         var sampleCount = (int)(durationMs / 1000.0 * SampleRate);

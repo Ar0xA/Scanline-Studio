@@ -423,9 +423,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly List<double> _bandpassFilteredSamples = [];
     private int _bandpassFilteredProcessedUpTo;
 
-    public AnalogFmSstvDecoder(int sampleRate = 11025)
+    // Settings-driven toggle, real but not a legacy port -- legacy's own AFC (sstv.cpp:1471) is
+    // unconditionally always-on with no user-facing off switch of its own; the only "off" case that
+    // exists in legacy is AVT mode's own exclusion (see InitializeAfc below), which this field does
+    // NOT replace -- AVT stays excluded regardless of this flag's value. Restart-only: this decoder
+    // is a DI singleton constructed once (Program.cs), and this field is readonly -- changing the
+    // setting takes effect on the next app launch, not live.
+    private readonly bool _afcEnabled;
+
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true)
     {
         _sampleRate = sampleRate;
+        _afcEnabled = afcEnabled;
         _demodulator = new HilbertFmDemodulator(sampleRate);
         _searchBandpassFilter = new SearchBandpassFilter(sampleRate);
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
@@ -2979,7 +2988,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // is always >= wherever AFC had gotten to in that case).
         _afcProcessedUpTo = Math.Max(_afcProcessedUpTo, _consumedSamples);
 
-        if (mode == SstvModeRegistry.Avt)
+        // AVT's own exclusion is real legacy behavior (see this method's own doc comment); the
+        // !_afcEnabled branch is this port's new settings-driven toggle, layered on top without
+        // changing AVT's case -- both land on the identical "_afcTracker stays null" outcome every
+        // existing AFC consumer already null-checks for (see ApplyAfcCorrections).
+        if (mode == SstvModeRegistry.Avt || !_afcEnabled)
         {
             _afcTracker = null;
             return;
@@ -2993,6 +3006,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
         _afcTracker = new AfcTracker(_sampleRate, syncTargetHz, bandLowHz, bandHighHz, afcBeginMs, afcWidthMs, bandwidthHalfHz);
     }
+
+    /// <summary>Test-only: directly invokes <see cref="InitializeAfc"/> (normally only reached via a
+    /// real VIS-lock/mode-match during <see cref="PushSamples"/>) so a test can check
+    /// <see cref="HasAfcTrackerForTests"/> without needing to drive a full decode. Production code
+    /// never calls this.</summary>
+    internal void InitializeAfcForTests(SstvModeDefinition mode) => InitializeAfc(mode);
+
+    /// <summary>Test-only visibility into whether AFC is currently active for the mode last passed to
+    /// <see cref="InitializeAfc"/> -- production code has no need to read this back.</summary>
+    internal bool HasAfcTrackerForTests => _afcTracker is not null;
 
     // Legacy applies AFC in the same single per-sample pass as the main demod ("if(m_Sync) d +=
     // m_AFCDiff" right after m_hill.Do(...), sstv.cpp:2255-2270 -- case 2/Hilbert, this port's real

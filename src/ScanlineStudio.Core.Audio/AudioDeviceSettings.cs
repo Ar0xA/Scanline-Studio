@@ -30,4 +30,49 @@ public sealed record AudioDeviceSettings
     /// 100 default" at every read site (see <c>SstvSessionService.GetTxVolumePercentAsync</c>), never
     /// re-add a non-null default value here.</summary>
     public int? TxVolumePercent { get; init; }
+
+    /// <summary>OS scheduling priority for the capture drain thread (see
+    /// <see cref="ScanlineStudio.Abstractions.Audio.IAudioEngine.StartCaptureAsync"/>'s own doc
+    /// comment) -- does NOT affect the real-time native audio callback thread, which has no
+    /// managed-settable priority at all.
+    ///
+    /// <b>Nullable</b> for the same STJ reason as <see cref="TxVolumePercent"/> above: the desired
+    /// "leave it at the runtime default" behavior is "don't pass a value at all," which is exactly
+    /// what <c>null</c> already means at the one read site (<c>SstvSessionService.StartReceivingAsync</c>)
+    /// -- never re-add a non-null default value here.</summary>
+    public System.Threading.ThreadPriority? CaptureThreadPriority { get; init; }
+
+    /// <summary>Requested native hardware/backend buffer period size, in frames, for BOTH capture
+    /// and playback sessions -- <c>0</c> means "leave miniaudio's own default period/backend
+    /// heuristic alone" (see <c>native/yoniq_audio.c</c>'s own doc comment on
+    /// <c>yoniq_audio_open_options</c>). A separate, lower-level knob from the fixed
+    /// managed-side ring capacity <c>MiniAudioCaptureSession</c>/<c>MiniAudioPlaybackSession</c>
+    /// already use internally -- this tunes the actual device buffer, not this shim's own ring.
+    ///
+    /// <b>Plain non-nullable <c>int</c>, NOT the nullable pattern</b> -- unlike
+    /// <see cref="TxVolumePercent"/>/<see cref="CaptureThreadPriority"/> above, the desired "unset"
+    /// default here (<c>0</c>, "don't touch it") IS the CLR default for <c>int</c>, so the
+    /// nullable-with-read-site-fallback pattern would be unnecessary ceremony (see
+    /// <c>RadioSafetySettings.SwrCutoffEnabled</c> for the established precedent of when a plain
+    /// default is correct). Do not "fix" this to nullable.</summary>
+    public int PeriodSizeInFrames { get; init; }
+
+    /// <summary>Requested native period count, for BOTH capture and playback sessions -- see
+    /// <see cref="PeriodSizeInFrames"/>'s own doc comment for the full reasoning (same
+    /// CLR-default-safe, plain-non-nullable shape, same <c>0</c> = "backend default"
+    /// meaning).</summary>
+    public int Periods { get; init; }
+
+    /// <summary>Which channel of a stereo-capable capture device to use as the mono RX source --
+    /// <b>not a confirmed legacy port</b> (see <see cref="AudioChannelSource"/>'s own doc comment).
+    /// Plain non-nullable, same CLR-default-safe reasoning as <see cref="PeriodSizeInFrames"/>
+    /// above -- <see cref="AudioChannelSource.Mono"/> (value <c>0</c>) is both the desired
+    /// "unset" default and the enum's own CLR default.</summary>
+    public AudioChannelSource CaptureChannelSource { get; init; }
+
+    /// <summary>Duplicates the TX signal to both output channels instead of a mono device open --
+    /// <b>not a confirmed legacy port</b>. Plain non-nullable, same CLR-default-safe reasoning as
+    /// <see cref="PeriodSizeInFrames"/> above -- <see langword="false"/> is both the desired
+    /// "unset" default and <see cref="bool"/>'s own CLR default.</summary>
+    public bool StereoTxEnabled { get; init; }
 }

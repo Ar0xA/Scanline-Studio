@@ -55,11 +55,35 @@ namespace ScanlineStudio.Abstractions.Audio;
 /// </summary>
 public interface IAudioEngine : IAsyncDisposable
 {
-    Task StartCaptureAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default);
+    /// <param name="drainThreadPriority">OS scheduling priority for the capture drain thread that
+    /// raises <see cref="SamplesCaptured"/> -- null leaves it at the runtime's normal default. Does
+    /// NOT affect the real-time native audio callback thread, which has no managed-settable
+    /// priority (see <c>ScanlineStudio.Core.Audio.MiniAudio.MiniAudioCaptureSession</c>'s own doc
+    /// comment).</param>
+    /// <param name="periodSizeInFrames">Requested native hardware/backend buffer period size (0 =
+    /// backend default, unchanged from before this parameter existed).</param>
+    /// <param name="periods">Requested native period count (0 = backend default).</param>
+    /// <param name="channelSource"><b>Not a confirmed legacy port</b> -- stereo-capture-source
+    /// backlog item, see <see cref="AudioChannelSource"/>'s own doc comment. Default
+    /// <see cref="AudioChannelSource.Mono"/> reproduces today's exact pre-existing behavior.
+    /// <see cref="SamplesCaptured"/> is unaffected either way -- always mono.</param>
+    Task StartCaptureAsync(
+        AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+        int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+        CancellationToken ct = default);
 
     Task StopCaptureAsync();
 
-    Task StartPlaybackAsync(AudioDeviceInfo device, int sampleRate, CancellationToken ct = default);
+    /// <param name="periodSizeInFrames">Requested native hardware/backend buffer period size (0 =
+    /// backend default, unchanged from before this parameter existed).</param>
+    /// <param name="periods">Requested native period count (0 = backend default).</param>
+    /// <param name="stereoTx"><b>Not a confirmed legacy port</b> -- stereo-TX-toggle backlog item.
+    /// Default <see langword="false"/> reproduces today's exact pre-existing behavior. When
+    /// <see langword="true"/>, the same mono signal <see cref="EnqueuePlaybackSamples"/> accepts is
+    /// duplicated to both output channels -- that method's own mono contract is unaffected.</param>
+    Task StartPlaybackAsync(
+        AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+        bool stereoTx = false, CancellationToken ct = default);
 
     /// <summary>Stops playback only once every previously-enqueued sample has actually been played
     /// out — not immediately. An SSTV transmission is real audio a rig's PTT stays keyed for; a

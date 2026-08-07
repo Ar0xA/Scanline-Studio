@@ -38,7 +38,19 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     /// handles resample/upmix to whatever the device's real native format is.</param>
     /// <param name="ringCapacityFrames">Sizes the buffer between <see cref="Write"/> and the
     /// real-time pull callback.</param>
-    public MiniAudioPlaybackSession(string deviceId, int sampleRate, int ringCapacityFrames = 16384)
+    /// <param name="periodSizeInFrames">Requested native hardware/backend period size (0 =
+    /// miniaudio's own default -- unchanged from before this parameter existed). A separate,
+    /// lower-level knob from <paramref name="ringCapacityFrames"/>, which only sizes this shim's
+    /// own managed-write-side ring, not the device's actual buffer.</param>
+    /// <param name="periods">Requested native period count (0 = miniaudio's own default).</param>
+    /// <param name="stereoTx"><b>Not a confirmed legacy port</b> -- stereo-TX-toggle backlog item.
+    /// When <see langword="false"/> (default), reproduces today's exact pre-existing behavior (a
+    /// mono device open, unchanged). When <see langword="true"/>, opens the device with 2 channels
+    /// and duplicates the same mono <see cref="Write"/>n signal to both output channels -- there is
+    /// no "which channel" choice on the output side, unlike capture's Left/Right selection.</param>
+    public MiniAudioPlaybackSession(
+        string deviceId, int sampleRate, int ringCapacityFrames = 16384, int periodSizeInFrames = 0,
+        int periods = 0, bool stereoTx = false)
     {
         // See MiniAudioCaptureSession's identical fix and doc comment: this session must hold its
         // own reference to the native context, not rely on some unrelated enumerator instance
@@ -47,7 +59,15 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
         try
         {
             var deviceIdBytes = NativeAudio.EncodeFixedString(deviceId, NativeAudio.IdSize);
-            _handle = NativeAudio.yoniq_audio_playback_session_open(deviceIdBytes, sampleRate, ringCapacityFrames);
+            var options = new NativeAudio.OpenOptions
+            {
+                SampleRate = sampleRate,
+                RingCapacityFrames = ringCapacityFrames,
+                PeriodSizeInFrames = periodSizeInFrames,
+                Periods = periods,
+                Channels = stereoTx ? 2 : 1,
+            };
+            _handle = NativeAudio.yoniq_audio_playback_session_open(deviceIdBytes, ref options);
             if (_handle == IntPtr.Zero)
             {
                 throw new InvalidOperationException($"Failed to open playback device '{deviceId}' at {sampleRate}Hz.");

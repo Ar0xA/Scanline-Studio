@@ -135,7 +135,16 @@ internal static partial class Program
 
         // SSTV DSP core -- one decoder/encoder/waterfall per app session (Phase 3 scope: a single
         // concurrent session, matching the single IAudioEngine instance above).
-        hostBuilder.Services.AddSingleton<ISstvDecoder>(new AnalogFmSstvDecoder());
+        // Factory, not an eagerly-constructed instance (unlike ISstvEncoder/IWaterfallSource below) --
+        // needs to read SstvDecoderSettings.AfcEnabled from ISettingsStore (registered above) before
+        // constructing, so this must defer until first resolution rather than running at this line.
+        hostBuilder.Services.AddSingleton<ISstvDecoder>(sp =>
+        {
+            var appSettings = sp.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult();
+            var decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
+                ?? new SstvDecoderSettings();
+            return new AnalogFmSstvDecoder(afcEnabled: decoderSettings.AfcEnabled ?? true);
+        });
         hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
         hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));
 
@@ -223,6 +232,25 @@ internal static partial class Program
         catch (Exception ex)
         {
             Log.ReceiveHistoryRecorderResolveFailed(logger, ex);
+        }
+
+        // Apply a settings-driven process priority, if configured -- a QoL knob, not a startup
+        // requirement, so a failure here (e.g. Win32Exception from insufficient permission on some
+        // platforms) must never prevent the app from starting. Null means "leave the OS default
+        // alone" (see AppPerformanceSettings.ProcessPriority's own doc comment).
+        try
+        {
+            var appPerformanceSettings = host.Services.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult()
+                .GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings);
+            if (appPerformanceSettings?.ProcessPriority is { } priority)
+            {
+                System.Diagnostics.Process.GetCurrentProcess().PriorityClass = priority;
+                Log.ProcessPrioritySet(logger, priority);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.ProcessPrioritySetFailed(logger, ex);
         }
 
         // Auto-connect from persisted settings at startup -- the radio status strip (step 9) is a
@@ -344,6 +372,12 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Critical, Message = "ApplicationLifetime.Start threw")]
         public static partial void LifetimeStartThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Process priority set to {Priority}")]
+        public static partial void ProcessPrioritySet(ILogger logger, System.Diagnostics.ProcessPriorityClass priority);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to apply configured process priority; continuing at the OS default")]
+        public static partial void ProcessPrioritySetFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Initial radio auto-connect failed; continuing without a radio connection")]
         public static partial void RadioAutoConnectFailed(ILogger logger, Exception ex);

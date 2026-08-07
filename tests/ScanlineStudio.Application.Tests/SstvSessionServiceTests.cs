@@ -78,6 +78,31 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public async Task StartReceivingAsync_ConfiguredCaptureThreadPriority_IsPassedToTheAudioEngine()
+    {
+        var (service, audioEngine, _, _, _, settingsStore) = CreateService();
+        var current = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)!;
+        settingsStore.Settings = settingsStore.Settings.WithSection(
+            AudioDeviceSettings.SectionKey,
+            current with { CaptureThreadPriority = ThreadPriority.AboveNormal },
+            AudioSettingsJsonContext.Default.AudioDeviceSettings);
+
+        await service.StartReceivingAsync();
+
+        Assert.Equal(ThreadPriority.AboveNormal, audioEngine.LastRequestedDrainThreadPriority);
+    }
+
+    [Fact]
+    public async Task StartReceivingAsync_NoConfiguredCaptureThreadPriority_PassesNullThroughUnchanged()
+    {
+        var (service, audioEngine, _, _, _, _) = CreateService();
+
+        await service.StartReceivingAsync();
+
+        Assert.Null(audioEngine.LastRequestedDrainThreadPriority);
+    }
+
+    [Fact]
     public async Task IsReceiving_ReflectsStartAndStop_ForTheHeaderReceivingToggle()
     {
         var (service, _, _, _, _, _) = CreateService();
@@ -169,6 +194,153 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public async Task SetPttLockAsync_Locked_KeysPttImmediatelyAndReportsLocked()
+    {
+        var (service, _, _, _, radioSession, _) = CreateService();
+
+        await service.SetPttLockAsync(true);
+
+        Assert.True(service.IsPttLocked);
+        Assert.Equal([true], radioSession.PttCalls);
+    }
+
+    [Fact]
+    public async Task SetPttLockAsync_LockedThenTransmit_DoesNotDoubleKeyAndLeavesPttKeyedAfterward()
+    {
+        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        await service.StartReceivingAsync();
+
+        await service.SetPttLockAsync(true);
+        await service.TransmitAsync(TestMode, TestImage);
+
+        // Exactly one PTT-on (from the lock engage) and no PTT-off at all -- the Transmit call must
+        // not have keyed again on entry, nor un-keyed in its own cleanup while still locked.
+        Assert.Equal([true], radioSession.PttCalls);
+        Assert.True(service.IsPttLocked);
+        // RX must not have been silently resumed either -- the operator is still "on the lock."
+        Assert.False(audioEngine.IsCapturing);
+    }
+
+    [Fact]
+    public async Task SetPttLockAsync_LockedThenUnlocked_UnkeysPttExactlyOnce()
+    {
+        var (service, _, _, _, radioSession, _) = CreateService();
+
+        await service.SetPttLockAsync(true);
+        await service.SetPttLockAsync(false);
+
+        Assert.False(service.IsPttLocked);
+        Assert.Equal(PttOnThenOff, radioSession.PttCalls);
+    }
+
+    [Fact]
+    public async Task SetPttLockAsync_DoubleLockOrDoubleUnlock_IsIdempotentInOutcome_NotInSuppressingCalls()
+    {
+        // Audit-fix regression test: an earlier version short-circuited when the requested state
+        // already matched IsPttLocked, which is exactly the shape of bug fixed below (a no-op unlock
+        // on a still-keyed rig). Every call now always issues the command -- redundant but harmless
+        // (confirmed idempotent on every real protocol backend) -- so the OUTCOME (locked state, and
+        // that the rig ends up correctly keyed/unkeyed) is what's asserted, not call suppression.
+        var (service, _, _, _, radioSession, _) = CreateService();
+
+        await service.SetPttLockAsync(true);
+        await service.SetPttLockAsync(true); // already locked -- redundant re-key is fine
+        Assert.True(service.IsPttLocked);
+        Assert.Equal([true, true], radioSession.PttCalls);
+
+        await service.SetPttLockAsync(false);
+        await service.SetPttLockAsync(false); // already unlocked -- redundant re-unkey is fine
+        Assert.False(service.IsPttLocked);
+        Assert.Equal([true, true, false, false], radioSession.PttCalls);
+    }
+
+    [Fact]
+    public async Task SetPttLockAsync_False_AlwaysAttemptsUnkey_EvenWhenAlreadyReportedUnlocked()
+    {
+        // The actual bug the fix above closes: TuneAsync(leaveKeyedAfterTune: true) leaves PTT
+        // physically keyed WITHOUT ever setting _pttLocked -- so a caller unlocking afterward, under
+        // the old short-circuit, would have silently no-op'd on a still-keyed rig with zero recovery
+        // path. Now it always sends the command regardless of the tracked flag's current value.
+        var (service, _, _, _, radioSession, _) = CreateService();
+
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1), leaveKeyedAfterTune: true);
+        Assert.False(service.IsPttLocked); // tracked state says "not locked"...
+        Assert.Equal([true], radioSession.PttCalls); // ...but the rig is still physically keyed
+
+        await service.SetPttLockAsync(false);
+
+        Assert.Equal([true, false], radioSession.PttCalls); // unlock still sent the real un-key command
+    }
+
+    [Fact]
+    public async Task SwrCutoffStyleCancellation_ForceUnkeysAndClearsLock_EvenWhileLocked()
+    {
+        // Audit-fix regression test for the most severe finding: a lock must NEVER be able to defeat
+        // an abnormal-termination path (SWR auto-cutoff / manual Stop TX both work by cancelling the
+        // token passed into TransmitAsync/TuneAsync). Simulated here the same way the existing
+        // TuneAsync_TokenCancelledMidTone_... regression test does -- a token cancelled mid-flight.
+        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        await service.StartReceivingAsync();
+        await service.SetPttLockAsync(true);
+        radioSession.PttCalls.Clear(); // isolate this test's own assertions from the lock-engage call above
+
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(10));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token));
+
+        Assert.Equal([false], radioSession.PttCalls); // force-unkeyed despite the lock
+        Assert.False(service.IsPttLocked, "a cutoff/cancel must force-clear the lock, not leave IsPttLocked lying about a rig that's now confirmed unkeyed");
+        Assert.True(audioEngine.IsCapturing, "RX must resume after a force-unkey too, same as the normal cancellation path");
+    }
+
+    [Fact]
+    public async Task UnlockAfterALockedTransmitPausedRx_ResumesRx()
+    {
+        // Audit-fix regression test: PlayWithPttAsync's own `wasReceiving` local is scoped to one
+        // call and gets discarded once that call returns (still locked) -- without the
+        // _rxPendingResumeAfterUnlock handoff, RX would stay stopped forever after this sequence.
+        var (service, audioEngine, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+
+        await service.SetPttLockAsync(true);
+        await service.TransmitAsync(TestMode, TestImage); // pauses RX, then skips resume because locked
+        Assert.False(audioEngine.IsCapturing);
+
+        await service.SetPttLockAsync(false);
+
+        Assert.True(audioEngine.IsCapturing, "RX should have been resumed once the lock covering it was released");
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhilePttLocked_ForceUnkeysBeforeTearingDown()
+    {
+        // Audit-fix regression test: app shutdown must never leave a locked rig keyed indefinitely
+        // just because nothing called SetPttLockAsync(false) first.
+        var (service, _, _, _, radioSession, _) = CreateService();
+        await service.SetPttLockAsync(true);
+        radioSession.PttCalls.Clear();
+
+        await service.DisposeAsync();
+
+        Assert.Equal([false], radioSession.PttCalls);
+    }
+
+    [Fact]
+    public async Task TransmitAsync_WithNoLockEngaged_BehavesExactlyAsBeforeThisFeature()
+    {
+        // Regression guard: introducing the lock must not change the un-locked default path.
+        var (service, _, _, _, radioSession, _) = CreateService();
+
+        Assert.False(service.IsPttLocked);
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.Equal(PttOnThenOff, radioSession.PttCalls);
+        Assert.False(service.IsPttLocked);
+    }
+
+    [Fact]
     public async Task TuneAsync_TokenCancelledMidTone_StillUnkeysPttAndRestartsCapture()
     {
         // Regression test for a real bug found while designing Piece 6 (SWR auto-cutoff / Stop TX):
@@ -191,10 +363,34 @@ public sealed class SstvSessionServiceTests
         // own tiny 3-sample fixture completes too fast for this to land reliably, which is why this
         // regression uses TuneAsync instead.
         await Assert.ThrowsAsync<OperationCanceledException>(
-            () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), cts.Token));
+            () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token));
 
         Assert.Equal(PttOnThenOff, radioSession.PttCalls);
         Assert.True(audioEngine.IsCapturing, "capture should have been restarted after a cancelled Tune");
+    }
+
+    [Fact]
+    public async Task TuneAsync_LeaveKeyedAfterTuneFalse_KeysThenUnkeysPtt_UnchangedDefaultBehavior()
+    {
+        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        await service.StartReceivingAsync();
+
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+
+        Assert.Equal(PttOnThenOff, radioSession.PttCalls);
+        Assert.True(audioEngine.IsCapturing, "RX should have resumed once the tune tone finished");
+    }
+
+    [Fact]
+    public async Task TuneAsync_LeaveKeyedAfterTuneTrue_KeysPttAndDoesNotUnkeyOrResumeCapture()
+    {
+        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        await service.StartReceivingAsync();
+
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1), leaveKeyedAfterTune: true);
+
+        Assert.Equal([true], radioSession.PttCalls); // keyed, and never un-keyed by this call
+        Assert.False(audioEngine.IsCapturing, "RX must not resume while PTT is deliberately left keyed");
     }
 
     [Fact]
