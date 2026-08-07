@@ -40,4 +40,20 @@ public interface ISstvDecoder
     /// Deliberately fire-and-forget (no return value) — the actual application is asynchronous
     /// relative to this call.</summary>
     void RequestReSync();
+
+    /// <summary>Requests an immediate decode restart into <paramref name="mode"/>, bypassing VIS
+    /// header detection — the port of legacy's real RX quick-mode-button click
+    /// (<c>TMmsstv::SBMClick</c>, `Main.cpp:6096-6122`, calling <c>CSSTVDEM::Start(mode, TRUE)</c>,
+    /// `sstv.cpp:1749-1767`). Confirmed a one-shot "start decoding as mode X right now" kick, not a
+    /// persistent lock: legacy's <c>Start(void)</c> unconditionally lands on the same
+    /// <c>m_SyncMode</c> value normal VIS auto-detect uses (`sstv.cpp:1744`), so once the forced
+    /// image ends, ordinary auto-detect resumes for the next transmission with no extra step. Any
+    /// in-progress decode (auto-detected or previously forced) is abandoned; any in-progress AVT
+    /// training is aborted. Safe to call from any thread; the request is deferred (last-request-wins)
+    /// and applied on whichever thread next calls <see cref="PushSamples"/> — no thread marshaling,
+    /// no synchronization context, matching <see cref="RequestReSync"/>'s own contract. Deliberately
+    /// fire-and-forget (no return value) — the actual application, and any resulting
+    /// <see cref="ModeDetected"/>/<see cref="DecodeRestarted"/> events, are asynchronous relative to
+    /// this call.</summary>
+    void ForceMode(SstvModeDefinition mode);
 }

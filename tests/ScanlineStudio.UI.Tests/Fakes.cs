@@ -126,6 +126,16 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public void RequestReSync() => RequestReSyncCallCount++;
 
+    public int ForceModeCallCount { get; private set; }
+
+    public SstvModeDefinition? LastForcedMode { get; private set; }
+
+    public void ForceMode(SstvModeDefinition mode)
+    {
+        ForceModeCallCount++;
+        LastForcedMode = mode;
+    }
+
     public Task StartReceivingAsync(CancellationToken ct = default)
     {
         if (ThrowOnStartReceiving)
