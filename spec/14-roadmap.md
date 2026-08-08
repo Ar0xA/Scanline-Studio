@@ -4178,9 +4178,31 @@ table is a grouping/leverage view of the same gaps below, not a new inventory:
 | ~~Operator-callsign/profile setting~~ — **corrected and done** (2026-08-08): the "zero grep hits" claim below was wrong (`OperatorSettings.Callsign` already existed, `247fde7`); the "unblocks 4 mock2 items" claim was also wrong — Identification (FSK/CW/Tail ID) is blocked on the whole FSK/CW-ID subsystem this project already deferred separately ([[06-sstv-dsp]]'s Station ID section), not on a setting, and stays blocked. `OperatorSettings` gained `Name`/`Grid`; a new `IMacroTextResolver` (scoped to `%m`/`%D`/`%T`/`{name}`/`{grid}` — legacy's own his-callsign/RST/greeting tokens need a "current QSO" form this port doesn't have, deferred same as CW-ID) now backs the Outgoing-metadata card's callsign/name/grid fields and the overlay editor's real insert-field picker/TX-macro substitution. See `PROJECT_BRIEF.md` for the full account. | `OperatorSettings.Callsign`/`Name`/`Grid`, `IMacroTextResolver` | Outgoing-metadata card (partial: callsign/name/grid only, not RST/to-station/report), overlay editor's insert-field picker + TX-macro substitution — 2 of the originally-claimed 4 mock2 items, not 4; Identification card and CW-ID text generation itself remain blocked on the separately-deferred FSK/CW-ID subsystem |
 | ~~**Decode-time signal telemetry**~~ (SNR, squelch, BPF/AGC/notch state, buffer/clipping %, noise floor, L/R levels) — **Tier A done** (2026-08-08, `cf76a08`), Tier B/C explicitly deferred, not silently dropped: `ISstvDecoder` gained `SignalPeakLevel`/`IsLevelOverdriven` (peak amplitude + legacy's own `DrawLvl` red-meter-bar threshold — NOT legacy's separate `m_OverFlow` raw-sample flag, a genuinely different legacy quantity this port's post-BPF AGC input can't reproduce; NOT the mock2 "Clipping %" figure either, legacy never computed a percentage, only this threshold), `SyncFrequencyCorrectionHz` (AFC's own correction passthrough), `BufferedSampleCount` (promoted from `internal`). Still unbacked, each deliberately scoped out (see `~/.claude/plans/steady-humming-osprey.md` for the full research): true SNR/SNR-histogram/noise-floor (legacy has zero equivalent anywhere — `CNoise` is a noise *generator* for test/sim, not a measurement — needs a product decision on what "SNR" even means for this port, not a legacy-verification pass), notch-filter state (`CNotch`, `fir.h:123`, entirely unported — no filter exists yet to report the state of), true L/R stereo levels (legacy and this port are both mono-only in the demod path), squelch (zero legacy grounding at all, confirmed via `grep -a`). | `ISstvDecoder.SignalPeakLevel`/`IsLevelOverdriven`/`SyncFrequencyCorrectionHz`/`BufferedSampleCount` | RX input-chain telemetry card (partial: level + buffer only), per-line SNR/histogram ("Signal quality" card, still fully blocked) |
 | ~~**Slant/sync correction readouts**~~ (ppm, offset px) — **done** (2026-08-08, `94831b6`): `ISstvDecoder` gained `SlantPpm` (legacy's own `DrawSlantInfo` ppm formula) and `SyncOffsetSamples` (legacy's `m_AutoStopPos`, a quantity legacy itself never displays). | `ISstvDecoder.SlantPpm`/`SyncOffsetSamples` | Sync/slant correction readouts card |
-| **`ReceiveHistoryEntry`'s field set** — only `Id, ReceivedAt, ModeId, FilePath, LinkedQsoId` today | No callsign, grid, SNR, note, flag, or decode-state fields | Gallery search/sort/filter, frame metadata card, "decode rows colored by state" |
+| ~~**`ReceiveHistoryEntry`'s field set**~~ — **partially done** (2026-08-08): gained `Note`
+  (`string?`), `IsFlagged` (`bool`), and `DecodeState` (`ReceiveDecodeState` enum,
+  `Completed`/`Abandoned` — auto-populated with zero new measurement at each of
+  `ReceiveHistoryRecorder`'s two existing write call sites; formalizes the pre-existing `_partial_`
+  filename convention into a real structured field). First schema migration this store has ever
+  needed (`SqliteReceiveHistoryStore.EnsureSchema`, `PRAGMA table_info` probe + `ALTER TABLE ADD
+  COLUMN`, transactional, backfills pre-existing rows' `DecodeState` from the filename shape via
+  `GLOB`, not a directory-path-vulnerable substring match). Callsign/grid/SNR still open — no
+  upstream data exists yet anywhere in this port (OCR unbuilt; SNR is Tier B, see below). | Gallery
+  search/sort/filter (still blocked, needs callsign/grid), frame metadata card's note field (now
+  real), "decode rows colored by state" (now real, 2 of 3 intended states — "decoding" is live
+  `IReceivedImageBuffer.Progress` state, a separate already-exposed source, not part of this field) |
 | **Structured per-decode event log** | `ReceiveHistoryStore` only records the final saved image, no per-decode trace | "Decode activity" log card, decoder-trace pane |
-| **Frame-action primitives** (abort-current-frame, re-decode, QSO-log-link) | `ISstvDecoder` has no abort; `LinkedQsoId` exists on the record but nothing ever sets it | RX frame actions (Abort/Re-decode/Copy-to-TX/Log QSO), Gallery's "Log entry"/"Open in log" |
+| ~~**Frame-action primitives**~~ (abort-current-frame, re-decode, QSO-log-link) — **QSO-log-link
+  piece done** (2026-08-08): `IReceiveHistoryStore` gained `SetLinkedQsoIdAsync` (plus
+  `SetNoteAsync`/`SetFlaggedAsync` for the field-set item above) — the real gap was narrower than
+  originally framed: `ILogbookRepository` already had a full write API and `QsoRecord.ReceivedImageId`
+  was already the matching reverse FK (logbook backend shipped 2026-08-07), this was purely a
+  missing update-after-the-fact method on the RX-history side. **Correction**: the "blocked on
+  [[08-logging]]" framing below (Gallery Unlogged/Flagged-filters bullet) was stale by the time this
+  landed. Abort and Re-decode remain open — Abort is a decoder-state COMMAND (different risk class,
+  `Core.Sstv`, needs `RequestReSync`/`ForceMode`-level concurrency care); Re-decode is effectively
+  blocked, no raw audio is retained anywhere in this port. | `ISstvDecoder` has no abort; `LinkedQsoId`
+  now settable post-save via `SetLinkedQsoIdAsync` | RX frame actions (Abort/Re-decode still
+  blocked; Copy-to-TX untouched), Gallery's "Log entry"/"Open in log" (now real) |
 | **TX-side device/clock telemetry** (output device name, sample-clock offset, occupied bandwidth, monitor-while-TX) | Nothing exposed in `Core.Audio` | TX telemetry readouts row |
 | **OCR/QRZ lookup** | Nothing | Frame metadata card's callsign/grid fields, gallery search on those |
 
@@ -4282,10 +4304,14 @@ wired everything real, these had no real data behind them today):
 - Gallery free-text search across callsign/grid/note and band filter — `ReceiveHistoryEntry`
   has no callsign/grid/frequency fields at all; would need the RX logbook fields already
   tracked under "Logbook/QSO tracking" above. Medium, blocked on that work.
-- Gallery Unlogged/Flagged filters and "Log entry"/"Open in log" actions — `LinkedQsoId` exists
-  on `ReceiveHistoryEntry` but nothing ever sets it to non-null; there is no logbook-linking
-  feature behind it yet, just an inert field. Medium, blocked on real QSO-log integration
-  ([[08-logging]]).
+- ~~Gallery Unlogged/Flagged filters and "Log entry"/"Open in log" actions~~ — **backend done
+  (2026-08-08), correction to this entry's own "blocked on [[08-logging]]" framing**: that was stale
+  even before this landed — `ILogbookRepository` already had a full write API and
+  `QsoRecord.ReceivedImageId` was already the matching reverse FK (logbook backend shipped
+  2026-08-07); the real, narrower gap was `IReceiveHistoryStore` having no update-after-the-fact
+  method. `SetLinkedQsoIdAsync`/`SetFlaggedAsync` now exist — see the root-cause map's Frame-action-
+  primitives/field-set entries above. Flagged filter can run client-side over the current ≤32-row
+  retention scale, no new query field needed. Backend-only, no UI binding yet.
 - Gallery sort by callsign/SNR, and per-frame Export/Re-decode actions — no callsign/SNR data
   exists on entries, and `IReceiveHistoryStore` has no export/re-decode operation. Small-medium.
 - Gallery Storage card's Sidecar-format and disk-free-space readouts — no JSON/EXIF sidecar is

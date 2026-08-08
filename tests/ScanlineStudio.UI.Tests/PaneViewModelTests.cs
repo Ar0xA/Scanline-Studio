@@ -272,7 +272,7 @@ public sealed class PaneViewModelTests
     {
         var historyStore = new FakeReceiveHistoryStore
         {
-            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null)],
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
 
@@ -288,7 +288,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_SelectingAnEntry_LoadsAReadOnlyPreview_NeverTouchingTheLiveReceivedImageBuffer()
     {
-        var historyEntry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null);
+        var historyEntry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
         var historyStore = new FakeReceiveHistoryStore
         {
             EntriesToReturn = [historyEntry],

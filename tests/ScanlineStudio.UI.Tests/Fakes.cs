@@ -448,4 +448,28 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     }
 
     public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => Task.FromResult(ImagesDirectory);
+
+    /// <summary>Actually mutates <see cref="EntriesToReturn"/> (matching <see cref="QueryAsync"/>'s
+    /// own "actually applies" convention above), so a Gallery-side test can verify a note/flag/
+    /// QSO-link edit round-trips through a subsequent query, not just that the call was made.</summary>
+    public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default) =>
+        Task.FromResult(TryUpdateEntry(entryId, e => e with { Note = note }));
+
+    public Task<bool> SetFlaggedAsync(string entryId, bool isFlagged, CancellationToken ct = default) =>
+        Task.FromResult(TryUpdateEntry(entryId, e => e with { IsFlagged = isFlagged }));
+
+    public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default) =>
+        Task.FromResult(TryUpdateEntry(entryId, e => e with { LinkedQsoId = qsoId }));
+
+    private bool TryUpdateEntry(string entryId, Func<ReceiveHistoryEntry, ReceiveHistoryEntry> update)
+    {
+        var index = EntriesToReturn.FindIndex(e => e.Id == entryId);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        EntriesToReturn[index] = update(EntriesToReturn[index]);
+        return true;
+    }
 }

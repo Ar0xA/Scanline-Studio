@@ -298,7 +298,7 @@ public sealed partial class ReceiveHistoryRecorder
 
         await _receivedImage.SaveAsync(filePath).ConfigureAwait(false);
 
-        var entry = new ReceiveHistoryEntry(Guid.NewGuid().ToString(), receivedAt, modeId, filePath, LinkedQsoId: null);
+        var entry = new ReceiveHistoryEntry(Guid.NewGuid().ToString(), receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Completed);
         await _historyStore.RecordAsync(entry).ConfigureAwait(false);
 
         Log.ImageSaved(_logger, filePath);
@@ -335,7 +335,7 @@ public sealed partial class ReceiveHistoryRecorder
 
         await SaveSnapshotAsync(snapshot, filePath).ConfigureAwait(false);
 
-        var entry = new ReceiveHistoryEntry(entryId, receivedAt, modeId, filePath, LinkedQsoId: null);
+        var entry = new ReceiveHistoryEntry(entryId, receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Abandoned);
         await _historyStore.RecordAsync(entry).ConfigureAwait(false);
 
         Log.AbandonedImageSaved(_logger, filePath);
