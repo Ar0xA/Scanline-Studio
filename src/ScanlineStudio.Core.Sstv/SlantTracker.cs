@@ -265,6 +265,15 @@ internal sealed class SlantTracker
     /// <summary><c>NormalSampFreq</c> (`ComLib.cpp:203-207`) -- rounds to the nearest 1/m fraction.</summary>
     private static double NormalSampleRate(double value, double precision) => (int)(value * precision + 0.5) / precision;
 
+    /// <summary>Current drift, in parts-per-million relative to the fixed declared sample rate --
+    /// legacy's own <c>DrawSlantInfo</c> ppm readout formula (`Main.cpp:5537`:
+    /// <c>(SSTVSET.m_SampFreq - sys.m_SampFreq) * 1e6 / sys.m_SampFreq</c>), with this class's
+    /// <see cref="_currentSampleRate"/>/<see cref="_sampleRate"/> standing in for
+    /// <c>SSTVSET.m_SampFreq</c>/<c>sys.m_SampFreq</c> respectively (see their own field doc
+    /// comments). Zero until the first correction commits, matching legacy's own
+    /// <c>SSTVSET.m_SampFreq == sys.m_SampFreq</c> until then.</summary>
+    internal double DriftPpm => (_currentSampleRate - _sampleRate) * 1_000_000.0 / _sampleRate;
+
     /// <summary>Test-only visibility into whether a baseline has been established yet -- lets a test
     /// directly observe the jitter gate's pass/fail outcome (ultracode audit finding #7) without
     /// waiting the further 3 lines a resulting correction would need.</summary>
