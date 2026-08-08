@@ -160,6 +160,42 @@ public sealed class LogbookSessionServiceTests
     }
 
     [Fact]
+    public async Task UpdateQsoAsync_DelegatesToTheRepository()
+    {
+        var repository = new FakeLogbookRepository();
+        await repository.AddAsync(SampleRecord("1"));
+        var service = CreateService(repository);
+        var edited = SampleRecord("1") with { Notes = "edited" };
+
+        await service.UpdateQsoAsync(edited);
+
+        Assert.Single(repository.Records);
+        Assert.Equal("edited", repository.Records[0].Notes);
+    }
+
+    [Fact]
+    public async Task UpdateQsoAsync_NeverPushesToGridTrackerOrQrz()
+    {
+        var repository = new FakeLogbookRepository();
+        await repository.AddAsync(SampleRecord("1"));
+        var gridTracker = new FakeGridTrackerStreamer();
+        var qrz = new FakeQrzLogbookUploader();
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                QrzUploadSettings.SectionKey,
+                new QrzUploadSettings { Enabled = true, ApiKey = "my-key" },
+                QrzUploadSettingsJsonContext.Default.QrzUploadSettings),
+        };
+        var service = CreateService(repository, gridTracker, qrz, settingsStore);
+
+        await service.UpdateQsoAsync(SampleRecord("1") with { Notes = "edited" });
+
+        Assert.Equal(0, gridTracker.CallCount);
+        Assert.Equal(0, qrz.CallCount);
+    }
+
+    [Fact]
     public async Task ExportAdifFileAsync_WritesEveryMatchingRecordToARealFile()
     {
         var repository = new FakeLogbookRepository();
@@ -175,6 +211,34 @@ public sealed class LogbookSessionServiceTests
 
             Assert.Contains("<EOH>", content);
             Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(content, "<EOR>").Count);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ExportAdifFileAsync_IncludesStationCallsignFromOperatorSettings()
+    {
+        var repository = new FakeLogbookRepository();
+        await repository.AddAsync(SampleRecord("1"));
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                OperatorSettings.SectionKey,
+                new OperatorSettings { Callsign = "w1aw" },
+                OperatorSettingsJsonContext.Default.OperatorSettings),
+        };
+        var service = CreateService(repository, settingsStore: settingsStore);
+        var path = Path.Combine(Path.GetTempPath(), $"scanline-studio-export-test-{Guid.NewGuid()}.adi");
+
+        try
+        {
+            await service.ExportAdifFileAsync(path, new LogbookQuery());
+            var content = await File.ReadAllTextAsync(path);
+
+            Assert.Contains("<STATION_CALLSIGN:4>W1AW", content);
         }
         finally
         {

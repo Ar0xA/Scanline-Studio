@@ -125,6 +125,7 @@ internal static partial class Program
         hostBuilder.Services.AddSingleton<RxImagePaneViewModel>();
         hostBuilder.Services.AddSingleton<RxHistoryPaneViewModel>();
         hostBuilder.Services.AddSingleton<TxControlsPaneViewModel>();
+        hostBuilder.Services.AddSingleton<LogbookPaneViewModel>();
 
         // Piece Engine 6. Registered by type, not an eagerly-constructed instance (unlike
         // ISettingsStore above) -- MiniAudioEngine's constructor initializes the native miniaudio
