@@ -7,11 +7,13 @@ namespace ScanlineStudio.Core.Sstv;
 /// does not honor property-initializer defaults for <c>init</c>-only properties absent from the JSON
 /// payload (see <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent</c>'s doc comment for
 /// the full explanation). The desired default for every field here is <see langword="true"/> (matches
-/// today's always-on behavior), which is NOT the CLR default for <see cref="bool"/>
-/// (<see langword="false"/>) -- so a settings.json saved before a field existed must not silently
-/// disable it for every existing install. Treat <see langword="null"/> as "unset -- apply the desired
-/// <see langword="true"/> default" at the one read site (<c>ScanlineStudio.Host.Program</c>'s
-/// <c>ISstvDecoder</c> registration), never re-add a non-null default value here.</summary>
+/// today's always-on behavior) -- <b>except <see cref="AutoStopEnabled"/></b>, whose own desired default
+/// is <see langword="false"/> (legacy's real fresh-startup default too, <c>sys.m_AutoStop = 0</c>,
+/// <c>Main.cpp:900</c>) -- deliberately not the CLR default for every other <see cref="bool"/> field, so
+/// a settings.json saved before a field existed must not silently disable an on-by-default feature for
+/// every existing install. Treat <see langword="null"/> as "unset -- apply that field's own desired
+/// default" at the one read site (<c>ScanlineStudio.Host.Program</c>'s <c>ISstvDecoder</c> registration),
+/// never re-add a non-null default value here.</summary>
 public sealed record SstvDecoderSettings
 {
     public const string SectionKey = "SstvDecoder";
@@ -33,4 +35,17 @@ public sealed record SstvDecoderSettings
     /// trigger branches, not the underlying drift-detection bookkeeping, which runs unconditionally
     /// in this port (see <see cref="AnalogFmSstvDecoder"/>'s own Auto Sync doc comments for why).</summary>
     public bool? AutoSyncEnabled { get; init; }
+
+    /// <summary>Port of legacy's real, user-toggleable <c>sys.m_AutoStop</c> (fresh default OFF,
+    /// <c>Main.cpp:900</c> -- unlike the other three fields here) -- gates whether erratic/weak-signal
+    /// detection is allowed to stop reception and re-arm auto-detection (legacy's
+    /// <c>RxAutoPush(TRUE)</c>). Gates only the trigger itself, not the underlying detection
+    /// bookkeeping, which runs unconditionally in this port (see <see cref="AnalogFmSstvDecoder"/>'s
+    /// own <c>TryAutoSync</c> doc comment). Caveat: legacy's "Lock" toolbar button
+    /// (<c>SBLKClick</c>, <c>Main.cpp:10898-10907</c>) ties this to the same button as
+    /// <see cref="SyncRestartEnabled"/>/<see cref="AutoSyncEnabled"/> -- Lock engaged means all three
+    /// are off, Lock disengaged means all three are on, so this port's own default combination
+    /// (the other three <see langword="true"/>, this one <see langword="false"/>) is not a state
+    /// legacy's Lock button can itself produce -- it matches legacy's fresh/unmodified default only.</summary>
+    public bool? AutoStopEnabled { get; init; }
 }

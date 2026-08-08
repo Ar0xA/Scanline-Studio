@@ -36,7 +36,13 @@ public interface ISstvDecoder
     /// which has no anchor-correction step) does <see cref="ModeDetected"/> fire first. A caller that
     /// needs to know "has the new mode's <see cref="ModeDetected"/> already fired by the time this
     /// event arrives" must track that itself (e.g. by mode-identity comparison against its own last-
-    /// seen state), not assume either ordering.</summary>
+    /// seen state), not assume either ordering.
+    ///
+    /// <b>Also fires when Auto Stop abandons reception with no replacement transmission pending</b>
+    /// (legacy's erratic/weak-signal detector, <c>sys.m_AutoStop</c>/<c>RxAutoPush</c>,
+    /// `Main.cpp:3884-3966`/`:6042-6060`) -- unlike every other case, which is always immediately
+    /// followed by a new mode being committed, this one simply re-arms auto-detection with nothing
+    /// queued up. Consumers must not assume a subsequent <see cref="ModeDetected"/> is imminent.</summary>
     event Action<SstvModeDefinition>? DecodeRestarted;
 
     /// <summary>Resets AGC/level-tracking state to its power-on defaults. Legacy calls its equivalent
