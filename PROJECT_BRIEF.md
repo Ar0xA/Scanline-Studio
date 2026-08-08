@@ -40,11 +40,30 @@ a failed follow-up refresh; a shared log line hardcoded the wrong method name). 
 ship-ready, only 2 accepted nits left (Export's stale-count window on a *failed* refresh — narrow,
 no data loss; blank Start-field text is silently discarded rather than shown as invalid — documented
 intentional). Full solution build clean, full test suite green (Application 65, UI 97, Logbook 64,
-Radio 112, Audio 14+56, Sstv 653 — all passing). **Committing and pushing now.**
+Radio 112, Audio 14+56, Sstv 653 — all passing). **Committed and pushed (`2fcb99d`).**
 
-**Next up**: item 2 on the must-implement checklist, DSP decode-accuracy residuals (~1/3 of the mode
-table exceeds tolerance at the declared 11025Hz rate) — likely needs the auditor's DSP-audit process
-(CLAUDE.md §7), not a quick fix. Then real Options dialogs → RX history browser affordances →
+**Item 2, DSP decode-accuracy residuals at 11025Hz: CLOSED, stale item, no new DSP work needed.**
+Research (a fork's synthetic-round-trip measurement) initially looked like it fully closed the gap,
+but that alone wasn't trustworthy enough to act on directly — `spec/14-roadmap.md` has an extensive
+prior "Robot-36-at-11025Hz decode-gap investigation" live log (this doc's own Piece 9-15+ history)
+establishing that synthetic self-consistency can hide real legacy-parity bugs (three of the first
+four adversarial-review bugs were invisible to round-trip alone), so golden-vector tests against
+REAL captured legacy audio are the authoritative check for this project. Verified against those
+instead: `GoldenVectorTests.cs` already passes 43/43 today, with Robot36/Robot72 tolerances
+tightened to reflect real measured deltas (down from a mid-investigation high of 68.06 to ~5-17
+now) — the fix already landed as a side effect of earlier DSP work, this checklist entry just never
+got updated. Added one new permanent test locking this in rather than leaving it as a historical doc
+note: `SstvRoundTripTests.EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance_At11025Hz`, covering
+every mode the checklist item named (Robot36, Robot72, MR73, ML180/240/280/320, Martin M2, MR115) at
+the real 11025Hz rate — all 9 pass comfortably (~2.3-4.9 delta vs. the 10.0 tolerance). No production
+DSP code touched; full auditor DSP-audit process (CLAUDE.md §7) skipped since nothing changed for it
+to review. `SstvRoundTripTests` 101/101 (was 92), full `Core.Sstv.Tests` 662/662 (was 653, +9 new),
+both confirmed green. **NOT YET committed** — about to commit alongside the `spec/14-roadmap.md`
+update.
+
+**Next up**: item 3 on the must-implement checklist, real Options dialogs
+(`RadioSettingsDialog`/`MacroKeyEditor`/`ColorSettingsDialog`/`LanguageSettingsDialog` — currently
+disabled+tooltip placeholders, not functional windows). Then RX history browser affordances →
 waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail items, per
 `spec/14-roadmap.md`'s own proposed order.
 
