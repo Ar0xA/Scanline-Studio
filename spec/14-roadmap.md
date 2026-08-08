@@ -4435,6 +4435,89 @@ gaps found while doing this pass, not previously tracked anywhere:
   app) is also **not tracked here** — see `docs/removed-features.md`'s new entry; too
   underspecified to even represent as a disabled placeholder.
 
+## Must-implement backlog — legacy parity gaps, NOT deferred/removed-with-replacement (2026-08-08)
+
+User request: "what are we still missing from legacy that we MUST implement" — distinct from the
+mock2 GUI-blocking backend-primitive work above (SlantPpm/telemetry/Gallery-metadata/device-name/
+Tone-map, all shipped this session). This list is durable specifically so it survives a `/clear` —
+check items off (`- [x]`) as they land, add a one-line note (commit hash, date) same as everywhere
+else in this doc, don't let this list itself go stale the way a couple of entries in the section
+above did (two items below were found ALREADY DONE by direct code verification when this list was
+first written — see their notes).
+
+**Working order** (this session's own proposal, not yet reprioritized by the user beyond "tackle
+these first" as a whole) — biggest-leverage/lowest-risk first:
+
+- [ ] **Logbook UI pane** — the single clearest "backend done, invisible to the user" gap. Verified
+  directly (not assumed): `AdifExporter.cs`/`AdifImporter.cs`/`QrzLogbookUploader.cs`/
+  `GridTrackerStreamer.cs` all real and already built (`src/ScanlineStudio.Core.Logbook/`), but
+  `src/ScanlineStudio.UI/` has zero `Logbook`-named ViewModel/View — no pane to browse/edit QSOs or
+  drive import/export exists. Also folds in the smaller logbook deltas from the Phase-4+ backlog
+  above: QSL sent/received flags, Maidenhead grid locator field, duplicate-QSO detection by
+  callsign/band (all "Trivial"/"Small" per that section).
+- [ ] **DSP decode-accuracy residuals at the declared 11025Hz rate** — ~1/3 of the mode table
+  (Robot36, Robot72, MR73, ML180/240/280/320, Martin M2, MR115) still measurably exceeds this
+  port's own 10.0-average-per-channel-delta round-trip tolerance at 11025Hz specifically (the
+  44100Hz test stand-in is "a pragmatic accommodation, not a hidden correctness bug," per this
+  doc's own earlier framing, ~line 47-49). Real, measured, unclosed DSP correctness work — the
+  closest thing to a genuine decode-fidelity bug still open in this port. Likely needs the
+  auditor's DSP-audit process (CLAUDE.md §7), not a quick fix.
+- [ ] **Options dialogs that are still placeholders, not real functional windows** —
+  `RadioSettingsDialog`/`MacroKeyEditor`/`ColorSettingsDialog`/`LanguageSettingsDialog` (the ~50
+  legacy Options-dialog items already added as disabled+tooltip placeholders, Phase-4+ backlog
+  section above, are UI *scaffolding/inventory*, not these dialogs actually existing and working).
+- [ ] **RX history browser affordances lost, no replacement** (`docs/removed-features.md`'s own
+  "History-tab navigation" entry) — step-through nav, one-click jump-to-latest, clipboard
+  copy-out/paste-in. `IReceiveHistoryStore`/`ReceiveHistoryEntry` already has the query surface
+  this would sit on top of (this session's own Gallery-metadata work extended it further).
+- [ ] **Waterfall color/palette rendering** — still plain grayscale: no 7-color palette
+  (gradient/FFT-background/trace/peak-hold/sync-marker/freq-marker), no separate FFT/scope trace
+  view, no peak-hold/persistence overlay, no zoom/bandwidth-range presets, no interactive
+  notch-filter marker, no signal-strength meter. Sizes Low-to-Medium-high individually; this doc's
+  own Phase-4+ section already deliberately deprioritized this as "a complete inventory, not a
+  priority push" — re-confirm that's still the right call before starting, don't silently
+  reprioritize just because it's on this list.
+- [ ] **OCR/QRZ lookup** — no OCR anywhere; QRZ needs new API-key config (legacy hardcoded a
+  personal account password, not being resurrected). Large, genuinely new feature, not a port.
+- [ ] **CW-ID / FSK station-ID subsystem** — real, working legacy feature (TX CW-ID tone + RX
+  FSK-callsign-ID packet decode, `sstv.cpp:2465-2551`'s STX `0x2a`, distinct from the already-ported
+  mode-announce STX `0x2d` packets), zero replacement built. Already user-deferred once this session
+  (Identification card work, 2026-08-08) — included here for completeness since it's a real gap,
+  not because this list overrides that earlier call; confirm priority explicitly before starting.
+- [ ] **VOX** (TX tone-burst preamble for a rig's own VOX circuit) — real but niche, this port
+  already has real CAT PTT. Low priority per this doc's own earlier framing.
+- [ ] **RTS-on-RX** (the other half of PTT lock) — no serial-control surface exists yet; may
+  conflict with Hamlib's own RTS-PTT ownership, needs a legacy re-check before deciding fit.
+- [ ] **Sound-file ID** — second TX station-ID method (play a recorded clip instead of CW), blocked
+  on CW-ID's own subsystem landing first.
+- [ ] **JPEG save quality setting** — trivial, but literally has no format to apply to until/unless
+  a JPEG save path exists (images save as PNG only today).
+
+**Not on this list, and why** (checked directly, not assumed — corrections to two items an earlier
+automated survey pass flagged as still-open when they're actually already shipped):
+- ~~`m_ReqSave` (abandoned-image save)~~ and ~~`m_SyncRestart` toggle~~ — BOTH already real and
+  shipped earlier this session (`ReceiveHistoryRecorder.RecordAbandonedImageAsync`,
+  `AnalogFmSstvDecoder`'s real `syncRestartEnabled` constructor parameter — both verified directly
+  in current source, not from memory). An earlier survey pass's citations for these two were stale
+  roadmap-doc wording that hadn't caught up to what had already shipped; this list is correct as of
+  the date above.
+- Perspective correction/webcam, full Hamlib extended commands, plugin sandboxing beyond
+  same-process, `.MDT` import, full QSL/template designer, SSTV repeater/beacon, contest logging —
+  all in "Explicitly deferred beyond v1" immediately below; real gaps, but the project has already
+  decided these are out of scope for now, not silently missing.
+- Native per-rig CAT parsers, OmniRig COM, RX-history drag-in-compositing, CItems plugin ABI,
+  MMlink, Loglink live IPC, JASTA contest codes, CQ100 mode, legacy Windows font-switch buttons —
+  all in `docs/removed-features.md` as removed-with-a-stated-replacement (even where imperfect),
+  not silent gaps.
+
+**The actual release blocker, separate from any single feature** (see "Release gates" below): the
+project's own stated gate requires the real-hardware manual checklist to pass on Windows, Linux,
+AND macOS before any tagged release — only Linux has ever actually been run against real/virtual
+hardware. This isn't a coding task the agent can complete alone; it needs the user (or someone) to
+actually run the app against real audio/CAT hardware on a Windows and a macOS machine. Flagging
+here so it isn't lost, not adding it to the checkbox list above since "implement" isn't the right
+verb for it.
+
 ## Explicitly deferred beyond v1
 
 - Perspective correction / webcam capture ([[07-image-pipeline]]).
