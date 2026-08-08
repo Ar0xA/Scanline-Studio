@@ -83,7 +83,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private bool _isEditorOpen;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ToneMapText))]
     private SstvModeDefinition? _selectedMode;
+
+    /// <summary>The selected mode's own baseband tone range -- backs mock2's Transmit tab "Tone
+    /// map" field. A static per-mode lookup (`SstvModeDefinition.LuminanceMinHz`/`MaxHz`, e.g.
+    /// narrow-family modes override the 1500/2300 default to 2044/2300 -- confirmed real,
+    /// mode-dependent data, not a constant, see `SstvModeRegistry.cs`), not a live measurement --
+    /// deliberately NOT the roadmap's separate, harder "Occupied BW" item (a live spectral estimate
+    /// that research found likely wouldn't vary meaningfully by content anyway; explicitly deferred,
+    /// see `~/.claude/plans/wandering-glowing-otter.md`). <see langword="null"/> only when no mode
+    /// is selected, matching every other <see cref="SelectedMode"/>-derived state in this
+    /// class.</summary>
+    public string? ToneMapText => SelectedMode is { } mode
+        ? _localization.GetString("Panes.TxControls.Telemetry.ToneMapFormat", mode.LuminanceMinHz, mode.LuminanceMaxHz)
+        : null;
 
     [ObservableProperty]
     private Bitmap? _previewImage;

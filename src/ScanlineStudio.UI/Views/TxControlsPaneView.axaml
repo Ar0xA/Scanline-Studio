@@ -168,13 +168,16 @@
                     <TextBox Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
                 </StackPanel>
 
-                <!-- Visual scaffolding only below this point: none of these are exposed anywhere
-                     in ScanlineStudio.Core.Audio today (spec/14-roadmap.md backlog). ALC/Power/SWR
-                     values themselves are NOT duplicated here; the real conditional rows above
-                     already cover that. -->
+                <!-- Tone map is real (static per-mode SstvModeDefinition.LuminanceMinHz/MaxHz
+                     lookup, ToneMapText below). TX clock/Monitor audio/Occupied BW below it are
+                     still visual scaffolding only: none of these are exposed anywhere in
+                     ScanlineStudio.Core.Audio today (spec/14-roadmap.md backlog); Occupied BW
+                     specifically was researched and deliberately deferred, not just not yet done,
+                     see ~/.claude/plans/wandering-glowing-otter.md. ALC/Power/SWR values themselves
+                     are NOT duplicated here; the real conditional rows above already cover that. -->
                 <Grid Classes="kv" ColumnDefinitions="Auto,*">
                     <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMap}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMapValue}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding ToneMapText}" />
                 </Grid>
                 <Grid Classes="kv" ColumnDefinitions="Auto,*">
                     <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.TxClock}" />
