@@ -5,7 +5,72 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-08, latest, ACTIVE) — Decode-time signal telemetry, Tier A (RX GUI-blocking backend primitive).
+## Resume here (2026-08-08, latest, ACTIVE) — Gallery/logbook metadata batch (Note/Flagged/DecodeState fields + QSO-log-link).
+
+User asked to work through the "similar expose/small build" backlog (root-cause map: `ReceiveHistoryEntry`'s
+field set, structured per-decode event log, frame-action primitives, TX-side device/clock telemetry)
+and combine into one plan if genuinely small, with the auditor specifically asked to double-check
+what's safe to combine. Research found 4 items split unevenly: 3 fields (`Note`/`IsFlagged`/
+`DecodeState`) + a QSO-log-link update method all touch the exact same table/store/record — bundled
+into one plan (`~/.claude/plans/mellow-drifting-lynx.md`). The other 3 sub-items (per-decode event
+log, Abort, Re-decode, TX telemetry) stayed explicitly deferred, each with its own reason.
+
+**Different risk class from the last two shipped items**: not decoder concurrency, but SQLite schema
+migration (the first this store has ever needed) + data-loss risk on real users' existing
+`history.db` files. Two rounds of plan-readiness review caught real, code-breaking SQL bugs on
+paper: round 1 found an invalid `ALTER TABLE ... NOT NULL` sequence with no `DEFAULT` (can never
+work in SQLite), a `LIKE '%_partial_%'` backfill pattern that's a genuine data-corruption bug (`_`
+is a SQL wildcard, LIKE is case-insensitive, so it matches against the FULL path — a user's images
+folder merely containing "partial" would misclassify every completed image), and an uncredited
+retention-trim data-loss issue (the existing 32-entry ring buffer would have silently deleted
+user-typed notes/flags/QSO-links every ~32 receptions). Round 2 caught one more: the narrower
+`instr()`-based backfill fix still matched the full path, not just the filename — fixed to `GLOB`
+anchored on the real filename shape. Round 2 verdict: "yes, start building."
+
+**Shipped**: `ReceiveHistoryEntry` gained `Note` (`string?`), `IsFlagged` (`bool`), `DecodeState`
+(new `ReceiveDecodeState` enum, `Completed`/`Abandoned`, required positional param — no default, so
+the compiler enumerates every construction site rather than letting a future one silently inherit a
+wrong value). `IReceiveHistoryStore` gained `SetNoteAsync`/`SetFlaggedAsync`/`SetLinkedQsoIdAsync`
+(all `Task<bool>`, `false` = `entryId` no longer exists — a reachable case precisely because of the
+retention trim). `SqliteReceiveHistoryStore.EnsureSchema` now migrates an existing pre-migration DB
+in place (`PRAGMA table_info` probe + `ALTER TABLE ADD COLUMN`, whole sequence transactional via
+`BeginTransaction(deferred: false)`), backfilling `DecodeState` for pre-existing rows from the
+`_partial_` filename convention via `GLOB '*_partial_????????.png'`. `TrimToRetentionLimitAsync`
+gained a `WHERE` exemption so a noted/flagged/logged row survives past the 32-entry window instead
+of being silently destroyed. **Real correction found along the way**: the roadmap's "QSO-log-link
+blocked on [[08-logging]]" framing was stale — the logbook backend (`ILogbookRepository`,
+`QsoRecord.ReceivedImageId`) already existed, shipped 2026-08-07; the real gap was just a missing
+update-after-the-fact method on the RX-history side.
+
+**Code-level audit after implementation**: no blockers, but caught one real "fix now or never" issue
+— the migrated schema's column order would have permanently diverged from a fresh DB's (SQLite
+`ADD COLUMN` always appends) the moment this shipped, contradicting the code's own "byte-identical
+schemas" doc-comment claim. Harmless today (no `SELECT *` anywhere in the codebase) but permanent
+once baked into real user DBs — fixed by reordering the `ALTER TABLE` sequence to match `CREATE
+TABLE`'s column order, and softened the doc comment (true byte-identical SQL text isn't achievable
+either way — `sqlite_master` stores `CREATE TABLE` vs `ALTER TABLE` text differently — the real
+invariant is identical column set/order/defaults). Also made `BeginTransaction(deferred: false)`
+explicit rather than relying on the parameterless overload's documented-but-unverified-by-audit
+default, and strengthened two tests that were checking a weaker property than their names claimed
+(a "run twice" test that only proved "doesn't throw," a migration test that didn't check the other
+2 columns' defaults).
+
+**Verified**: full solution build clean, `Core.Logbook.Tests` 64/64 (was 55, +9 new — including a
+migration test with a deliberately-adversarial `rx_partial_saves`-named directory to prove the GLOB
+fix doesn't false-positive the way the rejected LIKE/instr approaches would have), UI.Tests 82/82,
+Application.Tests 59/59, all unaffected by this change and confirmed unbroken. `Core.Sstv.Tests`
+not re-run (unrelated assembly, unchanged since its last full green run this session). **NOT YET
+committed** — about to commit.
+
+**Next up**: per the roadmap, the remaining deferred sub-items are Abort (a decoder-state COMMAND,
+`Core.Sstv`, needs `RequestReSync`/`ForceMode`-level concurrency care — different risk class,
+separate plan), Re-decode (effectively blocked, no raw audio retained anywhere in this port),
+structured per-decode event log (real open design question on granularity — one row per image vs.
+a live per-line decoder-trace pane), and TX-side device/clock telemetry (`Core.Audio`, fully
+independent assembly — device name might already be available client-side with zero backend
+change, worth a quick check before assuming a gap).
+
+## Previously (2026-08-08) — Decode-time signal telemetry, Tier A (RX GUI-blocking backend primitive).
 
 Second item off `spec/14-roadmap.md`'s root-cause map, right after the slant/sync readouts below.
 That item's own roadmap note flagged the next one ("Decode-time signal telemetry": SNR, squelch,
