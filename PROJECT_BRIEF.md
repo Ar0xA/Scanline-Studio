@@ -5,7 +5,57 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-08, latest, ACTIVE) — Slant/sync correction readouts (RX GUI-blocking backend primitive).
+## Resume here (2026-08-08, latest, ACTIVE) — Decode-time signal telemetry, Tier A (RX GUI-blocking backend primitive).
+
+Second item off `spec/14-roadmap.md`'s root-cause map, right after the slant/sync readouts below.
+That item's own roadmap note flagged the next one ("Decode-time signal telemetry": SNR, squelch,
+BPF/AGC/notch state, buffer/clipping%, noise floor, L/R levels) as bigger and needing a plan-review
+pass first — this session did that: a research fork found the item is NOT homogeneous, split into
+3 tiers (`~/.claude/plans/steady-humming-osprey.md` has the full breakdown), only Tier A built now.
+
+**Tier A shipped, backend-only (no UI wired yet)**: `ISstvDecoder` gained `SignalPeakLevel`
+(double, peak amplitude `LevelAgc.CurMax/32768.0`), `IsLevelOverdriven` (bool, legacy's own
+`DrawLvl` red-meter-bar threshold `>= 24578.0`, NOT legacy's separate `m_OverFlow` raw-sample flag —
+a real, different legacy quantity this port's post-BPF `LevelAgc` input can't reproduce),
+`SyncFrequencyCorrectionHz` (double?, AFC's own `CorrectionHz` passthrough), and
+`BufferedSampleCount` (int, promoted from `internal`). Implemented on both `ISstvDecoder`
+implementers + 3 test `FakeSstvDecoder`s.
+
+**Tier B/C explicitly scoped OUT, not silently dropped**: true SNR/SNR-histogram/noise-floor
+(legacy has zero equivalent — `CNoise` is a noise *generator* for test/sim, not a measurement;
+inventing one needs a product decision, not a port); notch-filter state (`CNotch`, `fir.h:123`,
+entirely unported — no filter exists yet to report the state of); true L/R stereo levels (legacy
+and this port are both mono-only in the demod path; this port's `AudioChannelSource` is a channel
+*selector*, not simultaneous dual-channel capture); squelch (zero legacy grounding at all, `grep -a`
+confirmed). All four are real, separately-scoped future items, not silently skipped.
+
+**Process**: full two-round auditor plan-readiness review before any code (round 1: READY WITH
+FIXES, 3 real corrections — `IsClipping`→`IsLevelOverdriven` rename fixing a conflated-legacy-
+quantity mistake, a self-contradictory normalization/threshold pairing, and a false "0 when idle"
+claim for `BufferedSampleCount`; round 2: "yes, start building", one more fix — the
+`RestartableSstvDecoder`'s AGC-backed properties don't reset cleanly on a restart swap the way
+`SlantPpm`/`SyncOffsetSamples` do, since the swap forwards the triggering chunk to the fresh inner).
+Then a code-level audit after implementation: verdict EQUIVALENT-WITH-RISKS, no production bugs,
+but caught a real test-hygiene gap — two "unit" tests re-derived the `/32768.0`/`>= 24578.0` math
+independently instead of reading the actual `SignalPeakLevel`/`IsLevelOverdriven` properties, so a
+wrong divisor or a `>`-vs-`>=` bug would have shipped green; notably, no test anywhere asserted
+`IsLevelOverdriven == true` even once before this fix. Fixed: added `LevelAgcForTests` (matching the
+existing `SlantTrackerForTests` pattern) so tests drive the decoder's real AGC instance and assert
+against the real production properties; added a real end-to-end amplitude test (0.9/0.3 amplitude
+1200Hz tones through the actual BPF/AGC pipeline, not just direct `LevelAgc` driving); added the one
+missing post-swap assertion (`BufferedSampleCount == 50` after a swap, the actual property the
+round-2 fix was about).
+
+**Verified**: full solution build clean, `Core.Sstv.Tests` 653/653 (was 637 after the prior item;
++16 net across both audit-driven fix rounds), Application/Imaging/Logbook.Tests all green. **NOT
+YET committed** — about to commit.
+
+**Next up**: same as before this item started — Tier B (SNR/noise-floor) needs a `/adhd`-style
+product decision on what "SNR" even means for an FM-demodulated SSTV signal with no clean reference,
+not a legacy-verification pass. Otherwise, continue down the roadmap's root-cause map for the next
+GUI-blocking backend gap.
+
+## Previously (2026-08-08) — Slant/sync correction readouts (RX GUI-blocking backend primitive).
 
 Working through `spec/14-roadmap.md`'s "Root-cause map" table, starting with the item flagged there
 as cheapest: **Slant/sync correction readouts (ppm, offset px)** — the numbers existed only as
