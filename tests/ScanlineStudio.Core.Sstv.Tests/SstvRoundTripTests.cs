@@ -243,7 +243,39 @@ public class SstvRoundTripTests
     public async Task EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance(SstvModeDefinition mode, double _)
     {
         var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
-        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: MaxAveragePerChannelDelta(mode));
+        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: MaxAveragePerChannelDelta(mode), sampleRate: 44100);
+    }
+
+    // spec/14-roadmap.md's must-implement backlog previously listed these modes (Robot36, Robot72,
+    // MR73, ML180/240/280/320, Martin M2, MR115) as "still measurably exceeding tolerance at
+    // 11025Hz" -- a claim from BEFORE this file's own Robot-36-at-11025Hz investigation (Pieces
+    // 9-15+, same doc) landed its systemic per-line-cursor-rounding fix. That fix's own measured
+    // notes there ("re-ran the 11025Hz experiment... real, consistent improvement across nearly
+    // every previously-failing mode") were never turned into a permanent, committed test at the
+    // time -- this locks that result in instead of leaving it as a historical doc note. The 10.0
+    // default tolerance is used here, NOT Robot36/AVT's widened 44100Hz-specific tolerances above
+    // (those exist for a different, unrelated reason at the 44100Hz stand-in rate -- see
+    // MaxAveragePerChannelDelta's own comment); at 11025Hz every one of these modes now measures
+    // well under 10.0.
+    public static readonly TheoryData<SstvModeDefinition> ModesPreviouslyFailingAt11025Hz = new()
+    {
+        SstvModeRegistry.Robot36,
+        SstvModeRegistry.Robot72,
+        SstvModeRegistry.Mr73,
+        SstvModeRegistry.Ml180,
+        SstvModeRegistry.Ml240,
+        SstvModeRegistry.Ml280,
+        SstvModeRegistry.Ml320,
+        SstvModeRegistry.MartinM2,
+        SstvModeRegistry.Mr115,
+    };
+
+    [Theory]
+    [MemberData(nameof(ModesPreviouslyFailingAt11025Hz))]
+    public async Task EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance_At11025Hz(SstvModeDefinition mode)
+    {
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: 10.0, sampleRate: 11025);
     }
 
     // Robot 36 alone needs a raised tolerance (all other modes hold 10.0) -- diagnosed and
@@ -301,12 +333,12 @@ public class SstvRoundTripTests
         // MonoFamilyLineDurationsOnly's doc comment for why: RM8/RM12 have no chroma at all, so a
         // fixture varying R and G independently can't meaningfully round-trip through them.
         var sourceImage = CreateGrayscaleGradientTestImage(mode.ImageWidth, mode.ImageHeight);
-        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: 10.0);
+        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: 10.0, sampleRate: 44100);
     }
 
-    private static async Task AssertEncodeThenDecodeRoundTrip(SstvModeDefinition mode, IImageSource sourceImage, double maxAveragePerChannelDelta)
+    private static async Task AssertEncodeThenDecodeRoundTrip(SstvModeDefinition mode, IImageSource sourceImage, double maxAveragePerChannelDelta, int sampleRate)
     {
-        var encoder = new AnalogFmSstvEncoder(44100);
+        var encoder = new AnalogFmSstvEncoder(sampleRate);
         var samples = new List<float>();
         await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
         {
