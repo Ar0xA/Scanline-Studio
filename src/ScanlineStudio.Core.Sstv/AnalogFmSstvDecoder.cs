@@ -110,12 +110,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // desync from what those warm-ups actually need to read.
     private const int AnchorWarmupSamples = 2000;
 
-    /// <summary>Diagnostic-only: the number of samples currently physically held in
-    /// <c>_rawSamples</c> (i.e. after trimming, NOT <see cref="TotalSamplesReceived"/>). Mirrors
-    /// <c>MiniAudioCaptureSession.OverrunCount</c>'s own shape -- a raw number for a caller/test to
-    /// interpret, not a verdict. Exists so <see cref="TrimBuffers"/>'s bound can actually be verified
-    /// (a long, never-locking stream should NOT grow this linearly with total samples pushed).</summary>
-    internal int BufferedSampleCount => _rawSamples.Count;
+    /// <summary>See <see cref="ISstvDecoder.BufferedSampleCount"/> -- the number of samples
+    /// currently physically held in <c>_rawSamples</c> (i.e. after trimming, NOT
+    /// <see cref="TotalSamplesReceived"/>). Mirrors <c>MiniAudioCaptureSession.OverrunCount</c>'s
+    /// own shape -- a raw number for a caller/test to interpret, not a verdict. Originally
+    /// diagnostic-only (so <see cref="TrimBuffers"/>'s bound could be verified -- a long,
+    /// never-locking stream should NOT grow this linearly with total samples pushed), now also a
+    /// real public telemetry surface -- both uses read the exact same field, no behavior
+    /// difference.</summary>
+    public int BufferedSampleCount => _rawSamples.Count;
 
     /// <summary>Diagnostic-only: combined physical length of the persistent VIS-bit/narrow-mode-header
     /// detector caches added for Band-2 item S5 (<see cref="D11At"/>/<see cref="D12At"/>/<see cref="D19At"/>)
@@ -971,6 +974,37 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             return mode is null || tracker is null || lastPeak is not double peak
                 ? null
                 : WrapSyncOffset((int)peak, mode);
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.SignalPeakLevel"/>. <see cref="_levelAgc"/> is
+    /// decoder-lifetime (constructed once in the ctor, unlike <see cref="_slantTracker"/>'s
+    /// per-lock construction), so there is no null/not-ready case to model here -- a single plain
+    /// field read of <see cref="LevelAgc.CurMax"/>, which is itself already <c>0.0</c> (not
+    /// garbage) before its first <c>Fix()</c> window completes.</summary>
+    public double SignalPeakLevel => _levelAgc.CurMax / 32768.0;
+
+    /// <summary>See <see cref="ISstvDecoder.IsLevelOverdriven"/>. Deliberately its own independent
+    /// read of <see cref="LevelAgc.CurMax"/>, not derived from <see cref="SignalPeakLevel"/>'s own
+    /// already-divided value -- see that property's interface doc comment for why the two can
+    /// disagree by one sample generation, an accepted consequence of two separate reads, not a
+    /// bug to fix by coupling them.</summary>
+    public bool IsLevelOverdriven => _levelAgc.CurMax >= 24578.0;
+
+    /// <summary>See <see cref="ISstvDecoder.SyncFrequencyCorrectionHz"/>. Same shape as
+    /// <see cref="SlantPpm"/>'s fix above, for the same reason: <see cref="_afcTracker"/>, like
+    /// <see cref="_slantTracker"/>, is deliberately NOT nulled by <see cref="AbandonInProgressImage"/>
+    /// (see that method's own doc comment) -- so <see cref="_mode"/> must be checked explicitly,
+    /// not just the tracker reference, or this would leak an abandoned image's stale correction
+    /// for the whole AVT mid-reception training pending window. Fields read into locals once, same
+    /// TOCTOU reasoning as <see cref="SyncOffsetSamples"/>.</summary>
+    public double? SyncFrequencyCorrectionHz
+    {
+        get
+        {
+            var mode = _mode;
+            var tracker = _afcTracker;
+            return mode is null ? null : tracker?.CorrectionHz;
         }
     }
 
@@ -3752,6 +3786,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// line via <see cref="SlantTracker.ProcessLineHistoryOnly"/>. Null until <see cref="InitializeSlant"/>
     /// runs for a non-AVT mode.</summary>
     internal SlantTracker? SlantTrackerForTests => _slantTracker;
+
+    /// <summary>Test-only visibility into the decoder-lifetime <see cref="LevelAgc"/> instance --
+    /// lets a test drive <see cref="LevelAgc.Do"/>/<see cref="LevelAgc.Fix"/> directly with exact,
+    /// known values, then assert against the real <see cref="SignalPeakLevel"/>/
+    /// <see cref="IsLevelOverdriven"/> production properties (not a duplicate of their math written
+    /// independently in the test, which a code-level audit found couldn't actually discriminate a
+    /// wrong divisor or a <c>&gt;</c>-vs-<c>&gt;=</c> threshold bug).</summary>
+    internal LevelAgc LevelAgcForTests => _levelAgc;
 
     /// <summary>Test-only visibility into the within-line sample accumulator Auto Slant advances --
     /// should always satisfy 0 &lt;= this &lt; <see cref="EffectiveSamplesPerLineForTests"/> even
