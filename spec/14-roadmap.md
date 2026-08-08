@@ -4466,13 +4466,24 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   smaller deltas (facade/repository changes, not just UI) — explicitly NOT bundled into this pane.
   Delete-a-QSO and the Gallery "Log entry"/"Open in log" cross-pane wiring are also explicitly out of
   scope (see the plan file's own "Explicitly OUT of scope" section for the reasons).
-- [ ] **DSP decode-accuracy residuals at the declared 11025Hz rate** — ~1/3 of the mode table
-  (Robot36, Robot72, MR73, ML180/240/280/320, Martin M2, MR115) still measurably exceeds this
-  port's own 10.0-average-per-channel-delta round-trip tolerance at 11025Hz specifically (the
-  44100Hz test stand-in is "a pragmatic accommodation, not a hidden correctness bug," per this
-  doc's own earlier framing, ~line 47-49). Real, measured, unclosed DSP correctness work — the
-  closest thing to a genuine decode-fidelity bug still open in this port. Likely needs the
-  auditor's DSP-audit process (CLAUDE.md §7), not a quick fix.
+- [x] **DSP decode-accuracy residuals at the declared 11025Hz rate** — **stale item, closed
+  2026-08-08, no new DSP work needed.** This checklist entry was written from an old measurement,
+  before the Robot-36-at-11025Hz investigation logged earlier in this same doc (the long
+  "Pieces 9-15+"/Hilbert/pre-AGC-filter/per-line-cursor-rounding history above) actually landed its
+  fix. Re-verified two independent ways before closing, not just re-trusting an old note: (1) the
+  existing `GoldenVectorTests.cs` (real captured legacy audio, not synthetic self-consistency —
+  this doc's own history explains why that distinction matters) already passes 43/43 today,
+  including Robot36/Robot72 at 11025Hz with tolerances tightened to reflect real measured deltas
+  around 5-17, down from the mid-investigation high of 68.06; (2) added a new permanent test,
+  `SstvRoundTripTests.EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance_At11025Hz`, covering
+  every mode this checklist item named (Robot36, Robot72, MR73, ML180/240/280/320, Martin M2,
+  MR115) at the real 11025Hz rate against the standard 10.0 tolerance — all 9 pass comfortably
+  (measured ~2.3-4.9 average-per-channel delta), locking in what was previously only a historical
+  doc note from a throwaway experiment. No production DSP code changed; this was a
+  verify-and-lock-in pass, not a port, so the full auditor DSP-audit process (CLAUDE.md §7) wasn't
+  invoked — skipped per that section's own "skip for mechanical" guidance, since nothing was
+  changed for it to review. Full `Core.Sstv.Tests` suite reconfirmed green after the new test
+  (101/101 in `SstvRoundTripTests` alone, was 92).
 - [ ] **Options dialogs that are still placeholders, not real functional windows** —
   `RadioSettingsDialog`/`MacroKeyEditor`/`ColorSettingsDialog`/`LanguageSettingsDialog` (the ~50
   legacy Options-dialog items already added as disabled+tooltip placeholders, Phase-4+ backlog
