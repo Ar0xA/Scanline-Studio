@@ -4217,7 +4217,25 @@ table is a grouping/leverage view of the same gaps below, not a new inventory:
   resolution lookup so it can never disagree with what a real TX would use), wired into
   `TxControlsPaneViewModel.OutputDeviceName`. Deliberately skipped the plan+auditor-review cycle for
   this one piece specifically (user's own call) — pure settings-plumbing, no DSP fidelity or
-  decoder-concurrency risk the way the last two batches had. | `ISstvSessionService.GetConfiguredPlaybackDeviceNameAsync`, `TxControlsPaneViewModel.OutputDeviceName` | TX telemetry readouts row (device name only; sample-clock/bandwidth/monitor remain fully blocked) |
+  decoder-concurrency risk the way the last two batches had. **Occupied bandwidth investigated and
+  explicitly abandoned** (2026-08-08), not just deferred: two rounds of plan-review found the whole
+  approach was likely fundamentally wrong, not just risky to implement — `AnalogFmSstvEncoder`
+  already bandpass-filters every TX sample (`TxOutputBandpassFilter`, 700-2800Hz), so a per-
+  transmission min/max spectral-occupancy union (needed to avoid a flickering per-frame instant
+  reading, itself also a real problem the review found) is a mathematical extreme-value statistic
+  that would very likely just converge to that FIXED FILTER'S OWN skirts on every transmission of
+  every mode, regardless of image content — reporting the encoder's own known characteristic back
+  as if it were a live measurement, not a real diagnostic. User's own call after seeing this: skip
+  it, ship the free "Tone map" static per-mode lookup instead (below) rather than build a
+  measurement likely to be non-functional-but-plausible-looking. Full reasoning preserved at
+  `~/.claude/plans/wandering-glowing-otter.md` in case a future pass wants to revisit with a
+  different measurement approach (e.g. reporting min/max EDGES rather than width, or measuring
+  pre-bandpass-filter samples instead of the already-filtered TX output this pass measured).
+  **"Tone map" freebie shipped instead** (2026-08-08): `SstvModeDefinition.LuminanceMinHz`/`MaxHz`
+  (already real, mode-dependent data — e.g. narrow-family modes override the 1500/2300 default to
+  2044/2300) exposed as `TxControlsPaneViewModel.ToneMapText`, zero new DSP, zero new wiring beyond
+  a `[NotifyPropertyChangedFor]` computed property. Also skipped the plan+auditor cycle (same
+  low-risk-UI-plumbing reasoning as device name). | `ISstvSessionService.GetConfiguredPlaybackDeviceNameAsync`, `TxControlsPaneViewModel.OutputDeviceName`/`ToneMapText` | TX telemetry readouts row (device name + tone map done; sample-clock/occupied-bandwidth/monitor remain blocked — occupied bandwidth now abandoned, not just unbuilt) |
 | **OCR/QRZ lookup** | Nothing | Frame metadata card's callsign/grid fields, gallery search on those |
 
 Already covered, not gaps: TX power/ALC/SWR history (`TxControlsPaneViewModel.TelemetryHistory`, real

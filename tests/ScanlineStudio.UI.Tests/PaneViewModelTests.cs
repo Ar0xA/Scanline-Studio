@@ -103,6 +103,55 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void TxControlsPaneViewModel_NoModeSelected_ToneMapTextIsNull()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance);
+
+        Assert.Null(vm.SelectedMode);
+        Assert.Null(vm.ToneMapText);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_ModeSelected_ToneMapTextIsPopulated()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance);
+
+        Assert.NotNull(vm.SelectedMode);
+        Assert.NotNull(vm.ToneMapText);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_SelectedModeChanges_RaisesPropertyChangedForToneMapText()
+    {
+        var narrowMode = TestMode with { Id = "narrow" }; // LuminanceMinHz/MaxHz not overridden here -- this test only needs a DIFFERENT mode instance, not different Hz values, to prove the reactive wiring fires
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode, narrowMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance);
+
+        var raisedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
+
+        vm.SelectedMode = narrowMode;
+
+        Assert.Contains(nameof(vm.ToneMapText), raisedProperties);
+    }
+
+    [Fact]
+    public void ToneMapFormat_MatchesMock2sDisplayConvention_ForBothTheDefaultAndANarrowModesRange()
+    {
+        // Real-value check independent of FakeLocalizationService (which returns the raw key, not
+        // the formatted string, so it can't verify this) -- confirms the actual locale format
+        // string (assets/locale/en.json's Panes.TxControls.Telemetry.ToneMapFormat) produces
+        // mock2's own literal display text for both the default range and a real narrow-family
+        // override (SstvModeRegistry.cs's Mn73/Mn110-style 2044/2300 override).
+        const string format = "{0:0}–{1:0} Hz"; // en dash, matching this key's own value in en.json
+
+        Assert.Equal("1500–2300 Hz", string.Format(System.Globalization.CultureInfo.InvariantCulture, format, 1500.0, 2300.0));
+        Assert.Equal("2044–2300 Hz", string.Format(System.Globalization.CultureInfo.InvariantCulture, format, 2044.0, 2300.0));
+    }
+
+    [AvaloniaFact]
     public void TxControlsPaneViewModel_ModeTimingRows_ComputedFromEachAvailableModesRealTiming()
     {
         var scottie1 = new SstvModeDefinition(

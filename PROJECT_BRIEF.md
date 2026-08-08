@@ -5,7 +5,61 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-08, latest, ACTIVE) — TX output device name (RX GUI-blocking backend primitive, deliberately no-ceremony).
+## Resume here (2026-08-08, latest, ACTIVE) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
+
+Picked "occupied bandwidth" next (user's own choice over the cheaper static alternative, after
+device name shipped). Research first: confirmed via `grep -a` that legacy has zero equivalent
+(legacy's one FFT instance only ever runs on RX input, never TX — genuinely an "invent" not "port"
+task). Drafted a plan, sent for auditor plan-review.
+
+**Round 1** caught 4 real design bugs in the initial per-frame approach: wrong quantity entirely (a
+per-STFT-frame instantaneous reading would flicker 40-300Hz values 21x/sec next to a static-looking
+"2.31 kHz" mock field), no exception isolation on the new TX push (a display bug could abort a live
+transmission), wrong push site (inside a back-pressure retry loop, would corrupt the FFT
+accumulator via duplicate pushes), missing View/locale wiring (would ship a VM property nothing
+displays). Redesigned around a per-transmission running union (min/max Hz edges merged across every
+frame, reset at transmission start) to fix the "wrong quantity" problem specifically.
+
+**Round 2** found the redesign introduced 2 NEW bugs (the RX `WaterfallPaneViewModel` coalescing
+pattern silently drops frames — fine for a live display, wrong for an accumulator that must see
+every frame; the un-reset FFT accumulator would splice a hard discontinuity across every
+transmission boundary, permanently poisoning that transmission's whole reading) — but more
+importantly, traced through `AnalogFmSstvEncoder`'s own `TxOutputBandpassFilter` (a real, confirmed
+700-2800Hz bandpass already applied to every TX sample) and reasoned that a min/max union over an
+entire transmission is an extreme-value statistic that would very likely just converge to that
+FIXED FILTER'S OWN skirts (~2-2.5kHz) on every transmission regardless of image content —
+reporting the encoder's own known, constant characteristic back as if it were a live per-image
+measurement. Recommended: measure first with real code before committing further design work, or
+reconsider the whole approach.
+
+**User's call, presented with that finding**: skip occupied bandwidth entirely (not worth building
+something likely non-functional-but-plausible-looking), ship the free "Tone map" field instead —
+`SstvModeDefinition.LuminanceMinHz`/`MaxHz` already has real, mode-dependent data (confirmed: narrow-
+family modes override the 1500/2300 default to 2044/2300, not a constant) with zero new DSP or
+wiring needed. Full plan/reasoning preserved at `~/.claude/plans/wandering-glowing-otter.md` for a
+future pass that might want to revisit with a different measurement point (e.g. pre-bandpass-filter
+samples) or report min/max edges instead of width.
+
+**Shipped**: `TxControlsPaneViewModel.ToneMapText` (computed, `[NotifyPropertyChangedFor(nameof(SelectedMode))]`-
+driven, reacts live to mode selection), a new localized format string
+(`Panes.TxControls.Telemetry.ToneMapFormat` = `"{0:0}–{1:0} Hz"`, replacing the old hardcoded
+`ToneMapValue` placeholder — real prose/format strings go through the locale layer, not baked into
+XAML, learned directly from round 2's parallel finding about the (abandoned) Occupied BW field's own
+Hz-formatting question). Skipped the plan+auditor cycle for this specific shipped piece (same
+low-risk-UI-plumbing reasoning as the device-name item) — no DSP correctness or concurrency risk,
+just a static per-mode lookup.
+
+**Verified**: full solution build clean, `UI.Tests` 88/88 (was 84, +4 new),
+`Core.Localization.Tests` 7/7 unaffected. **NOT YET committed** — about to commit.
+
+**Next up**: sample-clock offset and monitor-while-TX remain deferred (genuinely new
+instrumentation/audio-routing features, not exposures) — no immediate plan to build either. Otherwise
+continue down the roadmap's root-cause map: `ReceiveHistoryEntry`'s remaining callsign/grid/SNR
+fields (blocked on OCR/Tier B), structured per-decode event log, decoder Abort (frame-action
+primitives' other piece, `Core.Sstv`, needs `RequestReSync`/`ForceMode`-level concurrency care), or
+OCR/QRZ lookup (large, separately-scoped).
+
+## Previously (2026-08-08) — TX output device name (RX GUI-blocking backend primitive, deliberately no-ceremony).
 
 Next roadmap item after the Gallery/logbook batch below: TX-side device/clock telemetry. Research
 found the roadmap's framing overstated the size — only "device name" is a cheap exposure; the other
