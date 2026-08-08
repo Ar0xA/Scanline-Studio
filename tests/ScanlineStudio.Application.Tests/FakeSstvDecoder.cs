@@ -42,6 +42,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance
         LastForcedMode = mode;
     }
 
+    public double? SlantPpm { get; set; }
+
+    public int? SyncOffsetSamples { get; set; }
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
         PushedSamples.Add(samples);

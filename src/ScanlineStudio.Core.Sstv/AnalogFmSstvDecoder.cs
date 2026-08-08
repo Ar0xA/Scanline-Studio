@@ -917,6 +917,63 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// thread marshaling, no synchronization context, no background dispatch).</summary>
     public void ForceMode(SstvModeDefinition mode) => Interlocked.Exchange(ref _forcedMode, mode);
 
+    /// <summary>See <see cref="ISstvDecoder.SlantPpm"/>. Thin wrapper over
+    /// <see cref="SlantTracker.DriftPpm"/>, but NOT simply <c>_slantTracker?.DriftPpm</c> -- auditor
+    /// finding: <see cref="_slantTracker"/> alone is not null in every case the interface documents as
+    /// null. <see cref="AbandonInProgressImage"/> (the AVT training-resettle hand-off,
+    /// `sstv.cpp`'s equivalent lock-abandon path) nulls <see cref="_mode"/> but deliberately leaves
+    /// <see cref="_slantTracker"/> alive (see that method's own doc comment) for up to ~7.1s while a
+    /// new AVT training lock resolves -- without the explicit <see cref="_mode"/> check here, a
+    /// polling GUI would keep reading the ABANDONED image's stale drift for that whole window, not
+    /// null. Reads both fields into locals once, not twice -- see <see cref="SyncOffsetSamples"/>'s
+    /// own doc comment for why a cross-thread poll needs that even though this class documents no
+    /// general thread-safety guarantee beyond the single-producer-thread contract every other member
+    /// already assumes.</summary>
+    public double? SlantPpm
+    {
+        get
+        {
+            var mode = _mode;
+            var tracker = _slantTracker;
+            return mode is null ? null : tracker?.DriftPpm;
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.SyncOffsetSamples"/>. Deliberately reads
+    /// <see cref="_lastLineSyncPeakPosition"/>, NOT <see cref="ComputeAutoSyncPosition"/>'s own live
+    /// <see cref="_slantLinePeakPosition"/> input -- that field is a within-line accumulator reset to
+    /// 0 at the end of every completed line, so a caller reading it from outside the decode loop
+    /// (exactly what a public property getter is) would not reliably observe the value for whichever
+    /// line was current when <see cref="PushSamples"/> last returned (see that field's own doc
+    /// comment). <see cref="_lastLineSyncPeakPosition"/> is the field already designed for this
+    /// exact after-the-fact read -- <see cref="PerformReSync"/>'s own deadband check uses it the same
+    /// way.
+    ///
+    /// Auditor finding: each of <see cref="_mode"/>/<see cref="_slantTracker"/>/
+    /// <see cref="_lastLineSyncPeakPosition"/> is read into a local exactly ONCE, not re-read between
+    /// the null-check and its use -- a caller on a different thread than whichever one calls
+    /// <see cref="PushSamples"/> (the documented intended use: a GUI polling this on a timer) can race
+    /// a decode-thread write that nulls one of these fields (<see cref="ResetReSyncState"/> alone runs
+    /// at the end of EVERY image) between two separate reads of the same field. An earlier version of
+    /// this getter checked <c>_lastLineSyncPeakPosition.HasValue</c> then separately read
+    /// <c>_lastLineSyncPeakPosition.Value</c> -- two non-volatile field loads of the same
+    /// <see cref="Nullable{T}"/>, which a race between them can turn into a thrown
+    /// <see cref="InvalidOperationException"/> instead of a clean null. Reading once into a local and
+    /// pattern-matching it removes that window entirely (a snapshot read can still be stale, but never
+    /// throws).</summary>
+    public int? SyncOffsetSamples
+    {
+        get
+        {
+            var mode = _mode;
+            var tracker = _slantTracker;
+            var lastPeak = _lastLineSyncPeakPosition;
+            return mode is null || tracker is null || lastPeak is not double peak
+                ? null
+                : WrapSyncOffset((int)peak, mode);
+        }
+    }
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
         // Consumed before _reSyncRequested below: legacy resolves the same simultaneous-command
@@ -1061,9 +1118,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // Wrap is ONE-SIDED ONLY (`> half ? -= lineWidth : unchanged`) -- Main.cpp:3888-3889 has no
     // `< -half` arm, unlike ApplySlantTracking's own two-sided wrap for `relative`, which is a
     // different quantity and must not be copied here.
-    private int ComputeAutoSyncPosition(SstvModeDefinition mode)
+    private int ComputeAutoSyncPosition(SstvModeDefinition mode) => WrapSyncOffset((int)_slantLinePeakPosition, mode);
+
+    /// <summary>Shared wrap math both <see cref="ComputeAutoSyncPosition"/> (fed the live within-line
+    /// <see cref="_slantLinePeakPosition"/> accumulator) and <see cref="SyncOffsetSamples"/> (fed the
+    /// safe-to-read-after-the-fact <see cref="_lastLineSyncPeakPosition"/> -- see that field's own doc
+    /// comment on why the two are not interchangeable as *inputs*, even though this formula is
+    /// identical either way) use on their respective sync-position input.</summary>
+    private int WrapSyncOffset(int syncPos, SstvModeDefinition mode)
     {
-        var syncPos = (int)_slantLinePeakPosition;
         var ofp = ComputeSyncPeakOffsetSamples(mode);
         var raw = syncPos - ofp;
         var half = (int)(_effectiveSamplesPerLine / 2.0);

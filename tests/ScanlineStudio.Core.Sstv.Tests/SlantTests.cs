@@ -296,6 +296,212 @@ public class SlantTests
     }
 
     [Fact]
+    public void SlantTracker_DriftPpm_ZeroBeforeAnyCorrectionCommits()
+    {
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine: SampleRate * 0.15, thresholdLinePositions: [64, 128, 160, 220]);
+        Assert.Equal(0.0, tracker.DriftPpm);
+    }
+
+    [Fact]
+    public void SlantTracker_DriftPpm_MatchesLegacyDrawSlantInfoFormulaAfterACorrectionCommits()
+    {
+        // Main.cpp:5537: (SSTVSET.m_SampFreq - sys.m_SampFreq) * 1e6 / sys.m_SampFreq -- re-derived
+        // here independently from the committed corrected rate, not by reading DriftPpm's own
+        // implementation, so this actually discriminates a wrong formula.
+        const double nominalSamplesPerLine = SampleRate * 0.15;
+        const double trueSamplesPerLine = nominalSamplesPerLine * 1.01;
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+
+        double? lastResult = null;
+        var trueCumulative = 0.0;
+        var assumedCumulative = 0.0;
+        var assumedSamplesPerLine = nominalSamplesPerLine;
+        for (var line = 0; line < 300 && lastResult is null; line++)
+        {
+            trueCumulative += trueSamplesPerLine;
+            assumedCumulative += assumedSamplesPerLine;
+            lastResult = tracker.ProcessLine(trueCumulative - assumedCumulative);
+        }
+
+        Assert.NotNull(lastResult);
+        var expectedPpm = (lastResult!.Value - SampleRate) * 1_000_000.0 / SampleRate;
+        Assert.Equal(expectedPpm, tracker.DriftPpm, tolerance: 0.001);
+    }
+
+    [Fact]
+    public void AnalogFmSstvDecoder_BeforeAnyLock_SlantPpmAndSyncOffsetSamplesAreNull()
+    {
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+        Assert.Null(decoder.SlantPpm);
+        Assert.Null(decoder.SyncOffsetSamples);
+    }
+
+    [Fact]
+    public void AnalogFmSstvDecoder_AvtMode_SlantPpmAndSyncOffsetSamplesStayNull()
+    {
+        // AVT has no Auto Slant tracking -- InitializeSlant nulls _slantTracker for it (see
+        // AnalogFmSstvDecoder's own class doc comment and SlantTracker's "Deliberately NOT ported"
+        // note). ForceMode(Avt) locks and announces immediately -- the simplest way to reach a
+        // locked-but-AVT state without a full encode/decode round trip (same pattern
+        // ForceModeTests.cs uses).
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+        decoder.ForceMode(SstvModeRegistry.Avt);
+        decoder.PushSamples(new float[64]);
+
+        Assert.Equal(SstvModeRegistry.Avt.Id, decoder.ModeForTests?.Id);
+        Assert.Null(decoder.SlantPpm);
+        Assert.Null(decoder.SyncOffsetSamples);
+    }
+
+    [Fact]
+    public async Task AnalogFmSstvDecoder_AfterARealDecode_SyncOffsetSamplesMatchesManualComputationFromExposedTestFields()
+    {
+        // Sampled from inside LineDecoded, not after PushSamples returns -- a bulk push that
+        // completes the whole image also runs EndOfImage() before PushSamples returns, which nulls
+        // _mode/_slantTracker/_lastLineSyncPeakPosition (see EndOfImage's own doc comment) -- the
+        // property must read back null at that point (already covered by the pre-lock/AVT tests
+        // above), so this test needs to observe mid-decode state instead.
+        var mode = SstvModeRegistry.Robot36;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(SampleRate);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+        int? actual = null;
+        int? expected = null;
+        var observations = 0;
+        decoder.LineDecoded += _ =>
+        {
+            if (decoder.LastLineSyncPeakPositionForTests is not { } syncPeakPosition)
+            {
+                return;
+            }
+
+            observations++;
+            var ofp = decoder.SyncPeakOffsetSamplesForTests!.Value;
+            var raw = (int)syncPeakPosition - ofp;
+            var half = (int)(decoder.EffectiveSamplesPerLineForTests / 2.0);
+            expected = raw > half ? raw - (int)decoder.EffectiveSamplesPerLineForTests : raw;
+            actual = decoder.SyncOffsetSamples;
+        };
+
+        decoder.PushSamples(samples.ToArray());
+
+        Assert.True(observations > 0, "LineDecoded never fired with a non-null LastLineSyncPeakPositionForTests -- test setup didn't exercise the code path under test.");
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task AnalogFmSstvDecoder_AfterASlantCorrectionCommits_SlantPpmMatchesTheUnderlyingTrackersOwnValue()
+    {
+        // Reuses AnalogFmSstvDecoder_RealisticClockMismatch's own 500ppm scenario (SlantTests.cs
+        // above) -- realistic enough that Auto Slant actually commits a correction during the
+        // decode, so this exercises the non-zero path, not just the zero-before-any-commit default.
+        // Sampled from inside LineDecoded -- see the sibling SyncOffsetSamples test's own doc comment
+        // on why reading back after PushSamples returns would only ever observe the post-EndOfImage
+        // null state.
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(230, 230, 230));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = 44100;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.0005);
+
+        var encoder = new AnalogFmSstvEncoder(trueSampleRate);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate);
+        double? lastNonZeroTrackerPpm = null;
+        double? lastNonZeroPropertyPpm = null;
+        decoder.LineDecoded += _ =>
+        {
+            var trackerPpm = decoder.SlantTrackerForTests?.DriftPpm;
+            if (trackerPpm is not (null or 0.0))
+            {
+                lastNonZeroTrackerPpm = trackerPpm;
+                lastNonZeroPropertyPpm = decoder.SlantPpm;
+            }
+        };
+
+        decoder.PushSamples(samples.ToArray());
+
+        Assert.NotNull(lastNonZeroTrackerPpm); // sanity: a correction actually committed during the decode
+        Assert.Equal(lastNonZeroTrackerPpm, lastNonZeroPropertyPpm);
+    }
+
+    [Fact]
+    public async Task AnalogFmSstvDecoder_DuringAPendingAvtTrainingWindow_SlantPpmIsNullDespiteTheAbandonedTrackerStillBeingAlive()
+    {
+        // Auditor finding (real bug, fixed): AbandonInProgressImage (the S7 mid-reception AVT
+        // hand-off, AvtNoiseTolerantDetectionTests.cs's own
+        // MidReception_RealAvtTransmissionAfterAnotherMode_ChunkedPush_StaysBounded exercises the same
+        // scenario) nulls _mode but deliberately leaves _slantTracker alive while a new AVT training
+        // lock resolves -- a real window, chunked-push-only, up to ~7.1s (that sibling test's own doc
+        // comment). A single bulk push (tried first here) doesn't reach this window at all: with the
+        // whole AVT header already buffered, TryResolveAvtTraining resolves same-call and
+        // InitializeSlant(Avt) (which nulls _slantTracker itself, independently of this fix) runs
+        // before DecodeRestarted ever fires -- confirmed by direct inspection, not assumed. Only a
+        // chunked push that stops mid-training actually leaves _mode null while the OLD tracker is
+        // still alive. A first version of SlantPpm was plain `_slantTracker?.DriftPpm`, which would
+        // have kept reporting the abandoned image's stale drift for that whole pending window instead
+        // of null -- this test reproduces the real window and pins the fixed (mode-checked) behavior.
+        // The precondition assertion below proves the exploit window actually occurred during this
+        // run, not just in theory -- without it, this test would pass vacuously if the window was
+        // never hit.
+        var firstMode = SstvModeRegistry.MartinM1;
+        var firstImage = CreateGradientTestImage(firstMode.ImageWidth, firstMode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var firstSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(firstMode, firstImage))
+        {
+            firstSamples.Add(sample);
+        }
+
+        var truncatedFirstSamples = firstSamples.Take(firstSamples.Count * 3 / 10).ToArray();
+
+        var avtMode = SstvModeRegistry.Avt;
+        var avtPixels = new Rgb24[avtMode.ImageWidth * avtMode.ImageHeight];
+        Array.Fill(avtPixels, new Rgb24(10, 20, 30));
+        var avtImage = new ArrayImageSource(avtMode.ImageWidth, avtMode.ImageHeight, avtPixels);
+        var avtSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(avtMode, avtImage))
+        {
+            avtSamples.Add(sample);
+        }
+
+        var combined = truncatedFirstSamples.Concat(avtSamples).ToArray();
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        var sawPendingWindow = false;
+
+        const int chunkSize = 500;
+        for (var offset = 0; offset < combined.Length; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, combined.Length - offset);
+            decoder.PushSamples(combined.AsMemory(offset, length));
+
+            if (decoder.ModeForTests is null && decoder.SlantTrackerForTests is not null)
+            {
+                sawPendingWindow = true;
+                Assert.Null(decoder.SlantPpm);
+            }
+        }
+
+        Assert.True(sawPendingWindow, "Never observed _mode == null with a still-alive SlantTrackerForTests -- test setup no longer exercises the pending-AVT-training window this test targets.");
+    }
+
+    [Fact]
     public void SlantTracker_AfterACommit_BaselineResetsInsteadOfStayingStale()
     {
         // ultracode audit finding #9: legacy's UpdateSampFreq calls InitAutoStop immediately after
