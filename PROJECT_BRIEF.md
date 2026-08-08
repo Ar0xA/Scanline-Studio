@@ -2,6 +2,96 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
+## Resume here (2026-08-08, latest, ACTIVE) — Auto Sync (automatic drift-triggered ReSync), the third
+and last piece of the "SyncRestart toggle + Auto Stop's save-on-abandon unblock" backlog item (the
+other two shipped earlier: commits `9346fb8`/`431d43e`/`05e90fa`). Plan file
+`~/.claude/plans/glimmering-orbiting-falcon.md`. Implemented and tested. Sent for a code-level review
+round. **Not yet committed.**
+
+**What it is**: an automatic trigger for the EXACT SAME skip-and-suppress action the already-shipped
+manual ReSync button performs (`Main.cpp:3917-3925`/`:3950-3958` vs `KRFSClick`,
+`Main.cpp:14004-14020`) -- confirmed via `Main.cpp:3968`'s `!m_AutoSyncCount` gate matching this
+port's own already-shipped `_slantCorrectionsDisabledForRestOfImage`. What's genuinely new is the
+drift-DETECTION state machine deciding when to auto-fire it: a 16-entry ring buffer of raw sync-
+offset observations, an 8-line warmup, a clustering-consistency check, and two distinct trigger
+thresholds (a coarse first-correction and a finer continuous-drift correction with its own cooldown).
+
+**Correction to an earlier, wrong assumption**: this was originally described as blocked on the
+still-unbuilt "RX buffer mode" roadmap item. Traced fully and found `sys.m_UseRxBuff` only ever
+appears as a bare truthy check inside `AutoStopJob`, never `==1`/`==2` -- simplifies to constant
+`true` under this port's own already-established convention (matches `TryResolveSyncAnchorCorrection`'s
+own precedent). Not actually blocked.
+
+**Review process**: 2 full plan-readiness rounds before any code was written (round 1: 14 findings,
+4 blockers -- most severe was a wrong anchor-base computation that would have caused continuous
+spurious auto-resyncs on a perfectly-synced signal; round 2: confirmed round 1's fixes, found 2 more
+real issues -- a missing non-null guard variant and, most notably, that the discriminator between
+"dominant" and "minority" `ISstvDecoder` event orderings needed to be the STASH's own mode identity
+checked first, not live state, mirroring the exact same class of bug the abandoned-image-save
+feature's own code-level review found). Auditor's own closing assessment: "write those six in, and
+this is ready... I'd not expect a third round." Proceeded to implementation.
+
+**Two more real bugs found during testing itself, beyond the 20 already caught by plan review**:
+
+1. **The round-2-resolved "reset Auto Sync's state on every SlantTracker correction commit, for
+   consistency with `SlantTracker.Reset()`'s own precedent" decision was empirically wrong.** An
+   18-combination sweep (3 modes x 6 realistic clock-mismatch percentages) showed ZERO triggers in
+   every case -- `SlantTracker`'s own frequent corrections were wiping Auto Sync's history before it
+   could ever accumulate enough to detect anything. Fixed by removing that reset call entirely (Auto
+   Sync's state now only resets at a fresh lock). On reflection this is also MORE legacy-faithful, not
+   just pragmatic: legacy's own `InitAutoStop`-after-commit call is the SAME call this plan's own
+   round-1 research already proved is dead code without the not-built RX-buffer-replay feature -- real
+   legacy never resets Auto Sync's state mid-image either.
+
+2. **The wrap/base regression test (guarding round-1's own most severe finding) didn't actually catch
+   that bug, for two independent reasons**, both found via a proper revert-fix-confirm-fail check:
+   the test used Robot36, whose sync segment happens to be first-in-line (making the wrong and right
+   anchor bases coincide for that one mode -- switched to ScottieS1, matching this port's own
+   established precedent for this exact class of confusion); and asserting only on trigger COUNT
+   didn't catch it either, since a CONSTANT wrong bias reads as a stable, self-consistent cluster to
+   the clustering check (nothing looks like a "jump" if every reading is uniformly offset the same
+   way) -- fixed by adding a direct capture of `ComputeAutoSyncPosition`'s own real return value
+   (`LastComputedAutoSyncPositionForTests`, set inside `TryAutoSync` at the only moment it's valid to
+   observe) and asserting on ITS magnitude directly.
+
+**Related finding, not a bug**: smooth continuous clock-rate mismatch never organically triggers Auto
+Sync at all (confirmed even after fixing bug #1 above) -- that's `SlantTracker`'s own job (continuous,
+regression-based); Auto Sync is for sudden discontinuities (cluster-based). Matches legacy's real
+design intent, not just this port's quirk. Proving the trigger mechanism genuinely works needed a
+real audio splice (silent samples inserted mid-stream, simulating a sync glitch) rather than a clock
+mismatch -- see `AutoSyncTests.cs`'s `SuddenPositionJump_EventuallyTriggersAutoSync`.
+
+**Tests** (`AutoSyncTests.cs`, 5): the corrected wrap/base regression, the splice-based real-trigger
+proof, its disabled-setting negative control (same splice scenario, genuine A/B), AVT exclusion, and
+`PerformReSync`'s own new observation-count reset. Both major fixes independently re-verified via
+their own revert-fix-confirm-fail checks.
+
+**Code-level review round found one more real bug, plus a wrong legacy citation.** The
+`(m_SyncMax-m_SyncMin)>5000` signal-strength gate (and this port's own `_pendingSkipSamples==0`
+guard) had been hoisted into the OUTER `_autoSyncObservationCount>=8` condition instead of living
+inside each of the two trigger branches, where legacy actually has it (`Main.cpp:3908`/`:3946`).
+This wrongly suppressed the `n>=4` reference-position update (`Main.cpp:3941`, gated in real legacy
+ONLY on the observation count and `n>=4`, nothing else) on weak-signal lines -- both missed triggers
+(reference never re-arms during a weak stretch) and potential spurious ones (a stale pre-weak-stretch
+reference can still satisfy the jump test once the signal recovers, where legacy's freshly-reanchored
+one would not). **Fixed** by moving both gates inside each trigger branch, matching legacy's real
+structure. Also corrected: two comments had claimed legacy's own `InitAutoStop`-after-commit call is
+"dead code without RX buffer mode" -- wrong, `sys.m_UseRxBuff` defaults to 1 so that call DOES run in
+real legacy; the actual reason not to copy it is that legacy immediately REPLAYS every buffered line
+afterward, rebuilding its own state rather than losing it, which this port has no equivalent for.
+The underlying design decision (don't reset on commit) stays correct, just for the corrected reason.
+Test coverage for the weak-signal-gating fix itself has an accepted, documented gap (no dedicated
+test -- would need real audio engineering comparable to the splice test's own effort, deliberately
+not built given this session's already extensive scope). Re-verified after the fix: full solution
+build clean, `Core.Sstv.Tests` 624/624 (unchanged count, golden vectors unaffected),
+`Application.Tests` 48/48, `UI.Tests` 78/78.
+
+**Not yet committed** — implemented, tested, and code-level reviewed (with the review's own finding
+now fixed and re-verified). Awaiting user go-ahead to commit/push. This closes out the
+"SyncRestart/Auto Sync/Auto Stop" backlog item's Auto Sync piece; Auto Stop itself (the
+erratic-signal-detection-and-stop trigger, shares the clustering code but is a distinct action)
+remains a real, tracked, not-yet-started follow-up.
+
 ## Resume here (2026-08-08, latest, ACTIVE) — "SyncRestart toggle + Auto Stop's save-on-abandon
 unblock" backlog item (user picked this scoped slice over the full 3-sub-feature "Auto Sync/Auto
 Stop/SyncRestart" item after research showed it was really 3 independent behaviors bundled by one
