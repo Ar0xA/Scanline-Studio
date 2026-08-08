@@ -149,6 +149,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private double _swrCutoffThreshold = 3.0;
 
+    /// <summary>The CONFIGURED TX playback device's display name (see
+    /// <see cref="ISstvSessionService.GetConfiguredPlaybackDeviceNameAsync"/>'s own doc comment for
+    /// the "configured, not necessarily currently in-flight" caveat) -- backs mock2's Transmit tab
+    /// "Device" field. <see langword="null"/> until the best-effort initial load below completes,
+    /// or if no device is configured / the configured device is no longer present (same
+    /// non-throwing contract the service method itself has -- this is a passive display field, not
+    /// something that should surface an error banner). Loaded once at construction, same convention
+    /// as <see cref="AutoFollowRxMode"/>/<see cref="SwrCutoffEnabled"/> above -- not re-fetched on a
+    /// live settings change while this pane stays open; a future pass can add that if it turns out
+    /// to matter in practice.</summary>
+    [ObservableProperty]
+    private string? _outputDeviceName;
+
     public TxControlsPaneViewModel(
         ISstvSessionService sstvSession,
         IImageFileLoader imageFileLoader,
@@ -186,6 +199,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _ = RefreshStockLibraryAsync();
         _ = LoadTxPaneUiSettingsAsync();
         _ = LoadSafetySettingsAsync();
+        _ = LoadOutputDeviceNameAsync();
     }
 
     /// <summary>Fired when a picked source's original image has loaded and a
@@ -266,6 +280,20 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.LoadTxPaneUiSettingsFailed(_logger, ex);
+        }
+    }
+
+    private async Task LoadOutputDeviceNameAsync()
+    {
+        try
+        {
+            OutputDeviceName = await _sstvSession.GetConfiguredPlaybackDeviceNameAsync();
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, same reasoning as LoadTxPaneUiSettingsAsync above -- a failure here
+            // leaves the field null (no device shown) rather than blocking construction.
+            Log.LoadOutputDeviceNameFailed(_logger, ex);
         }
     }
 
@@ -690,6 +718,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting TxPaneUiSettings failed")]
         public static partial void PersistTxPaneUiSettingsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured TX output device name failed")]
+        public static partial void LoadOutputDeviceNameFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading radio safety settings failed")]
         public static partial void LoadSafetySettingsFailed(ILogger logger, Exception ex);
