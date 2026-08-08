@@ -565,26 +565,51 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     private async Task<AudioDeviceInfo> ResolveDeviceAsync(bool forCapture, CancellationToken ct)
     {
-        var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
-        var deviceId = forCapture ? settings.CaptureDeviceId : settings.PlaybackDeviceId;
-        if (deviceId is null)
-        {
-            var kind = forCapture ? "capture" : "playback";
-            Log.NoDeviceConfigured(_logger, kind);
-            throw new InvalidOperationException($"No {kind} audio device configured -- set one in settings before starting a session.");
-        }
-
-        await _deviceEnumerator.RefreshAsync(ct).ConfigureAwait(false);
-        var devices = forCapture ? _deviceEnumerator.InputDevices : _deviceEnumerator.OutputDevices;
-        var device = devices.FirstOrDefault(d => d.Id == deviceId);
+        var device = await TryResolveDeviceAsync(forCapture, ct).ConfigureAwait(false);
         if (device is null)
         {
             var kind = forCapture ? "capture" : "playback";
+            var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
+            var deviceId = forCapture ? settings.CaptureDeviceId : settings.PlaybackDeviceId;
+            if (deviceId is null)
+            {
+                Log.NoDeviceConfigured(_logger, kind);
+                throw new InvalidOperationException($"No {kind} audio device configured -- set one in settings before starting a session.");
+            }
+
+            await _deviceEnumerator.RefreshAsync(ct).ConfigureAwait(false);
+            var devices = forCapture ? _deviceEnumerator.InputDevices : _deviceEnumerator.OutputDevices;
             Log.ConfiguredDeviceNotFound(_logger, kind, deviceId, devices.Count);
             throw new InvalidOperationException($"Configured {kind} device '{deviceId}' was not found among currently available devices.");
         }
 
         return device;
+    }
+
+    /// <summary>Non-throwing counterpart to <see cref="ResolveDeviceAsync"/>, extracted from it (not
+    /// duplicated) so <see cref="GetConfiguredPlaybackDeviceNameAsync"/>'s passive readout use and
+    /// <see cref="ResolveDeviceAsync"/>'s action-that-should-fail-loudly use share one lookup --
+    /// <see langword="null"/> for either "no device configured" or "configured device not found",
+    /// not distinguished here (the caller-facing exception messages for those two cases still live
+    /// in <see cref="ResolveDeviceAsync"/> alone, the only caller that needs them).</summary>
+    private async Task<AudioDeviceInfo?> TryResolveDeviceAsync(bool forCapture, CancellationToken ct)
+    {
+        var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
+        var deviceId = forCapture ? settings.CaptureDeviceId : settings.PlaybackDeviceId;
+        if (deviceId is null)
+        {
+            return null;
+        }
+
+        await _deviceEnumerator.RefreshAsync(ct).ConfigureAwait(false);
+        var devices = forCapture ? _deviceEnumerator.InputDevices : _deviceEnumerator.OutputDevices;
+        return devices.FirstOrDefault(d => d.Id == deviceId);
+    }
+
+    public async Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default)
+    {
+        var device = await TryResolveDeviceAsync(forCapture: false, ct).ConfigureAwait(false);
+        return device?.Name;
     }
 
     private async Task<AudioDeviceSettings> LoadAudioSettingsAsync(CancellationToken ct)
