@@ -5,7 +5,36 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-08, latest, ACTIVE) — Gallery/logbook metadata batch (Note/Flagged/DecodeState fields + QSO-log-link).
+## Resume here (2026-08-08, latest, ACTIVE) — TX output device name (RX GUI-blocking backend primitive, deliberately no-ceremony).
+
+Next roadmap item after the Gallery/logbook batch below: TX-side device/clock telemetry. Research
+found the roadmap's framing overstated the size — only "device name" is a cheap exposure; the other
+3 sub-items (sample-clock offset, occupied bandwidth, monitor-while-TX) are all real new
+instrumentation/features, explicitly deferred with their own reasons (see `spec/14-roadmap.md`'s
+updated root-cause map row). User's own call: skip the plan+2-round-auditor-review cycle for this
+one piece specifically, since it's pure UI/Application-layer settings plumbing with no DSP fidelity
+or decoder-concurrency risk (unlike the last two batches) — implemented directly.
+
+**Shipped**: `ISstvSessionService` gained `GetConfiguredPlaybackDeviceNameAsync` (non-throwing;
+extracted `SstvSessionService.ResolveDeviceAsync`'s device-lookup into a shared
+`TryResolveDeviceAsync` so this can never disagree with what a real `TransmitAsync` call would
+actually use — same lookup, not a second independently-fallible one). Wired into
+`TxControlsPaneViewModel.OutputDeviceName`, loaded once at construction via the same best-effort
+fire-and-forget convention `LoadTxPaneUiSettingsAsync`/`LoadSafetySettingsAsync` already use.
+Confirmed the existing `ResolveDeviceAsync` throwing-behavior tests (`StartReceivingAsync_NoCaptureDeviceConfigured_Throws`,
+`TransmitAsync_NoPlaybackDeviceConfigured_Throws`) still pass unchanged — the refactor preserved
+real TX/RX device-resolution behavior exactly, only added a non-throwing sibling path.
+
+**Verified**: full solution build clean, `Application.Tests` 62/62 (was 59, +3 new),
+`UI.Tests` 84/84 (was 82, +2 new). **NOT YET committed** — about to commit.
+
+**Next up**: occupied bandwidth (user's own pick for after this) — the FFT/waterfall machinery
+already exists (`RadixTwoFft`/`WaterfallSource`) but is wired to RX capture only; needs real new
+wiring to point at TX audio, plus an actual measurement-definition decision (what threshold counts
+as "occupied"?) before scoping further — likely worth the full plan+auditor cycle given that open
+design question, unlike this device-name piece.
+
+## Previously (2026-08-08) — Gallery/logbook metadata batch (Note/Flagged/DecodeState fields + QSO-log-link).
 
 User asked to work through the "similar expose/small build" backlog (root-cause map: `ReceiveHistoryEntry`'s
 field set, structured per-decode event log, frame-action primitives, TX-side device/clock telemetry)

@@ -207,6 +207,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         return Task.CompletedTask;
     }
 
+    public string? ConfiguredPlaybackDeviceName { get; set; }
+
+    public Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default) => Task.FromResult(ConfiguredPlaybackDeviceName);
+
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     public void RaiseModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);

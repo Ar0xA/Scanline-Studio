@@ -83,6 +83,26 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void TxControlsPaneViewModel_Constructed_LoadsTheConfiguredOutputDeviceName()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], ConfiguredPlaybackDeviceName = "USB Audio CODEC" };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("USB Audio CODEC", vm.OutputDeviceName);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_Constructed_NoPlaybackDeviceConfigured_OutputDeviceNameStaysNull()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], ConfiguredPlaybackDeviceName = null };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.OutputDeviceName);
+    }
+
+    [AvaloniaFact]
     public void TxControlsPaneViewModel_ModeTimingRows_ComputedFromEachAvailableModesRealTiming()
     {
         var scottie1 = new SstvModeDefinition(

@@ -98,6 +98,18 @@ public interface ISstvSessionService : IAsyncDisposable
 
     Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default);
 
+    /// <summary>The display name of the currently CONFIGURED TX playback device (`AudioDeviceSettings.PlaybackDeviceId`
+    /// resolved against the device enumerator), for a UI readout -- e.g. mock2's Transmit tab
+    /// "Device" field. Reuses the exact same settings/enumerator lookup <see cref="TransmitAsync"/>
+    /// itself uses to pick the real device, so this can never disagree with what a TX would actually
+    /// use -- but non-throwing (<see langword="null"/> instead of an exception) for no device
+    /// configured or a configured device no longer present, since this is a passive readout, not an
+    /// action that should fail loudly. Reflects the CONFIGURED device, not necessarily whatever
+    /// device an already-in-flight <see cref="TransmitAsync"/> call resolved earlier under different
+    /// settings -- a real, accepted approximation for a passive display, not a live "what is TX
+    /// using right now" guarantee.</summary>
+    Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default);
+
     /// <summary>Whether <see cref="SetPttLockAsync"/>'s lock is currently engaged.</summary>
     bool IsPttLocked { get; }
 

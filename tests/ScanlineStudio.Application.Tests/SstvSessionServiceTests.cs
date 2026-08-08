@@ -245,6 +245,36 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public async Task GetConfiguredPlaybackDeviceNameAsync_ValidDevice_ReturnsItsName()
+    {
+        var (service, _, _, _, _, _) = CreateService();
+
+        var name = await service.GetConfiguredPlaybackDeviceNameAsync();
+
+        Assert.Equal("Playback", name);
+    }
+
+    [Fact]
+    public async Task GetConfiguredPlaybackDeviceNameAsync_NoPlaybackDeviceConfigured_ReturnsNull_NotThrow()
+    {
+        var (service, _, _, _, _, _) = CreateService(playbackDeviceId: null);
+
+        var name = await service.GetConfiguredPlaybackDeviceNameAsync();
+
+        Assert.Null(name);
+    }
+
+    [Fact]
+    public async Task GetConfiguredPlaybackDeviceNameAsync_ConfiguredDeviceNoLongerPresent_ReturnsNull_NotThrow()
+    {
+        var (service, _, _, _, _, _) = CreateService(playbackDeviceId: "playback-vanished");
+
+        var name = await service.GetConfiguredPlaybackDeviceNameAsync();
+
+        Assert.Null(name);
+    }
+
+    [Fact]
     public async Task TransmitAsync_KeysPttOnThenOffAroundPlayback()
     {
         var (service, _, _, _, radioSession, _) = CreateService();
