@@ -18,4 +18,6 @@ public sealed record OptionsSnapshot(
     string? HamlibSerialPort,
     int? HamlibBaudRate,
     string? HamlibPttType,
-    string? Callsign);
+    string? Callsign,
+    string? OperatorName,
+    string? OperatorGrid);
