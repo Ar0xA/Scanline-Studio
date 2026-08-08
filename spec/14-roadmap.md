@@ -4067,9 +4067,9 @@ candidate list to pull from once that's further along, not a commitment.
 **Logbook/QSO tracking** ([[08-logging]]'s plan already matches legacy reality on format/ADIF/
 QRZ.com/cty.dat scope — these are the deltas found):
 - QSL sent/received flags — legacy has them, `QsoRecord` doesn't. Trivial.
-- Maidenhead grid locator — missing from legacy AND the current plan, but standard in modern
-  ADIF and present in QSSTV's own field set. Trivial; matters for real ADIF interop with
-  third-party loggers.
+- ~~Maidenhead grid locator~~ — **correction (2026-08-08)**: this claim was stale by the time the
+  logbook backend actually shipped (2026-08-07) — `QsoRecord.GridSquare` already exists
+  (`src/ScanlineStudio.Abstractions/Logbook/QsoRecord.cs`), verified directly, not a gap.
 - Duplicate-QSO detection (by callsign, or callsign+band) — real legacy feature
   (`LogSet.cpp`/`LogFile.h`'s `m_CheckBand`), not in the current plan. Small.
 
@@ -4450,11 +4450,15 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
 
 - [ ] **Logbook UI pane** — the single clearest "backend done, invisible to the user" gap. Verified
   directly (not assumed): `AdifExporter.cs`/`AdifImporter.cs`/`QrzLogbookUploader.cs`/
-  `GridTrackerStreamer.cs` all real and already built (`src/ScanlineStudio.Core.Logbook/`), but
-  `src/ScanlineStudio.UI/` has zero `Logbook`-named ViewModel/View — no pane to browse/edit QSOs or
-  drive import/export exists. Also folds in the smaller logbook deltas from the Phase-4+ backlog
-  above: QSL sent/received flags, Maidenhead grid locator field, duplicate-QSO detection by
-  callsign/band (all "Trivial"/"Small" per that section).
+  `GridTrackerStreamer.cs` all real and already built (`src/ScanlineStudio.Core.Logbook/`), plus a
+  complete Application-layer facade already exists too (`ILogbookSessionService`, DI-registered,
+  `LogQsoAsync`/`SearchAsync`/`ExportAdifFileAsync`/`ImportAdifFileAsync`) — this is a UI-only gap,
+  not backend work. `src/ScanlineStudio.UI/` has zero `Logbook`-named ViewModel/View. Currently
+  being scoped (2026-08-08), see `~/.claude/plans/` for the active plan file once drafted.
+  QSL sent/received flags and duplicate-QSO detection (by callsign/band) remain real, separate,
+  smaller deltas (facade/repository changes, not just UI) — explicitly NOT bundled into the UI-pane
+  plan; Maidenhead grid locator was a stale claim, `QsoRecord.GridSquare` already exists (correction
+  above).
 - [ ] **DSP decode-accuracy residuals at the declared 11025Hz rate** — ~1/3 of the mode table
   (Robot36, Robot72, MR73, ML180/240/280/320, Martin M2, MR115) still measurably exceeds this
   port's own 10.0-average-per-channel-delta round-trip tolerance at 11025Hz specifically (the
@@ -4527,6 +4531,15 @@ verb for it.
 - The full QSL/template designer and `.mtm` import ([[15-template-designer]]) — specified but deferred; [[07-image-pipeline]]'s minimal `ImageOverlay` covers text-only TX overlay in the meantime.
 - SSTV repeater/beacon mode ([[06-sstv-dsp]], legacy `RepSet.cpp`).
 - Contest logging (JASTA application, `MMCG.DEF` JARL area database) — out of scope entirely, not just deferred; see [docs/removed-features.md](../docs/removed-features.md).
+
+## Verify later with human — items neither the agent nor the auditor could resolve alone
+
+Populated during autonomous work on the "Must-implement backlog" above (2026-08-08 onward, user's
+own instruction: "IF you get stumped by bugs, solution directions, ask the auditor for help. If the
+auditor can't figure it out, put it on the 'verify later with human' list" — this is that list, not
+a place to silently give up; every entry needs a one-line reason it's genuinely stuck, not just
+"medium effort"). Empty as of this list's creation — the Logbook UI pane item currently in progress
+is still in its normal plan-review flow, nothing routed here yet.
 
 ## Release gates
 
