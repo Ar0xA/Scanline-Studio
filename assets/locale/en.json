@@ -323,7 +323,7 @@
   "Panes.TxId.Tail": "Tail",
   "Panes.TxId.TailValue": "CW after frame",
   "Panes.TxControls.Telemetry.ToneMap": "Tone map",
-  "Panes.TxControls.Telemetry.ToneMapValue": "1500–2300 Hz",
+  "Panes.TxControls.Telemetry.ToneMapFormat": "{0:0}–{1:0} Hz",
   "Panes.TxControls.Telemetry.TxClock": "TX clock",
   "Panes.TxControls.Telemetry.TxClockValue": "48 000.12 Hz",
   "Panes.TxControls.Telemetry.MonitorAudio": "Monitor audio",
