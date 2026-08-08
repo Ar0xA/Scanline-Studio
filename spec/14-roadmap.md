@@ -4203,7 +4203,21 @@ table is a grouping/leverage view of the same gaps below, not a new inventory:
   blocked, no raw audio is retained anywhere in this port. | `ISstvDecoder` has no abort; `LinkedQsoId`
   now settable post-save via `SetLinkedQsoIdAsync` | RX frame actions (Abort/Re-decode still
   blocked; Copy-to-TX untouched), Gallery's "Log entry"/"Open in log" (now real) |
-| **TX-side device/clock telemetry** (output device name, sample-clock offset, occupied bandwidth, monitor-while-TX) | Nothing exposed in `Core.Audio` | TX telemetry readouts row |
+| ~~**TX-side device/clock telemetry**~~ (output device name, sample-clock offset, occupied
+  bandwidth, monitor-while-TX) — **device-name piece done** (2026-08-08), the other 3 confirmed
+  bigger than this row's original framing, not just unexposed: sample-clock offset needs genuinely
+  new instrumentation with no reusable RX analog (`SlantPpm`'s drift-detection mechanism depends on
+  a reference signal TX doesn't have); occupied bandwidth has real FFT machinery already built
+  (`RadixTwoFft`/`WaterfallSource`) but wired to RX capture only — pointing it at TX audio is real
+  new wiring, and reducing a spectrum to a single "occupied bandwidth" number needs an actual
+  measurement-definition decision, not a lookup; monitor-while-TX is a genuinely new audio-routing
+  feature (a second concurrent local-playback stream), not an exposure. Device name turned out to
+  live entirely in the UI/Application layer, not `Core.Audio` at all: `ISstvSessionService` gained
+  `GetConfiguredPlaybackDeviceNameAsync` (non-throwing, reuses `TransmitAsync`'s own device-
+  resolution lookup so it can never disagree with what a real TX would use), wired into
+  `TxControlsPaneViewModel.OutputDeviceName`. Deliberately skipped the plan+auditor-review cycle for
+  this one piece specifically (user's own call) — pure settings-plumbing, no DSP fidelity or
+  decoder-concurrency risk the way the last two batches had. | `ISstvSessionService.GetConfiguredPlaybackDeviceNameAsync`, `TxControlsPaneViewModel.OutputDeviceName` | TX telemetry readouts row (device name only; sample-clock/bandwidth/monitor remain fully blocked) |
 | **OCR/QRZ lookup** | Nothing | Frame metadata card's callsign/grid fields, gallery search on those |
 
 Already covered, not gaps: TX power/ALC/SWR history (`TxControlsPaneViewModel.TelemetryHistory`, real
