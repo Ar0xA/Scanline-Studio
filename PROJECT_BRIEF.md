@@ -2,7 +2,210 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-08, latest, ACTIVE) — Auto Stop (`sys.m_AutoStop`, erratic/weak-signal
+## Resume here (2026-08-08, latest, ACTIVE) — Operator-profile setting + minimal TX-macro engine.
+**Implemented, full solution build clean, all test projects green (630/630 Core.Sstv.Tests
+unaffected, 82/82 UI.Tests (was 78, +4 new), 59/59 Application.Tests). NOT YET COMMITTED** —
+awaiting user go-ahead.
+
+**Scope correction made before writing any code, worth remembering**: the gap-analysis session that
+originally framed this item was wrong on two counts, both caught by fresh research rather than
+trusted at face value. (1) `OperatorSettings.Callsign` already existed (shipped in `247fde7`,
+already wired into ADIF export) — the "confirmed via full-tree grep, zero real hits" claim was
+false. (2) The "Identification card (FSK/CW/Tail ID)" is NOT actually unblocked by a profile
+setting at all — it's blocked on the whole FSK/CW-ID audio subsystem, which THIS project already
+investigated and explicitly deferred earlier (see `spec/14-roadmap.md`'s own note: "much larger
+than a smaller item... TX + RX + a wholly new CW/Morse subsystem"). Building a setting doesn't
+change that; Identification stays blocked regardless. **Real scope actually delivered**: `Outgoing-
+metadata`'s callsign/name/grid fields, and the overlay editor's `TX-macro token substitution` +
+`insert-field picker` — 2 of the original 4 claimed unblocks, not 4.
+
+**Second surprise, also found before coding**: legacy's real macro engine (`MacroText`,
+`Main.cpp:10679-10833`) is not "insert my callsign" — it's a full QSO-context templating engine
+with tokens for HIS callsign/name/QTH, RST exchange both directions, and time-of-day greeting
+phrases, all sourced from live "current contact" form fields (`HisCall`/`HisName`/`HisQTH`/
+`HisRST`) this port has no UI concept for at all. Scoped down (user's explicit choice, "minimal
+macro engine now") to only the tokens sourceable from `OperatorSettings` + the system clock: `%m`
+(callsign, legacy-exact), `%D`/`%T` (UTC date/time, legacy-exact), `{name}`/`{grid}` (new,
+non-legacy — legacy has no "my name"/"my QTH" token at all; added deliberately per user's own
+real-world observation of other stations' overlays showing exactly this, and matching mock2's own
+"MY NAME"/"MY GRID" insert-field chips already in the mockup). His-*/RST/greeting tokens
+deliberately deferred, need a "current QSO" form this port doesn't have — same class of deferral as
+CW-ID itself, documented not silently dropped.
+
+**Also resolved, a real ham-radio-knowledge exchange worth keeping**: user initially thought
+QTH/name/notes seen on other stations' received pictures were transmitted digitally (guessed VIS
+header, then FSK-ID). Neither is right in the way assumed: VIS is a fixed few-bit mode-announce
+code with no room for free text by design (part of the cross-software interop standard); FSK-ID
+(`OutputFSKID`, `Main.cpp:6904-6965`) IS technically a generic ASCII-over-FSK packet (not
+callsign-limited at the protocol level — worth remembering if FSK-ID is ever built later, no
+protocol ceiling to work around) but isn't what casual operators use for this. Real answer: it's
+overlay text baked directly into the image pixels, requiring no special decode support on the
+receiving end — exactly the mechanism this piece extends.
+
+**Implementation**: `OperatorSettings` (`ScanlineStudio.Application`) gained `Name`/`Grid` (nullable
+strings, matching `Callsign`'s existing pattern) — threaded through `OptionsSnapshot`/
+`OptionsSettingsService`/`OptionsWindowViewModel`/`OptionsWindowView.axaml` alongside the existing
+Callsign field, following that plumbing's own established shape exactly. New `IMacroTextResolver`/
+`MacroTextResolver` (`ScanlineStudio.Application`, pure/stateless, DI-registered singleton) resolves
+`%`-tokens char-by-char (matching legacy's real semantics including an unrecognized-token-or-literal-
+`%%`-both-resolve-to-`%%` quirk, `Main.cpp:10817-10819`) then `{}`-tokens via plain `.Replace`.
+`OverlayElementViewModel` gained a `ResolveMacros` delegate (same "set once at creation time"
+pattern as its existing `RemoveCommand`) and a computed `ResolvedText` property — the canvas preview
+binds to `ResolvedText` (so typing `%m` shows your actual callsign live, not the literal token), and
+`ToImageOverlayElement()` now bakes `ResolvedText` into the image sent to `ApplyOverlay`, NOT raw
+`Text` — this was almost a real bug (an early version would have transmitted literal `%m` text in
+the actual TX'd image) caught by writing `Overlay_BakesResolvedTextIntoTheAppliedImage_...` before
+considering the feature done. Overlay editor's 12 mock2 "insert field" chips: only the 5 backed by
+real data now have a `Command` (MY CALL/MY GRID/MY NAME/DATE/UTC → `InsertFieldCommand`, appends the
+token to the selected element's raw text) — the other 7 (HIS CALL/HIS GRID/FREQ/MODE/HIS RSV/DIST/
+BEAM) stay exactly as they were, literal non-functional scaffolding, since they need the deferred
+QSO-form concept.
+
+**Tests**: `MacroTextResolverTests` (new, 10), `OperatorSettingsTests` (extended, 2, including an
+explicit old-settings-file-still-round-trips backward-compatibility case), 4 new
+`TxImageEditorPaneViewModelTests` (resolved-text-not-raw-template live preview, the
+bakes-into-applied-image regression proof above, insert-field append, insert-field no-op with
+nothing selected). All existing `TxControlsPaneViewModel`/`TxImageEditorPaneViewModel` test call
+sites updated for the new constructor parameter (`IMacroTextResolver`) via a `CreateEditor`/
+`CreateViewModel` helper pattern already established in those test files.
+
+**Not yet committed** — awaiting user go-ahead. Next up per user's own priority ordering: the
+other item flagged alongside this one, slant/sync correction readouts (exposing already-computed
+internal fields as public properties on `ISstvDecoder` — flagged earlier this session as "closer to
+add a public property than add new DSP", likely the cheapest remaining item in the RX/DSP-adjacent
+backlog).
+
+## Resume here (2026-08-08, superseded by the entry above) — RX buffer mode: investigated in full
+this session, decision reached: **NOT WORTH BUILDING NOW**, plan shelved rather than discarded (not
+a "deliberately NOT next" deferral this time — a researched, auditor-confirmed priority call).
+Original entry text preserved below for the full research trail.
+
+## Resume here (2026-08-08, superseded by the entry above) — RX buffer mode + high-precision
+
+## Resume here (2026-08-08, superseded by the entry above) — RX buffer mode + high-precision
+slant/sync replay actions: **investigated in full this session, decision reached: NOT WORTH
+BUILDING NOW, plan shelved rather than discarded.**
+
+**What was built this session (all research/planning, zero code)**: a full legacy function map
+(`Main.cpp:4958-5870`, `sstv.cpp:1615-1650`) confirming `sys.m_UseRxBuff` stages a rolling
+**post-demodulation** buffer (discriminator output + sync envelope, NOT raw audio — legacy replay
+re-renders already-demodulated data, never re-decodes), consumed by 5 manual/semi-automatic
+actions (`ReSyncSSTV`, `CorrectSlant`, `UpdateSampFreq`, `RedrawAdjustSync`, `RedrawSSTV`). A design
+fork was resolved via auditor consult: this port's own `_rawSamples`/`TrimBuffers` retention was
+correctly rejected as the wrong substrate (would force re-demodulation, and touches the one method
+in this codebase with the most documented bug history); the right shape is an independent
+per-image replay store of two post-demod series, reusing this port's EXISTING per-sample data
+(`_demodulatedFrequencies`, `SyncEnvelopeDetector`'s output) rather than duplicating raw audio.
+
+**Plan went through 4 review rounds, each finding genuine new bugs (not style nits), never fully
+closing**: round 1 (6 blockers — wrong automatic-trigger attribution, missing the real
+`SlantTracker`-commit-triggered retroactive mechanism, guard scoped as a blanket skip instead of 4
+specific action sites, `ReSyncSSTV`'s own ~60-line mode-constant table omitted, store coordinate
+space undefined across a skip, post-replay cursor reconciliation completely unspecified); round 2
+(fixed all 6, found 3 MORE in the fixes themselves — reconciliation math still in the wrong
+coordinate space, the store not truncated after a rewind causing a re-append collision, the replay
+guard at the wrong layer entirely, needed inside `SlantTracker.TryComputeCorrection` not at the
+decoder call site); round 3 (fixed those 3, found 2 more — a self-contradicting reconciliation spec
+that would silently discard a partial line's samples on every rate-corrected replay, 3 helper
+signatures using the decoder's fixed sample rate instead of the rate actually being tried, matching
+a real legacy `SetSampFreq()`-before-peak-search ordering this port had missed); round 4 (auditor
+drafted concrete C# for all 3 remaining gaps, plus independently flagged its own uncertainty about
+the sign of one term — Hilbert group-delay direction — rather than guessing, and left explicit
+negative-OFS handling for code-review time). Plan file, left in a **near-buildable but never fully
+auditor-approved** state, intentionally kept rather than deleted:
+`~/.claude/plans/rippling-anchoring-heron.md`.
+
+**Why building was called off, not just "still has findings"**: asked the auditor directly "is
+this worth it, or is the port already good enough" and got a reasoned no. It independently
+re-derived `SlantTracker`'s real convergence behavior (not assumed) and found the actual visible
+defect legacy's own correction ladder produces is capped at **roughly 6px of skew on the top ~8%
+of an image**, only in the subset of receptions with a large clock mismatch and a clean signal —
+because the cases where the forward tracker is SLOW to converge are exactly the cases where the
+per-line drift is small, so accumulated skew stays sub-pixel regardless. There is no real-world
+scenario found where forward-only correction leaves an image visibly, badly skewed. Separately
+corrected a standing assumption from earlier in this session: of the "3 manual precision actions"
+buffer mode would add, only ONE is genuinely new (`PerformReSync`, the already-shipped manual
+ReSync button, turned out to already be a faithful line-for-line port of the real legacy function,
+not an approximation as previously believed) — and that one gap (phase-shift/click-to-realign) has
+a ~90%-fidelity alternative needing NONE of this machinery: horizontally rotate already-rendered
+rows and shift the live sync offset forward, no replay store, no reconciliation, no `TrimBuffers`/
+`SlantTracker` changes.
+
+**Deciding factor, stated plainly by the auditor**: the payoff is invisible precisely where the
+defect-generating scenario is slow (small residual), and only visible where it's already fast
+(small residual, capped by the same ladder) — while the implementation cost concentrates entirely
+in `AnalogFmSstvDecoder`'s cursor/retention reconciliation and `SlantTracker`'s commit path, the
+two places in this codebase with the most documented history of silent, test-passing bugs (a
+non-decaying bug-discovery rate across all 4 rounds — round 3 found bugs IN round 2's fixes).
+Against 2 backlog items sitting right next to it flagged as an order of magnitude cheaper AND more
+user-visible (operator-profile setting, slant/sync readouts as a public-property exposure), the
+ratio didn't clear the bar.
+
+**Explicitly not lost work**: the plan document stays valid and re-usable — revisit if (a) real
+captures ever show a visible top-of-image defect users actually complain about, or (b) the
+deferred `CorrectSlant`/`RedrawAdjustSync` sub-features become desirable later and would share the
+same store, or (c) `AnalogFmSstvDecoder`'s cursor/retention logic gets consolidated enough that the
+reconciliation piece stops being the risky part.
+replay actions (`spec/14-roadmap.md`'s Phase 4+ backlog, "RX/TX quality-of-life" section), then the
+other RX/DSP-adjacent telemetry gaps below. **User's own instruction**: work through the "RX and
+other DSP-adjacent issues" before the GUI-unblocking items (operator-profile, etc.) surfaced by the
+gap-analysis session immediately below. **No code written yet for this — pure research/planning
+starting point**, captured now per explicit user request ("just write it all out so I can /clear").
+
+**What RX buffer mode actually is (legacy)**: a rolling raw-audio+sync staging buffer
+(`CSSTVDEM::m_StgBuf`/`m_StgB12`, allocated by `OpenCloseRxBuff`, `sstv.cpp:1626-1639`, gated on
+`sys.m_UseRxBuff` which defaults to 1, `Main.cpp:899`) that captures every decoded line's raw sample
+data (`m_StgBuf`) and sync-envelope data (`m_StgB12`) as reception proceeds, up to
+`dp->m_RxBufAllocSize`. Written incrementally during normal per-line decode (`Main.cpp:4999-5010`,
+and again at `CopyStgBuf`, `Main.cpp:5234-5256`). Consumed by a substantial cluster of legacy
+functions spanning roughly `Main.cpp:5260-5870` (not yet individually traced this session — found via
+grep, not read) including: `UpdateSampFreq` (`:5590-5627`, replays the whole buffer through
+`DrawSSTV`→`AutoStopJob` after a sample-rate correction, `m_ASDis=1` suppressing Auto Sync/Auto Stop
+triggers only during that replay), a second near-identical replay block for slant recalculation
+(`:5670-5730`ish), and `RedrawSSTV` (`:5742-5864`ish, a thin wrapper delegating to the same pattern).
+This is almost certainly also where the "high-precision sync" menu-item functions operate (the
+`ReSyncSSTV` 32-line envelope fold already traced and found NOT to be the real ReSync button's own
+mechanism, per the already-done "Manual ReSync button" entry in `spec/14-roadmap.md` — that fold
+likely reads FROM this same buffer).
+
+**Why this matters, already flagged in 3 separate places this session**: every one of Auto Sync's own
+"don't reset detection state on every SlantTracker commit" and "don't copy legacy's
+InitAutoStop-after-commit call" design decisions (see the Auto Sync/Auto Stop entries below) is
+justified by "this port has no replay mechanism, so legacy's real net effect (reset-then-immediately-
+rebuild-via-replay) can't be reproduced, and not resetting is closer than resetting-without-rebuilding."
+**Building real RX buffer mode would let those decisions be revisited for full fidelity**, not just
+accepted as a documented gap. This is the single biggest lever for closing the last known Auto
+Sync/Auto Stop fidelity gaps, not a standalone unrelated feature.
+
+**Scope warning already in the roadmap doc, worth repeating**: "medium, DSP-adjacent... flag
+carefully, don't treat as a plain UI toggle." This is a real buffering/replay subsystem touching the
+core decode loop, not a settings checkbox — expect this to need the full research→plan→2-round
+auditor plan-review→implement-in-pieces→code-level-review workflow, likely at HIGH effort given the
+DSP/protocol-porting stakes (per `feedback_effort_level_by_work_type` memory).
+
+**Concrete next step**: a fresh, dedicated research pass reading `Main.cpp:4958-5870` and
+`sstv.cpp:1600-1650` in full (not just the grep hits above) to build the real function map before
+drafting any plan — this session only located the pieces via `grep -na`, did not read them.
+
+**Other RX/DSP-adjacent gaps to work through after RX buffer mode** (per this session's gap-analysis
+pass, also now documented in `spec/14-roadmap.md`'s new "Root-cause map" table, mock2 section):
+- **RX input-chain telemetry** (squelch, BPF, notch/AGC, buffer, clipping %, noise floor, L/R level
+  meters) — nothing measured anywhere in `Core.Audio`/`Core.Sstv` today. Medium-high, several
+  independent DSP measurements needed, not one feature.
+- **Per-line SNR / luminance histogram / calibration-tone-offset readouts** ("Signal quality" card)
+  — no per-line SNR or histogram computation exists in the decode pipeline. Medium.
+- **Slant/sync correction readouts** (ppm, offset px) — the raw numbers already exist as
+  `private`/`internal ...ForTests` fields inside `AnalogFmSstvDecoder` (built for Auto
+  Sync/ReSync's own internal logic) but nothing public exposes them on `ISstvDecoder` yet — likely
+  the cheapest of this group, closer to "add a public property" than "add new DSP."
+
+**Deliberately NOT next, per explicit user instruction**: the operator-callsign/profile setting —
+identified this session as the single highest-leverage GUI-unblocking gap (unblocks 4 separate mock2
+cards: Identification, Outgoing-metadata, CW-ID/TX-macro token substitution, overlay insert-field
+picker) — but the user explicitly chose to work the RX/DSP-adjacent list first. Don't jump to it
+without being asked again.
+
+## Resume here (2026-08-08, superseded by the entry above) — Auto Stop (`sys.m_AutoStop`, erratic/weak-signal
 detector that stops reception and re-arms auto-detection). This is the LAST of the three sub-features
 `TMmsstv::AutoStopJob` bundles (Auto Sync shipped as `4ecfea6`, see the entry directly below; KRSA
 sample-rate auto-calibration stays permanently out of scope, no toggle/UI exists for it). Plan file

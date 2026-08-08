@@ -159,7 +159,7 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:OverlayElementViewModel">
-                                <TextBlock Text="{Binding Text}"
+                                <TextBlock Text="{Binding ResolvedText}"
                                            Foreground="White"
                                            Background="#66000000"
                                            Canvas.Left="{Binding LeftPixels}"
@@ -233,21 +233,34 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
-                <!-- New mock2 scaffolding: insert-field token chips (no Command this pass). -->
+                <!-- Insert-field token chips. Only the 5 backed by real data this pass (MY CALL/MY
+                     GRID/MY NAME/DATE/UTC, sourced from OperatorSettings + system clock via
+                     MacroTextResolver) get a Command; HIS CALL/HIS GRID/FREQ/MODE/HIS RSV/DIST/BEAM
+                     need a "current QSO" form concept this port doesn't have yet
+                     (spec/14-roadmap.md's TX-macro/CW-ID backlog entry), so they're left as
+                     literal, non-functional scaffolding, unchanged from before. Clicking a wired
+                     chip appends its token to the selected overlay element's raw Text (no
+                     caret-position tracking; append is simplest and matches what "insert" means
+                     for the other chips' future no-selection-yet state too). -->
                 <Border Classes="cardInner">
                     <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                         <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" />
                         <WrapPanel>
                             <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip1}" />
                             <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip2}" />
-                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip3}" />
-                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip4}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
+                                    Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
+                                    Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
                             <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip5}" />
                             <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip6}" />
-                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip7}" />
-                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip8}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
+                                    Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
+                                    Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
                             <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip9}" />
-                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip10}" />
+                            <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
+                                    Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
                             <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip11}" />
                             <Button Classes="chip" Content="{loc:Translate Panes.TxImageEditor.Chip12}" />
                         </WrapPanel>

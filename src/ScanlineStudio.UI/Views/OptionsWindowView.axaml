@@ -249,6 +249,18 @@
                                 </StackPanel>
                             </Border>
 
+                            <!-- Name/Grid: no legacy MMSSTV equivalent (its own macro engine has no
+                                 "my name"/"my QTH" token at all), added to back mock2's own "MY
+                                 NAME"/"MY GRID" overlay insert-field chips and the TX-macro engine. -->
+                            <Border Classes="cardInner">
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Tx.OperatorName}" />
+                                    <TextBox Text="{Binding OperatorName}" Width="200" HorizontalAlignment="Left" />
+                                    <TextBlock Classes="label" Text="{loc:Translate Options.Tx.OperatorGrid}" />
+                                    <TextBox Text="{Binding OperatorGrid}" Width="200" HorizontalAlignment="Left" />
+                                </StackPanel>
+                            </Border>
+
                             <!-- Disabled placeholder: legacy's YONIQ-fork-specific QRZ.com lookup
                                  toggle; legacy hardcodes a personal API password for this, which
                                  is not being resurrected in any form; only the bare enable concept

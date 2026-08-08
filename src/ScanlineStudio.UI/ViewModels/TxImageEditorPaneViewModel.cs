@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
+using ScanlineStudio.Application;
 using ScanlineStudio.UI.Imaging;
 
 namespace ScanlineStudio.UI.ViewModels;
@@ -39,6 +40,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private readonly IImageSource _workingCopy;
     private readonly SstvModeDefinition _targetMode;
     private readonly ITransmitImagePreparer _preparer;
+    private readonly IMacroTextResolver _macroTextResolver;
+    private readonly OperatorSettings _operatorSettings;
 
     [ObservableProperty]
     private NormalizedRect _cropRect = new(0, 0, 1, 1);
@@ -58,11 +61,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     public TxImageEditorPaneViewModel(
         IImageSource originalSource,
         SstvModeDefinition targetMode,
-        ITransmitImagePreparer preparer)
+        ITransmitImagePreparer preparer,
+        IMacroTextResolver macroTextResolver,
+        OperatorSettings operatorSettings)
     {
         _originalSource = originalSource;
         _targetMode = targetMode;
         _preparer = preparer;
+        _macroTextResolver = macroTextResolver;
+        _operatorSettings = operatorSettings;
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
         WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
@@ -130,11 +137,32 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [RelayCommand]
     private void AddOverlayElement()
     {
-        var element = new OverlayElementViewModel { ImageWidth = WorkingCopyWidth, ImageHeight = WorkingCopyHeight, RemoveCommand = RemoveOverlayElementCommand };
+        var element = new OverlayElementViewModel
+        {
+            ImageWidth = WorkingCopyWidth,
+            ImageHeight = WorkingCopyHeight,
+            RemoveCommand = RemoveOverlayElementCommand,
+            ResolveMacros = text => _macroTextResolver.Resolve(text, _operatorSettings),
+        };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
         RecomputePreview();
+    }
+
+    /// <summary>Backs the overlay editor's "Insert field" chips -- appends a macro token (e.g.
+    /// <c>%m</c>, <c>{grid}</c>) to the currently selected overlay element's raw <see cref="OverlayElementViewModel.Text"/>.
+    /// A no-op with nothing selected, matching every other selection-dependent action in this
+    /// editor (no error, no auto-select).</summary>
+    [RelayCommand]
+    private void InsertField(string? token)
+    {
+        if (string.IsNullOrEmpty(token) || SelectedOverlayElement is not { } element)
+        {
+            return;
+        }
+
+        element.Text += token;
     }
 
     [RelayCommand]

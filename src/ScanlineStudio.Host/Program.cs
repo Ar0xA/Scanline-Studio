@@ -189,6 +189,7 @@ internal static partial class Program
         // Crop/Resize/ApplyOverlay pipeline both TxImageEditorPaneViewModel's live preview and
         // TxControlsPaneViewModel's mode-change reflow run against.
         hostBuilder.Services.AddSingleton<ITransmitImagePreparer, TransmitImagePreparer>();
+        hostBuilder.Services.AddSingleton<IMacroTextResolver, MacroTextResolver>();
 
         // Radio layer -- all three backends now registered (Settings/Options Piece 3): None,
         // rigctld, and linked Hamlib. RadioController's constructor takes

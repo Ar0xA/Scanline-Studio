@@ -2,6 +2,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Sstv;
+using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
@@ -26,6 +27,7 @@ public sealed class TxControlsFavoritesAndAutoFollowTests
             new FakeLocalizationService(),
             settingsStore,
             new FakeRadioSessionService(),
+            new MacroTextResolver(),
             NullLogger<TxControlsPaneViewModel>.Instance);
 
     [AvaloniaFact]
