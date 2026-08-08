@@ -47,13 +47,22 @@ missing post-swap assertion (`BufferedSampleCount == 50` after a swap, the actua
 round-2 fix was about).
 
 **Verified**: full solution build clean, `Core.Sstv.Tests` 653/653 (was 637 after the prior item;
-+16 net across both audit-driven fix rounds), Application/Imaging/Logbook.Tests all green. **NOT
-YET committed** — about to commit.
++16 net across both audit-driven fix rounds), Application/Imaging/Logbook.Tests all green.
+**COMMITTED** (`cf76a08`).
+
+**Doc sync (2026-08-08)**: `spec/14-roadmap.md`'s root-cause map table and the itemized mock2 list
+below it were stale after this item and the prior one (`94831b6`) — both had gone in still listing
+the two shipped items as open gaps. Updated both to `~~strikethrough~~` + **done**/**partially
+done** with commit citations, matching this doc's own established convention (see the
+Operator-callsign row for the pattern). Verified against the actual `ISstvDecoder` interface
+(`grep`'d the real member list), not written from memory.
 
 **Next up**: same as before this item started — Tier B (SNR/noise-floor) needs a `/adhd`-style
 product decision on what "SNR" even means for an FM-demodulated SSTV signal with no clean reference,
 not a legacy-verification pass. Otherwise, continue down the roadmap's root-cause map for the next
-GUI-blocking backend gap.
+GUI-blocking backend gap — `ReceiveHistoryEntry`'s missing field set, structured per-decode event
+log, frame-action primitives, and TX-side device/clock telemetry are the remaining "expose/small
+build"-shaped items; OCR/QRZ lookup and the TX image editor are larger, separately-scoped builds.
 
 ## Previously (2026-08-08) — Slant/sync correction readouts (RX GUI-blocking backend primitive).
 
