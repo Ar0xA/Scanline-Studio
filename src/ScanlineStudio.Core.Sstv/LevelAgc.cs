@@ -21,9 +21,15 @@ namespace ScanlineStudio.Core.Sstv;
 ///
 /// <c>m_Cur</c> (legacy's pre-AGC "current sample", read by the AFC/pixel path) isn't tracked here
 /// either: legacy's value is exactly the same <c>d</c> already available at every call site in this
-/// port (no LPF/BPF stage exists yet ahead of this class -- legacy's own averaging LPF + bandpass
-/// filter, `sstv.cpp:1823-1833`, has no counterpart here, a separately logged gap), so callers just
-/// keep using their own raw sample directly instead of fetching it back out of this class.
+/// port. Stale-comment correction: an earlier revision of this paragraph claimed "no LPF/BPF stage
+/// exists yet ahead of this class" as the reason -- false as of <c>AnalogFmSstvDecoder.AgcSampleAt</c>,
+/// which now feeds this class legacy's real post-2-tap-LPF/post-bandpass-filter value via
+/// <c>BandpassFilteredSampleAt</c> (`sstv.cpp:1824-1834` -- the LPF/BPF block itself; `:1823` is
+/// the overflow check's own closing brace, not part of it), matching legacy's own filter ordering.
+/// The real, still-accurate reason <c>m_Cur</c> has no dedicated field here: that filtered value is
+/// already directly available at every call site in this port (the same value <see cref="Do"/> is
+/// called with), so callers just keep using their own copy instead of fetching it back out of this
+/// class -- there was never anything this class needed to additionally track.
 ///
 /// Scale bridge: legacy's <c>d</c> is int16-valued (confirmed via `sstv.cpp:1821`'s 24578 overflow
 /// check and `Wave.cpp:796-808`'s direct <c>SHORT</c>-to-<c>double</c> copy), so <c>CLVL</c>'s

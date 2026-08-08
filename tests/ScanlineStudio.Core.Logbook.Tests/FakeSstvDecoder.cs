@@ -26,6 +26,14 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public int? SyncOffsetSamples => null;
 
+    public double SignalPeakLevel => 0.0;
+
+    public bool IsLevelOverdriven => false;
+
+    public double? SyncFrequencyCorrectionHz => null;
+
+    public int BufferedSampleCount => 0;
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
     }

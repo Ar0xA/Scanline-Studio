@@ -208,7 +208,10 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     }
 
     /// <summary>Forwards to whichever inner instance is current. A restart swap resets this to
-    /// <see langword="null"/> (a fresh inner has no lock/slant-tracker yet), matching
+    /// <see langword="null"/> for any realistic triggering chunk (a fresh inner has no lock/
+    /// slant-tracker yet, and establishing one requires a full VIS lock, not just pre-lock
+    /// scanning progress) -- same state-gated reasoning as <see cref="SyncFrequencyCorrectionHz"/>
+    /// below, not a hard guarantee for an arbitrarily large forwarded chunk. Matches
     /// <see cref="ISstvDecoder.SlantPpm"/>'s own documented null cases.</summary>
     public double? SlantPpm
     {
@@ -221,9 +224,10 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    /// <summary>Forwards to whichever inner instance is current. A restart swap resets this to
-    /// <see langword="null"/> (a fresh inner has no completed line yet), matching
-    /// <see cref="ISstvDecoder.SyncOffsetSamples"/>'s own documented null cases.</summary>
+    /// <summary>Forwards to whichever inner instance is current. Same post-swap reasoning as
+    /// <see cref="SlantPpm"/> above -- state-gated on a fresh lock, reliably <see langword="null"/>
+    /// for any realistic triggering chunk. Matches <see cref="ISstvDecoder.SyncOffsetSamples"/>'s
+    /// own documented null cases.</summary>
     public int? SyncOffsetSamples
     {
         get
@@ -231,6 +235,71 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             lock (_gate)
             {
                 return _inner.SyncOffsetSamples;
+            }
+        }
+    }
+
+    /// <summary>Forwards to whichever inner instance is current. Unlike <see cref="SlantPpm"/>/
+    /// <see cref="SyncOffsetSamples"/> above, a restart swap does NOT reliably reset this to
+    /// <c>0.0</c>: <see cref="PushSamples"/> swaps to a fresh inner and then forwards that SAME
+    /// chunk to it, and pre-lock header scanning drives this underlying AGC cursor forward with no
+    /// lock required -- so the value immediately after a restart reflects a freshly-constructed
+    /// inner PLUS whatever that one push call fed it (0.0 only if that chunk was under the
+    /// underlying ~100ms averaging window).</summary>
+    public double SignalPeakLevel
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.SignalPeakLevel;
+            }
+        }
+    }
+
+    /// <summary>Forwards to whichever inner instance is current. Same post-swap caveat as
+    /// <see cref="SignalPeakLevel"/> above -- NOT reliably <see langword="false"/> immediately
+    /// after a restart, since the triggering chunk is forwarded to the fresh inner and pre-lock
+    /// scanning alone can drive the underlying level past threshold for a large enough chunk.</summary>
+    public bool IsLevelOverdriven
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.IsLevelOverdriven;
+            }
+        }
+    }
+
+    /// <summary>Forwards to whichever inner instance is current. A restart swap resets this to
+    /// <see langword="null"/> (a fresh inner has no lock/AFC-tracker yet), matching
+    /// <see cref="ISstvDecoder.SyncFrequencyCorrectionHz"/>'s own documented null cases -- unlike
+    /// the two AGC-backed properties above, this one IS state-gated (requires a fresh <c>_mode</c>
+    /// lock, not just any pre-lock scanning progress), so a realistic single streaming chunk
+    /// reliably can't establish one within the same push call that triggered the swap.</summary>
+    public double? SyncFrequencyCorrectionHz
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.SyncFrequencyCorrectionHz;
+            }
+        }
+    }
+
+    /// <summary>Forwards to whichever inner instance is current. Same post-swap caveat as
+    /// <see cref="SignalPeakLevel"/> above -- NOT reliably near-zero immediately after a restart,
+    /// since the triggering chunk (which could itself be large) is forwarded to the fresh inner
+    /// and counted by its own pre-lock retention window.</summary>
+    public int BufferedSampleCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.BufferedSampleCount;
             }
         }
     }

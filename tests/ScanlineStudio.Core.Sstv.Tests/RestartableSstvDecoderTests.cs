@@ -26,6 +26,57 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void ForceMode_ForwardsTelemetryPropertiesToTheCurrentInner()
+    {
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue);
+
+        Assert.Equal(0.0, decoder.SignalPeakLevel);
+        Assert.False(decoder.IsLevelOverdriven);
+        Assert.Equal(0, decoder.BufferedSampleCount);
+        Assert.Null(decoder.SyncFrequencyCorrectionHz);
+
+        decoder.ForceMode(SstvModeRegistry.Robot36);
+        decoder.PushSamples(new float[64]);
+
+        Assert.True(decoder.BufferedSampleCount > 0);
+    }
+
+    [Fact]
+    public void PushSamples_AfterASwap_TelemetryPropertiesReflectTheFreshInnerPlusTheTriggeringChunk()
+    {
+        // Round-2 plan-review correction: unlike SlantPpm/SyncOffsetSamples, a restart swap does NOT
+        // reliably reset the 3 AGC-backed properties to a fixed "empty" value -- PushSamples forwards
+        // the SAME chunk that triggered the swap to the fresh inner, and pre-lock scanning alone
+        // drives BufferedSampleCount/SignalPeakLevel/IsLevelOverdriven with no lock required. Using
+        // idle silence as the triggering chunk (never locks, near-zero amplitude) so the AGC-backed
+        // properties land at their "nothing happened yet" values for THIS specific chunk shape --
+        // not asserting that as a general post-swap guarantee, only for silence.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+
+        // SyncFrequencyCorrectionHz IS state-gated (needs a fresh _mode lock) -- reliably null, since
+        // silence can never establish one.
+        Assert.Null(decoder.SyncFrequencyCorrectionHz);
+
+        // The AGC-backed properties reflect the fresh inner plus the small silent triggering chunk:
+        // silence never drives CurMax up, so these read as if freshly constructed for THIS chunk
+        // shape specifically (not a general post-swap guarantee -- see this test's own comment above).
+        Assert.Equal(0.0, decoder.SignalPeakLevel);
+        Assert.False(decoder.IsLevelOverdriven);
+
+        // The one property this round-2 correction was actually about (code-level audit finding: an
+        // earlier version of this test omitted it) -- NOT 0, the fresh inner's BufferedSampleCount
+        // already reflects the 50-sample chunk PushSamples forwarded to it as part of this very swap.
+        Assert.Equal(50, decoder.BufferedSampleCount);
+    }
+
+    [Fact]
     public void PushSamples_IdlePastWarningThreshold_SwapsInner_AndEventForwardingSurvives()
     {
         var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000);
