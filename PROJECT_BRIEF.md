@@ -5,34 +5,48 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-08, latest, ACTIVE) — Subject switch: working the "must-implement" legacy-parity backlog.
+## Resume here (2026-08-08, latest, ACTIVE) — Working the "must-implement" legacy-parity backlog. Item 1 (Logbook UI pane) shipped.
 
-User asked a different question than the GUI-blocking-backend-primitive work below: "what are we
-still missing from legacy that we MUST implement" — not mock2 polish, real legacy YONIQ/MMSSTV
-functionality gaps. Answered via a full survey of `spec/14-roadmap.md` (4400+ lines) +
-`docs/removed-features.md`, cross-checked against this session's own actual shipped work (caught 2
-stale roadmap-doc claims — `m_ReqSave`/`m_SyncRestart` were already done, the survey's automated
-pass hadn't caught that) and one gap found by direct verification, not the survey (Logbook UI: the
-backend — `AdifExporter`/`AdifImporter`/`QrzLogbookUploader`/`GridTrackerStreamer` — is fully built,
-but zero `Logbook`-named ViewModel/View exists in `src/ScanlineStudio.UI/`).
+User instruction governing all work in this subject: **"throughout the night keep working on the
+total list using the same process flow. IF you get stumped by bugs, solution directions, ask the
+auditor for help. If the auditor cant figure it out, put it the 'verify later with human' list."**
+Work autonomously through `spec/14-roadmap.md`'s "## Must-implement backlog" checklist, item by
+item, using the established research→plan→auditor(2 rounds)→implement→audit(2 rounds)→commit→push
+flow, minimal check-ins. Escalation path: stuck on a bug → ask the auditor; auditor also can't
+resolve it → log to `spec/14-roadmap.md`'s "## Verify later with human" section (added, currently
+empty) rather than stalling.
 
-**Durable checklist added to `spec/14-roadmap.md`'s new "## Must-implement backlog" section**
-(right before "Explicitly deferred beyond v1") — user explicitly asked for something that survives
-a `/clear`, so it lives in the checked-into-git spec doc, not just this scratch file. Check items
-off there (`- [x]`) as they land, not here. Proposed working order (not yet reprioritized by the
-user beyond "tackle these first" as a whole): Logbook UI pane → DSP decode-accuracy residuals
-(~1/3 of the mode table exceeds tolerance at the declared 11025Hz rate) → real Options
-dialogs (currently placeholders) → RX history browser affordances → waterfall color/palette →
-OCR/QRZ lookup → CW-ID/FSK subsystem → VOX/RTS-on-RX/Sound-file-ID/JPEG-quality (small tail items).
+**Item 1, Logbook UI pane: SHIPPED.** New 4th tab + `LogbookPaneViewModel` (search/browse, add/edit
+QSO form, ADIF import/export). Plan: `~/.claude/plans/rustling-drifting-falcon.md`. New facade
+method `ILogbookSessionService.UpdateQsoAsync` (no GridTracker/QRZ re-push — QRZ's upload API is
+INSERT-only). Fixed a pre-existing `ExportAdifFileAsync` gap (missing `STATION_CALLSIGN`).
 
-Also flagged separately (not a checkbox item, "implement" isn't the right verb): the project's own
-release gate needs the real-hardware manual checklist to pass on Windows/Linux/macOS before any
-tagged release, and only Linux has ever actually been run against real hardware — needs a human on
-real Windows/macOS machines, not something this agent can complete alone.
+Two rounds of auditor plan-review caught 4 real bugs before any code was written (Mode-as-free-text
+enum crash risk, `.ToUniversalTime()` date corruption, exact-match callsign-filter trap, wrong
+file-picker API shape). Two rounds of POST-implementation code audit then caught 3 more real
+blockers actually shipped in the first pass: (1) every success status message was set then
+immediately nulled by a shared `New()` reset helper — the user got zero feedback after logging or
+updating a QSO; (2) the Mode and SSTV-mode `ComboBox`es were bound via `SelectedItem` against a
+different element type than the bound property (`RadioMode?`/`string?` vs. the `ItemsSource`'s
+actual element type) — silently nulled the field on every selection, a real data-loss bug on edit;
+(3) `StringFormat` on a TwoWay Start/End `TextBox` binding doesn't reverse on `ConvertBack`, so
+edited timestamps were parsed using the machine's LOCAL offset instead of UTC — corrupting stored
+instants and breaking the repository's lexicographic date-range queries. All three fixed (new
+`RadioModeOption` wrapper + `SelectedValueBinding`/`SelectedValue`; new `UtcTimestampTextConverter`;
+`ResetForm()` split from the `New` command so it no longer clobbers a just-set status line), plus 5
+lower-severity risks (FromDate wasn't UTC-normalized the way ToDate was; re-selecting the same row
+after "New" was a dead end; Export could report a stale count; Import's success message could mask
+a failed follow-up refresh; a shared log line hardcoded the wrong method name). Round 2 audit:
+ship-ready, only 2 accepted nits left (Export's stale-count window on a *failed* refresh — narrow,
+no data loss; blank Start-field text is silently discarded rather than shown as invalid — documented
+intentional). Full solution build clean, full test suite green (Application 65, UI 97, Logbook 64,
+Radio 112, Audio 14+56, Sstv 653 — all passing). **Committing and pushing now.**
 
-**Not started yet** — this entry exists to make the subject switch and the durable-list location
-findable after a `/clear`; next action is picking the first item (Logbook UI pane, per the proposed
-order above) and beginning real work on it.
+**Next up**: item 2 on the must-implement checklist, DSP decode-accuracy residuals (~1/3 of the mode
+table exceeds tolerance at the declared 11025Hz rate) — likely needs the auditor's DSP-audit process
+(CLAUDE.md §7), not a quick fix. Then real Options dialogs → RX history browser affordances →
+waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail items, per
+`spec/14-roadmap.md`'s own proposed order.
 
 ## Previously (2026-08-08) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
 

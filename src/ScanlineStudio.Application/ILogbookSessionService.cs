@@ -17,6 +17,12 @@ public interface ILogbookSessionService
 
     Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default);
 
+    /// <summary>Edits an already-logged QSO in place. Deliberately does NOT re-push to GridTracker
+    /// or QRZ the way <see cref="LogQsoAsync"/> does -- see the implementation's own doc comment for
+    /// why (QRZ's real upload API is INSERT-only; a re-push would file as a duplicate, not an
+    /// update).</summary>
+    Task UpdateQsoAsync(QsoRecord record, CancellationToken ct = default);
+
     Task ExportAdifFileAsync(string filePath, LogbookQuery query, CancellationToken ct = default);
 
     /// <summary>Parses <paramref name="filePath"/> and persists every record it contains via

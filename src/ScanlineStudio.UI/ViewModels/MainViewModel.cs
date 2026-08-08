@@ -33,6 +33,7 @@ public partial class MainViewModel : ViewModelBase
         RxImagePaneViewModel rxImage,
         RxHistoryPaneViewModel rxHistory,
         TxControlsPaneViewModel txControls,
+        LogbookPaneViewModel logbook,
         IRadioSessionService radioSession,
         ISstvSessionService sstvSession,
         ILocalizationService localization,
@@ -49,6 +50,7 @@ public partial class MainViewModel : ViewModelBase
         RxImage = rxImage;
         RxHistory = rxHistory;
         TxControls = txControls;
+        Logbook = logbook;
 
         // Replaces AppDockFactory.OpenTxImageEditor/CloseTxImageEditor's AddDockable/CloseDockable
         // pair -- a plain nullable property swapped via a ContentControl in the Transmit tab.
@@ -71,6 +73,8 @@ public partial class MainViewModel : ViewModelBase
     public RxHistoryPaneViewModel RxHistory { get; }
 
     public TxControlsPaneViewModel TxControls { get; }
+
+    public LogbookPaneViewModel Logbook { get; }
 
     public RadioStatusViewModel RadioStatus { get; }
 

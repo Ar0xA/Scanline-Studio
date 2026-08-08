@@ -3,6 +3,7 @@ using System.Reactive.Subjects;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
@@ -341,7 +342,21 @@ internal sealed class FakeFilePickerService : IFilePickerService
 {
     public string? PathToReturn { get; set; } = "/tmp/fake.png";
 
+    public string? AdifPathToReturn { get; set; } = "/tmp/fake.adi";
+
+    public string? SaveAdifPathToReturn { get; set; } = "/tmp/fake.adi";
+
+    public string? LastSuggestedFileName { get; private set; }
+
     public Task<string?> PickImageFileAsync() => Task.FromResult(PathToReturn);
+
+    public Task<string?> PickAdifFileAsync() => Task.FromResult(AdifPathToReturn);
+
+    public Task<string?> PickSaveAdifFileAsync(string suggestedFileName)
+    {
+        LastSuggestedFileName = suggestedFileName;
+        return Task.FromResult(SaveAdifPathToReturn);
+    }
 }
 
 internal sealed class FakeStockImageLibrary : IStockImageLibrary
@@ -475,5 +490,87 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
         EntriesToReturn[index] = update(EntriesToReturn[index]);
         return true;
+    }
+}
+
+internal sealed class FakeLogbookSessionService : ILogbookSessionService
+{
+    public List<QsoRecord> Records { get; } = [];
+
+    public LogQsoResult? LogResultToReturn { get; set; }
+
+    public Exception? ThrowOnLog { get; set; }
+
+    public Exception? ThrowOnUpdate { get; set; }
+
+    public Exception? ThrowOnImport { get; set; }
+
+    public Exception? ThrowOnExport { get; set; }
+
+    public int UpdateCallCount { get; private set; }
+
+    public string? LastExportPath { get; private set; }
+
+    public LogbookQuery? LastSearchQuery { get; private set; }
+
+    public IReadOnlyList<QsoRecord> ImportResultToReturn { get; set; } = [];
+
+    public Task<LogQsoResult> LogQsoAsync(QsoRecord record, CancellationToken ct = default)
+    {
+        if (ThrowOnLog is not null)
+        {
+            throw ThrowOnLog;
+        }
+
+        Records.Add(record);
+        return Task.FromResult(LogResultToReturn ?? new LogQsoResult(record, false, false, null, null));
+    }
+
+    public Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default)
+    {
+        LastSearchQuery = query;
+        return Task.FromResult<IReadOnlyList<QsoRecord>>(Records);
+    }
+
+    public Task UpdateQsoAsync(QsoRecord record, CancellationToken ct = default)
+    {
+        UpdateCallCount++;
+        if (ThrowOnUpdate is not null)
+        {
+            throw ThrowOnUpdate;
+        }
+
+        var index = Records.FindIndex(r => r.Id == record.Id);
+        if (index >= 0)
+        {
+            Records[index] = record;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public LogbookQuery? LastExportQuery { get; private set; }
+
+    public Task ExportAdifFileAsync(string filePath, LogbookQuery query, CancellationToken ct = default)
+    {
+        LastExportPath = filePath;
+        LastExportQuery = query;
+        if (ThrowOnExport is not null)
+        {
+            throw ThrowOnExport;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<QsoRecord>> ImportAdifFileAsync(string filePath, CancellationToken ct = default)
+    {
+        if (ThrowOnImport is not null)
+        {
+            throw ThrowOnImport;
+        }
+
+        Records.AddRange(ImportResultToReturn);
+        return Task.FromResult(ImportResultToReturn);
     }
 }
