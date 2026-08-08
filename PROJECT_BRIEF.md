@@ -5,7 +5,36 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-08, latest, ACTIVE) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
+## Resume here (2026-08-08, latest, ACTIVE) — Subject switch: working the "must-implement" legacy-parity backlog.
+
+User asked a different question than the GUI-blocking-backend-primitive work below: "what are we
+still missing from legacy that we MUST implement" — not mock2 polish, real legacy YONIQ/MMSSTV
+functionality gaps. Answered via a full survey of `spec/14-roadmap.md` (4400+ lines) +
+`docs/removed-features.md`, cross-checked against this session's own actual shipped work (caught 2
+stale roadmap-doc claims — `m_ReqSave`/`m_SyncRestart` were already done, the survey's automated
+pass hadn't caught that) and one gap found by direct verification, not the survey (Logbook UI: the
+backend — `AdifExporter`/`AdifImporter`/`QrzLogbookUploader`/`GridTrackerStreamer` — is fully built,
+but zero `Logbook`-named ViewModel/View exists in `src/ScanlineStudio.UI/`).
+
+**Durable checklist added to `spec/14-roadmap.md`'s new "## Must-implement backlog" section**
+(right before "Explicitly deferred beyond v1") — user explicitly asked for something that survives
+a `/clear`, so it lives in the checked-into-git spec doc, not just this scratch file. Check items
+off there (`- [x]`) as they land, not here. Proposed working order (not yet reprioritized by the
+user beyond "tackle these first" as a whole): Logbook UI pane → DSP decode-accuracy residuals
+(~1/3 of the mode table exceeds tolerance at the declared 11025Hz rate) → real Options
+dialogs (currently placeholders) → RX history browser affordances → waterfall color/palette →
+OCR/QRZ lookup → CW-ID/FSK subsystem → VOX/RTS-on-RX/Sound-file-ID/JPEG-quality (small tail items).
+
+Also flagged separately (not a checkbox item, "implement" isn't the right verb): the project's own
+release gate needs the real-hardware manual checklist to pass on Windows/Linux/macOS before any
+tagged release, and only Linux has ever actually been run against real hardware — needs a human on
+real Windows/macOS machines, not something this agent can complete alone.
+
+**Not started yet** — this entry exists to make the subject switch and the durable-list location
+findable after a `/clear`; next action is picking the first item (Logbook UI pane, per the proposed
+order above) and beginning real work on it.
+
+## Previously (2026-08-08) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
 
 Picked "occupied bandwidth" next (user's own choice over the cheaper static alternative, after
 device name shipped). Research first: confirmed via `grep -a` that legacy has zero equivalent
