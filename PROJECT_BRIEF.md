@@ -2,7 +2,80 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
-## Resume here (2026-08-08, latest, ACTIVE) — Auto Sync (automatic drift-triggered ReSync), the third
+## Resume here (2026-08-08, latest, ACTIVE) — Auto Stop (`sys.m_AutoStop`, erratic/weak-signal
+detector that stops reception and re-arms auto-detection). This is the LAST of the three sub-features
+`TMmsstv::AutoStopJob` bundles (Auto Sync shipped as `4ecfea6`, see the entry directly below; KRSA
+sample-rate auto-calibration stays permanently out of scope, no toggle/UI exists for it). Plan file
+`~/.claude/plans/scalable-yawning-tarjan.md`. **Implemented, tested (630/630 `Core.Sstv.Tests`),
+code-level reviewed, all findings fixed and re-verified. NOT YET COMMITTED** — awaiting user go-ahead.
+
+**Design, and why it turned out smaller than expected**: research found `AnalogFmSstvDecoder.cs`'s
+existing `EndOfImage()` is already a direct, doc-confirmed port of legacy's `CSSTVDEM::Stop()` — the
+exact function `RxAutoPush` (Auto Stop's own action) calls — and the already-shipped abandoned-image-
+save feature's `ReceiveHistoryRecorder.OnDecodeRestarted` already implements the exact same 65%
+completeness gate `WriteHistory(0)` uses. Net effect: Auto Stop's own trigger reuses the *existing*
+`DecodeRestarted` event + `EndOfImage()` reset — no new event, no new Logbook/Imaging code. The only
+genuinely new work: the shared `m_AutoStopCnt` counter (incremented/decremented across 5 sites shared
+with Auto Sync's own triggers inside `TryAutoSync`), a new `AutoStopEnabled` settings toggle (legacy
+default **OFF**, unlike the other three), and wiring the trigger into the per-line decode loop.
+
+**2 rounds of plan-readiness review, round 1 found 3 real blockers, all fixed before any implementation
+survived them**: (1) the original design called `EndOfImage()` synchronously from inside `TryAutoSync`
+— but that method runs MID-`ApplySlantTracking`, and the statements immediately after its own call
+site dereference `_slantTracker`/`_syncEnvelopeDetector` with no null-check; `EndOfImage()` nulls both,
+so this would have been a guaranteed NRE on the very next line, confirmed by direct trace, not
+inference. **Fixed**: `TryAutoSync` now only sets a flag; the actual `DecodeRestarted` fire +
+`EndOfImage()` call moved to `TryProcessBuffer`'s own per-line loop, after `ApplySlantTracking()` fully
+returns. (2) `EndOfImage()`'s baked-in 0.5s dead-time skip is wrong for this path — legacy's real
+`RxAutoPush(TRUE)` overrides `Stop()`'s own dead-time state (`m_SyncMode=0`, `Main.cpp:6053`, not
+`Stop()`'s own `512`, `sstv.cpp:1786`) and resumes scanning immediately. **Fixed**: new
+`EndOfImage(bool applyDeadTime = true)` parameter, called `false` only from Auto Stop's own site. (3)
+"Mutually exclusive by construction" (vs. the existing `TryVisLockStateMachine` restart check) was
+FALSE — `ApplySlantTracking()` runs BEFORE that check in the same loop iteration, so a stale flag could
+destroy a freshly-committed lock. **Fixed**: the new check is ordered BEFORE the VIS check, closing the
+race by ordering. Round 2 confirmed all three fixes against live code, found the round-1 caveat about
+legacy's "Lock" toolbar button had its own polarity backwards (Lock engaged = all three toggles OFF,
+not on — fixed before it became a wrong code comment) and turned the 8192-envelope-threshold scale
+check into a hard pass/fail gate instead of a soft assertion. Auditor's own closing verdict: "Yes,"
+build-readiness confirmed both rounds.
+
+**One real empirical finding during test-writing, worth remembering**: pure SILENCE does NOT reliably
+trigger Auto Stop despite trivially satisfying the weak-envelope condition — silence is perfectly
+reproducible line to line, so `ComputeAutoSyncPosition` returns the same degenerate value every time,
+which reads as a maximally STABLE cluster (`n>=4`), which DECREMENTS the counter, not increments it.
+Genuine random noise (jitters the computed position line to line, reliably producing `n<2`) is what
+actually exercises the trigger — switched all 3 noise-dependent tests to a shared `ReplaceTailWithNoise`
+helper after discovering this via direct diagnostic instrumentation, not guessing.
+
+**Code-level review (fresh context, after implementation) found**: one real test-coverage gap — the
+original `ManualReSync_ResetsAutoStopCnt` test used a smoothly-drifting clean signal that never
+actually drove `_autoStopCnt` above 0 in the first place (smooth drift reads as a stable cluster, which
+decrements the counter), so the assertion would have passed even with `PerformReSync`'s own new
+`_autoStopCnt = 0` line deleted — **fixed and independently re-verified via revert-fix-confirm-fail**
+(temporarily removing that reset line made the rewritten test fail with `Expected: 0, Actual: 1`,
+confirming it's now genuinely load-bearing). Also fixed: an inverted doc comment (claimed
+`ApplySlantTracking`'s own `ProcessLine` call ran BEFORE `TryAutoSync` in the same invocation — it
+actually runs after), a last-wins-vs-first-wins event-handler nit in one test, and a test that asserted
+trigger count without independently confirming the image aborted early (tightened to also assert
+`lineCount < mode.ImageHeight`).
+
+**Tests** (`AutoStopTests.cs`, new file, 6 tests): the 8192-threshold hard-gate scale check (a clean
+signal MUST clear it, else stop and escalate — this is what confirms the port's `SyncEnvelopeDetector`
+output is on the same scale as legacy's raw `m_SyncMax-m_SyncMin`), the noise-based trigger proof, its
+disabled-setting negative control (bookkeeping still runs), a trigger-fires-`DecodeRestarted`-and-
+decoder-recovers-for-a-different-mode test, AVT exclusion, and the corrected `ManualReSync` reset test.
+The synchronous-`EndOfImage()`-inside-`TryAutoSync` NRE (round-1 finding 1) was independently
+re-confirmed via its own revert-fix-confirm-fail: temporarily reintroducing it crashed at exactly the
+predicted null-deref site (`ApplySlantTracking`'s own `ProcessLine` call).
+
+**Full verification**: full solution build clean throughout. `Core.Sstv.Tests` 630/630 (was 624 before
+this session, includes every real legacy-captured golden vector, confirmed unaffected). **NOT YET
+COMMITTED** — awaiting user go-ahead. This closes out the entire "SyncRestart/Auto Sync/Auto Stop"
+backlog item (SyncRestart `431d43e`, abandoned-image-save `05e90fa`, Auto Sync `4ecfea6`, Auto Stop
+pending) — no more sub-pieces of it remain.
+
+## Resume here (2026-08-08, superseded by the entry above) — Auto Sync (automatic drift-triggered
+ReSync), the third
 and last piece of the "SyncRestart toggle + Auto Stop's save-on-abandon unblock" backlog item (the
 other two shipped earlier: commits `9346fb8`/`431d43e`/`05e90fa`). Plan file
 `~/.claude/plans/glimmering-orbiting-falcon.md`. Implemented and tested. Sent for a code-level review
@@ -86,11 +159,9 @@ not built given this session's already extensive scope). Re-verified after the f
 build clean, `Core.Sstv.Tests` 624/624 (unchanged count, golden vectors unaffected),
 `Application.Tests` 48/48, `UI.Tests` 78/78.
 
-**Not yet committed** — implemented, tested, and code-level reviewed (with the review's own finding
-now fixed and re-verified). Awaiting user go-ahead to commit/push. This closes out the
-"SyncRestart/Auto Sync/Auto Stop" backlog item's Auto Sync piece; Auto Stop itself (the
-erratic-signal-detection-and-stop trigger, shares the clustering code but is a distinct action)
-remains a real, tracked, not-yet-started follow-up.
+**COMMITTED as `4ecfea6`** (this stale "not yet committed" line corrected 2026-08-08 while updating the
+brief for the Auto Stop entry above). Auto Stop itself is now also done — see the entry at the top of
+this file.
 
 ## Resume here (2026-08-08, latest, ACTIVE) — "SyncRestart toggle + Auto Stop's save-on-abandon
 unblock" backlog item (user picked this scoped slice over the full 3-sub-feature "Auto Sync/Auto
