@@ -1,6 +1,7 @@
 using Avalonia.Headless.XUnit;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
+using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.UI.ViewModels;
 
@@ -17,6 +18,15 @@ public sealed class TxImageEditorPaneViewModelTests
         ColorEncoding: ColorEncoding.RgbSequential,
         LineSegments: []);
 
+    // Real MacroTextResolver + blank OperatorSettings -- none of these tests exercise macro
+    // resolution itself (that's MacroTextResolverTests' job), so a real-but-inert resolver is
+    // simpler than a fake with nothing to configure.
+    private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer) =>
+        CreateEditor(original, mode, preparer, new OperatorSettings());
+
+    private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, OperatorSettings operatorSettings) =>
+        new(original, mode, preparer, new MacroTextResolver(), operatorSettings);
+
     [AvaloniaFact]
     public void Constructor_OriginalLargerThanWorkingCopyBudget_DownsamplesBeforeUse()
     {
@@ -24,7 +34,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var original = CreateSource(20, 20);
         var preparer = new FakeTransmitImagePreparer();
 
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, preparer);
+        var vm = CreateEditor(original, SmallMode, preparer);
 
         Assert.NotNull(vm.WorkingCopyBitmap);
         Assert.NotNull(vm.PreviewImage);
@@ -41,7 +51,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var original = CreateSource(4, 4);
         var preparer = new FakeTransmitImagePreparer();
 
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, preparer);
+        var vm = CreateEditor(original, SmallMode, preparer);
 
         Assert.NotNull(vm.WorkingCopyBitmap);
         Assert.Equal(1, preparer.ResizeCallCount);
@@ -51,7 +61,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void NudgeCropMove_PlainArrow_MovesByExactlyOnePixelRelativeToOriginalResolution()
     {
         var original = CreateSource(100, 50);
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, new FakeTransmitImagePreparer());
+        var vm = CreateEditor(original, SmallMode, new FakeTransmitImagePreparer());
         vm.CropRect = new NormalizedRect(0.5, 0.5, 0.2, 0.2);
 
         vm.NudgeCropMove(NudgeDirection.Right, ctrl: false);
@@ -64,7 +74,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void NudgeCropMove_CtrlArrow_MovesByExactlySixteenPixelsRelativeToOriginalResolution()
     {
         var original = CreateSource(100, 50);
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, new FakeTransmitImagePreparer());
+        var vm = CreateEditor(original, SmallMode, new FakeTransmitImagePreparer());
         vm.CropRect = new NormalizedRect(0, 0, 0.2, 0.2);
 
         vm.NudgeCropMove(NudgeDirection.Down, ctrl: true);
@@ -77,7 +87,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void NudgeCropResize_EngagesStretchAndResizesByExactlyOnePixel()
     {
         var original = CreateSource(100, 100);
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, new FakeTransmitImagePreparer());
+        var vm = CreateEditor(original, SmallMode, new FakeTransmitImagePreparer());
         vm.CropRect = new NormalizedRect(0, 0, 0.2, 0.2);
         Assert.True(vm.PreserveAspect);
 
@@ -92,7 +102,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void AddOverlayElement_AddsAndSelectsItAndTriggersPreviewRecompute()
     {
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
         var countBefore = preparer.ApplyOverlayCallCount;
 
         vm.AddOverlayElementCommand.Execute(null);
@@ -103,10 +113,59 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void OverlayElement_ResolvedTextReflectsMacroTokens_NotTheRawTemplate()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new OperatorSettings { Callsign = "W1AW" });
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+
+        element.Text = "DE %m";
+
+        Assert.Equal("DE %m", element.Text);
+        Assert.Equal("DE W1AW", element.ResolvedText);
+    }
+
+    [AvaloniaFact]
+    public void Overlay_BakesResolvedTextIntoTheAppliedImage_NotTheRawTemplate()
+    {
+        // ToImageOverlayElement (what actually reaches ApplyOverlay/the TX'd image) must use
+        // ResolvedText, not the raw template -- otherwise the transmitted picture would show the
+        // literal "%m" token instead of the operator's callsign.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, new OperatorSettings { Callsign = "W1AW" });
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.OverlayElements[0].Text = "DE %m";
+
+        Assert.Contains(preparer.Overlays, o => o.Elements.Any(e => e.Text == "DE W1AW"));
+    }
+
+    [AvaloniaFact]
+    public void InsertField_AppendsTokenToSelectedElementsText()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.OverlayElements[0].Text = "DE ";
+
+        vm.InsertFieldCommand.Execute("%m");
+
+        Assert.Equal("DE %m", vm.OverlayElements[0].Text);
+    }
+
+    [AvaloniaFact]
+    public void InsertField_NothingSelected_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.InsertFieldCommand.Execute("%m");
+
+        Assert.Empty(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
     public void ChangingAnOverlayElementProperty_TriggersPreviewRecompute()
     {
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
         vm.AddOverlayElementCommand.Execute(null);
         var element = vm.OverlayElements[0];
         var countBefore = preparer.ApplyOverlayCallCount;
@@ -120,7 +179,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void RemoveOverlayElement_UnsubscribesAndClearsSelectionWhenItWasSelected()
     {
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
         vm.AddOverlayElementCommand.Execute(null);
         var element = vm.OverlayElements[0];
 
@@ -143,7 +202,7 @@ public sealed class TxImageEditorPaneViewModelTests
         // distinct instance from the original -- this is what makes the assertion discriminating.
         var original = CreateSource(20, 20);
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(original, SmallMode, preparer);
+        var vm = CreateEditor(original, SmallMode, preparer);
 
         IImageSource? applied = null;
         vm.Applied += img => applied = img;
@@ -160,7 +219,7 @@ public sealed class TxImageEditorPaneViewModelTests
     public void Cancel_FiresCancelledEventWithoutInvokingThePipelineAgain()
     {
         var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxImageEditorPaneViewModel(CreateSource(4, 4), SmallMode, preparer);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
         var cropCountBefore = preparer.CropCallCount;
         var resizeCountBefore = preparer.ResizeCallCount;
         var overlayCountBefore = preparer.ApplyOverlayCallCount;

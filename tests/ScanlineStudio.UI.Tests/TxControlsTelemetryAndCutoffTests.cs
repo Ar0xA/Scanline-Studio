@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
+using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.UI.ViewModels;
 
@@ -29,6 +30,7 @@ public sealed class TxControlsTelemetryAndCutoffTests
             new FakeLocalizationService(),
             new FakeSettingsStore(),
             radioSession,
+            new MacroTextResolver(),
             NullLogger<TxControlsPaneViewModel>.Instance);
 
     [AvaloniaFact]

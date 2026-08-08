@@ -41,7 +41,9 @@ public sealed partial class OptionsSettingsService
         HamlibSerialPort: new RadioConnectionSettings().SerialPort,
         HamlibBaudRate: new RadioConnectionSettings().BaudRate,
         HamlibPttType: new RadioConnectionSettings().PttType,
-        Callsign: new OperatorSettings().Callsign);
+        Callsign: new OperatorSettings().Callsign,
+        OperatorName: new OperatorSettings().Name,
+        OperatorGrid: new OperatorSettings().Grid);
 
     public async Task<OptionsSnapshot> LoadAsync(CancellationToken ct = default)
     {
@@ -64,7 +66,9 @@ public sealed partial class OptionsSettingsService
             HamlibSerialPort: radio.SerialPort,
             HamlibBaudRate: radio.BaudRate,
             HamlibPttType: radio.PttType,
-            Callsign: operatorSettings.Callsign);
+            Callsign: operatorSettings.Callsign,
+            OperatorName: operatorSettings.Name,
+            OperatorGrid: operatorSettings.Grid);
     }
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
@@ -91,7 +95,10 @@ public sealed partial class OptionsSettingsService
                     PttType = snapshot.HamlibPttType,
                 },
                 RadioSettingsJsonContext.Default.RadioConnectionSettings)
-            .WithSection(OperatorSettings.SectionKey, new OperatorSettings { Callsign = snapshot.Callsign }, OperatorSettingsJsonContext.Default.OperatorSettings);
+            .WithSection(
+                OperatorSettings.SectionKey,
+                new OperatorSettings { Callsign = snapshot.Callsign, Name = snapshot.OperatorName, Grid = snapshot.OperatorGrid },
+                OperatorSettingsJsonContext.Default.OperatorSettings);
 
         await _settingsStore.SaveAsync(settings, ct).ConfigureAwait(false);
         _loadedSettings = settings;
