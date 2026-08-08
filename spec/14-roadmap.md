@@ -4176,8 +4176,8 @@ table is a grouping/leverage view of the same gaps below, not a new inventory:
 | Missing backend primitive | What exists today | mock2 elements it blocks |
 |---|---|---|
 | ~~Operator-callsign/profile setting~~ — **corrected and done** (2026-08-08): the "zero grep hits" claim below was wrong (`OperatorSettings.Callsign` already existed, `247fde7`); the "unblocks 4 mock2 items" claim was also wrong — Identification (FSK/CW/Tail ID) is blocked on the whole FSK/CW-ID subsystem this project already deferred separately ([[06-sstv-dsp]]'s Station ID section), not on a setting, and stays blocked. `OperatorSettings` gained `Name`/`Grid`; a new `IMacroTextResolver` (scoped to `%m`/`%D`/`%T`/`{name}`/`{grid}` — legacy's own his-callsign/RST/greeting tokens need a "current QSO" form this port doesn't have, deferred same as CW-ID) now backs the Outgoing-metadata card's callsign/name/grid fields and the overlay editor's real insert-field picker/TX-macro substitution. See `PROJECT_BRIEF.md` for the full account. | `OperatorSettings.Callsign`/`Name`/`Grid`, `IMacroTextResolver` | Outgoing-metadata card (partial: callsign/name/grid only, not RST/to-station/report), overlay editor's insert-field picker + TX-macro substitution — 2 of the originally-claimed 4 mock2 items, not 4; Identification card and CW-ID text generation itself remain blocked on the separately-deferred FSK/CW-ID subsystem |
-| **Decode-time signal telemetry** (SNR, squelch, BPF/AGC/notch state, buffer/clipping %, noise floor, L/R levels) | Nothing measured anywhere in `Core.Audio`/`Core.Sstv` | RX input-chain telemetry card, per-line SNR/histogram ("Signal quality" card) |
-| **Slant/sync correction readouts** (ppm, offset px) | The numbers exist as `private`/`internal ...ForTests` fields inside `AnalogFmSstvDecoder` (computed for Auto Sync/ReSync's own logic) — just never exposed on `ISstvDecoder` | Sync/slant correction readouts card |
+| ~~**Decode-time signal telemetry**~~ (SNR, squelch, BPF/AGC/notch state, buffer/clipping %, noise floor, L/R levels) — **Tier A done** (2026-08-08, `cf76a08`), Tier B/C explicitly deferred, not silently dropped: `ISstvDecoder` gained `SignalPeakLevel`/`IsLevelOverdriven` (peak amplitude + legacy's own `DrawLvl` red-meter-bar threshold — NOT legacy's separate `m_OverFlow` raw-sample flag, a genuinely different legacy quantity this port's post-BPF AGC input can't reproduce; NOT the mock2 "Clipping %" figure either, legacy never computed a percentage, only this threshold), `SyncFrequencyCorrectionHz` (AFC's own correction passthrough), `BufferedSampleCount` (promoted from `internal`). Still unbacked, each deliberately scoped out (see `~/.claude/plans/steady-humming-osprey.md` for the full research): true SNR/SNR-histogram/noise-floor (legacy has zero equivalent anywhere — `CNoise` is a noise *generator* for test/sim, not a measurement — needs a product decision on what "SNR" even means for this port, not a legacy-verification pass), notch-filter state (`CNotch`, `fir.h:123`, entirely unported — no filter exists yet to report the state of), true L/R stereo levels (legacy and this port are both mono-only in the demod path), squelch (zero legacy grounding at all, confirmed via `grep -a`). | `ISstvDecoder.SignalPeakLevel`/`IsLevelOverdriven`/`SyncFrequencyCorrectionHz`/`BufferedSampleCount` | RX input-chain telemetry card (partial: level + buffer only), per-line SNR/histogram ("Signal quality" card, still fully blocked) |
+| ~~**Slant/sync correction readouts**~~ (ppm, offset px) — **done** (2026-08-08, `94831b6`): `ISstvDecoder` gained `SlantPpm` (legacy's own `DrawSlantInfo` ppm formula) and `SyncOffsetSamples` (legacy's `m_AutoStopPos`, a quantity legacy itself never displays). | `ISstvDecoder.SlantPpm`/`SyncOffsetSamples` | Sync/slant correction readouts card |
 | **`ReceiveHistoryEntry`'s field set** — only `Id, ReceivedAt, ModeId, FilePath, LinkedQsoId` today | No callsign, grid, SNR, note, flag, or decode-state fields | Gallery search/sort/filter, frame metadata card, "decode rows colored by state" |
 | **Structured per-decode event log** | `ReceiveHistoryStore` only records the final saved image, no per-decode trace | "Decode activity" log card, decoder-trace pane |
 | **Frame-action primitives** (abort-current-frame, re-decode, QSO-log-link) | `ISstvDecoder` has no abort; `LinkedQsoId` exists on the record but nothing ever sets it | RX frame actions (Abort/Re-decode/Copy-to-TX/Log QSO), Gallery's "Log entry"/"Open in log" |
@@ -4213,13 +4213,28 @@ wired everything real, these had no real data behind them today):
 - RX frame actions (Abort/Re-decode/Copy-to-TX/Log QSO) and a completion progress bar — no
   abandon-current-frame, re-decode, or QSO-log-linking primitive exists yet. Medium-large,
   several independent features.
-- Sync/slant correction readouts and controls (ppm, offset px, ReSync/Reset, advanced timing) —
-  cross-reference the "Manual ReSync button"/"AFC toggle" items above; not re-filed as new.
-- RX input-chain telemetry (squelch, BPF, notch/AGC, buffer, clipping %, noise floor, L/R level
-  meters) — none of this is measured anywhere in `ScanlineStudio.Core.Audio`/`Sstv` today.
-  Medium-high, several DSP measurements needed.
+- ~~Sync/slant correction readouts and controls (ppm, offset px, ReSync/Reset, advanced timing)~~
+  — **readouts' backend done** (2026-08-08, see the root-cause map above's `SlantPpm`/
+  `SyncOffsetSamples` entry); the ReSync/Reset control's own backend (`RequestReSync`) was already
+  done in an earlier pass — cross-reference the "Manual ReSync button"/"AFC toggle" items above.
+  Nothing left backend-side for this card; only UI binding remains.
+- RX input-chain telemetry — **partially done (2026-08-08)**: level and buffer now have real
+  backing data (`SignalPeakLevel`/`IsLevelOverdriven`/`BufferedSampleCount`, see the root-cause
+  map's Decode-time-signal-telemetry entry above). Squelch, BPF (as reportable/adjustable state
+  beyond "which fixed filter is active" — itself already derivable client-side from `ModeDetected`,
+  not a gap), notch, noise floor, and L/R level meters remain unbacked — squelch and notch need
+  real feature builds (no legacy squelch concept exists at all; the notch filter, `CNotch`, is
+  entirely unported), noise floor needs an invented measurement (no legacy equivalent), true L/R
+  needs real stereo capture (legacy and this port are both mono-only in the demod path). Medium
+  remaining, down from medium-high.
 - Per-line SNR / luminance histogram / calibration-tone-offset readouts ("Signal quality" card)
-  — no per-line SNR or histogram computation exists in the decode pipeline. Medium.
+  — **partially done (2026-08-08)**: the sync-tone calibration-offset readout now has real backing
+  data (`SyncFrequencyCorrectionHz`, see the root-cause map above) — legacy's own AFC only ever
+  tracks the sync tone, so this card's Black(1500Hz)/White(2300Hz) tone-offset fields have no
+  legacy equivalent and must stay unbacked, not invented. Per-line SNR and the luminance histogram
+  remain fully unbacked — no such computation exists in the decode pipeline, and SNR specifically
+  needs a product decision (see the root-cause map's Tier B note above), not a lookup. Medium
+  remaining.
 - Structured "Decode activity" log (freq/mode/callsign-OCR/grid/SNR/slant/lines/state per decode)
   and its decoder-trace pane — no such structured event log exists; would need a new decode-
   history recorder distinct from `ReceiveHistoryStore`. Medium-large.
