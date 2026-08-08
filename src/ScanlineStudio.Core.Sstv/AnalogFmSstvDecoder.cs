@@ -1554,14 +1554,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 {
                     restarted = true;
                     // The abandoned (local `mode`, captured at the top of this outer-loop iteration),
-                    // not the new one. For a non-AVT match, TryVisLockStateMachine already called
-                    // Commit(), which fired ModeDetected for the *new* mode before we get here; for an
-                    // AVT match (S7), Commit() hasn't run yet -- training is still pending, and
-                    // ModeDetected fires later once it resolves. Either way, passing the new mode here
-                    // too (an earlier version did, via `_mode!`) is a trap review caught: a caller that
-                    // allocates a buffer on ModeDetected and discards on DecodeRestarted would discard
-                    // the buffer it just allocated for the new mode, not the old one it actually needs
-                    // to throw away.
+                    // not the new one. Round-2-review correction (found while planning the abandoned-
+                    // image-save feature): an earlier version of this comment claimed ModeDetected for
+                    // the new mode always fires before this event -- wrong since piece 8c. For a
+                    // non-AVT match (the common case here), Commit() defers ModeDetected until the new
+                    // mode's own sync anchor resolves (_pendingAnchorCorrectionMode), which can be a
+                    // LATER PushSamples call entirely -- so THIS event fires first, not second. Only
+                    // an AVT match resolving within this same call (S7's Commit() -> immediate
+                    // FinalizeAnchorAndStartDecoding) fires ModeDetected before this. See
+                    // ISstvDecoder.cs's own DecodeRestarted doc comment for the corrected, general
+                    // statement of this ordering. Passing the new mode here too (an earlier version
+                    // did, via `_mode!`) is a trap review caught: a caller that allocates a buffer on
+                    // ModeDetected and discards on DecodeRestarted would discard the buffer it just
+                    // allocated for the new mode, not the old one it actually needs to throw away.
                     DecodeRestarted?.Invoke(mode);
                     break;
                 }
