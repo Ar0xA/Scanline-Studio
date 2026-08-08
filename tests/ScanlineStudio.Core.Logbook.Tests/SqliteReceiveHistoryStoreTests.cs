@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using SixLabors.ImageSharp;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Settings;
@@ -14,7 +15,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         try
         {
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
-            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
 
             await store.RecordAsync(entry);
             var results = await store.QueryAsync(new ReceiveHistoryFilter());
@@ -24,6 +25,33 @@ public sealed class SqliteReceiveHistoryStoreTests
             Assert.Equal(entry.ModeId, loaded.ModeId);
             Assert.Equal(entry.FilePath, loaded.FilePath);
             Assert.Null(loaded.LinkedQsoId);
+            Assert.Equal(ReceiveDecodeState.Completed, loaded.DecodeState);
+            Assert.Null(loaded.Note);
+            Assert.False(loaded.IsFlagged);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task RecordAsync_ThenQueryAsync_RoundTripsNoteFlaggedAndAbandonedDecodeState()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", "qso-1", ReceiveDecodeState.Abandoned, Note: "faded fast", IsFlagged: true);
+
+            await store.RecordAsync(entry);
+            var results = await store.QueryAsync(new ReceiveHistoryFilter());
+
+            var loaded = Assert.Single(results);
+            Assert.Equal("qso-1", loaded.LinkedQsoId);
+            Assert.Equal(ReceiveDecodeState.Abandoned, loaded.DecodeState);
+            Assert.Equal("faded fast", loaded.Note);
+            Assert.True(loaded.IsFlagged);
         }
         finally
         {
@@ -38,8 +66,8 @@ public sealed class SqliteReceiveHistoryStoreTests
         try
         {
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
-            await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null));
-            await store.RecordAsync(new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "martin1", "/tmp/b.png", null));
+            await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+            await store.RecordAsync(new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "martin1", "/tmp/b.png", null, ReceiveDecodeState.Completed));
 
             var results = await store.QueryAsync(new ReceiveHistoryFilter(ModeId: "martin1"));
 
@@ -61,8 +89,8 @@ public sealed class SqliteReceiveHistoryStoreTests
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
             var old = DateTimeOffset.UtcNow.AddDays(-10);
             var recent = DateTimeOffset.UtcNow;
-            await store.RecordAsync(new ReceiveHistoryEntry("old", old, "robot36", "/tmp/a.png", null));
-            await store.RecordAsync(new ReceiveHistoryEntry("recent", recent, "robot36", "/tmp/b.png", null));
+            await store.RecordAsync(new ReceiveHistoryEntry("old", old, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+            await store.RecordAsync(new ReceiveHistoryEntry("recent", recent, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed));
 
             var results = await store.QueryAsync(new ReceiveHistoryFilter(From: DateTimeOffset.UtcNow.AddDays(-1)));
 
@@ -83,8 +111,8 @@ public sealed class SqliteReceiveHistoryStoreTests
         {
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
             var now = DateTimeOffset.UtcNow;
-            await store.RecordAsync(new ReceiveHistoryEntry("first", now.AddMinutes(-5), "robot36", "/tmp/a.png", null));
-            await store.RecordAsync(new ReceiveHistoryEntry("second", now, "robot36", "/tmp/b.png", null));
+            await store.RecordAsync(new ReceiveHistoryEntry("first", now.AddMinutes(-5), "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+            await store.RecordAsync(new ReceiveHistoryEntry("second", now, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed));
 
             var results = await store.QueryAsync(new ReceiveHistoryFilter());
 
@@ -116,7 +144,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             }
 
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
-            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", imagePath, null);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", imagePath, null, ReceiveDecodeState.Completed);
 
             IImageSource thumbnail = await store.LoadThumbnailAsync(entry, maxDimension: 4);
 
@@ -192,7 +220,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             // source citations).
             for (var i = 0; i < 33; i++)
             {
-                await store.RecordAsync(new ReceiveHistoryEntry($"entry-{i}", now.AddMinutes(i), "robot36", $"/tmp/{i}.png", null));
+                await store.RecordAsync(new ReceiveHistoryEntry($"entry-{i}", now.AddMinutes(i), "robot36", $"/tmp/{i}.png", null, ReceiveDecodeState.Completed));
             }
 
             var results = await store.QueryAsync(new ReceiveHistoryFilter());
@@ -224,9 +252,9 @@ public sealed class SqliteReceiveHistoryStoreTests
             var store = new SqliteReceiveHistoryStore(settingsStore, dbPath);
             var now = DateTimeOffset.UtcNow;
 
-            await store.RecordAsync(new ReceiveHistoryEntry("first", now, "robot36", "/tmp/a.png", null));
-            await store.RecordAsync(new ReceiveHistoryEntry("second", now.AddMinutes(1), "robot36", "/tmp/b.png", null));
-            await store.RecordAsync(new ReceiveHistoryEntry("third", now.AddMinutes(2), "robot36", "/tmp/c.png", null));
+            await store.RecordAsync(new ReceiveHistoryEntry("first", now, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+            await store.RecordAsync(new ReceiveHistoryEntry("second", now.AddMinutes(1), "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed));
+            await store.RecordAsync(new ReceiveHistoryEntry("third", now.AddMinutes(2), "robot36", "/tmp/c.png", null, ReceiveDecodeState.Completed));
 
             var results = await store.QueryAsync(new ReceiveHistoryFilter());
 
@@ -260,7 +288,7 @@ public sealed class SqliteReceiveHistoryStoreTests
 
             for (var i = 0; i < 33; i++)
             {
-                await store.RecordAsync(new ReceiveHistoryEntry($"entry-{i}", now.AddMinutes(i), "robot36", $"/tmp/{i}.png", null));
+                await store.RecordAsync(new ReceiveHistoryEntry($"entry-{i}", now.AddMinutes(i), "robot36", $"/tmp/{i}.png", null, ReceiveDecodeState.Completed));
             }
 
             var results = await store.QueryAsync(new ReceiveHistoryFilter());
@@ -271,6 +299,283 @@ public sealed class SqliteReceiveHistoryStoreTests
         {
             DeleteDb(dbPath);
         }
+    }
+
+    [Fact]
+    public async Task EnsureSchema_FreshDatabase_HasAllEightColumnsFromCreateTableAlone()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            _ = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+
+            var columns = await ReadColumnNamesAsync(dbPath);
+
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged"];
+            Assert.Equal(expectedColumns, columns);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureSchema_ExistingPreMigrationDatabase_AddsTheThreeNewColumns_AndBackfillsDecodeStateFromTheFilenameShape_NotTheDirectoryName()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            // Seed a pre-migration DB with only the original 5 columns -- exactly what an
+            // installation that predates this change has on disk -- via raw SQL, bypassing
+            // SqliteReceiveHistoryStore entirely so this test doesn't accidentally depend on the
+            // very migration logic it's meant to verify.
+            await using (var seedConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await seedConnection.OpenAsync();
+                var create = seedConnection.CreateCommand();
+                create.CommandText = """
+                    CREATE TABLE ReceiveHistory (
+                        Id TEXT PRIMARY KEY,
+                        ReceivedAt TEXT NOT NULL,
+                        ModeId TEXT NOT NULL,
+                        FilePath TEXT NOT NULL,
+                        LinkedQsoId TEXT NULL
+                    )
+                    """;
+                await create.ExecuteNonQueryAsync();
+
+                // Row A: a normal completed image (RecordCompletedImageAsync's real filename shape,
+                // ReceiveHistoryRecorder.cs -- `{yyyyMMdd-HHmmss}_{modeId}.png`) -- must backfill Completed.
+                // Row B: an abandoned image (RecordAbandonedImageAsync's real filename shape --
+                // `{yyyyMMdd-HHmmssfff}_{modeId}_partial_{entryId[..8]}.png`) -- must backfill Abandoned.
+                // Row C: a normal COMPLETED-shaped filename sitting inside a directory literally named
+                // "rx_partial_saves" (containing the exact `_partial_` substring) -- must STILL backfill
+                // Completed. A plain instr()/LIKE full-path substring match (an earlier, rejected draft
+                // of this migration) would have misclassified this one as Abandoned; GLOB anchored on
+                // the real filename SHAPE must not.
+                foreach (var (id, filePath) in new[]
+                {
+                    ("a", "/tmp/history/20260101-120000_robot36.png"),
+                    ("b", "/tmp/history/20260101-120000123_robot36_partial_abcd1234.png"),
+                    ("c", "/tmp/rx_partial_saves/20260101-120000_robot36.png"),
+                })
+                {
+                    var insert = seedConnection.CreateCommand();
+                    insert.CommandText = "INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId) VALUES ($id, $receivedAt, 'robot36', $filePath, NULL)";
+                    insert.Parameters.AddWithValue("$id", id);
+                    insert.Parameters.AddWithValue("$receivedAt", DateTimeOffset.UtcNow.ToString("O"));
+                    insert.Parameters.AddWithValue("$filePath", filePath);
+                    await insert.ExecuteNonQueryAsync();
+                }
+            }
+
+            // Constructing the store runs EnsureSchema, which must migrate this existing DB in place.
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+
+            var columns = await ReadColumnNamesAsync(dbPath);
+            Assert.Contains("Note", columns);
+            Assert.Contains("IsFlagged", columns);
+            Assert.Contains("DecodeState", columns);
+
+            var results = await store.QueryAsync(new ReceiveHistoryFilter());
+            var loadedA = results.Single(r => r.Id == "a");
+            var loadedB = results.Single(r => r.Id == "b");
+            var loadedC = results.Single(r => r.Id == "c");
+            Assert.Equal(ReceiveDecodeState.Completed, loadedA.DecodeState);
+            Assert.Equal(ReceiveDecodeState.Abandoned, loadedB.DecodeState);
+            Assert.Equal(ReceiveDecodeState.Completed, loadedC.DecodeState);
+            // The ADD COLUMN defaults for the other 2 new columns, not just DecodeState's backfill.
+            Assert.Null(loadedA.Note);
+            Assert.False(loadedA.IsFlagged);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureSchema_RunTwiceAgainstTheSameAlreadyMigratedDatabase_DoesNotReRunTheBackfill()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            // First construction creates a fresh (already-current-schema) DB -- DecodeState is
+            // never "newly added" here, so this alone can't exercise the re-run risk. Force a real
+            // pre-migration-then-migrated DB instead, then manually correct a backfilled row (as if
+            // a hypothetical future SetDecodeStateAsync had been used) via raw SQL, and confirm a
+            // SECOND EnsureSchema pass leaves that correction alone -- proving the backfill gate
+            // genuinely doesn't re-run, not just that construction doesn't throw.
+            await using (var seedConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await seedConnection.OpenAsync();
+                var create = seedConnection.CreateCommand();
+                create.CommandText = "CREATE TABLE ReceiveHistory (Id TEXT PRIMARY KEY, ReceivedAt TEXT NOT NULL, ModeId TEXT NOT NULL, FilePath TEXT NOT NULL, LinkedQsoId TEXT NULL)";
+                await create.ExecuteNonQueryAsync();
+                var insert = seedConnection.CreateCommand();
+                insert.CommandText = "INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId) VALUES ('b', $receivedAt, 'robot36', '/tmp/history/20260101-120000123_robot36_partial_abcd1234.png', NULL)";
+                insert.Parameters.AddWithValue("$receivedAt", DateTimeOffset.UtcNow.ToString("O"));
+                await insert.ExecuteNonQueryAsync();
+            }
+
+            _ = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath); // first EnsureSchema: migrates and backfills "b" to Abandoned
+
+            await using (var correctionConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await correctionConnection.OpenAsync();
+                var correct = correctionConnection.CreateCommand();
+                correct.CommandText = "UPDATE ReceiveHistory SET DecodeState = 'Completed' WHERE Id = 'b'";
+                await correct.ExecuteNonQueryAsync();
+            }
+
+            var storeAgain = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath); // second EnsureSchema: must NOT re-backfill
+
+            var results = await storeAgain.QueryAsync(new ReceiveHistoryFilter());
+            Assert.Equal(ReceiveDecodeState.Completed, Assert.Single(results).DecodeState);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task SetNoteAsync_ExistingEntry_UpdatesTheNote_AndReturnsTrue()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+
+            var updated = await store.SetNoteAsync("1", "weak signal, guessed at colors");
+
+            Assert.True(updated);
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.Equal("weak signal, guessed at colors", loaded.Note);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task SetFlaggedAsync_ExistingEntry_UpdatesTheFlag_AndReturnsTrue()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+
+            var updated = await store.SetFlaggedAsync("1", true);
+
+            Assert.True(updated);
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.True(loaded.IsFlagged);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task SetLinkedQsoIdAsync_ExistingEntry_UpdatesTheLink_AndReturnsTrue()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+
+            var updated = await store.SetLinkedQsoIdAsync("1", "qso-42");
+
+            Assert.True(updated);
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.Equal("qso-42", loaded.LinkedQsoId);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task SetNoteAsync_SetFlaggedAsync_SetLinkedQsoIdAsync_NonexistentEntryId_ReturnFalse_NotThrow()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+
+            Assert.False(await store.SetNoteAsync("missing", "note"));
+            Assert.False(await store.SetFlaggedAsync("missing", true));
+            Assert.False(await store.SetLinkedQsoIdAsync("missing", "qso-1"));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task TrimToRetentionLimit_ANotedFlaggedOrLoggedRowSurvivesPastTheWindow_ButAnUntouchedRowStillGetsTrimmed()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var settingsStore = new FakeSettingsStore
+            {
+                Settings = new AppSettings().WithSection(
+                    ReceiveHistorySettings.SectionKey,
+                    new ReceiveHistorySettings { MaxEntries = 2 },
+                    ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings),
+            };
+            var store = new SqliteReceiveHistoryStore(settingsStore, dbPath);
+            var now = DateTimeOffset.UtcNow;
+
+            // "old-untouched" and "old-flagged" both start outside the newest-2 window once "third"
+            // and "fourth" are recorded below -- only "old-flagged" (via IsFlagged, set here before
+            // the trim-triggering pushes) should survive.
+            await store.RecordAsync(new ReceiveHistoryEntry("old-untouched", now, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+            await store.RecordAsync(new ReceiveHistoryEntry("old-flagged", now.AddMinutes(1), "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed));
+            await store.SetFlaggedAsync("old-flagged", true);
+
+            await store.RecordAsync(new ReceiveHistoryEntry("third", now.AddMinutes(2), "robot36", "/tmp/c.png", null, ReceiveDecodeState.Completed));
+            await store.RecordAsync(new ReceiveHistoryEntry("fourth", now.AddMinutes(3), "robot36", "/tmp/d.png", null, ReceiveDecodeState.Completed));
+
+            var results = await store.QueryAsync(new ReceiveHistoryFilter());
+            var ids = results.Select(r => r.Id).ToHashSet();
+
+            Assert.DoesNotContain("old-untouched", ids);
+            Assert.Contains("old-flagged", ids);
+            Assert.Contains("third", ids);
+            Assert.Contains("fourth", ids);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    private static async Task<List<string>> ReadColumnNamesAsync(string dbPath)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(ReceiveHistory)";
+
+        var columns = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            columns.Add(reader.GetString(reader.GetOrdinal("name")));
+        }
+
+        return columns;
     }
 
     private static string TempDbPath() => Path.Combine(Path.GetTempPath(), $"scanline-studio-history-test-{Guid.NewGuid()}.db");
