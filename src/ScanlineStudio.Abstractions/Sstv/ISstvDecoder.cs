@@ -110,4 +110,92 @@ public interface ISstvDecoder
     /// Safe to read from any thread, same guarantee and same caveat as <see cref="SlantPpm"/> above
     /// (a concurrent read can observe a momentarily stale snapshot, never a thrown exception).</summary>
     int? SyncOffsetSamples { get; }
+
+    /// <summary>Peak amplitude over the trailing ~100ms window, normalized against this port's own
+    /// <c>[-1,1]</c> float sample contract (`spec/05-audio-engine.md:44`) -- port of legacy's
+    /// <c>CLVL.m_CurMax</c> (<c>sstv.h:223-298</c>), rescaled <c>/32768.0</c> back from legacy's
+    /// int16-ish domain (confirmed against <c>Wave.cpp:796-808</c>'s direct <c>SHORT</c>-to-
+    /// <c>double</c> copy). NOT the raw input/soundcard level -- this is the peak AFTER the receive
+    /// bandpass filter, the same post-filter point legacy's own <c>m_CurMax</c> measures
+    /// (<c>CSSTVDEM::Do</c>, `sstv.cpp:1824-1839`) -- a GUI labeling this "Input level" would be
+    /// misleading; "Signal level" or similar is more accurate. Typical range <c>[0, ~1.0]</c>, not
+    /// hard-bounded (that same bandpass filter can overshoot slightly). Not the same scale as
+    /// legacy's own on-screen meter, which reads full at <c>24578</c> on ITS OWN scale
+    /// (`Main.cpp:6168-6169`) -- this port deliberately uses its own existing float full-scale
+    /// instead, so <see cref="IsLevelOverdriven"/>'s threshold below sits at ~0.75 of this value,
+    /// not at 1.0.
+    ///
+    /// Never <see langword="null"/>: the underlying tracker is decoder-lifetime (constructed once,
+    /// not per-lock like <see cref="SlantPpm"/>'s tracker), and reads <c>0.0</c> -- a real,
+    /// meaningful value, not a "not ready" placeholder -- before the first sample is ever pushed,
+    /// immediately after <see cref="ResetAgc"/> until the next ~100ms window completes, and
+    /// (like every property here) between images.
+    ///
+    /// <b>Freshness caveat, accepted not fixed</b>: only as fresh as the decoder's internal AGC
+    /// cursor, which normal per-line decode and pre-lock header scanning both advance -- except in
+    /// one specific combination: a locked AVT reception with sync-restart disabled (the "Lock"
+    /// toggle engaged), where nothing advances that cursor for the rest of that image (AVT has no
+    /// Auto Slant/AFC tracking to drive it, and the one other driver is gated off by that same
+    /// toggle) -- this value can sit frozen at a stale reading for the whole image in that specific
+    /// case. A documented limitation of a read-only exposure, not a bug to work around here.
+    ///
+    /// Safe to read from any thread, same guarantee as <see cref="SlantPpm"/> above.</summary>
+    double SignalPeakLevel { get; }
+
+    /// <summary>Whether <see cref="SignalPeakLevel"/>'s underlying peak amplitude has reached
+    /// legacy's own red-meter-bar threshold -- <c>CLVL.m_CurMax &gt;= 24578</c>, the exact
+    /// condition legacy's RX level meter turns red at (<c>DrawLvl</c>'s RX branch,
+    /// <c>Main.cpp:6174</c>). Deliberately NOT legacy's separate <c>m_OverFlow</c> flag
+    /// (<c>sstv.cpp:1821-1822</c>), which tests the raw, pre-filter sample and is a latched,
+    /// GUI-repaint-cleared flag -- a genuinely different legacy quantity this port has no
+    /// equivalent access point for (this port's AGC is fed the already-bandpass-filtered signal).
+    /// Not a percentage: exposes what legacy actually measured (a threshold crossing), not an
+    /// invented "clipping %" figure legacy never computed.
+    ///
+    /// Reads the underlying peak amplitude independently of <see cref="SignalPeakLevel"/> (a
+    /// second, separate field read, not derived from that property's own already-divided value) --
+    /// a caller reading both back-to-back can in principle observe them disagree by one sample
+    /// generation (e.g. <see cref="SignalPeakLevel"/> just under 0.75 while this is still
+    /// <see langword="true"/> from a fractionally earlier reading). Inherent to two independent
+    /// reads of a live value, not a bug.
+    ///
+    /// Never <see langword="null"/>, same lifetime/freshness notes as <see cref="SignalPeakLevel"/>
+    /// (including its AVT/locked/sync-restart-disabled staleness caveat). Safe to read from any
+    /// thread, same guarantee as <see cref="SlantPpm"/> above.</summary>
+    bool IsLevelOverdriven { get; }
+
+    /// <summary>Current sync-tone AFC frequency correction, in Hz -- direct passthrough of the
+    /// underlying AFC tracker's own correction value (no sign flip), which callers add to every
+    /// demodulated sample (port of legacy's <c>CSSTVDEM::SyncFreq</c>/<c>d += m_AFCDiff</c>,
+    /// `sstv.cpp:2270`). Backs a "Sync tone" readout the way legacy would show it via its own AFC
+    /// state -- legacy has no equivalent readout for the Black(1500Hz)/White(2300Hz) picture
+    /// tones, since AFC only ever tracks the sync tone in both legacy and this port; a GUI must
+    /// not invent values for those.
+    ///
+    /// <see langword="null"/> in every case the underlying tracker doesn't exist: before any mode
+    /// is locked or between images; for AVT (no AFC tracking, matching
+    /// <see cref="SlantPpm"/>'s own AVT exclusion); when AFC is disabled by configuration (a
+    /// port-only null case with no legacy analogue); and -- the one easy to miss, since the
+    /// underlying tracker is NOT torn down by the same mid-reception AVT-training-hand-off path
+    /// that leaves the current mode momentarily null (same class of gap <see cref="SlantPpm"/> had
+    /// to be fixed for) -- during that same pending-training window. <c>0.0</c>, not
+    /// <see langword="null"/>, once tracking is active but before AFC's first lock (matching
+    /// legacy's own zero-correction-until-locked default) -- verified this can never leak a stale
+    /// non-zero value from a previous lock, since the tracker is always freshly constructed, never
+    /// reset in place.
+    ///
+    /// Safe to read from any thread, same guarantee as <see cref="SlantPpm"/> above.</summary>
+    double? SyncFrequencyCorrectionHz { get; }
+
+    /// <summary>Number of raw samples currently held in the decoder's internal buffer, after
+    /// trimming. NOT "0 while idle" -- pre-lock header/VIS scanning retains a bounded, multi-
+    /// thousand-sample search window even while streaming with nothing locked; this is genuinely
+    /// <c>0</c> only before the very first <see cref="PushSamples"/> call, and grows to roughly one
+    /// image's worth of samples while a lock is active. Counts the raw sample buffer only, not the
+    /// separate small per-detector caches the pre-lock header scanners maintain -- not a total
+    /// memory figure, a diagnostic of the one buffer most likely to grow unbounded if something is
+    /// wrong.
+    ///
+    /// Safe to read from any thread, same guarantee as <see cref="SlantPpm"/> above.</summary>
+    int BufferedSampleCount { get; }
 }
