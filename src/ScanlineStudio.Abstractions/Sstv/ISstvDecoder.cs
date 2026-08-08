@@ -74,4 +74,40 @@ public interface ISstvDecoder
     /// <see cref="ModeDetected"/>/<see cref="DecodeRestarted"/> events, are asynchronous relative to
     /// this call.</summary>
     void ForceMode(SstvModeDefinition mode);
+
+    /// <summary>Current Auto Slant sample-clock drift, in parts-per-million relative to the declared
+    /// (nominal) sample rate -- the same quantity and formula as legacy's own "Sync &amp; slant"
+    /// readout (<c>TMmsstv::DrawSlantInfo</c>, `Main.cpp:5535-5544`:
+    /// <c>(SSTVSET.m_SampFreq - sys.m_SampFreq) * 1e6 / sys.m_SampFreq</c>). <see langword="null"/>
+    /// before any mode is locked, and for AVT (which has no Auto Slant tracking, matching
+    /// <see cref="RequestReSync"/>'s own no-op condition) -- <c>0.0</c>, not <see langword="null"/>,
+    /// once tracking is active but before the first correction ever commits (drift is genuinely zero
+    /// until then, matching legacy's own <c>SSTVSET.m_SampFreq == sys.m_SampFreq</c> at that
+    /// point).
+    ///
+    /// Lifetime differs from legacy's own readout, not just its null cases: legacy's
+    /// <c>SSTVSET.m_SampFreq</c> persists across receptions until a new correction or an explicit
+    /// Slant-Reset (`Main.cpp:13186-13193`), so its ppm readout carries forward between images. This
+    /// port's tracker is rebuilt fresh on every lock and torn down at end-of-image, so this value
+    /// resets to <see langword="null"/> (then <c>0.0</c> again once a fresh lock's tracker exists)
+    /// between receptions rather than carrying over -- a real, accepted port-level scoping choice, not
+    /// an oversight.
+    ///
+    /// Safe to read from any thread (e.g. a GUI polling this on a timer while another thread drives
+    /// <see cref="PushSamples"/>) -- unlike <see cref="RequestReSync"/>/<see cref="ForceMode"/>, this
+    /// is a plain field read with no cross-thread write to synchronize, so a concurrent read can
+    /// observe a momentarily stale value (never a torn/corrupt one) but never throws.</summary>
+    double? SlantPpm { get; }
+
+    /// <summary>Most recent per-line sync-envelope offset, in samples, relative to where the locked
+    /// mode's sync segment is expected to start -- the same quantity legacy computes as
+    /// <c>m_AutoStopPos</c> (`Main.cpp:3887`) for its own Auto Sync/Auto Stop triggers, but never
+    /// itself displays (legacy's only on-screen readout for this family is the ppm-only
+    /// <see cref="SlantPpm"/> one above). <see langword="null"/> before any mode is locked, for AVT
+    /// (no Auto Slant tracking), or before any line has completed since the current lock or the last
+    /// applied correction (mirrors <see cref="RequestReSync"/>'s own no-op condition).
+    ///
+    /// Safe to read from any thread, same guarantee and same caveat as <see cref="SlantPpm"/> above
+    /// (a concurrent read can observe a momentarily stale snapshot, never a thrown exception).</summary>
+    int? SyncOffsetSamples { get; }
 }

@@ -5,7 +5,54 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-08, latest, ACTIVE) — Operator-profile setting + minimal TX-macro engine.
+## Resume here (2026-08-08, latest, ACTIVE) — Slant/sync correction readouts (RX GUI-blocking backend primitive).
+
+Working through `spec/14-roadmap.md`'s "Root-cause map" table, starting with the item flagged there
+as cheapest: **Slant/sync correction readouts (ppm, offset px)** — the numbers existed only as
+internal/test-only fields on `AnalogFmSstvDecoder`, never exposed on `ISstvDecoder`, blocking the
+mock2 "Sync & slant" RX readout card (`Panes.RxSync.SlantPpm`/`OffsetPx` in `mockups/`).
+
+**Done, backend-only (no UI wired yet)**: `ISstvDecoder` gained `SlantPpm` (double?, ppm drift,
+legacy's `DrawSlantInfo` formula, `Main.cpp:5537`) and `SyncOffsetSamples` (int?, legacy's
+`m_AutoStopPos`, `Main.cpp:3887-3889`, never itself displayed by legacy — this port's own new
+readout). Implemented on both `ISstvDecoder` implementers (`AnalogFmSstvDecoder`,
+`RestartableSstvDecoder`'s forwarding wrapper) plus null/no-op stubs added to all 3 test
+`FakeSstvDecoder`s (Application/Imaging/Logbook.Tests).
+
+**Two real bugs caught by auditor review, both fixed before landing** (see git history for the
+diff): (1) `SlantPpm` originally only null-checked `_slantTracker`, not `_mode` — during the AVT
+mid-reception training hand-off (`AbandonInProgressImage`, up to ~7.1s pending window, chunked-push
+only), the abandoned mode's tracker stays alive while `_mode` goes null, so the naive version leaked
+the abandoned image's stale ppm the whole window instead of returning null. Fixed by checking both,
+read into locals once. (2) `SyncOffsetSamples` had a cross-thread TOCTOU bug: read
+`_lastLineSyncPeakPosition.HasValue` then separately `.Value` — a decode-thread write racing between
+those two reads (a GUI polling this on a timer, the documented intended use, is exactly this
+scenario) could throw `InvalidOperationException` instead of returning null. Fixed by reading each
+field into a local exactly once per getter call.
+
+New tests: `SlantTests.cs` gained 7 (was 24 relevant, now 31) — `SlantTracker.DriftPpm` formula
+tests (2), decoder-level null-before-lock/AVT-stays-null tests (2), wiring-correctness tests tying
+the public properties to the already-audited internal fields (2), and a regression test for bug #1
+above (`AnalogFmSstvDecoder_DuringAPendingAvtTrainingWindow_...`) — confirmed via revert-fix-confirm-
+fail that it actually fails against the pre-fix code (returned stale `0` instead of `null`), not
+just superficially exercising the code path.
+
+**Verified**: full solution build clean (0 warnings/errors). `Core.Sstv.Tests` in progress at time
+of writing (was 636/636 before the two auditor-driven fixes were added — re-running now). Auditor
+review: VERDICT EQUIVALENT-WITH-RISKS, both risk-level findings fixed above; two remaining nits
+accepted as documented limitations, not fixed (re-wrap uses live vs. capture-time line width,
+sub-sample/display-only; and this port's ppm readout resets to null between images unlike legacy's
+persistent-until-reset one — already stated in the interface doc comment, not a new gap). **NOT YET
+committed** — pending final full-suite confirmation.
+
+**Next up**: per the roadmap's root-cause map, the next-biggest GUI-blocking gap after this one is
+**Decode-time signal telemetry** (SNR, squelch, BPF/AGC/notch state, buffer/clipping %, noise floor)
+— currently nothing measured anywhere in `Core.Audio`/`Core.Sstv`, blocking the RX input-chain
+telemetry card and per-line SNR/histogram ("Signal quality") card. Larger than this item (several
+new DSP measurements, not just exposing existing state) — worth a plan-review pass before starting,
+not a straight "add a property" job like this one was.
+
+## Previously (2026-08-08) — Operator-profile setting + minimal TX-macro engine.
 **Implemented, full solution build clean, all test projects green (630/630 Core.Sstv.Tests
 unaffected, 82/82 UI.Tests (was 78, +4 new), 59/59 Application.Tests). COMMITTED (`8556738`) and
 pushed.**
