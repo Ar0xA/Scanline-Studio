@@ -155,7 +155,8 @@ internal static partial class Program
             return new RestartableSstvDecoder(
                 afcEnabled: decoderSettings.AfcEnabled ?? true,
                 syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true,
-                autoSyncEnabled: decoderSettings.AutoSyncEnabled ?? true);
+                autoSyncEnabled: decoderSettings.AutoSyncEnabled ?? true,
+                autoStopEnabled: decoderSettings.AutoStopEnabled ?? false); // legacy fresh default is OFF (Main.cpp:900), unlike the other three
         });
         hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
         hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));
