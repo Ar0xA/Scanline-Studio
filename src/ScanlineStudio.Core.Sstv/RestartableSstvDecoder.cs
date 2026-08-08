@@ -207,6 +207,34 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         current.ForceMode(mode);
     }
 
+    /// <summary>Forwards to whichever inner instance is current. A restart swap resets this to
+    /// <see langword="null"/> (a fresh inner has no lock/slant-tracker yet), matching
+    /// <see cref="ISstvDecoder.SlantPpm"/>'s own documented null cases.</summary>
+    public double? SlantPpm
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.SlantPpm;
+            }
+        }
+    }
+
+    /// <summary>Forwards to whichever inner instance is current. A restart swap resets this to
+    /// <see langword="null"/> (a fresh inner has no completed line yet), matching
+    /// <see cref="ISstvDecoder.SyncOffsetSamples"/>'s own documented null cases.</summary>
+    public int? SyncOffsetSamples
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.SyncOffsetSamples;
+            }
+        }
+    }
+
     private void Swap()
     {
         UnsubscribeFrom(_inner);

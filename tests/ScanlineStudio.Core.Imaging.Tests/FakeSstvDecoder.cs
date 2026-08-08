@@ -22,6 +22,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     {
     }
 
+    public double? SlantPpm => null;
+
+    public int? SyncOffsetSamples => null;
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
     }
