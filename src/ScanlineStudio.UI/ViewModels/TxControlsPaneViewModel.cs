@@ -35,6 +35,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private readonly ILocalizationService _localization;
     private readonly ISettingsStore _settingsStore;
     private readonly IRadioSessionService _radioSession;
+    private readonly IMacroTextResolver _macroTextResolver;
     private readonly ILogger<TxControlsPaneViewModel> _logger;
 
     private const int SwrCutoffConsecutiveSamplesRequired = 2;
@@ -157,6 +158,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         ILocalizationService localization,
         ISettingsStore settingsStore,
         IRadioSessionService radioSession,
+        IMacroTextResolver macroTextResolver,
         ILogger<TxControlsPaneViewModel> logger)
     {
         _sstvSession = sstvSession;
@@ -167,6 +169,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _localization = localization;
         _settingsStore = settingsStore;
         _radioSession = radioSession;
+        _macroTextResolver = macroTextResolver;
         _logger = logger;
 
         AvailableModes = sstvSession.AvailableModes;
@@ -553,7 +556,13 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var editor = new TxImageEditorPaneViewModel(original, mode, _preparer);
+        // Loaded fresh here rather than cached at construction -- the operator may have edited
+        // Options (Callsign/Name/Grid) at any point before opening the editor.
+        var operatorSettings = (await _settingsStore.LoadAsync())
+            .GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
+            ?? new OperatorSettings();
+
+        var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _macroTextResolver, operatorSettings);
         editor.Applied += final => OnEditorApplied(fileName, original, editor, final);
         editor.Cancelled += OnEditorCancelled;
         EditorOpened?.Invoke(editor);

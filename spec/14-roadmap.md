@@ -4076,12 +4076,15 @@ QRZ.com/cty.dat scope — these are the deltas found):
 **TX macros / CW-ID** (legacy's "macro" is a token-picker popup, not a saved template — shared
 across the overlay editor, CW-ID text, and repeater auto-answer via one substitution function,
 `MacroText`):
-- Token-picker UI + substitution service — low-medium complexity, but the real blocker is that
-  **no operator-callsign/profile setting exists yet** to substitute from (same root gap
-  [[07-image-pipeline]] already flags for why overlay text is plain free-typed today).
+- ~~Token-picker UI + substitution service~~ — **done (2026-08-08)**, scoped to the tokens
+  sourceable from `OperatorSettings`/system clock (`%m`/`%D`/`%T`/`{name}`/`{grid}`) — `MacroTextResolver`,
+  wired into the overlay editor's insert-field chips. Legacy's full token set (his-callsign/his-
+  name/his-QTH/RST exchange/greetings) still needs a "current QSO" form concept that doesn't
+  exist, same class of gap as CW-ID below — deferred, not silently dropped.
 - CW-ID (real, working legacy feature — not dead like Vari SSTV) — low-medium complexity, and
   can reuse `SstvSessionService`'s existing `TuneAsync`/`GenerateTone`/`PlayWithPttAsync` (built
-  for the Tune button, Piece 5/6 above) rather than needing a new audio subsystem.
+  for the Tune button, Piece 5/6 above) rather than needing a new audio subsystem. Can now reuse
+  `MacroTextResolver` too, once built, for its own text-token expansion.
 - The two only intersect at token substitution; buildable independently.
 
 **Waterfall/color** (still plain grayscale — a prior, standing decision already deprioritized
@@ -4144,9 +4147,18 @@ filter — those are a known exclusion, not rediscovered here):
 - RX buffer mode + "high-precision" slant/sync replay actions — medium, DSP-adjacent (a rolling
   raw-audio buffer replayed through sync/slant correction); flag carefully, don't treat as a
   plain UI toggle.
-- Auto-stop-at-end-of-signal / auto-resync toggles — group with the already-tracked
-  `m_SyncRestart`/abandoned-image-save gap (below, under "explicitly deferred") rather than file
-  as new items; all three are one legacy "Lock" toolbar button.
+- ~~Auto-stop-at-end-of-signal / auto-resync toggles~~ — **done** (2026-08-08): both are the other
+  two sub-features of the same legacy "Lock" toolbar button as `m_SyncRestart`
+  (`TMmsstv::AutoStopJob`, `Main.cpp:3884-4035`). Auto Sync (automatic drift-triggered ReSync,
+  commit `4ecfea6`) and Auto Stop (erratic/weak-signal detector that stops reception, commit
+  `cda094d`) both shipped backend-only, following the exact same design as `RequestReSync`/
+  `AfcEnabled` above (new `SstvDecoderSettings.AutoSyncEnabled`/`AutoStopEnabled`, nullable,
+  STJ-safe). `AutoStopEnabled` defaults OFF, matching legacy's own fresh default
+  (`sys.m_AutoStop = 0`, `Main.cpp:900`) — the other three toggles in this family default ON. KRSA
+  (sample-rate auto-calibration, the third sub-feature `AutoStopJob` bundles) stays permanently out
+  of scope — no toggle/UI exists for it and no plan to add one. See `PROJECT_BRIEF.md` for the full
+  account (2 plan-review rounds + a code-level review each, several real bugs caught, including a
+  guaranteed NRE and a wrong dead-time-skip assumption in Auto Stop's own design).
 - **Confirmed NOT a real feature — don't port**: "always on top" (`m_StayOnTop` is write-only in
   legacy's own ini handling, never read back or wired to anything; vestigial/dead code there too).
 - **Confirmed NOT a gap**: auto-save-on-receive — legacy always auto-saves unconditionally too,
@@ -4154,6 +4166,27 @@ filter — those are a known exclusion, not rediscovered here):
 - VOX (a TX tone-burst preamble to trigger a rig's own VOX circuit, not audio-input-detected PTT,
   and doesn't touch the CAT/PTT layer at all) — real but niche given this port already has real
   CAT PTT; low priority.
+
+**Root-cause map (2026-08-08)** — the itemized mock2 list just below is real and current, but reading
+it item-by-item hides that most entries trace back to a small number of shared missing backend
+primitives. Verified directly against the current interfaces (`ISstvDecoder`, `ISstvSessionService`,
+`IReceivedImageBuffer`, `ReceiveHistoryEntry` — not inferred from the mock or from memory), so this
+table is a grouping/leverage view of the same gaps below, not a new inventory:
+
+| Missing backend primitive | What exists today | mock2 elements it blocks |
+|---|---|---|
+| ~~Operator-callsign/profile setting~~ — **corrected and done** (2026-08-08): the "zero grep hits" claim below was wrong (`OperatorSettings.Callsign` already existed, `247fde7`); the "unblocks 4 mock2 items" claim was also wrong — Identification (FSK/CW/Tail ID) is blocked on the whole FSK/CW-ID subsystem this project already deferred separately ([[06-sstv-dsp]]'s Station ID section), not on a setting, and stays blocked. `OperatorSettings` gained `Name`/`Grid`; a new `IMacroTextResolver` (scoped to `%m`/`%D`/`%T`/`{name}`/`{grid}` — legacy's own his-callsign/RST/greeting tokens need a "current QSO" form this port doesn't have, deferred same as CW-ID) now backs the Outgoing-metadata card's callsign/name/grid fields and the overlay editor's real insert-field picker/TX-macro substitution. See `PROJECT_BRIEF.md` for the full account. | `OperatorSettings.Callsign`/`Name`/`Grid`, `IMacroTextResolver` | Outgoing-metadata card (partial: callsign/name/grid only, not RST/to-station/report), overlay editor's insert-field picker + TX-macro substitution — 2 of the originally-claimed 4 mock2 items, not 4; Identification card and CW-ID text generation itself remain blocked on the separately-deferred FSK/CW-ID subsystem |
+| **Decode-time signal telemetry** (SNR, squelch, BPF/AGC/notch state, buffer/clipping %, noise floor, L/R levels) | Nothing measured anywhere in `Core.Audio`/`Core.Sstv` | RX input-chain telemetry card, per-line SNR/histogram ("Signal quality" card) |
+| **Slant/sync correction readouts** (ppm, offset px) | The numbers exist as `private`/`internal ...ForTests` fields inside `AnalogFmSstvDecoder` (computed for Auto Sync/ReSync's own logic) — just never exposed on `ISstvDecoder` | Sync/slant correction readouts card |
+| **`ReceiveHistoryEntry`'s field set** — only `Id, ReceivedAt, ModeId, FilePath, LinkedQsoId` today | No callsign, grid, SNR, note, flag, or decode-state fields | Gallery search/sort/filter, frame metadata card, "decode rows colored by state" |
+| **Structured per-decode event log** | `ReceiveHistoryStore` only records the final saved image, no per-decode trace | "Decode activity" log card, decoder-trace pane |
+| **Frame-action primitives** (abort-current-frame, re-decode, QSO-log-link) | `ISstvDecoder` has no abort; `LinkedQsoId` exists on the record but nothing ever sets it | RX frame actions (Abort/Re-decode/Copy-to-TX/Log QSO), Gallery's "Log entry"/"Open in log" |
+| **TX-side device/clock telemetry** (output device name, sample-clock offset, occupied bandwidth, monitor-while-TX) | Nothing exposed in `Core.Audio` | TX telemetry readouts row |
+| **OCR/QRZ lookup** | Nothing | Frame metadata card's callsign/grid fields, gallery search on those |
+
+Already covered, not gaps: TX power/ALC/SWR history (`TxControlsPaneViewModel.TelemetryHistory`, real
+data via `RadioState` polling), decode progress (`IReceivedImageBuffer.Progress`), PTT lock,
+tune-and-hold, stereo capture, buffer/thread-priority settings.
 
 **New UI shell mock2 elements omitted for lack of real backing data** (found while building the
 fixed Menu/header/3-tab shell, see `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` —
@@ -4201,8 +4234,10 @@ wired everything real, these had no real data behind them today):
   log above). Flagged directly to the user mid-session; not yet resolved either way.
 - VOX tone-burst preamble row in the Transmit tab's TX-mode card — cross-reference the VOX
   bullet above; no new note.
-- Whole Identification card (FSK ID/CW ID/Tail) — blocked on the already-tracked missing
-  operator-callsign/profile setting (cross-reference "TX macros / CW-ID" above); no new note.
+- Whole Identification card (FSK ID/CW ID/Tail) — **correction (2026-08-08)**: not actually
+  blocked on the operator-profile setting (that's now done, see the root-cause map above); blocked
+  on the separately-deferred FSK/CW-ID audio subsystem itself (cross-reference "TX macros / CW-ID"
+  above and [[06-sstv-dsp]]'s Station ID section). Stays blocked.
 - TX output device name / TX sample-clock / occupied-bandwidth / monitor-audio-while-
   transmitting readouts — none of these are exposed anywhere in `ScanlineStudio.Core.Audio`
   today. Small-medium each.
@@ -4212,16 +4247,20 @@ wired everything real, these had no real data behind them today):
   "actually transmitting" gate as the existing `LiveSwrRatio`/etc. readouts. Backend-only —
   nothing renders it yet; a future chart binds directly, no translation step needed.
 - Whole Outgoing-metadata card (VIS code/FSK ID/CW ID/callsign/to-station/grid-beam/report/
-  freq-mode/date burned into the picture) — blocked on the same missing operator-profile
-  setting as Identification, plus a separate "to station"/report/QSO-context concept that
-  doesn't exist yet. Medium-large.
+  freq-mode/date burned into the picture) — **partially done (2026-08-08)**: callsign/name/grid
+  fields now real (`OperatorSettings`/`IMacroTextResolver`). FSK ID/CW ID content generation stays
+  blocked on the separately-deferred FSK/CW-ID subsystem; "to station"/report/QSO-context fields
+  still need a "current QSO" form concept that doesn't exist yet. Was medium-large, now small-medium
+  remaining.
 - TX image editor: Move/Scale/Rotate/Box/Line/Mask/Pick tools, Undo/Redo, zoom/snap-grid,
   brightness/contrast/saturation/gamma/sharpen/denoise adjustments — `ITransmitImagePreparer`
   only implements Crop/Resize/ApplyOverlay; none of these operations exist in the pipeline.
   Large, several independent features.
-- Insert-field token picker / saved templates in the overlay editor — blocked on the same
-  missing operator-profile setting as CW-ID, plus the separately-deferred template designer;
-  no new note.
+- Insert-field token picker in the overlay editor — **done (2026-08-08)**: 5 of 12 mock2 chips
+  (MY CALL/MY GRID/MY NAME/DATE/UTC) are real via `IMacroTextResolver`; the other 7 (HIS
+  CALL/HIS GRID/FREQ/MODE/HIS RSV/DIST/BEAM) need the same "current QSO" form / FSK-ID dependency
+  as the Outgoing-metadata card above. Saved templates remain a separately-deferred template
+  designer, untouched by this pass.
 - TX queue (batch multiple images), persisted TX log, and "recently sent" reuse strip — no
   queueing, no TX-history store distinct from RxHistory exists. Medium-large, three separate
   features.
@@ -4248,7 +4287,8 @@ just above; demod-type selector and auto-start-on-sync-detect — cross-referenc
 "AFC toggle"/"Auto-stop-at-end-of-signal" above; window-position/size memory — cross-reference
 "RX history retention limit" above; 7 waterfall/spectrum colors — cross-reference "Waterfall/
 color" above; CW ID text/frequency/speed + FSK encode/decode — cross-reference "TX macros /
-CW-ID" above, same operator-profile blocker; OmniRig 4th CAT backend — already tracked in
+CW-ID" above, blocked on the separately-deferred FSK/CW-ID subsystem, not the (now-resolved)
+operator-profile setting; OmniRig 4th CAT backend — already tracked in
 `spec/03-cat-layer.md` as speculative/undesigned) — no new notes for any of those. Genuinely new
 gaps found while doing this pass, not previously tracked anywhere:
 - ~~Sound FIFO buffer size (RX/TX)~~, ~~sound-card thread (capture-drain) priority~~,
@@ -4298,8 +4338,9 @@ gaps found while doing this pass, not previously tracked anywhere:
   architecture at all; still open.
 - Sound-file ID (a recorded `.mmv`-style audio clip played instead of a CW-keyed tone) — distinct
   from CW-ID above (which is real and already tracked); this is a second, separate ID method with
-  its own file-path field. Small-medium once CW-ID's operator-profile blocker is resolved, since
-  they'd likely share the same "ID method" selector.
+  its own file-path field. Small-medium once CW-ID's own FSK/CW-ID subsystem blocker is resolved
+  (not an operator-profile blocker, that part's already done), since they'd likely share the same
+  "ID method" selector.
 - ~~Tune-satellite-trigger toggle~~ — **done** (2026-08-07), explicitly **not a confirmed legacy
   port** (a citation attempt against `CtrBtn.cpp` only found a UI-enablement guard, not the actual
   post-tune state-transition logic — documented as an assumption, not verified). New

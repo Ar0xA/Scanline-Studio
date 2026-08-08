@@ -64,6 +64,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private string? _callsign;
 
     [ObservableProperty]
+    private string? _operatorName;
+
+    [ObservableProperty]
+    private string? _operatorGrid;
+
+    [ObservableProperty]
     private bool _isConfirmingResetAll;
 
     public OptionsWindowViewModel(
@@ -178,6 +184,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         HamlibBaudRate = snapshot.HamlibBaudRate;
         HamlibPttType = snapshot.HamlibPttType;
         Callsign = snapshot.Callsign;
+        OperatorName = snapshot.OperatorName;
+        OperatorGrid = snapshot.OperatorGrid;
     }
 
     [RelayCommand]
@@ -200,7 +208,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             HamlibSerialPort: HamlibSerialPort,
             HamlibBaudRate: HamlibBaudRate,
             HamlibPttType: HamlibPttType,
-            Callsign: Callsign);
+            Callsign: Callsign,
+            OperatorName: OperatorName,
+            OperatorGrid: OperatorGrid);
 
         try
         {
@@ -270,6 +280,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     {
         Log.ResetSectionInvoked(_logger, "Tx");
         Callsign = OptionsSettingsService.Defaults.Callsign;
+        OperatorName = OptionsSettingsService.Defaults.OperatorName;
+        OperatorGrid = OptionsSettingsService.Defaults.OperatorGrid;
     }
 
     [RelayCommand]
