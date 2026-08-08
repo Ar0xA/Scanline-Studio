@@ -4448,17 +4448,24 @@ first written — see their notes).
 **Working order** (this session's own proposal, not yet reprioritized by the user beyond "tackle
 these first" as a whole) — biggest-leverage/lowest-risk first:
 
-- [ ] **Logbook UI pane** — the single clearest "backend done, invisible to the user" gap. Verified
-  directly (not assumed): `AdifExporter.cs`/`AdifImporter.cs`/`QrzLogbookUploader.cs`/
-  `GridTrackerStreamer.cs` all real and already built (`src/ScanlineStudio.Core.Logbook/`), plus a
-  complete Application-layer facade already exists too (`ILogbookSessionService`, DI-registered,
-  `LogQsoAsync`/`SearchAsync`/`ExportAdifFileAsync`/`ImportAdifFileAsync`) — this is a UI-only gap,
-  not backend work. `src/ScanlineStudio.UI/` has zero `Logbook`-named ViewModel/View. Currently
-  being scoped (2026-08-08), see `~/.claude/plans/` for the active plan file once drafted.
+- [x] **Logbook UI pane** — **shipped 2026-08-08.** New 4th tab (`MainWindow.axaml`) +
+  `LogbookPaneViewModel`: search/browse (callsign exact-match + UTC calendar-date From/To range,
+  30-day default), add/edit QSO form (all `QsoRecord` fields except `Id`/`ReceivedImageId`), ADIF
+  import/export via 2 new `IFilePickerService` methods. New facade method
+  `ILogbookSessionService.UpdateQsoAsync` (deliberately no GridTracker/QRZ re-push — QRZ's real
+  upload API is INSERT-only). Fixed a pre-existing `ExportAdifFileAsync` gap (missing
+  `STATION_CALLSIGN`, exported files didn't import cleanly into LoTW/eQSL). Scoped via 2 rounds of
+  auditor plan-review, then 2 rounds of post-implementation auditor code-review — round 1 caught 3
+  real blockers (status messages silently discarded after every Log/Update; Mode and SSTV-mode
+  ComboBoxes bound via `SelectedItem` against a different element type than the bound property,
+  silently nulling the field on every selection; `StringFormat` on a TwoWay Start/End `TextBox`
+  binding that doesn't reverse on `ConvertBack`, corrupting stored UTC timestamps to the machine's
+  local offset on edit) plus 5 risks, all fixed and re-verified ship-ready in round 2. Plan file:
+  `~/.claude/plans/rustling-drifting-falcon.md`.
   QSL sent/received flags and duplicate-QSO detection (by callsign/band) remain real, separate,
-  smaller deltas (facade/repository changes, not just UI) — explicitly NOT bundled into the UI-pane
-  plan; Maidenhead grid locator was a stale claim, `QsoRecord.GridSquare` already exists (correction
-  above).
+  smaller deltas (facade/repository changes, not just UI) — explicitly NOT bundled into this pane.
+  Delete-a-QSO and the Gallery "Log entry"/"Open in log" cross-pane wiring are also explicitly out of
+  scope (see the plan file's own "Explicitly OUT of scope" section for the reasons).
 - [ ] **DSP decode-accuracy residuals at the declared 11025Hz rate** — ~1/3 of the mode table
   (Robot36, Robot72, MR73, ML180/240/280/320, Martin M2, MR115) still measurably exceeds this
   port's own 10.0-average-per-channel-delta round-trip tolerance at 11025Hz specifically (the
