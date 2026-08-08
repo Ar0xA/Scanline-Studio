@@ -3,6 +3,9 @@
         xmlns:vm="using:ScanlineStudio.UI.ViewModels"
         xmlns:views="using:ScanlineStudio.UI.Views"
         xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:sstv="using:ScanlineStudio.Abstractions.Sstv"
+        xmlns:logbook="using:ScanlineStudio.Abstractions.Logbook"
+        xmlns:conv="using:ScanlineStudio.UI.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600"
@@ -950,6 +953,145 @@
                                     <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.DiskLabel}" />
                                     <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.DiskValue}" />
                                 </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+            <TabItem Header="{loc:Translate MainWindow.Tabs.Logbook}">
+                <Grid ColumnDefinitions="*,380" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}" DataContext="{Binding Logbook}">
+
+                    <!-- Left: search/browse. CallsignFilter is an exact, case-insensitive match
+                         (SqliteLogbookRepository's own COLLATE NOCASE), not a substring search;
+                         no watermark claims otherwise. FromDate defaults to 30 days ago on first
+                         load (cheap paging insurance, spec/14-roadmap.md); ToDate is end-of-day
+                         inclusive when set. -->
+                    <Border Grid.Column="0" Classes="card">
+                        <DockPanel LastChildFill="True">
+                            <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.Logbook.SearchHeader}" />
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto"
+                                  ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,4">
+                                <TextBox Text="{Binding CallsignFilter}" Watermark="{loc:Translate Panes.Logbook.CallsignFilterWatermark}" />
+                                <DatePicker Grid.Column="1" SelectedDate="{Binding FromDate}" />
+                                <DatePicker Grid.Column="2" SelectedDate="{Binding ToDate}" />
+                                <Button Grid.Column="3" Classes="small" Content="{loc:Translate Panes.Logbook.Refresh}" Command="{Binding RefreshCommand}" />
+                            </Grid>
+                            <TextBlock DockPanel.Dock="Top" Classes="caption"
+                                       Text="{loc:Translate Panes.Logbook.NoEntriesYet}"
+                                       IsVisible="{Binding !Entries.Count}" />
+                            <ScrollViewer>
+                                <ListBox ItemsSource="{Binding Entries}"
+                                         SelectedItem="{Binding SelectedEntry}"
+                                         Background="Transparent"
+                                         BorderThickness="0">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="logbook:QsoRecord">
+                                            <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,2">
+                                                <TextBlock Classes="value" FontWeight="Bold" Text="{Binding Callsign}" />
+                                                <TextBlock Grid.Column="1" Classes="caption" Margin="8,0" Text="{Binding StartUtc, StringFormat='{}{0:yyyy-MM-dd HH:mm} UTC'}" />
+                                                <TextBlock Grid.Column="2" Classes="caption" Text="{Binding Mode}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Right: add/edit form + ADIF import/export. Every timestamp shown/edited
+                         here is raw UTC; no local-time conversion anywhere in this pane. -->
+                    <Grid Grid.Column="1" RowDefinitions="*,Auto" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
+                        <Border Classes="card">
+                            <ScrollViewer>
+                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.Logbook.FormHeader}" />
+                                        <Button Grid.Column="1" Classes="small" HorizontalAlignment="Right" Content="{loc:Translate Panes.Logbook.New}" Command="{Binding NewCommand}" />
+                                    </Grid>
+
+                                    <TextBox Text="{Binding FormCallsign}" Watermark="{loc:Translate Panes.Logbook.Form.CallsignWatermark}" />
+
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.StartLabel}" />
+                                        <TextBox Grid.Column="1" Text="{Binding FormStartUtc, Converter={x:Static conv:UtcTimestampTextConverter.Instance}}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.EndLabel}" />
+                                        <TextBox Grid.Column="1" Text="{Binding FormEndUtc, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.FrequencyLabel}" />
+                                        <TextBox Grid.Column="1" Text="{Binding FormFrequencyHz}" />
+                                    </Grid>
+                                    <!-- SelectedValueBinding/SelectedValue, NOT SelectedItem: AvailableModes'
+                                         element type (RadioModeOption) differs from FormMode's type
+                                         (RadioMode?); SelectedItem would never match an item and would
+                                         silently null out FormMode on every selection (see RadioModeOption's
+                                         own doc comment). -->
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.ModeLabel}" />
+                                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableModes}" SelectedValueBinding="{Binding Value}" SelectedValue="{Binding FormMode, Mode=TwoWay}" HorizontalAlignment="Stretch">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:RadioModeOption">
+                                                    <TextBlock>
+                                                        <TextBlock.Text>
+                                                            <MultiBinding Converter="{x:Static conv:RadioModeDisplayConverter.Instance}">
+                                                                <Binding />
+                                                                <loc:Translate Key="Panes.Logbook.Form.NoModeOption" />
+                                                            </MultiBinding>
+                                                        </TextBlock.Text>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </Grid>
+                                    <!-- Same SelectedValueBinding/SelectedValue reasoning as Mode above:
+                                         AvailableSstvModes' element type is SstvModeDefinition, FormSstvModeId
+                                         is string?. -->
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.SstvModeLabel}" />
+                                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableSstvModes}" SelectedValueBinding="{Binding Id}" SelectedValue="{Binding FormSstvModeId, Mode=TwoWay}" HorizontalAlignment="Stretch">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="sstv:SstvModeDefinition">
+                                                    <TextBlock Text="{Binding DisplayName}" />
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.RstSentLabel}" />
+                                        <TextBox Grid.Column="1" Text="{Binding FormRstSent}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.RstReceivedLabel}" />
+                                        <TextBox Grid.Column="1" Text="{Binding FormRstReceived}" />
+                                    </Grid>
+                                    <TextBox Text="{Binding FormName}" Watermark="{loc:Translate Panes.Logbook.Form.NameWatermark}" />
+                                    <TextBox Text="{Binding FormQth}" Watermark="{loc:Translate Panes.Logbook.Form.QthWatermark}" />
+                                    <TextBox Text="{Binding FormGridSquare}" Watermark="{loc:Translate Panes.Logbook.Form.GridSquareWatermark}" />
+                                    <TextBox Text="{Binding FormCountry}" Watermark="{loc:Translate Panes.Logbook.Form.CountryWatermark}" />
+                                    <TextBox Text="{Binding FormNotes}" Watermark="{loc:Translate Panes.Logbook.Form.NotesWatermark}" AcceptsReturn="True" Height="60" TextWrapping="Wrap" />
+
+                                    <UniformGrid Columns="2">
+                                        <Button Classes="primary small" Margin="0,0,3,0" Content="{loc:Translate Panes.Logbook.Log}" Command="{Binding LogCommand}" IsVisible="{Binding !IsEditing}" />
+                                        <Button Classes="primary small" Margin="0,0,3,0" Content="{loc:Translate Panes.Logbook.Update}" Command="{Binding UpdateCommand}" IsVisible="{Binding IsEditing}" />
+                                    </UniformGrid>
+
+                                    <TextBlock Text="{Binding StatusMessage}"
+                                               TextWrapping="Wrap"
+                                               Classes="caption"
+                                               IsVisible="{Binding StatusMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+
+                        <Border Grid.Row="1" Classes="card">
+                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.Logbook.AdifHeader}" />
+                                <UniformGrid Columns="2">
+                                    <Button Classes="small" Margin="0,0,3,0" Content="{loc:Translate Panes.Logbook.Import}" Command="{Binding ImportAdifCommand}" />
+                                    <Button Classes="small" Margin="3,0,0,0" Content="{loc:Translate Panes.Logbook.Export}" Command="{Binding ExportAdifCommand}" />
+                                </UniformGrid>
                             </StackPanel>
                         </Border>
                     </Grid>

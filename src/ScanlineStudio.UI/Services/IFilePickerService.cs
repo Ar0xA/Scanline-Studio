@@ -10,4 +10,11 @@ public interface IFilePickerService
 {
     /// <summary>Returns the picked file's local path, or <c>null</c> if the user cancelled.</summary>
     Task<string?> PickImageFileAsync();
+
+    /// <summary>Returns the picked ADIF file's local path, or <c>null</c> if the user cancelled.</summary>
+    Task<string?> PickAdifFileAsync();
+
+    /// <summary>Prompts for a save location pre-filled with <paramref name="suggestedFileName"/>;
+    /// returns the chosen local path, or <c>null</c> if the user cancelled.</summary>
+    Task<string?> PickSaveAdifFileAsync(string suggestedFileName);
 }

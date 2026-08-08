@@ -2,6 +2,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
@@ -416,5 +417,175 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("/tmp/scanlinestudio-history", vm.ImagesDirectory);
+    }
+
+    private static QsoRecord SampleQsoRecord(string id = "1") =>
+        new(id, "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null);
+
+    private static LogbookPaneViewModel CreateLogbookPaneViewModel(
+        FakeLogbookSessionService? logbook = null,
+        FakeFilePickerService? filePicker = null) =>
+        new(
+            logbook ?? new FakeLogbookSessionService(),
+            filePicker ?? new FakeFilePickerService(),
+            new FakeSstvSessionService { AvailableModes = [TestMode] },
+            new FakeLocalizationService(),
+            NullLogger<LogbookPaneViewModel>.Instance);
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_Constructed_LoadsEntriesFromSearchAsync()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        var entry = Assert.Single(vm.Entries);
+        Assert.Equal("1", entry.Id);
+    }
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_LogCommand_DisabledWithoutCallsign()
+    {
+        var vm = CreateLogbookPaneViewModel();
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FormCallsign = null;
+        Assert.False(vm.LogCommand.CanExecute(null));
+
+        vm.FormCallsign = "N0CALL";
+        Assert.True(vm.LogCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_PersistsAndClearsFormAndRefreshes()
+    {
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FormCallsign = "N0CALL";
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(logbook.Records);
+        Assert.Equal("N0CALL", logbook.Records[0].Callsign);
+        Assert.Null(vm.FormCallsign);
+        Assert.Single(vm.Entries);
+        // Regression: ResetForm() (not New()) must run here, or the status line set from
+        // BuildLogStatusMessage would be immediately nulled back out before the UI ever shows it.
+        Assert.NotNull(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_SelectingAnEntry_LoadsFormForEditAndEnablesUpdate()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.UpdateCommand.CanExecute(null));
+
+        vm.SelectedEntry = vm.Entries[0];
+
+        Assert.Equal("N0CALL", vm.FormCallsign);
+        Assert.True(vm.IsEditing);
+        Assert.True(vm.UpdateCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_UpdateAsync_DelegatesAndNeverTouchesGridTrackerOrQrz()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+        vm.FormNotes = "edited";
+        await vm.UpdateCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, logbook.UpdateCallCount);
+        Assert.Equal("edited", logbook.Records[0].Notes);
+        // Regression: same ResetForm()-vs-New() bug as the Log path above.
+        Assert.NotNull(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_New_ClearsSelectedEntry_SoReselectingTheSameRowReloadsTheForm()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+        Assert.True(vm.IsEditing);
+
+        vm.NewCommand.Execute(null);
+        Assert.Null(vm.SelectedEntry);
+        Assert.False(vm.IsEditing);
+
+        // Regression: without New() also clearing SelectedEntry, this second assignment of the SAME
+        // record would be a no-op (no PropertyChanged), leaving the form stuck empty.
+        vm.SelectedEntry = vm.Entries[0];
+        Assert.True(vm.IsEditing);
+        Assert.Equal("N0CALL", vm.FormCallsign);
+    }
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_RefreshAsync_NormalizesFromDateToUtcCalendarDate()
+    {
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        // Simulates what Avalonia's DatePicker actually emits: a LOCAL-offset DateTimeOffset, not a
+        // UTC one -- BuildCurrentQuery must normalize this to a UTC calendar date regardless.
+        vm.FromDate = new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.FromHours(5));
+        vm.RefreshCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var from = logbook.LastSearchQuery?.From;
+        Assert.NotNull(from);
+        Assert.Equal(TimeSpan.Zero, from!.Value.Offset);
+        Assert.Equal(new DateTime(2026, 8, 1), from.Value.Date);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_ImportAdifAsync_RefreshesEntriesAndReportsCount()
+    {
+        var imported = new List<QsoRecord> { SampleQsoRecord("imported-1") };
+        var logbook = new FakeLogbookSessionService { ImportResultToReturn = imported };
+        var filePicker = new FakeFilePickerService { AdifPathToReturn = "/tmp/import.adi" };
+        var vm = CreateLogbookPaneViewModel(logbook, filePicker);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ImportAdifCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains(vm.Entries, e => e.Id == "imported-1");
+        Assert.NotNull(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_ExportAdifAsync_UsesCurrentFilterAndReportsCount()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var filePicker = new FakeFilePickerService { SaveAdifPathToReturn = "/tmp/export.adi" };
+        var vm = CreateLogbookPaneViewModel(logbook, filePicker);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.CallsignFilter = "N0CALL";
+        await vm.ExportAdifCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("/tmp/export.adi", logbook.LastExportPath);
+        Assert.Equal("N0CALL", logbook.LastExportQuery?.Callsign);
+        Assert.NotNull(vm.StatusMessage);
     }
 }

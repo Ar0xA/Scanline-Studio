@@ -17,12 +17,21 @@ namespace ScanlineStudio.UI.Localization;
 /// constructor injection there.</summary>
 public sealed class TranslateExtension : MarkupExtension
 {
-    private readonly string _key;
+    /// <summary>Parameterless + settable <see cref="Key"/> exist alongside the single-string
+    /// constructor solely so this extension can also be used in object-element form (e.g. inside a
+    /// <c>MultiBinding</c>'s child list, where the usual <c>{loc:Translate ...}</c> curly-brace/
+    /// positional-arg form doesn't apply) -- every existing curly-brace call site keeps working
+    /// unchanged via the constructor overload below.</summary>
+    public TranslateExtension()
+    {
+    }
 
     public TranslateExtension(string key)
     {
-        _key = key;
+        Key = key;
     }
+
+    public string Key { get; set; } = string.Empty;
 
     public object[] Args { get; set; } = [];
 
@@ -34,7 +43,7 @@ public sealed class TranslateExtension : MarkupExtension
 
         return new Binding(nameof(TranslateBindingSource.Value))
         {
-            Source = new TranslateBindingSource(localization, _key, Args),
+            Source = new TranslateBindingSource(localization, Key, Args),
         };
     }
 }

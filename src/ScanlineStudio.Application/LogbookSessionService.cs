@@ -72,11 +72,31 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
     public Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default) => _repository.SearchAsync(query, ct);
 
+    /// <summary>Edits an already-logged QSO in place -- thin delegation to
+    /// <see cref="ILogbookRepository.UpdateAsync"/> (already fully implemented). Deliberately does
+    /// NOT re-push to GridTracker or QRZ the way <see cref="LogQsoAsync"/> does: <see cref="_qrzUploader"/>'s
+    /// real QRZ Logbook API call is INSERT-only (see <see cref="IQrzLogbookUploader"/>'s own doc
+    /// comment) -- a re-push here would file as a SECOND, duplicate contact at QRZ's end, not an
+    /// update; real re-push support would need QRZ's own OPTION=REPLACE/LOGID tracking, which
+    /// doesn't exist anywhere in this codebase. <see cref="_gridTrackerStreamer"/>'s own
+    /// `SendLoggedQsoAsync` is an equally one-shot "QSO logged" UDP datagram with no update
+    /// semantics either. A future re-push feature would need real work in both of those classes
+    /// first, not just a call site change here.</summary>
+    public Task UpdateQsoAsync(QsoRecord record, CancellationToken ct = default) => _repository.UpdateAsync(record, ct);
+
     public async Task ExportAdifFileAsync(string filePath, LogbookQuery query, CancellationToken ct = default)
     {
         var records = await _repository.SearchAsync(query, ct).ConfigureAwait(false);
+
+        // Matches LogQsoAsync's own STATION_CALLSIGN lookup above -- this call site used to omit it
+        // entirely (a real, pre-existing gap this method's own first real UI caller, the Logbook
+        // pane's Export button, is what makes user-visible: an exported file missing
+        // STATION_CALLSIGN doesn't import cleanly into LoTW/eQSL).
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var stationCallsign = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)?.Callsign;
+
         await using var writer = new StreamWriter(filePath);
-        _adifExporter.Export(records, writer);
+        _adifExporter.Export(records, writer, stationCallsign);
         Log.AdifExported(_logger, filePath, records.Count);
     }
 
