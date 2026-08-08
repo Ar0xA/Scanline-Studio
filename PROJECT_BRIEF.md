@@ -2,6 +2,143 @@
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale.
 
+## Resume here (2026-08-08, latest, ACTIVE) — "SyncRestart toggle + Auto Stop's save-on-abandon
+unblock" backlog item (user picked this scoped slice over the full 3-sub-feature "Auto Sync/Auto
+Stop/SyncRestart" item after research showed it was really 3 independent behaviors bundled by one
+legacy "Lock" button; Auto Sync's own drift-detector deferred to a follow-up per user's own choice).
+Both sub-pieces DONE, tested, build clean. SyncRestart toggle COMMITTED locally (`9346fb8`,
+`431d43e`), abandoned-image-save DONE but NOT YET COMMITTED. Neither pushed yet.
+
+**Research finding worth remembering**: `TMmsstv::AutoStopJob` (`Main.cpp:3884-4035`) is NOT the
+same thing as this port's already-built `SlantTracker`/Auto-Slant feature (`KRSA`) -- it's a
+SEPARATE, older mechanism gated by `sys.m_AutoStop`/`sys.m_AutoSync` (default OFF/ON respectively,
+`Main.cpp:900-901`) that tracks raw sync-position drift via its own 16-entry ring buffer and either
+(a) auto-triggers a ReSync-style skip ("Auto Sync") or (b) auto-stops the reception via
+`RxAutoPush(TRUE)` after ~8 failed drift-cluster checks ("Auto Stop"). `RxAutoPush`'s call to
+`WriteHistory(0)` is exactly the same abandoned-image-save path `m_ReqSave` uses -- confirming Auto
+Stop's real action *is* "stop + save if warranted", not a separate concept. Auto Sync's full fidelity
+has a genuine coupling to `sys.m_UseRxBuff` ("RX buffer mode", the other still-unbuilt roadmap item)
+-- deferred with that dependency explicitly flagged, not silently ignored.
+
+**SyncRestart toggle** (commits `9346fb8` doc fix + `431d43e` feature): new
+`SstvDecoderSettings.SyncRestartEnabled` (nullable, STJ-safe, mirrors `AfcEnabled`), gates the
+mid-reception restart call site in `AnalogFmSstvDecoder.TryProcessBuffer`. Threaded through
+`RestartableSstvDecoder`/`Program.cs`. New test proves the toggle changes real end-to-end behavior
+(truncated-then-superseded transmission decodes straight through as garbage instead of
+abandoning/restarting, when disabled). `Core.Sstv.Tests` 619/619 (was 618, golden vectors
+unaffected), `Application.Tests` 48/48, `UI.Tests` 78/78.
+
+**Abandoned-image save** (port of legacy's `m_ReqSave`, `sstv.cpp:2134-2137` -- closes the gap
+`spec/14-roadmap.md` line 143 flagged as "correctly blocked on the not-yet-built logging/history
+feature," which now exists). Plan file `~/.claude/plans/wandering-glinting-otter.md`, 2 rounds of
+auditor plan-readiness review -- **round 1 caught a genuine data-corruption risk**: the original
+design assumed `ISstvDecoder.ModeDetected` always fires before `DecodeRestarted` (matching that
+interface's own doc comment AT THE TIME), which was stale since this port's "piece 8c" deferred-
+anchor-correction work changed the real ordering without the doc being updated. The TRUE ordering is
+path-dependent (dominant case: `DecodeRestarted` fires first, `ModeDetected` deferred, possibly to a
+LATER `PushSamples` call; minority case -- AVT resolving same-call, or `ForceMode`-into-AVT --
+`ModeDetected` fires first). Building the original design as drafted would have been silently inert
+for ordinary mid-reception restarts AND would have saved a stale, unrelated PREVIOUS restart's image
+under a LATER restart's mode id. Fixed at the source too: `ISstvDecoder.cs`'s `DecodeRestarted` doc
+comment corrected (own tiny commit, `9346fb8`), plus a matching stale-comment fix at
+`AnalogFmSstvDecoder.cs`'s own mid-reception restart call site (drive-by, bundled with this feature's
+commit). Round 2 confirmed the redesign's ordering table/logic correct but found 4 more small,
+localized issues, all fixed: no `IImageSource` impl reachable from `Core.Logbook` without a new
+Core-to-Core project reference (switched to a small local `PixelSnapshot` record instead, since
+`Rgb24` already lives in the already-referenced `Abstractions.Imaging`); a missing non-null guard on
+the fallback-stash branch (NRE-on-audio-thread risk via a zero-lines-decoded minority-ordering
+restart); `_recordedForCurrentImage`'s set-condition and "is there something to save" wrongly
+conflated (split into two checks); a real filename-collision risk at second-granularity once
+back-to-back restarts are possible from a bulk-decoded WAV file (switched to millisecond precision +
+a `_partial` suffix, which also gives partial saves a visible marker neither legacy nor this port's
+existing completed-image path has).
+
+**Design (final, post-code-review)**: `ReceiveHistoryRecorder.OnDecodeRestarted` checks the STASH
+FIRST (`_pendingAbandonMode == abandonedMode` plus non-null image/line, the minority orderings) and
+only falls back to live state (`_currentMode == abandonedMode`, the dominant ordering) when the stash
+doesn't match -- both branches require actual non-null image+line data before considering a save, and
+both funnel into the same >=65%-threshold check (`completedLines = line + (step ?? 1)`,
+`threshold = ImageHeight * 65 / 100`, integer math matching legacy's own truncating idiom; legacy's
+threshold is sample-position-based, this port only has line-granularity at this event level,
+documented as an equivalent-within-one-line adaptation, not sample-exact). Pixel data is captured as
+an explicit snapshot copy on every `LineDecoded` (NOT a held live reference -- an earlier draft
+wrongly assumed `AnalogFmSstvDecoder`'s `MutableImageSource` was frozen once handed out; that class's
+own doc comment says the opposite, it's a live alias mutated in-place across a single image's
+remaining lines). Deliberately saves from all 3 `DecodeRestarted` sources (mid-reception VIS/narrow
+restart, AVT-training-abort, `ForceMode`) where legacy's own `m_ReqSave` is set from exactly one (the
+VIS case-3 confirm) -- kept intentionally broader, documented as a deliberate improvement (never
+silently losing a mostly-complete image), not a fidelity miss.
+
+**Code-level review (after implementation, per this project's standing practice) found the
+implementation still had a real gap neither plan round could have caught**: mode-IDENTITY alone (what
+both plan rounds settled on as the dominant-vs-minority discriminator) is not sufficient, because in
+the minority ordering the newly-detected mode can be the SAME `SstvModeDefinition` instance as the
+abandoned one -- reachable via AVT-into-AVT (a second AVT lock found mid-training, or `ForceMode`
+into AVT while an AVT image is already decoding, since `SstvModeRegistry.Avt` is one shared
+singleton). `_currentMode == abandonedMode` would then wrongly take the dominant branch even though
+`OnModeDetected` had already reset live state for the new image -- losing the abandoned save AND
+permanently blocking the new image from ever completing its own record, the exact data-loss class
+round-1 caught, just re-entering through mode identity instead of event order. **Fixed by checking the
+stash first, live state second** (flipped from the original order) -- the stash is only ever populated
+when `OnModeDetected` is about to overwrite a real, unhandled in-flight image (precisely the minority
+ordering's precondition) and is cleared on every `OnDecodeRestarted` call, so it can't be stale by more
+than one restart. Also found and fixed: a completed image could be saved a SECOND time as `_partial`
+(`AnalogFmSstvDecoder`'s mid-reception restart check has no guard against firing right after the final
+line of an already-finished image -- fixed via a new `alreadyHandled` check, matching legacy's own
+`m_Sync`-gated equivalent); the millisecond-precision filename could still collide for two saves
+landing in the same tick (fixed by folding the history entry's own GUID into the filename); and the
+new tests were writing real PNGs into the actual OS Pictures folder, since the abandoned-image path
+deliberately bypasses the completed-image path's `IReceivedImageBuffer.SaveAsync` (which the test
+fakes stub out) -- fixed with a `TempImagesDirectorySettings()` test helper redirecting
+`ReceiveHistorySettings.ImagesDirectory` to a temp folder. 2 more regression tests added (AVT-into-AVT
+same-instance, and the just-completed-image double-save case) -- **the mode-identity fix independently
+re-verified via its own revert-fix-confirm-fail** (temporarily removing the stash-first check broke
+exactly the 3 minority-ordering tests, nothing else). One low-priority perf finding (an unconditional
+full-image snapshot copy on every `LineDecoded`, real but non-urgent LOH churn for a coarse gate
+feature) deliberately deferred, documented rather than fixed -- not a correctness issue, and adding
+more conditional complexity this late in a long session wasn't worth it for a "correct, just wasteful"
+finding. Stray test PNGs the pre-fix test runs had already left in the real
+`~/Pictures/ScanlineStudio/History` folder were cleaned up (created this session, safe to remove).
+
+**Tests** (`ReceiveHistoryRecorderTests.cs`, 7 new total): dominant-ordering save above threshold,
+zero-lines-decoded no-op, minority-ordering save via the stash, the bug-fix regression itself (new
+image after a minority-ordering restart still records once complete -- **verified via
+revert-fix-confirm-fail**: temporarily reproducing the old unconditional
+`_recordedForCurrentImage = true` made exactly the 4 abandoned-save tests fail while the 3 original
+tests kept passing), the two-back-to-back-restarts data-corruption regression (second restart's save
+never uses a stale stash from the first), plus the two code-level-review-round-1 additions (AVT-into-
+AVT same-mode-instance, and the just-completed-image double-save case).
+
+**Second code-level review round (a fresh confirmation pass after round 1's fixes) found round 1's
+own mode-identity fix was a NARROWER version of the same bug it fixed, not the full fix**: gating the
+`OnModeDetected`-side stash's own POPULATION on `!_recordedForCurrentImage` left the stash empty
+whenever the abandoned image had ALSO already completed before a same-instance restart arrived (a
+completed AVT image immediately followed by a same-instance AVT restart) -- sending that case into
+the live-state branch and permanently blocking the NEXT image instead, the identical failure mode
+round 1 had just fixed for a different precondition. **Final, correct shape**: the stash now
+populates UNCONDITIONALLY whenever there's a live mode; a new `_pendingAbandonRecorded` field
+carries forward the separate "was this already handled" fact, keeping "which branch" and "is there
+something to save" genuinely independent questions (conflating them was the root cause both times).
+Also added a defensive `ClearPendingAbandon()` call at the top of `OnLineDecoded` (any decoded line
+for the current image proves a pending stash for whatever preceded it has already been consumed).
+Round 2's fix independently re-verified via its own revert-fix-confirm-fail (temporarily re-gating
+the stash's population broke exactly the new regression test, nothing else). One more regression
+test added (9 new total across the whole feature). `Core.Logbook.Tests` 55/55 (was 47).
+`Core.Imaging.Tests` 24/24 confirmed unaffected. Full solution build clean throughout both rounds.
+Stray test PNGs from before the isolation fix (created by pre-fix test runs) cleaned up from the real
+`~/Pictures/ScanlineStudio/History` folder.
+
+**This is now 4 total review rounds on this one feature (2 plan-level, 2 code-level), each finding a
+real bug in the same underlying area** (the dominant-vs-minority ordering discriminator, and what
+"already handled" actually means). Reported back rather than auto-requesting a 5th round, matching
+this project's "soft 3-round backstop, then loop in the user" cadence -- **user's call whether one
+more confirmation pass is warranted before committing.**
+
+**Not yet committed** (SyncRestart toggle IS committed locally, not pushed). Next up per the backlog:
+Auto Sync itself (the drift-detector, deferred from this pass per user's own explicit choice) --
+genuinely coupled to the still-unbuilt "RX buffer mode" item for full fidelity, flag that dependency
+again when picked up.
+
 ## Resume here (2026-08-08, latest, ACTIVE) — RX force-mode decode override (Item 3 of the DSP/backend
 backlog, `spec/14-roadmap.md`'s Phase 4+ backlog). Implemented, full solution build clean, all
 touched test projects green. **NOT YET COMMITTED.**
