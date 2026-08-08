@@ -287,6 +287,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private double _syncSegmentOffsetSamples;
     private double _slantIdealSamplesSoFarInLine;
     private double _slantLineMaxEnvelope;
+    private double _slantLineMinEnvelope; // port of legacy's m_SyncMin (Main.cpp:4193/4200-4201) -- Auto Sync's own signal-strength gate, (max-min)>5000
+    private bool _slantLineEnvelopeSeeded; // has the current line's first sample seeded both max/min yet (see ApplySlantTracking's own doc comment on the seed-both-then-else-if convention)
     private double _slantLinePeakPosition;
 
     // Manual ReSync (legacy's KRFSClick/m_Skip, Main.cpp:14004-14020 -- NOT ReSyncSSTV) state. See
@@ -296,6 +298,36 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private double? _lastLineSyncPeakPosition; // port-equivalent of m_SyncRPos (see ApplySlantTracking's capture point for why one field also stands in for m_SyncPos at this port's granularity)
     private bool _suppressNextSlantProcessLine;
     private bool _slantCorrectionsDisabledForRestOfImage; // port of m_AutoSyncCount's gate on AutoStopJob's correction branch
+
+    // Auto Sync (legacy's sys.m_AutoSync, an automatic trigger for the exact same skip-and-suppress
+    // action manual ReSync applies -- see TryAutoSync/ApplySyncCorrection's own doc comments for the
+    // full design and the two rounds of plan-readiness review this went through) detection state, port
+    // of legacy's InitAutoStop (Main.cpp:3801-3863), Auto-Sync-relevant fields only. Deliberately a
+    // SEPARATE 16-entry ring buffer from SlantTracker's own _history -- that one is fed the
+    // segment-offset-relative `relative` ApplySlantTracking computes for ITS OWN purposes; this one
+    // needs the OFP-relative ComputeAutoSyncPosition value instead (see that method's own doc comment
+    // for why conflating the two would be a real, silent bug, not just a style choice).
+    private readonly int[] _autoSyncPositionHistory = new int[16]; // port of m_AutoStopAPos[16]
+    private int _autoSyncObservationCount; // port of m_AutoStopACnt
+    private int? _autoSyncReferencePosition; // port of m_AutoSyncPos (sentinel 0x7fffffff -> null)
+    private int _autoSyncCooldown; // port of m_AutoSyncDis
+    private int _autoSyncBaseMult; // port of m_Mult
+    private int _autoSyncDiff; // port of m_AutoSyncDiff
+    private int _autoSyncTriggerCountForTests; // test-only: how many times TryAutoSync itself (not manual ReSync) has applied a correction
+
+    // Test-only: ComputeAutoSyncPosition's own real return value, captured INSIDE TryAutoSync at the
+    // only moment it's valid to read (_slantLinePeakPosition is a live, within-line accumulator reset
+    // at the end of every completed line -- reading the production method's result from OUTSIDE the
+    // decode loop, asynchronously after PushSamples returns, does not reliably observe the value for
+    // whichever line was current at capture time). A round-trip revert-fix-confirm-fail check found
+    // that neither an externally-recomputed independent value NOR the end-to-end trigger count alone
+    // reliably catches a wrong anchor base: a CONSTANT wrong bias reads as a stable, self-consistent
+    // cluster to TryAutoSync's own clustering check (nothing ever looks like a "jump" if every
+    // reading is uniformly offset the same way), so AutoSyncTriggerCountForTests alone stayed 0
+    // either way. This field captures the actual production value directly, so a test can compare it
+    // against an independently-derived expectation without needing a live re-read's timing hazard OR
+    // relying on trigger behavior that's provably insensitive to this specific class of bug.
+    private int? _lastComputedAutoSyncPositionForTests;
 
     // Force-mode (legacy's RX quick-mode-button click, Main.cpp:6096-6122 -> CSSTVDEM::Start(mode,
     // TRUE), sstv.cpp:1749-1767/1717-1747) request state. Reference-type field, not a plain volatile
@@ -478,10 +510,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // Restart-only, same reasoning as _afcEnabled above.
     private readonly bool _syncRestartEnabled;
 
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true)
+    // Port of legacy's real sys.m_AutoSync (default 1, Main.cpp:901) -- gates only the two Auto Sync
+    // trigger branches (TryAutoSync's own doc comment), not the drift-detection bookkeeping that
+    // Main.cpp:3886's own outer gate (constant-true in this port, see TryAutoSync) keeps running
+    // unconditionally either way. Restart-only, same reasoning as _afcEnabled above.
+    private readonly bool _autoSyncEnabled;
+
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true)
     {
         _sampleRate = sampleRate;
         _afcEnabled = afcEnabled;
+        _autoSyncEnabled = autoSyncEnabled;
         _syncRestartEnabled = syncRestartEnabled;
         _demodulator = new HilbertFmDemodulator(sampleRate);
         _searchBandpassFilter = new SearchBandpassFilter(sampleRate);
@@ -916,24 +955,217 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             skip += lineWidthSamples; // Main.cpp:14009-14010 -- forward-only
         }
 
-        _pendingSkipSamples = skip; // do NOT apply it here -- see DrainPendingSkip's own doc comment
-
-        // Main.cpp:14012 (m_SyncPos = m_SyncRPos = -1) plus the two-flag suppression scheme ported in
-        // ApplySlantTracking for m_AutoSyncCount++ (Main.cpp:14017) -- see that method's own comments.
-        //
         // KRFSClick's other four writes -- m_AutoSyncPos = 0x7fffffff (:14013), m_AutoStopCnt = 0
-        // (:14014), m_AutoStopACnt = 0 (:14015), m_AutoSyncDis = 6 (:14016) -- are deliberately NOT
-        // ported, not missed: m_AutoSyncPos/m_AutoStopCnt/m_AutoSyncDis only ever gate Auto Sync/Auto
-        // Stop, neither of which this port implements (SlantTracker.cs's own class doc). m_AutoStopACnt
-        // has one ported consumer (SlantTracker._totalLinesObserved, read at the >=5-lines-observed
-        // gate) but resetting it here would be unobservable anyway: _slantCorrectionsDisabledForRestOfImage
-        // permanently routes every future line through ProcessLineHistoryOnly, which never reads that
-        // gate again for the rest of this image -- exactly as legacy's own !m_AutoSyncCount check
-        // (Main.cpp:3968) is already false for the same reason, making its own m_AutoStopACnt = 0 (:14015)
-        // equally moot.
+        // (:14014), m_AutoStopACnt = 0 (:14015), m_AutoSyncDis = 6 (:14016). Auto Sync now exists in
+        // this port (this comment previously said these were "deliberately NOT ported" -- true only
+        // until Auto Sync landed; corrected here, not left stale). m_AutoSyncPos/m_AutoSyncDis are
+        // covered by ApplySyncCorrection's own shared tail below (identical to what Auto Sync's own
+        // triggers write for those two fields). m_AutoStopACnt is genuinely PerformReSync-specific --
+        // Auto Sync's own triggers deliberately do NOT reset it (see TryAutoSync's own doc comment for
+        // why a manual click re-arms the full warmup and an automatic trigger does not), so it needs
+        // its own explicit reset here. m_AutoStopCnt is NOT ported at all -- Auto Stop itself (the only
+        // feature that ever reads it) remains out of scope; see TryAutoSync's own doc comment.
+        _autoSyncObservationCount = 0;
+        ApplySyncCorrection(skip);
+    }
+
+    // Shared tail: the skip-application-and-suppression action both manual ReSync (above) and Auto
+    // Sync's own two triggers (TryAutoSync) perform once each has independently decided a skip is
+    // warranted -- identical for every legacy field both write (KRFSClick, Main.cpp:14004-14020;
+    // AutoStopJob's own triggers, Main.cpp:3917-3925/:3950-3958): m_Skip, m_SyncPos/m_SyncRPos (this
+    // port's _lastLineSyncPeakPosition=null + _suppressNextSlantProcessLine, see ApplySlantTracking's
+    // own one-line-suppress branch), m_AutoSyncPos (=null here), m_AutoSyncDis (=6), and m_AutoSyncCount
+    // (this port's _slantCorrectionsDisabledForRestOfImage bool). Callers differ only in what led to
+    // this decision, and in m_AutoStopACnt handling, which stays with each caller -- see
+    // PerformReSync's own doc comment for that divergence.
+    private void ApplySyncCorrection(int skip)
+    {
+        _pendingSkipSamples = skip; // do NOT apply it here -- see DrainPendingSkip's own doc comment
         _lastLineSyncPeakPosition = null;
         _suppressNextSlantProcessLine = true;
         _slantCorrectionsDisabledForRestOfImage = true;
+        _autoSyncReferencePosition = null;
+        _autoSyncCooldown = 6;
+    }
+
+    // Port of legacy's InitAutoStop (Main.cpp:3801-3863), Auto-Sync-relevant fields only -- the
+    // Auto-Slant-specific fields InitAutoStop also resets (m_ASBgnPos/m_ASDis/m_ASBitMask/etc.) are
+    // already covered by SlantTracker's own construction/Reset(). Called ONLY at a fresh lock
+    // (InitializeSlant), deliberately NOT after every slant correction commits -- see
+    // ApplySlantTracking's own correctedSampleRate branch for why an earlier draft's "reset on every
+    // commit, for consistency with SlantTracker.Reset()" choice was empirically wrong (made Auto Sync
+    // untriggerable under exactly the sustained-drift conditions it exists for).
+    //
+    // Code-level review correction: an earlier version of this comment justified NOT resetting by
+    // claiming legacy's own InitAutoStop-after-commit call is "proven dead code without the not-built
+    // RX-buffer-replay feature" -- that was WRONG. sys.m_UseRxBuff defaults to 1 (Main.cpp:899), and
+    // OpenCloseRxBuff allocates m_StgBuf for exactly that value (sstv.cpp:1630-1639), so
+    // UpdateSampFreq's own `dp->m_StgBuf != NULL` gate (Main.cpp:5597) IS satisfied by default, and
+    // InitAutoStop DOES run after every commit in real legacy. The actual reason not to copy that
+    // call: legacy resets and then immediately REPLAYS every buffered line back through
+    // DrawSSTV -> AutoStopJob (Main.cpp:5603-5612, with m_ASDis=1 at :5601 suppressing triggers only
+    // during that replay, cleared at :5627) -- so legacy's net Auto Sync state is rebuilt, not lost.
+    // This port has no replay mechanism, so reset-without-rebuild would be strictly further from
+    // legacy's real net effect than leaving the state alone, which is exactly what the empirical
+    // untriggerable-feature finding above independently confirmed was the right call.
+    private void ResetAutoSyncDetectionState()
+    {
+        Array.Clear(_autoSyncPositionHistory);
+        _autoSyncObservationCount = 0;
+        _autoSyncReferencePosition = null;
+        _autoSyncBaseMult = (int)(_effectiveSamplesPerLine / 320.0); // Main.cpp:3860's m_Mult, from the CURRENT (slant-corrected) line width
+        _autoSyncDiff = Math.Min(_autoSyncBaseMult * 3, (int)(45.0 * _sampleRate / 11025.0)); // Main.cpp:3861-3862 -- cap uses the NOMINAL declared rate, not the corrected one
+    }
+
+    // Port of legacy's m_AutoStopPos (Main.cpp:3887-3889) -- the CENTERED, ONE-SIDED-wrapped raw
+    // sync-offset for the line just completed. Built from ComputeSyncPeakOffsetSamples (OFP), the same
+    // quantity PerformReSync's own deadband check uses -- deliberately NOT _syncSegmentOffsetSamples
+    // (ApplySlantTracking's own `relative` variable's base, fed to SlantTracker for a different
+    // purpose). Round-1 plan-review finding: using the wrong base here produces a silent, constant
+    // bias large enough to cause continuous spurious auto-resyncs on a perfectly-synced signal (e.g.
+    // ~318 samples on Martin M1 @44.1kHz, against a ~180-sample trigger threshold).
+    //
+    // Wrap is ONE-SIDED ONLY (`> half ? -= lineWidth : unchanged`) -- Main.cpp:3888-3889 has no
+    // `< -half` arm, unlike ApplySlantTracking's own two-sided wrap for `relative`, which is a
+    // different quantity and must not be copied here.
+    private int ComputeAutoSyncPosition(SstvModeDefinition mode)
+    {
+        var syncPos = (int)_slantLinePeakPosition;
+        var ofp = ComputeSyncPeakOffsetSamples(mode);
+        var raw = syncPos - ofp;
+        var half = (int)(_effectiveSamplesPerLine / 2.0);
+        return raw > half ? (int)(raw - _effectiveSamplesPerLine) : raw;
+    }
+
+    // Port of legacy's clustering count (Main.cpp:3890-3906) -- counts how many of the 16 ring-buffer
+    // entries fall within a threshold of the CURRENT position (14*mult once a full 16 real
+    // observations exist, else 10*mult). Deliberately scans ALL 16 slots unconditionally, including
+    // zero-initialized ones during the 8-15-observation warmup window (Main.cpp:3892's loop has no
+    // "only count filled slots" logic) -- a real, load-bearing legacy quirk (a well-centered signal
+    // reaches n>=8 from padding alone in that window), not an oversight to "fix."
+    private int CountAutoSyncCluster(int currentPosition)
+    {
+        var threshold = (_autoSyncObservationCount >= 16 ? 14 : 10) * _autoSyncBaseMult;
+        var n = 0;
+        foreach (var entry in _autoSyncPositionHistory)
+        {
+            if (Math.Abs(currentPosition - entry) <= threshold)
+            {
+                n++;
+            }
+        }
+
+        return n;
+    }
+
+    // Port of legacy's TMmsstv::AutoStopJob (Main.cpp:3884-4035) -- ONLY the Auto Sync (sys.m_AutoSync)
+    // portion. Auto Stop (sys.m_AutoStop, RxAutoPush) is explicitly out of scope for this port (a
+    // separate, not-yet-built follow-up) -- m_AutoStopCnt, which ONLY Auto Stop's own branch ever
+    // reads, is therefore deliberately NOT tracked here at all: no field, no increment, no decrement,
+    // no reset. When Auto Stop is eventually built, its own plan must add m_AutoStopCnt tracking to
+    // BOTH this method's own two trigger bodies (each currently omits the `if(m_AutoStopCnt)
+    // m_AutoStopCnt--;` line legacy has) and to PerformReSync's own reset.
+    //
+    // Called from ApplySlantTracking's own per-line loop, in the `else` arm of the
+    // _suppressNextSlantProcessLine check, ahead of the existing _slantCorrectionsDisabledForRestOfImage/
+    // ProcessLine split -- matches legacy's own AutoStopJob call (Main.cpp:4190, gated on `m_SyncPos !=
+    // -1`, this port's equivalent exclusion) running ahead of the Auto-Slant regression block
+    // (Main.cpp:3968). AVT exclusion is free: InitializeSlant nulls _slantTracker for AVT, and
+    // ApplySlantTracking already returns immediately in that case, before ever reaching this call.
+    //
+    // KRSA->Checked (Main.cpp:3886's own entry gate, and the branch-1 threshold ternary at :3910)
+    // resolves to a CONSTANT true in this port -- there is no Auto Slant on/off toggle here
+    // (InitializeSlant runs unconditionally for every non-AVT mode) -- so the outer gate is always
+    // satisfied regardless of sys.m_AutoStop/sys.m_AutoSync's own values (only the two trigger
+    // branches below carry their own separate `sys.m_AutoSync &&` term, via _autoSyncEnabled), and
+    // branch 1's threshold is always `5 * m_Mult`, never `2 * m_Mult`.
+    //
+    // Suppressed entirely while a skip from an EARLIER trigger (manual or automatic) hasn't finished
+    // draining yet (_pendingSkipSamples != 0) -- round-2 plan-review finding: this port's own
+    // PushSamples-level DrainPendingSkip() runs BEFORE TryProcessBuffer() (where this method is
+    // eventually called from), so a second trigger landing before the first has drained would silently
+    // overwrite/discard it. Legacy's own per-sample drain (sstv.cpp:2271-2274) makes this unreachable
+    // there -- this guard reproduces that same "can't retrigger mid-drain" property explicitly.
+    private void TryAutoSync(SstvModeDefinition mode)
+    {
+        var currentPosition = ComputeAutoSyncPosition(mode);
+        _lastComputedAutoSyncPositionForTests = currentPosition; // captured at the only moment it's valid -- see that field's own doc comment
+        var previousPosition = _autoSyncPositionHistory[^1];
+
+        // Bookkeeping (Main.cpp:3963-3966) below always runs; only the two trigger branches read
+        // _autoSyncEnabled -- see this method's own doc comment for why the outer gate can't be used
+        // to skip the whole method when the setting is off.
+        //
+        // Code-level review finding: the (m_SyncMax-m_SyncMin)>5000 signal-strength test and this
+        // port's own _pendingSkipSamples guard live INSIDE each trigger branch, NOT in this outer
+        // gate -- legacy has that test only at Main.cpp:3908/:3946 (inside each trigger body), while
+        // the n>=4 reference update at :3941 is gated on m_AutoStopACnt>=8 and n>=4 alone, nothing
+        // else. An earlier draft hoisted both into this outer condition, which froze the reference on
+        // weak-signal lines -- suppressing legitimate triggers once the signal recovered (the
+        // reference was never re-armed to the weak-line position) AND enabling spurious ones (a stale
+        // pre-weak-stretch reference could still satisfy branch 1's own jump test once the signal
+        // came back, where legacy would already have re-anchored to the drifted position instead).
+        if (_autoSyncObservationCount >= 8)
+        {
+            var n = CountAutoSyncCluster(currentPosition);
+            var signalStrongEnough = (_slantLineMaxEnvelope - _slantLineMinEnvelope) > 5000;
+
+            if (n < 4)
+            {
+                // Branch 1 (Main.cpp:3906-3929): can only fire once per image
+                // (!_slantCorrectionsDisabledForRestOfImage, port of !m_AutoSyncCount). Two-part test:
+                // (a) a small, non-noisy step from the immediately preceding observation, AND (b) a
+                // real, large jump from the last stable reference.
+                if (_autoSyncEnabled && signalStrongEnough && _pendingSkipSamples == 0
+                    && n >= 2 && _autoSyncReferencePosition is { } reference
+                    && !_slantCorrectionsDisabledForRestOfImage
+                    && Math.Abs(currentPosition - previousPosition) <= 5 * _autoSyncBaseMult
+                    && Math.Abs(currentPosition - reference) >= 5 * _autoSyncBaseMult)
+                {
+                    TriggerAutoSync(currentPosition);
+                }
+            }
+            else
+            {
+                _autoSyncReferencePosition = currentPosition; // Main.cpp:3941 -- bookkeeping only, no skip applied here, NOT gated on signal strength
+            }
+
+            // Branch 2 (Main.cpp:3945-3961): runs regardless of n<4 or n>=4 this same call. Can only
+            // fire once branch 1 (or an n>=4 reference re-establishment) has already set a reference
+            // this image, and respects its own cooldown. Two-part test: (a) a small step from the
+            // immediately preceding observation, AND (b) the ABSOLUTE position vs zero (not vs the
+            // reference -- a different comparison target than branch 1's own (b)).
+            if (_autoSyncEnabled && signalStrongEnough && _pendingSkipSamples == 0
+                && _autoSyncCooldown == 0 && _autoSyncReferencePosition is not null
+                && _slantCorrectionsDisabledForRestOfImage
+                && Math.Abs(currentPosition - previousPosition) <= _autoSyncDiff
+                && Math.Abs(currentPosition) >= _autoSyncDiff)
+            {
+                TriggerAutoSync(currentPosition);
+            }
+        }
+
+        // Main.cpp:3963-3966, unconditional.
+        if (_autoSyncCooldown > 0)
+        {
+            _autoSyncCooldown--;
+        }
+
+        _autoSyncObservationCount++;
+        Array.Copy(_autoSyncPositionHistory, 1, _autoSyncPositionHistory, 0, _autoSyncPositionHistory.Length - 1);
+        _autoSyncPositionHistory[^1] = currentPosition;
+    }
+
+    private void TriggerAutoSync(int position)
+    {
+        var skip = position;
+        if (skip < 0)
+        {
+            skip += (int)_effectiveSamplesPerLine; // forward-only, matching ApplySyncCorrection's own callers
+        }
+
+        ApplySyncCorrection(skip);
+        _autoSyncTriggerCountForTests++;
     }
 
     // Force-mode (legacy's RX quick-mode-button click, Main.cpp:6096-6122 -> CSSTVDEM::Start(mode,
@@ -2424,6 +2656,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _lastLineSyncPeakPosition = null;
         _suppressNextSlantProcessLine = false;
         _slantCorrectionsDisabledForRestOfImage = false;
+        _autoSyncCooldown = 0; // Main.cpp:4994's own m_AutoSyncDis=0, alongside m_AutoSyncCount=0 above
     }
 
     private void Commit(SstvModeDefinition matched, int lineStartSample)
@@ -3369,6 +3602,30 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// reaches 0 exactly when <see cref="DrainPendingSkip"/> has fully applied a correction.</summary>
     internal int PendingSkipSamplesForTests => _pendingSkipSamples;
 
+    /// <summary>Test-only: how many times <see cref="TryAutoSync"/> itself has applied a correction
+    /// (distinct from a manual <see cref="RequestReSync"/> call, which shares the same underlying
+    /// <see cref="ApplySyncCorrection"/> tail but is not counted here) -- the regression check for
+    /// round-1 plan-review's own most severe finding (a wrong anchor base causing continuous spurious
+    /// auto-resyncs on a good signal) needs to observe THIS specifically staying at 0.</summary>
+    internal int AutoSyncTriggerCountForTests => _autoSyncTriggerCountForTests;
+
+    /// <summary>Test-only visibility into Auto Sync's own observation counter (port of
+    /// <c>m_AutoStopACnt</c>) -- gates the 8-line warmup and the 14-vs-10 cluster threshold.</summary>
+    internal int AutoSyncObservationCountForTests => _autoSyncObservationCount;
+
+    /// <summary>Test-only visibility into Auto Sync's own stable-reference position (port of
+    /// <c>m_AutoSyncPos</c>, <see langword="null"/> = legacy's <c>0x7fffffff</c> sentinel).</summary>
+    internal int? AutoSyncReferencePositionForTests => _autoSyncReferencePosition;
+
+    /// <summary>Test-only visibility into Auto Sync's own retrigger cooldown (port of
+    /// <c>m_AutoSyncDis</c>).</summary>
+    internal int AutoSyncCooldownForTests => _autoSyncCooldown;
+
+    /// <summary>Test-only: <see cref="ComputeAutoSyncPosition"/>'s own real return value from the last
+    /// time <see cref="TryAutoSync"/> ran -- see <see cref="_lastComputedAutoSyncPositionForTests"/>'s
+    /// own doc comment for why this is captured internally rather than recomputed from outside.</summary>
+    internal int? LastComputedAutoSyncPositionForTests => _lastComputedAutoSyncPositionForTests;
+
     /// <summary>Test-only visibility into the currently-locked mode (<see langword="null"/> when
     /// idle/between images) -- <see cref="ForceMode"/> is the first feature whose own test suite
     /// needs to distinguish "idle" from "locked" independently of <see cref="ModeDetected"/> having
@@ -3493,6 +3750,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _effectiveSamplesPerLine = mode.LineDurationMs / 1000.0 * _sampleRate;
         _slantIdealSamplesSoFarInLine = 0;
         _slantLineMaxEnvelope = double.NegativeInfinity;
+        _slantLineMinEnvelope = double.PositiveInfinity;
+        _slantLineEnvelopeSeeded = false;
         _slantLinePeakPosition = 0;
 
         if (mode == SstvModeRegistry.Avt)
@@ -3506,6 +3765,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _syncEnvelopeDetector = new SyncEnvelopeDetector(_sampleRate, isNarrow ? 1900.0 : 1200.0);
         _syncSegmentOffsetSamples = SstvModeRegistry.GetSyncSegmentOffsetMs(mode) / 1000.0 * _sampleRate;
         _slantTracker = new SlantTracker(_sampleRate, _effectiveSamplesPerLine, SstvModeRegistry.GetAutoSlantThresholdPositions(mode));
+
+        // Auto Sync's own InitAutoStop-equivalent (Main.cpp:3801-3863, Auto-Sync-relevant fields only
+        // -- see ResetAutoSyncDetectionState's own doc comment). Deliberately AFTER the AVT
+        // early-return above: Auto Sync state has no meaning for AVT (matches AutoStopJob's own entry
+        // gate, Main.cpp:3886, excluding smAVT), and this port's AVT exclusion is free because
+        // TryAutoSync is only ever called from inside this same non-AVT branch of ApplySlantTracking.
+        ResetAutoSyncDetectionState();
     }
 
     // Legacy tracks the sync-envelope's peak position continuously as part of the same real-time
@@ -3534,10 +3800,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // switch(m_SyncMode) dispatch (sstv.cpp:1841-1853), not a separately-scaled reading.
             var envelope = _syncEnvelopeDetector!.ProcessSample(AgcSampleAt(_slantProcessedUpTo));
 
-            if (envelope > _slantLineMaxEnvelope)
+            // Auto Sync's own (m_SyncMax-m_SyncMin)>5000 gate needs both a running max AND min per
+            // line (Main.cpp:4193/4196/4200-4201) -- legacy seeds BOTH from the line's first sample
+            // explicitly, then uses an else-if chain for the rest (one sample can't set both). Round-2
+            // plan-review finding: a naive independent-if-per-extreme implementation with infinity
+            // sentinels leaves min stuck at +Infinity on a monotonically-rising line, since the max
+            // branch would keep winning every single sample.
+            if (!_slantLineEnvelopeSeeded)
+            {
+                _slantLineEnvelopeSeeded = true;
+                _slantLineMaxEnvelope = envelope;
+                _slantLineMinEnvelope = envelope;
+                _slantLinePeakPosition = _slantIdealSamplesSoFarInLine;
+            }
+            else if (envelope > _slantLineMaxEnvelope)
             {
                 _slantLineMaxEnvelope = envelope;
                 _slantLinePeakPosition = _slantIdealSamplesSoFarInLine;
+            }
+            else if (envelope < _slantLineMinEnvelope)
+            {
+                _slantLineMinEnvelope = envelope;
             }
 
             _slantIdealSamplesSoFarInLine += 1;
@@ -3597,26 +3880,63 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // set would let an immediate second ReSync click apply a bogus second skip from it.
                 _lastLineSyncPeakPosition = null;
             }
-            else if (_slantCorrectionsDisabledForRestOfImage)
-            {
-                // m_AutoSyncCount (Main.cpp:3968), set by a successful ReSync and cleared only at the
-                // next reception's start (:4994): the history/counter bookkeeping legacy runs
-                // unconditionally keeps running, the whole correction branch does not. Deliberately NOT
-                // `ProcessLine(relative)`-and-discard -- see ProcessLineHistoryOnly's own doc comment
-                // (SlantTracker.cs) for what that would additionally (and wrongly) mutate.
-                _slantTracker.ProcessLineHistoryOnly(relative);
-            }
             else
             {
-                var correctedSampleRate = _slantTracker.ProcessLine(relative);
-                if (correctedSampleRate is not null)
+                // Auto Sync (Main.cpp:3907-3961) runs here, ahead of the Auto-Slant regression split
+                // below and regardless of _slantCorrectionsDisabledForRestOfImage -- that flag gates
+                // Auto SLANT's own correction branch (Main.cpp:3968's !m_AutoSyncCount), not Auto
+                // Sync's, which has its own independent gates. See TryAutoSync's own doc comment for
+                // the full design and the two rounds of plan-readiness review this went through.
+                TryAutoSync(_mode!);
+
+                if (_slantCorrectionsDisabledForRestOfImage)
                 {
-                    _effectiveSamplesPerLine = _mode!.LineDurationMs / 1000.0 * correctedSampleRate.Value;
+                    // m_AutoSyncCount (Main.cpp:3968), set by a successful ReSync and cleared only at
+                    // the next reception's start (:4994): the history/counter bookkeeping legacy runs
+                    // unconditionally keeps running, the whole correction branch does not. Deliberately
+                    // NOT `ProcessLine(relative)`-and-discard -- see ProcessLineHistoryOnly's own doc
+                    // comment (SlantTracker.cs) for what that would additionally (and wrongly) mutate.
+                    _slantTracker.ProcessLineHistoryOnly(relative);
+                }
+                else
+                {
+                    var correctedSampleRate = _slantTracker.ProcessLine(relative);
+                    if (correctedSampleRate is not null)
+                    {
+                        _effectiveSamplesPerLine = _mode!.LineDurationMs / 1000.0 * correctedSampleRate.Value;
+
+                        // Deliberately does NOT reset Auto Sync's own detection state here -- an
+                        // earlier draft of this port called ResetAutoSyncDetectionState() on every
+                        // commit "for consistency" with SlantTracker.Reset()'s own already-shipped
+                        // behavior (which DOES reset on every commit, ultracode audit finding #9).
+                        // Empirically wrong, caught by this feature's own test suite: SlantTracker
+                        // commits corrections often enough under sustained drift that Auto Sync's own
+                        // 8-line warmup and 16-entry ring buffer never survived long enough to
+                        // accumulate anything, making the whole feature untriggerable in exactly the
+                        // sustained-drift scenario it exists to help with.
+                        //
+                        // Code-level review correction: an earlier version of this comment additionally
+                        // claimed this was "the MORE legacy-faithful choice too" because legacy's own
+                        // InitAutoStop-after-commit call is "proven dead code without the not-built
+                        // RX-buffer-replay feature" -- that specific claim was WRONG. sys.m_UseRxBuff
+                        // defaults to 1 (Main.cpp:899) and OpenCloseRxBuff allocates m_StgBuf for
+                        // exactly that value (sstv.cpp:1630-1639), so UpdateSampFreq's own gate
+                        // (Main.cpp:5597) IS satisfied by default and InitAutoStop DOES run after every
+                        // commit in real legacy. See ResetAutoSyncDetectionState's own doc comment for
+                        // the real reason not to copy that call: legacy immediately REPLAYS every
+                        // buffered line back through DrawSSTV afterward (Main.cpp:5603-5612), rebuilding
+                        // its own state rather than losing it -- this port has no replay, so
+                        // reset-without-rebuild would be strictly further from legacy's real net effect
+                        // than leaving the state alone, which the empirical finding above independently
+                        // already confirmed was the right call regardless.
+                    }
                 }
             }
 
             _slantIdealSamplesSoFarInLine -= completedLineSamples; // carry remainder against the OLD samples-per-line -- keeps line boundaries from drifting
             _slantLineMaxEnvelope = double.NegativeInfinity;
+            _slantLineMinEnvelope = double.PositiveInfinity;
+            _slantLineEnvelopeSeeded = false;
             _slantLinePeakPosition = 0;
         }
     }

@@ -154,7 +154,8 @@ internal static partial class Program
                 ?? new SstvDecoderSettings();
             return new RestartableSstvDecoder(
                 afcEnabled: decoderSettings.AfcEnabled ?? true,
-                syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true);
+                syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true,
+                autoSyncEnabled: decoderSettings.AutoSyncEnabled ?? true);
         });
         hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
         hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));

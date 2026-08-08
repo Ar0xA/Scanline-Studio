@@ -26,4 +26,11 @@ public sealed record SstvDecoderSettings
     /// onto it. See <see cref="AnalogFmSstvDecoder"/>'s own doc comment at its mid-reception restart
     /// call site for the full citation trail.</summary>
     public bool? SyncRestartEnabled { get; init; }
+
+    /// <summary>Port of legacy's real, user-toggleable <c>sys.m_AutoSync</c> (default 1,
+    /// <c>Main.cpp:901</c>) -- gates whether a detected sync-position drift is allowed to
+    /// automatically apply the same correction the manual ReSync button applies. Gates only the two
+    /// trigger branches, not the underlying drift-detection bookkeeping, which runs unconditionally
+    /// in this port (see <see cref="AnalogFmSstvDecoder"/>'s own Auto Sync doc comments for why).</summary>
+    public bool? AutoSyncEnabled { get; init; }
 }
