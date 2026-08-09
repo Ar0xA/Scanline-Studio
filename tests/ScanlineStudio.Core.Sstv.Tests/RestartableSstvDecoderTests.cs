@@ -12,6 +12,83 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 public class RestartableSstvDecoderTests
 {
     [Fact]
+    public void AutoSlantEnabled_ForwardsTheConstructorValue()
+    {
+        // Auditor plan-review finding: no existing test in this file covers ANY of the sibling
+        // constructor-injected toggles' own forwarding (every other call site here passes
+        // afcEnabled: true as an incidental fixed value while testing maintenance-threshold behavior)
+        // -- this is the first such test for any of these flags, not mirroring an existing pattern.
+        // Reads the WRAPPER's own stored value (RestartableSstvDecoder.AutoSlantEnabled), not a
+        // decode-driven inner-decoder property -- see that property's own doc comment for why no
+        // _gate is needed to read it.
+        Assert.True(new RestartableSstvDecoder(autoSlantEnabled: true).AutoSlantEnabled);
+        Assert.False(new RestartableSstvDecoder(autoSlantEnabled: false).AutoSlantEnabled);
+    }
+
+    [Fact]
+    public async Task AutoSlantEnabledFalse_ActuallyPropagatesToTheInnerDecodersOwnGate_NotJustTheWrapperField()
+    {
+        // Auditor-caught gap: AutoSlantEnabled_ForwardsTheConstructorValue above only proves the
+        // WRAPPER's own field readback -- nothing proved CreateInner() actually forwards
+        // autoSlantEnabled: into the real AnalogFmSstvDecoder it constructs (the production path,
+        // since Program.cs registers THIS wrapper type, not AnalogFmSstvDecoder directly). Dropping
+        // that one constructor argument in CreateInner() would leave the whole suite green otherwise.
+        // Same 1.0005x-mismatch technique as SlantTests.cs's own
+        // AnalogFmSstvDecoder_AutoSlantDisabled_SlantPpmNeverMovesOffZero_ButBookkeepingStillAdvances
+        // (that test's 44100 rate yields ~499ppm; this test is pinned to the wrapper's own fixed
+        // 11025 rate instead, yielding ~453ppm -- see the positive control below for why that
+        // difference matters here specifically),
+        // driven through the wrapper instead of the inner decoder directly.
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(230, 230, 230));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = RestartableSstvDecoder.ProductionSampleRate;
+        const double trueSampleRate = declaredSampleRate * 1.0005;
+
+        var encoder = new AnalogFmSstvEncoder((int)trueSampleRate);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        // Positive control (auditor round 2 finding): the `false` assertion below is only load-bearing
+        // if this exact scenario WOULD commit a correction with the flag on -- CreateInner() pins the
+        // wrapper to the 11025 default (no sampleRate argument forwarded), a rate/ppm combination
+        // ((int)(11025*1.0005)=11030, ~453ppm) none of SlantTests.cs's own commit scenarios actually
+        // exercise (they all use 44100). Without this control, a scenario that never commits at 11025
+        // regardless of the flag would make the `false` assertion pass vacuously even if
+        // autoSlantEnabled: were silently dropped from CreateInner() entirely.
+        var enabledDecoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue, autoSlantEnabled: true);
+        var observedNonZeroSlantPpmWhenEnabled = false;
+        enabledDecoder.LineDecoded += _ =>
+        {
+            if (enabledDecoder.SlantPpm is not (null or 0.0))
+            {
+                observedNonZeroSlantPpmWhenEnabled = true;
+            }
+        };
+        enabledDecoder.PushSamples(samples.ToArray());
+        Assert.True(observedNonZeroSlantPpmWhenEnabled,
+            "Positive control failed -- this scenario never commits a correction at 11025Hz even with the flag on, so the disabled case below would pass vacuously.");
+
+        var disabledDecoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue, autoSlantEnabled: false);
+        var observedNonZeroSlantPpmWhenDisabled = false;
+        disabledDecoder.LineDecoded += _ =>
+        {
+            if (disabledDecoder.SlantPpm is not (null or 0.0))
+            {
+                observedNonZeroSlantPpmWhenDisabled = true;
+            }
+        };
+        disabledDecoder.PushSamples(samples.ToArray());
+
+        Assert.False(observedNonZeroSlantPpmWhenDisabled);
+    }
+
+    [Fact]
     public void ForceMode_ForwardsToTheCurrentInner()
     {
         var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue);

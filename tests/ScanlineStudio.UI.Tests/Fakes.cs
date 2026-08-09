@@ -242,6 +242,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public bool IsLevelOverdriven { get; set; }
 
+    public bool AutoSlantEnabled { get; set; } = true;
+
     public double? SyncFrequencyCorrectionHz { get; set; }
 
     public int BufferedSampleCount { get; set; }

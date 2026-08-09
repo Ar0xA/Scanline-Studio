@@ -48,4 +48,15 @@ public sealed record SstvDecoderSettings
     /// (the other three <see langword="true"/>, this one <see langword="false"/>) is not a state
     /// legacy's Lock button can itself produce -- it matches legacy's fresh/unmodified default only.</summary>
     public bool? AutoStopEnabled { get; init; }
+
+    /// <summary>Port of legacy's real, user-toggleable <c>KRSA-&gt;Checked</c> (<c>Main.cpp:1863</c>'s
+    /// <c>Define/AutoSlant</c> .ini key) -- gates whether <see cref="AnalogFmSstvDecoder"/>'s
+    /// slant-correction commits are ever applied (the underlying drift-detection bookkeeping still
+    /// runs unconditionally, same reasoning as <see cref="AutoSyncEnabled"/>/<see cref="AutoStopEnabled"/>
+    /// above). Default-desired <see langword="true"/> here preserves this port's own current
+    /// always-on shipped behavior -- NOT a confirmed legacy fresh-install default: the shipped
+    /// <c>.ini</c>s disagree (<c>Mmsstv.ini</c>/<c>MmsstvV.ini</c> say <c>1</c>, but
+    /// <c>Mmsstv English.ini</c>/<c>Mmsstv Japanese.ini</c> both say <c>0</c>), and legacy's real
+    /// design-time default lives in the binary <c>Main.vlb</c>, unreadable.</summary>
+    public bool? AutoSlantEnabled { get; init; }
 }
