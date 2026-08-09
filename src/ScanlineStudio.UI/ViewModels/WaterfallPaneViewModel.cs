@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
+using ScanlineStudio.UI.Controls;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -37,9 +38,92 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
     [ObservableProperty]
     private double _gainDb = 50.0;
 
+    /// <summary>Real now (batch 8b), wired to mock2's Start/Span <c>NumericUpDown</c>s -- continuous
+    /// rather than legacy's 3 discrete zoom presets (`Main.cpp:11515-11531`'s `GetFFTRect`: (0,3.0k)/
+    /// (700,2.0k)/(1000,1.5k)), a deliberate generalization matching mock2's own richer continuous
+    /// design (spec/06 exempts this visualization from strict port-first fidelity). Default 1000/1600
+    /// sits on legacy's own 1.5k preset.</summary>
+    [ObservableProperty]
+    private double _startHz = 1000.0;
+
+    [ObservableProperty]
+    private double _spanHz = 1600.0;
+
+    /// <summary>Read-only computed telemetry pushed FROM <c>SpectrumTraceControl.BinsPerPixel</c> via
+    /// a <c>Mode=OneWayToSource</c> binding (auditor round-2 finding: an <c>ElementName</c> binding
+    /// can't cross the <c>MainWindow.axaml</c>/<c>WaterfallPaneView.axaml</c> XAML name-scope boundary
+    /// -- this property is the shared point both sides can reach). Never set directly by this
+    /// view-model's own code.</summary>
+    [ObservableProperty]
+    private double _binsPerPixel;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsViewBoth), nameof(IsViewSpectrumOnly), nameof(IsViewWaterfallOnly))]
+    private WaterfallViewMode _viewMode = WaterfallViewMode.Both;
+
+    [ObservableProperty]
+    private bool _peakHoldEnabled;
+
+    /// <summary>Tracks the currently-locked mode for <see cref="SpectrumTraceMath.ComputeMarkerFrequencies"/>
+    /// -- <see langword="null"/> before any mode has locked this session (or once RX stops without a
+    /// dedicated "idle" event to react to, see <see cref="OnModeDetected"/>'s own doc comment), which
+    /// <see cref="SpectrumTraceMath.ComputeMarkerFrequencies"/> already handles as "use the wide-mode
+    /// default marker set."</summary>
+    [ObservableProperty]
+    private SstvModeDefinition? _currentMode;
+
     public WaterfallPaneViewModel(ISstvSessionService sstvSession)
     {
         sstvSession.Waterfall.Frames.Subscribe(OnFrame);
+        sstvSession.ModeDetected += OnModeDetected;
+    }
+
+    /// <summary>Same "worry, don't fire-and-forget" concurrency contract as <see cref="OnFrame"/>:
+    /// <see cref="ISstvSessionService.ModeDetected"/>'s own doc comment states it fires synchronously
+    /// on the audio drain thread (auditor round-2 catch -- an earlier version of this method assigned
+    /// <see cref="CurrentMode"/> directly, which would have raised <c>PropertyChanged</c>, and hence
+    /// updated Avalonia bindings, off the UI thread). No corresponding "mode un-locked"/RX-stopped
+    /// event exists on <see cref="ISstvSessionService"/> today (only a polled <c>IsReceiving</c> bool),
+    /// so <see cref="CurrentMode"/> is deliberately NOT reset to null when RX stops -- it just keeps
+    /// showing the last-locked mode's markers until a new one locks, which
+    /// <see cref="SpectrumTraceMath.ComputeMarkerFrequencies"/>'s own default (wide-mode set when null)
+    /// makes a reasonable idle fallback for regardless.</summary>
+    private void OnModeDetected(SstvModeDefinition mode) => Dispatcher.UIThread.Post(() => CurrentMode = mode);
+
+    public bool IsViewBoth
+    {
+        get => ViewMode == WaterfallViewMode.Both;
+        set
+        {
+            if (value)
+            {
+                ViewMode = WaterfallViewMode.Both;
+            }
+        }
+    }
+
+    public bool IsViewSpectrumOnly
+    {
+        get => ViewMode == WaterfallViewMode.SpectrumOnly;
+        set
+        {
+            if (value)
+            {
+                ViewMode = WaterfallViewMode.SpectrumOnly;
+            }
+        }
+    }
+
+    public bool IsViewWaterfallOnly
+    {
+        get => ViewMode == WaterfallViewMode.WaterfallOnly;
+        set
+        {
+            if (value)
+            {
+                ViewMode = WaterfallViewMode.WaterfallOnly;
+            }
+        }
     }
 
     private void OnFrame(WaterfallFrame frame)
