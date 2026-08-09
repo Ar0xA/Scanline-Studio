@@ -189,12 +189,40 @@ closes it. Also fixed: a `Saved` subscriber's own exception could fault the save
 
 **Verified**: full solution build clean, full suite green — 1135 tests total (Core.Imaging.Tests
 28/28 was 24, Core.Logbook.Tests 65/65 was 64, UI.Tests 119/119 was 118 pre-batch-4, Core.Sstv.Tests
-662/662 unaffected). **NOT YET committed** — about to commit.
+662/662 unaffected). **COMMITTED and pushed (`bbe766c`).**
 
-**Remaining on §17's REAL-EASY list**: Buffer·XRUN (needs a small `IAudioEngine` interface extension
-first, not pure wiring); Auto-correct's "on/off" half (needs exposing legacy's `AutoSlant` setting,
-currently hardcoded on, plus an AVT case). Batch 5, not yet started — per the user's "tick those
-items off" instruction, this is next.
+**Batch 5 scoping done, NOT started (session paused mid-investigation by user request, resume
+2026-08-09 13:00)**: checked the actual scope of both remaining §17 REAL-EASY items before touching
+anything (same "check before diving in" discipline as the item-3 Options-dialogs scoping earlier in
+this doc) —
+
+- **Buffer·XRUN — confirmed genuinely cheap, plan is clear, not yet coded.** `MiniAudioEngine.CaptureOverrunCount`
+  (`MiniAudioEngine.cs:127`) already exists but isn't on `IAudioEngine` (deliberately, per that
+  interface's own doc comment: "no other backend implementation exists yet to confirm the same shape
+  generalizes" — still true, only one backend exists, but the shape is simple enough not to block a
+  real UI need on that). Plan: promote `int CaptureOverrunCount { get; }` onto `IAudioEngine`
+  (`MiniAudioEngine` already satisfies it as-is; `FakeAudioEngine`, `src/ScanlineStudio.Core.Audio/FakeAudioEngine.cs`,
+  needs a new settable property), thread a pass-through onto `ISstvSessionService`/`SstvSessionService`
+  (single `_audioEngine` field already used for both capture/playback, no new DI wiring needed), add
+  to `RxImagePaneViewModel.PollTelemetry()`. Also: now that BOTH halves would be real, RECOMBINE the
+  Buffer/XRUN display back into mock2's original single "buffer 512 · 0 XRUN" format
+  (`spec/16-gui-wiring-survey.md:315` has the exact literal) instead of the two separate real-only
+  properties batch 1/2 shipped specifically to avoid pairing a real number with a fake one — that
+  reason no longer applies once XRUN goes real too.
+- **Auto-correct's "on/off" half — genuinely bigger than "wire it," flagging before building.**
+  `SlantTracker` (legacy's `AutoSlant`) is unconditionally constructed in
+  `AnalogFmSstvDecoder.InitializeAfc`/mode-init (`AnalogFmSstvDecoder.cs:4002`) — there is no on/off
+  flag anywhere in this port, matching legacy's shipped `AutoSlant=1` default with no toggle exposed.
+  A REAL on/off setting isn't just a UI/wiring change like everything else in batches 1-4: it means
+  adding a settings field (`OptionsSnapshot`/`OptionsSettingsService`, matching existing
+  operator-settings plumbing) AND conditionally skipping `_slantTracker` construction/use in the DSP
+  decode path when disabled — an actual RX-decode-BEHAVIOR change, not just exposing already-computed
+  state. Per CLAUDE.md §7/the DSP-audit-process convention this project already follows for anything
+  touching `AnalogFmSstvDecoder`'s own decode path, this likely warrants a plan + auditor
+  plan-readiness review before coding (not just the lighter post-implementation-only code review
+  batches 1-4 used) — this is a scope/rigor decision, not yet made. **Needs a user call on priority
+  before starting**: ship Buffer·XRUN alone as a smaller batch 5 now, or also take on Auto-correct's
+  on/off half as its own separately-scoped (bigger) piece.
 
 **After the RX telemetry slice is done**, next in `spec/14-roadmap.md`'s proposed order: RX history
 browser affordances → waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail
