@@ -68,6 +68,76 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void WaterfallPaneViewModel_ModeDetectedEvent_UpdatesCurrentModeOnUiThread()
+    {
+        // Auditor-caught (batch 8 plan review): ISstvSessionService.ModeDetected fires synchronously
+        // on the audio drain thread -- an earlier version assigned CurrentMode directly in the event
+        // handler, which would raise PropertyChanged (and hence update Avalonia bindings) off the UI
+        // thread. Same Dispatcher.UIThread.Post-then-RunJobs pattern as OnFrame's own test above
+        // proves the marshaling actually happens.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new WaterfallPaneViewModel(sstvSession);
+        Assert.Null(vm.CurrentMode);
+
+        var mode = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(mode, vm.CurrentMode);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_ViewMode_DefaultsToBoth()
+    {
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService());
+
+        Assert.Equal(WaterfallViewMode.Both, vm.ViewMode);
+        Assert.True(vm.IsViewBoth);
+        Assert.False(vm.IsViewSpectrumOnly);
+        Assert.False(vm.IsViewWaterfallOnly);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_SettingIsViewSpectrumOnly_UpdatesViewModeAndTheOtherComputedBools()
+    {
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService());
+
+        vm.IsViewSpectrumOnly = true;
+
+        Assert.Equal(WaterfallViewMode.SpectrumOnly, vm.ViewMode);
+        Assert.False(vm.IsViewBoth);
+        Assert.True(vm.IsViewSpectrumOnly);
+        Assert.False(vm.IsViewWaterfallOnly);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_SettingIsViewWaterfallOnly_UpdatesViewModeAndTheOtherComputedBools()
+    {
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService());
+
+        vm.IsViewWaterfallOnly = true;
+
+        Assert.Equal(WaterfallViewMode.WaterfallOnly, vm.ViewMode);
+        Assert.False(vm.IsViewBoth);
+        Assert.False(vm.IsViewSpectrumOnly);
+        Assert.True(vm.IsViewWaterfallOnly);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_StartHzSpanHzPeakHoldEnabled_HaveTheDocumentedDefaults()
+    {
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService());
+
+        Assert.Equal(1000.0, vm.StartHz);
+        Assert.Equal(1600.0, vm.SpanHz);
+        Assert.False(vm.PeakHoldEnabled);
+        Assert.Equal(0.0, vm.BinsPerPixel);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_UpdatedEvent_RefreshesImageOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();

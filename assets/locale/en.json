@@ -116,6 +116,7 @@
   "Panes.Waterfall.Span": "Span",
   "Panes.Waterfall.Gain": "Gain",
   "Panes.Waterfall.Zero": "Zero",
+  "Panes.Waterfall.PeakHold": "Peak hold",
   "Panes.Waterfall.ViewBoth": "Both",
   "Panes.Waterfall.ViewSpec": "Spec",
   "Panes.Waterfall.ViewWf": "WF",
