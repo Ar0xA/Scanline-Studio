@@ -5,7 +5,17 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-09, latest, ACTIVE) — Must-implement backlog items 1-2 shipped/closed; pivoted to a full GUI wiring survey, awaiting user prioritization.
+## Resume here (2026-08-09, latest, ACTIVE)
+
+**Current status**: Must-implement backlog items 1-2 shipped/closed. Full GUI wiring survey done
+(`spec/16-gui-wiring-survey.md`). RX telemetry feasibility slice (`spec/17-rx-telemetry-feasibility.md`)
+fully shipped, batches 1-6. RX history browser affordances shipped (batch 7). **Waterfall color/palette
+rendering shipped and CLOSED** (batches 8a/8b, commits `1cc4568`/`71a7daf` — see below for detail).
+No further task is currently authorized by the user — the last exchange offered OCR/QRZ lookup or
+CW-ID/FSK subsystem as the next `spec/14-roadmap.md` backlog items and is awaiting a reply. **Read
+this file top-to-bottom is not required to resume** — the batch entries below (8a, 8b, 7, 6...) are
+kept for "what happened and why" detail; skip straight to whatever the user's next message asks for
+and consult a specific batch entry only if its reasoning becomes directly relevant again.
 
 User instruction governing all work in this subject: **"throughout the night keep working on the
 total list using the same process flow. IF you get stumped by bugs, solution directions, ask the
