@@ -138,9 +138,19 @@ new `ISstvSessionService` pass-through properties added for the underlying decod
 dead "Reset" button (no real semantics, see below) was explicitly disabled rather than left silently
 inert next to the now-live Re-sync button.
 
+**Batch 2 SHIPPED (2026-08-09)**: Status bar's "line N / total" readout (from
+`IReceivedImageBuffer.Progress`, an already-computed `[0.0,1.0]` fraction — real, zero new backend),
+Frame-metadata card's "Started" timestamp (new client-side `DateTimeOffset.UtcNow` capture at
+`ModeDetected`, not a decoder property). Also opportunistically wired the status bar's Buffer readout
+(`RxImagePaneViewModel.BufferedSampleCountDisplay` already existed from batch 1, just wasn't
+connected to this second display site) — deliberately drops mock2's own "· N XRUN" half rather than
+pairing a real number with a still-fake one. Two rounds of auditor review, no blockers; one real risk
+fixed (a missing property-change notification that could show a stale/wrong line total for one frame
+after a fresh mode detection).
+
 Remaining, cheapest/highest-value first (all REAL-EASY, mostly pure wiring, no new DSP):
-1. Line progress, Frames today/Log size, File size, UTC clock, "Started" timestamp, AGC gain
-   (client-side derivation, zero backend) — trivial wiring or one-line additions, no risk.
+1. Frames today/Log size, File size, UTC clock, AGC gain (client-side derivation, zero backend) —
+   trivial wiring or one-line additions, no risk.
 2. RX device name — same shape as work already shipped this session (mirror an existing pattern).
 3. Buffer·XRUN — needs a small `IAudioEngine` interface extension + `FakeAudioEngine` update first
    (not a pure existing-property read, per the audit correction above), still cheap but budget for
