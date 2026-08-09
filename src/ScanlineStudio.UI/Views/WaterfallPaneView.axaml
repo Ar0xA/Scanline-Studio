@@ -6,7 +6,7 @@
              x:DataType="vm:WaterfallPaneViewModel">
 
     <Border Classes="plot">
-        <controls:WaterfallControl Frame="{Binding LatestFrame}" />
+        <controls:WaterfallControl Frame="{Binding LatestFrame}" ZeroDb="{Binding ZeroDb}" GainDb="{Binding GainDb}" />
     </Border>
 
 </UserControl>

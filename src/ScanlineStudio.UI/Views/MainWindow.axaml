@@ -313,10 +313,10 @@
                              sibling); there is no separate spectrum-only PlotView component, so
                              the left "Spectrum" column is a literal placeholder Border
                              Classes="plot" reproducing mock2's 2-plot layout, not a second real
-                             control. Settings column (Bins/px, Start, Span, Gain, Zero, Both/
-                             Spec/WF toggle) is entirely literal: none of these are real tunable
-                             parameters on WaterfallPaneViewModel today (spec/14-roadmap.md
-                             backlog). -->
+                             control (batch 8 fills this in; see spec/14-roadmap.md). Gain/Zero
+                             are real now (batch 8, WaterfallPaneViewModel.GainDb/ZeroDb). Bins/px,
+                             Start, Span, Both/Spec/WF toggle remain literal pending the rest of
+                             batch 8. -->
                         <Border Grid.Row="0" Classes="card">
                             <DockPanel LastChildFill="True">
                                 <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*">
@@ -339,13 +339,24 @@
                                             <TextBlock Classes="label" Text="{loc:Translate Panes.Waterfall.Span}" VerticalAlignment="Center" />
                                             <NumericUpDown Grid.Column="1" Classes="tight" Increment="100" Value="1600" />
                                         </Grid>
+                                        <!-- Gain/Zero: real now (batch 8); drive WaterfallControl's
+                                             ZeroDb/GainDb dB-normalization window directly (see
+                                             WaterfallPaneViewModel's own doc comment for how the
+                                             range/defaults were measured against real captured audio,
+                                             not guessed). -->
                                         <Grid ColumnDefinitions="Auto,*">
                                             <TextBlock Classes="label" Text="{loc:Translate Panes.Waterfall.Gain}" VerticalAlignment="Center" />
-                                            <Slider Grid.Column="1" Value="60" />
+                                            <Slider Grid.Column="1" Minimum="20" Maximum="80" Value="{Binding Waterfall.GainDb}" />
                                         </Grid>
+                                        <!-- Minimum/Maximum here are load-bearing: RangeBase coerces
+                                             Value into [Minimum,Maximum] and Value is TwoWay by
+                                             default, so if these were ever dropped or overridden by a
+                                             style, a -70 ZeroDb default would clamp against
+                                             RangeBase's own default 0..100 range and silently write
+                                             the clamped value back into the view-model. -->
                                         <Grid ColumnDefinitions="Auto,*">
                                             <TextBlock Classes="label" Text="{loc:Translate Panes.Waterfall.Zero}" VerticalAlignment="Center" />
-                                            <Slider Grid.Column="1" Value="20" />
+                                            <Slider Grid.Column="1" Minimum="-70" Maximum="30" Value="{Binding Waterfall.ZeroDb}" />
                                         </Grid>
                                         <Border Classes="segment" HorizontalAlignment="Left">
                                             <StackPanel Orientation="Horizontal">
