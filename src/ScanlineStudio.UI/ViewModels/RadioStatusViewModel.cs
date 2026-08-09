@@ -20,10 +20,16 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 {
     private static readonly TimeSpan VolumePersistDebounce = TimeSpan.FromMilliseconds(400);
 
+    /// <summary>Tick interval for <see cref="UtcClockDisplay"/> -- a plain wall-clock readout with
+    /// no backend dependency at all (spec/17-rx-telemetry-feasibility.md), 1 second is the readout's
+    /// own display resolution (`HH:mm:ss`), no finer granularity would be visible.</summary>
+    private static readonly TimeSpan UtcClockTickInterval = TimeSpan.FromSeconds(1);
+
     private readonly IRadioSessionService _radioSession;
     private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
     private readonly ILogger<RadioStatusViewModel> _logger;
+    private readonly DispatcherTimer _utcClockTimer;
     private bool _suppressVolumePersist;
     private CancellationTokenSource? _volumePersistCts;
 
@@ -83,6 +89,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private bool _catLinked;
 
+    /// <summary>VFO card's UTC clock -- real, ticking, zero backend dependency
+    /// (spec/17-rx-telemetry-feasibility.md).</summary>
+    [ObservableProperty]
+    private string _utcClockDisplay = string.Empty;
+
     public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, ILogger<RadioStatusViewModel> logger)
     {
         _radioSession = radioSession;
@@ -107,7 +118,13 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         _ = LoadPresetsSafeAsync();
         _ = LoadTxVolumeSafeAsync();
+
+        UpdateUtcClock();
+        _utcClockTimer = new DispatcherTimer(UtcClockTickInterval, DispatcherPriority.Background, (_, _) => UpdateUtcClock());
+        _utcClockTimer.Start();
     }
+
+    private void UpdateUtcClock() => UtcClockDisplay = _localization.GetString("RadioStatus.UtcValueFormat", DateTimeOffset.UtcNow);
 
     public IReadOnlyList<RadioMode> AvailableModes { get; } = Enum.GetValues<RadioMode>();
 
