@@ -440,6 +440,80 @@ public class SlantTests
     }
 
     [Fact]
+    public async Task AnalogFmSstvDecoder_AutoSlantDisabled_SlantPpmNeverMovesOffZero_ButBookkeepingStillAdvances()
+    {
+        // Regression test for the Auto-correct on/off toggle (auditor plan-review, batch 6): reuses
+        // AnalogFmSstvDecoder_AfterASlantCorrectionCommits_SlantPpmMatchesTheUnderlyingTrackersOwnValue's
+        // own 500ppm scenario above, which reliably commits a correction with the toggle on -- with
+        // autoSlantEnabled: false, no commit must ever happen.
+        //
+        // NOT "SlantPpm stays null" -- an earlier version of this test (and this port's own doc
+        // comments) wrongly assumed that, caught by this test actually failing once written:
+        // SlantTracker.DriftPpm is `(_currentSampleRate - _sampleRate) * 1e6 / _sampleRate`, and
+        // _currentSampleRate is initialized to _sampleRate in the constructor (SlantTracker.cs:80) --
+        // so DriftPpm reads exactly 0.0 (a real, non-null double) from the moment InitializeSlant
+        // constructs the tracker, regardless of this flag's value, since construction is deliberately
+        // NOT gated (see this file's own ApplySlantTracking gate comment). The correct invariant is
+        // "SlantPpm never moves AWAY from 0.0" -- proving no commit ever mutates _currentSampleRate --
+        // not "SlantPpm is null."
+        //
+        // Asserting that alone is still insufficient (auditor finding): staying at 0.0 is also
+        // satisfied by two WRONG implementations -- skipping ApplySlantTracking's slant call entirely,
+        // or calling ProcessLine(...)-and-discarding the result before it would have committed
+        // (explicitly documented as wrong in SlantTracker.cs's own ProcessLineHistoryOnly doc comment,
+        // since ProcessLine itself mutates the baseline/_correctionAverage/_bitMask/history state as a
+        // side effect regardless of what the caller does with its return value, even on lines where it
+        // returns null). So this also asserts the tracker's own bookkeeping-only hook:
+        // TotalLinesObservedForTests keeps advancing (proving ProcessLineHistoryOnly specifically ran,
+        // not a full skip), while HasBaselineForTests stays false (proving ProcessLine was never
+        // called).
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(230, 230, 230));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = 44100;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.0005);
+
+        var encoder = new AnalogFmSstvEncoder(trueSampleRate);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        // Captured DURING LineDecoded, not re-read after PushSamples returns -- EndOfImage() (which
+        // runs before PushSamples returns for a single bulk push covering a whole image) nulls both
+        // _mode and _slantTracker, so decoder.SlantPpm/SlantTrackerForTests would read null/null
+        // post-completion regardless of this test's own outcome, same reasoning as the sibling
+        // AfterASlantCorrectionCommits test above never asserting decoder.SlantPpm after the push.
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate, autoSlantEnabled: false);
+        var observedNonZeroSlantPpm = false;
+        var maxTotalLinesObserved = 0;
+        var everHadBaseline = false;
+        decoder.LineDecoded += _ =>
+        {
+            if (decoder.SlantPpm is not (null or 0.0))
+            {
+                observedNonZeroSlantPpm = true;
+            }
+
+            var tracker = decoder.SlantTrackerForTests;
+            if (tracker is not null)
+            {
+                maxTotalLinesObserved = Math.Max(maxTotalLinesObserved, tracker.TotalLinesObservedForTests);
+                everHadBaseline |= tracker.HasBaselineForTests;
+            }
+        };
+
+        decoder.PushSamples(samples.ToArray());
+
+        Assert.False(observedNonZeroSlantPpm);
+        Assert.True(maxTotalLinesObserved > 0); // bookkeeping DID run
+        Assert.False(everHadBaseline); // but no commit ever happened
+    }
+
+    [Fact]
     public async Task AnalogFmSstvDecoder_DuringAPendingAvtTrainingWindow_SlantPpmIsNullDespiteTheAbandonedTrackerStillBeingAlive()
     {
         // Auditor finding (real bug, fixed): AbandonInProgressImage (the S7 mid-reception AVT

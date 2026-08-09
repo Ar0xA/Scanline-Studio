@@ -229,17 +229,43 @@ settable property that didn't enforce the same contract the real engine does (0 
 reset on a fresh `StartCaptureAsync`) — fixed to match, closing a gap where a test could pass against
 a state the real engine can never produce.
 
-Remaining:
-1. Auto-correct's "on/off" HALF still not wired (the "locked" half shipped in batch 1) — needs
-   exposing legacy's real `AutoSlant` setting (currently hardcoded on) plus an explicit AVT case, not
-   just a null check — slightly bigger than it looks, see the table entry above. Scoped
-   2026-08-09: this is an actual RX-decode-BEHAVIOR change (conditionally skipping `SlantTracker`
-   construction in `AnalogFmSstvDecoder`'s decode path when disabled), not pure UI wiring — likely
-   warrants a plan + auditor plan-review pass before coding, per this project's own DSP-audit
-   convention, not just the lighter post-implementation-only review batches 1-5 used. Deferred
-   pending a user decision on priority/rigor (user chose "Buffer·XRUN only, now" when asked).
+**Batch 6 SHIPPED (2026-08-09)**: Auto-correct's "on/off" half. Full plan + auditor plan-review process
+(not the lighter batches 1-5 review), since this genuinely touches `AnalogFmSstvDecoder`'s decode path,
+not just UI wiring. New `SstvDecoderSettings.AutoSlantEnabled` (mirrors the 4 already-shipped sibling
+toggles' exact pattern — `AfcEnabled`/`SyncRestartEnabled`/`AutoSyncEnabled`/`AutoStopEnabled` —
+restart-only, no live-reconfigure), threaded through `AnalogFmSstvDecoder`/`RestartableSstvDecoder`/
+`ISstvDecoder`/`ISstvSessionService`, gating `ApplySlantTracking`'s commit branch (routes to
+`ProcessLineHistoryOnly` instead of `ProcessLine` when off, exactly mirroring the sibling
+`_slantCorrectionsDisabledForRestOfImage` gate already there). `RxImagePaneViewModel.AutoCorrectDisplay`
+rewritten from a 2-way (locked/not-locked) to a 4-way state (AVT literal `"—"` / Off / Locked / on-not-
+-locked), fixing a real pre-existing readout gap where "off" had no distinct state at all.
 
-Then, only with explicit product decisions made first: "Source" (detection-method labels), Advanced
+**Plan-review round found a real, un-scoped legacy-parity bug**: `KRSA->Checked` (legacy's AutoSlant
+checkbox) is ALSO read at a completely separate call site — `Main.cpp:3910`/`:3917`, inside Auto
+Sync's own branch-1 threshold (`(KRSA->Checked ? 5 : 2) * m_Mult`), not just at the slant-commit
+block this batch originally set out to gate. This port had hardcoded the `5` side unconditionally,
+correct only because no Auto Slant toggle existed yet to ever make the `2` side reachable — fixed as
+part of this batch (not deferred), with a dedicated regression test verifying the exact 5:2 ratio
+directly rather than trying to empirically tune a real-audio splice to distinguish the two threshold
+values (both move branch 1's trigger window in opposite directions at once).
+
+**A second real design misconception surfaced mid-implementation, caught by a test actually failing**:
+both the plan and the plan-review auditor assumed "with the toggle off, `SlantPpm` stays null." Wrong
+— `SlantTracker.DriftPpm` defaults to `0.0` (a real, non-null value) from construction, regardless of
+the toggle, since `_currentSampleRate` starts equal to `_sampleRate` and is only ever reassigned by an
+actual commit. The correct invariant is "`SlantPpm` never MOVES away from `0.0`," not "stays null" —
+fixed in the test and every doc comment that repeated the wrong claim (took **two** attempts: the
+first correction narrowed the claim to "only reachable in a brief pane-construction startup window,"
+which the post-implementation code-review round caught as ALSO wrong — `SlantPpm` is null for a
+decoder's entire IDLE period, not just a startup window, since `EndOfImage`/`AbandonInProgressImage`
+both null the decoder's mode between every reception). Two rounds of post-implementation auditor
+review also caught: a `RestartableSstvDecoderTests` forwarding test that could pass vacuously (fixed
+with a positive control proving the same scenario DOES commit with the toggle on, at the wrapper's own
+pinned 11025Hz rate — none of `SlantTests.cs`'s own commit scenarios exercise that specific rate); an
+untested `OnPropertyChanged` re-raise call; and an AVT-vs-toggle test that never actually exercised the
+states its name claimed to cover.
+
+Remaining, only with explicit product decisions made first: "Source" (detection-method labels), Advanced
 timing (relabel as static reference vs. drop the card section), "Reset" button semantics, and
 squelch (a real, narrow, repeater-scoped legacy feature exists — decide whether/how to generalize
 it before building, per the corrected verdict above; note `CLMS::Sig`/`m_repsig` may also be a

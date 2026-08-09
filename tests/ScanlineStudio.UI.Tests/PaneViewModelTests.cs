@@ -169,10 +169,86 @@ public sealed class PaneViewModelTests
         Assert.Equal("—", vm.SyncOffsetSamplesDisplay);
         Assert.Equal("—", vm.SyncToneDisplay);
         // FakeLocalizationService.GetString returns the raw key (not the formatted string) --
-        // asserting the KEY selected still proves the not-locked branch fired, matching this file's
-        // own established ToneMapFormat precedent for testing GetString-based computed properties.
-        Assert.Equal("Panes.RxSync.AutoCorrectValue.NotLocked", vm.AutoCorrectDisplay);
+        // asserting the KEY selected still proves the on-not-locked branch fired, matching this
+        // file's own established ToneMapFormat precedent for testing GetString-based computed
+        // properties. AutoSlantEnabled defaults true on FakeSstvSessionService (matching this port's
+        // own always-on-by-default), so this is "on, not locked yet" -- NOT "off".
+        Assert.Equal("Panes.RxSync.AutoCorrectValue.OnNotLocked", vm.AutoCorrectDisplay);
         Assert.Equal("Panes.RxInput.ClippingValue.Normal", vm.ClippingDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_AutoSlantDisabled_ShowsOff_RegardlessOfSlantPpm()
+    {
+        // Regression test for the toggle this batch adds: AutoSlantEnabled=false must show "Off" even
+        // if SlantPpm happens to be non-null (shouldn't be reachable in production once the decoder
+        // gate is correctly wired, but the VM's own display logic must not silently relabel it
+        // "locked" if it somehow were).
+        var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = false, SlantPpm = 3.4 };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        vm.PollTelemetry();
+
+        Assert.Equal("Panes.RxSync.AutoCorrectValue.Off", vm.AutoCorrectDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_AvtMode_AutoCorrectDisplayShowsPlaceholder_EvenWithALingeringLockedSlantPpm()
+    {
+        // AVT has no slant tracking at all -- a different reason for "nothing to show" than "locked",
+        // which a STALE SlantPpm from a previous non-AVT mode could otherwise satisfy (auditor-caught
+        // gap in an earlier version of this test: it never actually set SlantPpm non-null, so it never
+        // proved AVT wins over "Locked" specifically, only over "on, not locked yet" by omission). Must
+        // win regardless.
+        var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = true, SlantPpm = 3.4 };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        vm.PollTelemetry();
+        Assert.Equal("Panes.RxSync.AutoCorrectValue.Locked", vm.AutoCorrectDisplay); // sanity: locked before AVT
+
+        var avtMode = new SstvModeDefinition(
+            Id: "avt", DisplayName: "AVT", VisCode: 68, ImageWidth: 320, ImageHeight: 240,
+            ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
+        sstvSession.RaiseModeDetected(avtMode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("—", vm.AutoCorrectDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_RaisesPropertyChangedForAutoCorrectDisplay()
+    {
+        // Regression test for OnDetectedModeChanged's own new re-raise call (auditor-caught: this
+        // batch added the call but nothing verified it actually fires) -- without it, switching
+        // into/out of AVT wouldn't refresh AutoCorrectDisplay's "—" case until some OTHER property
+        // change happened to fire first.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        var raisedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
+
+        var mode = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential, LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains(nameof(vm.AutoCorrectDisplay), raisedProperties);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_AvtMode_AutoCorrectDisplayShowsPlaceholder_EvenWithAutoSlantDisabled()
+    {
+        // Same reasoning as the sibling test above, for the OTHER state AVT must win over: "Off".
+        var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = false };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        var avtMode = new SstvModeDefinition(
+            Id: "avt", DisplayName: "AVT", VisCode: 68, ImageWidth: 320, ImageHeight: 240,
+            ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
+        sstvSession.RaiseModeDetected(avtMode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("—", vm.AutoCorrectDisplay);
     }
 
     [AvaloniaFact]

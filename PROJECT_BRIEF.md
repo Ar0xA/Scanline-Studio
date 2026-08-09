@@ -215,14 +215,39 @@ capturing, reset on a fresh `StartCaptureAsync`) — fixed to match. Full detail
 was 14, MiniAudio.Tests 57/57 was 56, Application.Tests 69/69 was 68, UI.Tests 120/120 was 119,
 Core.Sstv.Tests 662/662 unaffected). **COMMITTED and pushed (`27df200`).**
 
-**Auto-correct's "on/off" half — still deferred, genuinely bigger than "wire it."** `SlantTracker`
-(legacy's `AutoSlant`) is unconditionally constructed in `AnalogFmSstvDecoder.InitializeAfc`/mode-init
-(`AnalogFmSstvDecoder.cs:4002`) — no on/off flag anywhere in this port. A real setting means adding a
-settings field AND conditionally skipping `_slantTracker` construction/use in the DSP decode path when
-disabled — an actual RX-decode-BEHAVIOR change, not just exposing already-computed state. Likely
-warrants a plan + auditor plan-readiness review before coding (per CLAUDE.md §7's DSP-audit
-convention), not the lighter post-implementation-only review batches 1-5 used. **Not started** — next
-session should re-ask on priority/rigor, or check `spec/17`'s own updated "Remaining" note.
+**Batch 6 SHIPPED (2026-08-09): Auto-correct's "on/off" half.** Full plan + auditor plan-review
+process (not the lighter batches 1-5 review) — this genuinely touches `AnalogFmSstvDecoder`'s decode
+path. New `SstvDecoderSettings.AutoSlantEnabled` mirroring the 4 already-shipped sibling toggles'
+exact pattern, threaded through `AnalogFmSstvDecoder`/`RestartableSstvDecoder`/`ISstvDecoder`/
+`ISstvSessionService`, gating `ApplySlantTracking`'s commit branch.
+`RxImagePaneViewModel.AutoCorrectDisplay` rewritten from 2-way to 4-way (AVT / Off / Locked /
+on-not-locked).
+
+**Plan-review found a real, un-scoped legacy-parity bug**: `KRSA->Checked` is ALSO read at
+`Main.cpp:3910`/`:3917`, inside Auto Sync's own branch-1 threshold (`(KRSA->Checked ? 5 : 2) * m_Mult`)
+— a completely separate call site from the slant-commit block this batch originally set out to gate.
+This port had hardcoded the `5` side unconditionally, correct only because no toggle existed yet to
+make the `2` side reachable — fixed as part of this batch, with a dedicated ratio-based regression
+test (not an empirically-tuned audio splice, which can't cleanly isolate two thresholds that move a
+trigger window in opposite directions at once).
+
+**A second real design misconception surfaced mid-implementation**, caught by a test actually
+failing, not by inspection: both the plan and the auditor's own plan-review assumed "with the toggle
+off, `SlantPpm` stays null." Wrong — `SlantTracker.DriftPpm` defaults to `0.0` (non-null) from
+construction, unaffected by the toggle. Took TWO correction attempts to get right: the first narrowed
+it to "only reachable in a brief startup window," which the post-implementation code-review round
+caught as ALSO wrong (`SlantPpm` is null for a decoder's entire idle period between receptions, not
+just a startup window). Two rounds of post-implementation auditor review also fixed a
+`RestartableSstvDecoderTests` forwarding test that could have passed vacuously (added a positive
+control), an untested `OnPropertyChanged` re-raise, and an AVT test that never exercised the states
+its own name claimed. Full details: `spec/17`.
+
+**Verified**: full solution build clean, full suite green — Core.Sstv.Tests 666/666 (was 662, +4),
+UI.Tests 124/124 (was 120, +4), everything else unaffected. **NOT YET committed** — about to commit.
+
+**§17's REAL-EASY list is now fully closed.** Remaining items on that page all need explicit product
+decisions first (Source labels, Advanced timing, Reset button semantics, squelch), or are real new
+DSP/feature builds, or are architecturally not possible — none are "quick wiring" candidates.
 
 **After the RX telemetry slice is done**, next in `spec/14-roadmap.md`'s proposed order: RX history
 browser affordances → waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail

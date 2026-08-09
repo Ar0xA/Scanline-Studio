@@ -164,6 +164,19 @@ public interface ISstvDecoder
     /// thread, same guarantee as <see cref="SlantPpm"/> above.</summary>
     bool IsLevelOverdriven { get; }
 
+    /// <summary>Whether legacy's <c>KRSA-&gt;Checked</c> ("Auto Slant") setting is enabled --
+    /// restart-only, same as this decoder's other settings-driven toggles: constructed once per DI
+    /// singleton lifetime, no live-reconfigure path. When <see langword="false"/>, slant-correction
+    /// commits never happen (the underlying drift-detection bookkeeping still runs), so
+    /// <see cref="SlantPpm"/> never moves away from its <c>0.0</c> default for the whole reception --
+    /// NOT <see langword="null"/>: <see cref="SlantPpm"/> is non-null (reading exactly <c>0.0</c>) from
+    /// the moment a non-AVT mode locks, whether this flag is <see langword="true"/> or
+    /// <see langword="false"/>, since the underlying tracker's drift value starts at zero and is only
+    /// ever reassigned by an actual commit. This property is the only way a caller can distinguish a
+    /// genuine "off" reading of <c>0.0</c> from a genuine "on, zero drift measured so far" reading of
+    /// the same value. Safe to read from any thread.</summary>
+    bool AutoSlantEnabled { get; }
+
     /// <summary>Current sync-tone AFC frequency correction, in Hz -- direct passthrough of the
     /// underlying AFC tracker's own correction value (no sign flip), which callers add to every
     /// demodulated sample (port of legacy's <c>CSSTVDEM::SyncFreq</c>/<c>d += m_AFCDiff</c>,
