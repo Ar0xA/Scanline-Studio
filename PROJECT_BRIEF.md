@@ -5,7 +5,7 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-08, latest, ACTIVE) — Working the "must-implement" legacy-parity backlog. Items 1-2 shipped/closed; item 3 blocked on user scoping input.
+## Resume here (2026-08-09, latest, ACTIVE) — Must-implement backlog items 1-2 shipped/closed; pivoted to a full GUI wiring survey, awaiting user prioritization.
 
 User instruction governing all work in this subject: **"throughout the night keep working on the
 total list using the same process flow. IF you get stumped by bugs, solution directions, ask the
@@ -77,7 +77,49 @@ picking a scope and diving in for potentially hours of unreviewed UI work. **Use
 answered which pieces to tackle first** — next session should re-ask rather than assume, or check if
 an answer arrived after this brief was written.
 
-**Order after item 3 gets unblocked**: RX history browser affordances → waterfall color/palette →
+**Subject pivot (2026-08-09): full GUI wiring survey, done and auditor-verified.** User asked
+directly: is the DSP/radio core solid enough to shift focus to the GUI, finding every identifier/
+parameter/button and wiring real functionality behind it? Answer given: yes, with one real
+exception (CW-ID/FSK is a whole unbuilt subsystem, not just wiring — still its own separate backlog
+item). User then asked for "a full and complete survey per screen, card, dialog, have auditor check
+this, then re-verify" — done, not the narrower item-3-only scope from above (item 3 is effectively
+subsumed into this broader survey now).
+
+**Survey**: `spec/16-gui-wiring-survey.md` (new, committed `85397e2`). Every control across all 7
+Views (Receive/Transmit/Gallery/Logbook tabs, menu/status bar, Radio header, Options window's 7
+tabs) traced from its `.axaml` binding back to the ViewModel and classified: **REAL** (genuinely
+wired), **STUB** (`IsEnabled="False"`/no Command), **FAKE-LIVE** (looks like live data, is actually
+a hardcoded literal — often hiding in `assets/locale/en.json` rather than the `.axaml` itself, e.g.
+status bar's `"SNR 21.6 dB"`/`"slant +3.4 ppm"`), **PARTIAL** (real wiring, incomplete). ~280
+controls classified: ~94 REAL, ~110 STUB, ~71 FAKE-LIVE, ~5 PARTIAL.
+
+**Densest placeholder concentration**: Receive tab's Sync&Slant/Input-chain/Signal-quality/
+Frame-metadata/Unattended-RX/Session-frames cards (nearly top-to-bottom fake/stub — no live
+audio-chain measurement, no SNR/histogram computation, no structured decode-event log exist
+anywhere in `Core.Audio`/`Core.Sstv` today, so these six cards are pure future-DSP-work, not just UI
+wiring). Options window's Decode/Identification/Advanced tabs (100% stub, ~55 controls — this is
+the old item-3 scope, now mapped precisely instead of guessed at). Transmit tab's right-column
+Queue/TX-log/Recently-sent cards (100% stub, no such features exist).
+
+**Auditor round: TRUSTWORTHY AS MASTER INVENTORY, 4 fixes applied.** Spot-checked ~40 citations +
+every REAL/PARTIAL claim sampled, confirmed all quoted locale literals verbatim. Found and fixed:
+(1) a missed FAKE-LIVE — TX image editor's canvas safe-area/callsign/report plate text overlay,
+arguably the single most deceptive one in the app since it reads as text burned into the actual
+outgoing TX image; (2) a reclassification — Receive tab's "Previous-frames strip" was marked REAL
+but the VM subscribes to no live session event (its own doc comment says so), so it never updates
+during an actual receive session, only at construction/manual-refresh/filter-change — moved to
+PARTIAL; (3)-(4) two label-consistency fixes (PARTIAL category had zero matching rows in the body;
+a `DataContext`-inheritance claim was imprecise about scope). All applied directly, re-verified for
+internal consistency (grep confirms no stale leftover text), committed together with the survey.
+
+**Next up: BLOCKED, waiting on user prioritization.** The survey is the deliverable the user asked
+for — next step is them picking which cards/screens to wire first (or asking for a recommended
+order). Do not start wiring anything from this survey without that direction; the old item-3 answer
+above ("re-ask rather than assume") applies here too, now at the whole-GUI scope instead of just
+Options.
+
+**Order after item 3/GUI-wiring gets unblocked** (stale framing, superseded by the above — kept for
+continuity only): RX history browser affordances → waterfall color/palette →
 OCR/QRZ lookup → CW-ID/FSK subsystem → small tail items, per `spec/14-roadmap.md`'s own proposed
 order (waterfall/CW-ID may end up partially absorbing pieces of item 3 once it's actually split).
 
