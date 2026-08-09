@@ -4488,6 +4488,16 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   `RadioSettingsDialog`/`MacroKeyEditor`/`ColorSettingsDialog`/`LanguageSettingsDialog` (the ~50
   legacy Options-dialog items already added as disabled+tooltip placeholders, Phase-4+ backlog
   section above, are UI *scaffolding/inventory*, not these dialogs actually existing and working).
+  **Scope-checked 2026-08-08, BLOCKED on user input before building anything**: there is no
+  separate dialog class per name above — all ~50 items are `IsEnabled="False"` +
+  `Options.NotImplemented.Help`-tooltipped controls inside one big
+  `src/ScanlineStudio.UI/Views/OptionsWindowView.axaml` (colors/FFT palette, VOX, CW-ID/
+  identification, macros, etc.), and several of those sections genuinely overlap with the
+  waterfall color/palette and CW-ID/FSK subsystem items listed separately below — building this as
+  one lump risks duplicating or conflicting with that later work. Needs a real per-section split
+  plus an auditor UI-design plan-review pass (this project's own established convention for UI/UX
+  choices) before any code, not a straight port. User asked which pieces to prioritize; no answer
+  yet as of this note.
 - [ ] **RX history browser affordances lost, no replacement** (`docs/removed-features.md`'s own
   "History-tab navigation" entry) — step-through nav, one-click jump-to-latest, clipboard
   copy-out/paste-in. `IReceiveHistoryStore`/`ReceiveHistoryEntry` already has the query surface

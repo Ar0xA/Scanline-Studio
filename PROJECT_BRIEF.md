@@ -5,7 +5,7 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-08, latest, ACTIVE) — Working the "must-implement" legacy-parity backlog. Item 1 (Logbook UI pane) shipped.
+## Resume here (2026-08-08, latest, ACTIVE) — Working the "must-implement" legacy-parity backlog. Items 1-2 shipped/closed; item 3 blocked on user scoping input.
 
 User instruction governing all work in this subject: **"throughout the night keep working on the
 total list using the same process flow. IF you get stumped by bugs, solution directions, ask the
@@ -58,14 +58,28 @@ every mode the checklist item named (Robot36, Robot72, MR73, ML180/240/280/320, 
 the real 11025Hz rate — all 9 pass comfortably (~2.3-4.9 delta vs. the 10.0 tolerance). No production
 DSP code touched; full auditor DSP-audit process (CLAUDE.md §7) skipped since nothing changed for it
 to review. `SstvRoundTripTests` 101/101 (was 92), full `Core.Sstv.Tests` 662/662 (was 653, +9 new),
-both confirmed green. **NOT YET committed** — about to commit alongside the `spec/14-roadmap.md`
-update.
+both confirmed green. **Committed and pushed (`44c7ca7`).**
 
-**Next up**: item 3 on the must-implement checklist, real Options dialogs
-(`RadioSettingsDialog`/`MacroKeyEditor`/`ColorSettingsDialog`/`LanguageSettingsDialog` — currently
-disabled+tooltip placeholders, not functional windows). Then RX history browser affordances →
-waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail items, per
-`spec/14-roadmap.md`'s own proposed order.
+**Item 3, real Options dialogs: BLOCKED on user scoping input — do not just start building.**
+Checked the actual scope before touching anything (not just trusting the checklist's one-line
+framing): there is no separate `RadioSettingsDialog`/`MacroKeyEditor`/`ColorSettingsDialog`/
+`LanguageSettingsDialog` class anywhere — it's ~50+ individually `IsEnabled="False"` +
+`Options.NotImplemented.Help`-tooltipped controls spread across one big
+`src/ScanlineStudio.UI/Views/OptionsWindowView.axaml` (colors/FFT palette, VOX, CW-ID/
+identification, macros, etc.). Several of those sections overlap with OTHER items already listed
+separately further down this same must-implement checklist (waterfall color/palette, CW-ID/FSK
+subsystem) — building "Options dialogs" as one lump would either duplicate or conflict with that
+later work. Real scoping needs an actual per-section split (which controls belong to THIS item vs.
+which are really the color-palette/CW-ID items in disguise), plus an auditor UI-design plan-review
+pass before any building (per this project's own "audit UI design before building" convention — UI
+design choices need that pass, not just DSP ports). Surfaced this to the user rather than silently
+picking a scope and diving in for potentially hours of unreviewed UI work. **User has not yet
+answered which pieces to tackle first** — next session should re-ask rather than assume, or check if
+an answer arrived after this brief was written.
+
+**Order after item 3 gets unblocked**: RX history browser affordances → waterfall color/palette →
+OCR/QRZ lookup → CW-ID/FSK subsystem → small tail items, per `spec/14-roadmap.md`'s own proposed
+order (waterfall/CW-ID may end up partially absorbing pieces of item 3 once it's actually split).
 
 ## Previously (2026-08-08) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
 
