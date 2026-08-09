@@ -157,11 +157,25 @@ against a second display site). No blockers either round; one real risk fixed (m
 property-change notification could show a stale/wrong line total for one frame after a fresh mode
 detection).
 
-**Next up**: batch 3 (RX device name — mirrors the existing TX pattern; luminance histogram/Clip
-Lo-Hi — pure image-domain, no DSP), then whatever's left on §17's list. After the RX telemetry slice
-is done, next in `spec/14-roadmap.md`'s proposed order: RX history browser affordances → waterfall
-color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail items (waterfall/CW-ID may end up
-partially absorbing pieces of the still-unsplit "Options dialogs" item).
+**Batch 3 SHIPPED (`2c047a4`)**: RX capture device name (new `GetConfiguredCaptureDeviceNameAsync`,
+exact mirror of the existing TX pattern), Signal-quality card's Clip lo/hi readout (new
+`LuminanceClipStatistics` utility — deliberately non-legacy, pure image-domain pixel math, not
+audio DSP). Round 1 caught a real bug: computing clip stats over the WHOLE mode-sized canvas
+mid-decode measured the not-yet-decoded (zeroed/black) rows, showing a wildly wrong "mostly clipped
+black" reading for the entire time a user watched a live decode. Fixed by row-limiting to
+`Progress * Height` rows, placeholder shown while idle.
+
+**Remaining on §17's REAL-EASY list**: Frames today/Log size, File size, UTC clock, AGC gain
+(client-side, zero backend — genuinely trivial); Buffer·XRUN (needs a small `IAudioEngine`
+interface extension first, not pure wiring); Auto-correct's "on/off" half (needs exposing legacy's
+`AutoSlant` setting, currently hardcoded on, plus an AVT case). None of these were picked up yet —
+next session should either continue this list or check with the user on priority, per the
+"go ahead and start wiring the cheap wins" authorization's original scope.
+
+**After the RX telemetry slice is done**, next in `spec/14-roadmap.md`'s proposed order: RX history
+browser affordances → waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail
+items (waterfall/CW-ID may end up partially absorbing pieces of the still-unsplit "Options dialogs"
+item).
 
 ## Previously (2026-08-08) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
 
