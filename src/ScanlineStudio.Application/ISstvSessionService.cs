@@ -110,6 +110,15 @@ public interface ISstvSessionService : IAsyncDisposable
     /// using right now" guarantee.</summary>
     Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default);
 
+    /// <summary>The display name of the currently CONFIGURED RX capture device
+    /// (`AudioDeviceSettings.CaptureDeviceId` resolved against the device enumerator), for a UI
+    /// readout -- e.g. mock2's Receive tab "Device" field. Exact mirror of
+    /// <see cref="GetConfiguredPlaybackDeviceNameAsync"/>'s own contract (reuses the same
+    /// settings/enumerator lookup <see cref="StartReceivingAsync"/> itself uses, non-throwing,
+    /// reflects the CONFIGURED device not necessarily whatever an already-running capture resolved
+    /// earlier) -- see that method's own doc comment for the full reasoning, not repeated here.</summary>
+    Task<string?> GetConfiguredCaptureDeviceNameAsync(CancellationToken ct = default);
+
     /// <summary>Whether <see cref="SetPttLockAsync"/>'s lock is currently engaged.</summary>
     bool IsPttLocked { get; }
 

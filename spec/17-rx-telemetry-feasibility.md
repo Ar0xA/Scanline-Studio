@@ -148,15 +148,24 @@ pairing a real number with a still-fake one. Two rounds of auditor review, no bl
 fixed (a missing property-change notification that could show a stale/wrong line total for one frame
 after a fresh mode detection).
 
+**Batch 3 SHIPPED (2026-08-09)**: RX capture device name (new `ISstvSessionService.GetConfiguredCaptureDeviceNameAsync`,
+exact mirror of the existing TX-side `GetConfiguredPlaybackDeviceNameAsync` pattern), and the
+Signal-quality card's "Clip lo/hi" readout (new `LuminanceClipStatistics` utility — deliberately
+non-legacy image-domain pixel-luminance arithmetic, not audio DSP, using standard ITU-R BT.601 luma
+weights). Two rounds of auditor review; round 1 caught a real bug in the new clip-stat math: it
+computed over the WHOLE mode-sized canvas including not-yet-decoded rows (which are zeroed `Rgb24`
+— pure black), so a live decode showed a wildly wrong "mostly clipped black" reading for the entire
+time a user watched it, only becoming accurate on the final line. Fixed by row-limiting the
+computation to `Progress * Height` rows, with the readout showing "—" while idle rather than a
+misleading number.
+
 Remaining, cheapest/highest-value first (all REAL-EASY, mostly pure wiring, no new DSP):
 1. Frames today/Log size, File size, UTC clock, AGC gain (client-side derivation, zero backend) —
    trivial wiring or one-line additions, no risk.
-2. RX device name — same shape as work already shipped this session (mirror an existing pattern).
-3. Buffer·XRUN — needs a small `IAudioEngine` interface extension + `FakeAudioEngine` update first
+2. Buffer·XRUN — needs a small `IAudioEngine` interface extension + `FakeAudioEngine` update first
    (not a pure existing-property read, per the audit correction above), still cheap but budget for
    that extra step.
-4. Luminance histogram / Clip Lo-Hi — new but small imaging-utility function, no DSP risk.
-5. Auto-correct's "on/off" HALF still not wired (the "locked" half shipped in batch 1) — needs
+3. Auto-correct's "on/off" HALF still not wired (the "locked" half shipped in batch 1) — needs
    exposing legacy's real `AutoSlant` setting (currently hardcoded on) plus an explicit AVT case, not
    just a null check — slightly bigger than it looks, see the table entry above.
 

@@ -630,6 +630,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         return device?.Name;
     }
 
+    /// <summary>See <see cref="ISstvSessionService.GetConfiguredCaptureDeviceNameAsync"/>.</summary>
+    public async Task<string?> GetConfiguredCaptureDeviceNameAsync(CancellationToken ct = default)
+    {
+        var device = await TryResolveDeviceAsync(forCapture: true, ct).ConfigureAwait(false);
+        return device?.Name;
+    }
+
     private async Task<AudioDeviceSettings> LoadAudioSettingsAsync(CancellationToken ct)
     {
         var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
