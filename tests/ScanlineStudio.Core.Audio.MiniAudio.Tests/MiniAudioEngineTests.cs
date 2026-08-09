@@ -207,6 +207,24 @@ public class MiniAudioEngineTests
     }
 
     [Fact]
+    public async Task CaptureOverrunCount_IsReachableThroughTheIAudioEngineInterface_AndZeroBeforeAnyCapture()
+    {
+        // Regression guard for the interface promotion (spec/17-rx-telemetry-feasibility.md's
+        // "Buffer · XRUN" readout): this property used to be concrete-class-only, deliberately NOT
+        // on IAudioEngine -- a caller that only ever holds the interface type (every real production
+        // caller, via ISstvSessionService) must be able to reach it.
+        IAudioEngine engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
+        try
+        {
+            Assert.Equal(0, engine.CaptureOverrunCount);
+        }
+        finally
+        {
+            await engine.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task StartCaptureAsync_WithUnknownDeviceId_ThrowsAudioDeviceUnavailableException()
     {
         await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);

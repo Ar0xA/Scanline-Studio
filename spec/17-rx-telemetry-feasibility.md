@@ -209,13 +209,35 @@ pre-`SaveAsync` setup, no image work, is still invisible to the guard; documente
 readout) and one comment-accuracy fix (the doc comment had wrongly implied the recorder's own
 directory-resolve step was covered by the guard; corrected).
 
+**Batch 5 SHIPPED (2026-08-09)**: Buffer·XRUN. Promoted `MiniAudioEngine.CaptureOverrunCount` onto
+`IAudioEngine` itself (was deliberately concrete-class-only), threaded a pass-through through
+`ISstvSessionService`/`SstvSessionService`, and recombined the status bar's/Input-chain's Buffer
+readout back into mock2's original single "buffer 512 samples · 0 XRUN" format now that both halves
+are real (batches 1/2 had split them apart specifically because XRUN was still hardcoded — that
+reason no longer applies). Two rounds of auditor review caught 3 real risks, all fixed: (1) the new
+`SstvSessionService.CaptureOverrunCount` pass-through was reachable from `RxImagePaneViewModel`'s
+250ms polling timer with no guard against a documented `MiniAudioEngine` race — a concurrent Stop RX
+disposing the capture session mid-read can throw `ObjectDisposedException`, which a `DispatcherTimer`
+tick has nowhere safe to land (this port's global unhandled-exception handler only logs, doesn't
+recover) — fixed by absorbing the exception at the `SstvSessionService` layer and returning `0` (the
+already-documented "not running" contract value, not a masked failure). (2) The interface doc
+comments claimed "0 when not running"/"safe to read from any thread" while the one real
+implementation could throw — fixed by making the `ISstvSessionService`-layer claim genuinely true
+(since (1) now absorbs the race there) and correcting the lower `IAudioEngine`-layer claim to
+honestly document the exception risk instead. (3) `FakeAudioEngine.CaptureOverrunCount` was a bare
+settable property that didn't enforce the same contract the real engine does (0 when not capturing,
+reset on a fresh `StartCaptureAsync`) — fixed to match, closing a gap where a test could pass against
+a state the real engine can never produce.
+
 Remaining:
-1. Buffer·XRUN — needs a small `IAudioEngine` interface extension + `FakeAudioEngine` update first
-   (not a pure existing-property read, per the audit correction above), still cheap but budget for
-   that extra step.
-2. Auto-correct's "on/off" HALF still not wired (the "locked" half shipped in batch 1) — needs
+1. Auto-correct's "on/off" HALF still not wired (the "locked" half shipped in batch 1) — needs
    exposing legacy's real `AutoSlant` setting (currently hardcoded on) plus an explicit AVT case, not
-   just a null check — slightly bigger than it looks, see the table entry above.
+   just a null check — slightly bigger than it looks, see the table entry above. Scoped
+   2026-08-09: this is an actual RX-decode-BEHAVIOR change (conditionally skipping `SlantTracker`
+   construction in `AnalogFmSstvDecoder`'s decode path when disabled), not pure UI wiring — likely
+   warrants a plan + auditor plan-review pass before coding, per this project's own DSP-audit
+   convention, not just the lighter post-implementation-only review batches 1-5 used. Deferred
+   pending a user decision on priority/rigor (user chose "Buffer·XRUN only, now" when asked).
 
 Then, only with explicit product decisions made first: "Source" (detection-method labels), Advanced
 timing (relabel as static reference vs. drop the card section), "Reset" button semantics, and

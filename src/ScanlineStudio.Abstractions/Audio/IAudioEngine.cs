@@ -17,10 +17,12 @@ namespace ScanlineStudio.Abstractions.Audio;
 /// must say what happens under a slow consumer): if the drain thread falls behind and the
 /// underlying ring buffer fills, the real-time capture callback drops the newest incoming frames
 /// (never blocks, never overwrites older undrained data) — RX samples are lost, not corrupted or
-/// reordered. Counted as an overrun for diagnostics (piece Engine 0/5a) — exposed as a
-/// implementation-specific diagnostic member (e.g. `MiniAudioEngine.CaptureOverrunCount`), not part
-/// of this interface itself, since no other backend implementation exists yet to confirm the same
-/// shape generalizes.
+/// reordered. Counted as an overrun for diagnostics (piece Engine 0/5a), now on this interface as
+/// <see cref="CaptureOverrunCount"/> (spec/17-rx-telemetry-feasibility.md's status-bar "Buffer ·
+/// XRUN" readout) — originally kept implementation-specific pending a second backend to confirm the
+/// same shape generalizes; still only one backend exists, but the shape (a plain non-negative count,
+/// reset only by a fresh <see cref="StartCaptureAsync"/>) is simple enough not to block a real UI
+/// need on that.
 ///
 /// Memory lifetime: the <see cref="ReadOnlyMemory{T}"/> handed to each invocation is a fresh,
 /// independently-owned array, safe to store or process asynchronously — never a view into a
@@ -73,6 +75,19 @@ public interface IAudioEngine : IAsyncDisposable
         CancellationToken ct = default);
 
     Task StopCaptureAsync();
+
+    /// <summary>Cumulative count of dropped-frame overrun events since the current capture session
+    /// started (see the class doc comment's "Overrun policy" for exactly what counts as one) — reset
+    /// only by a fresh <see cref="StartCaptureAsync"/>, never decremented mid-session, back to
+    /// <c>0</c> once capture is stopped. <b>Diagnostic-only, not guaranteed exception-free</b>
+    /// (auditor round 1, batch-5 wiring): a concurrent <see cref="StopCaptureAsync"/> racing this
+    /// read can surface <see cref="ObjectDisposedException"/> in at least one implementation
+    /// (<c>MiniAudioEngine</c>'s own doc comment documents the exact window) -- a caller that
+    /// polls this on a timer, as <c>ScanlineStudio.Application.ISstvSessionService.CaptureOverrunCount</c>'s
+    /// own implementation does, must not assume this member alone is safe to read unguarded from any
+    /// thread the way the class doc comment's general "Memory lifetime"/"Lifecycle-error contract"
+    /// sections promise for the rest of this interface.</summary>
+    int CaptureOverrunCount { get; }
 
     /// <param name="periodSizeInFrames">Requested native hardware/backend buffer period size (0 =
     /// backend default, unchanged from before this parameter existed).</param>

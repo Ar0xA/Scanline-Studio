@@ -139,6 +139,17 @@ public interface ISstvSessionService : IAsyncDisposable
 
     int BufferedSampleCount { get; }
 
+    /// <summary>Pass-through of the underlying <see cref="ScanlineStudio.Abstractions.Audio.IAudioEngine.CaptureOverrunCount"/>
+    /// -- a DIFFERENT quantity from <see cref="BufferedSampleCount"/> above despite the similar
+    /// name: this is the audio-engine's own dropped-frame overrun count (status bar's "· N XRUN"
+    /// half), not the decoder's internal sample-history buffer. 0 whenever RX capture isn't running,
+    /// same as the underlying engine property -- unlike that underlying property (see its own doc
+    /// comment), THIS one genuinely upholds the class-level "safe to read from any thread" contract:
+    /// the implementation absorbs the underlying engine's documented stop-capture race and reports
+    /// <c>0</c> rather than letting it throw, matching this member's own "capture isn't running"
+    /// contract value exactly (auditor round 1, batch-5 wiring).</summary>
+    int CaptureOverrunCount { get; }
+
     /// <summary>Manual-keying diagnostic aid: holds PTT keyed independent of any
     /// <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> call, until unlocked. Idempotent both
     /// ways. See the implementation's own doc comment for the exact failure-handling and
