@@ -483,15 +483,17 @@
                         </Border>
                     </Grid>
 
-                    <!-- Right column: visual scaffolding only. Frame metadata's fields (OCR,
-                         QRZ lookup, dropped-lines, file size, note/override-callsign) and
-                         Unattended RX's scan/watch state have no backing data or feature at all
-                         yet (spec/14-roadmap.md backlog: "Frame metadata card"/"Unattended RX").
-                         Session frames is a distinct placeholder list matching mock2's own
-                         Callsign/Mode/Meta text format; not a second copy of the real
-                         thumbnail strip, which lives in the Incoming-frame card above. -->
+                    <!-- Right column: mostly visual scaffolding still. Frame metadata's "Started"
+                         row is real (spec/17-rx-telemetry-feasibility.md), wired to
+                         RxImagePaneViewModel; its other fields (Callsign/OCR, QRZ lookup,
+                         Frequency/Mode/VIS, SNR/slant, dropped-lines, file size,
+                         note/override-callsign) and Unattended RX's scan/watch state have no
+                         backing data or feature at all yet (spec/14-roadmap.md backlog: "Frame
+                         metadata card"/"Unattended RX"). Session frames is a distinct placeholder
+                         list matching mock2's own Callsign/Mode/Meta text format; not a second copy
+                         of the real thumbnail strip, which lives in the Incoming-frame card above. -->
                     <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
-                        <Border Grid.Row="0" Classes="card">
+                        <Border Grid.Row="0" Classes="card" DataContext="{Binding RxImage}">
                             <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                 <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxFrameMeta.CardHeader}" />
                                 <Grid Classes="kv" ColumnDefinitions="Auto,*">
@@ -512,7 +514,7 @@
                                 </Grid>
                                 <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.Started}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.StartedValue}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding StartedDisplay}" />
                                 </Grid>
                                 <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.SnrSlant}" />
@@ -1117,12 +1119,15 @@
              the concept/wiring is real and kept per direct user request. TX-inhibit lights up when
              the last transmit attempt ended in an error/SWR-cutoff (TxControls.ErrorMessage); this
              app has no persistent transmit-lockout state to reflect more literally than that; see
-             TxControlsPaneViewModel's own SWR-cutoff design for why. Frequency/Mode/DetectedMode
-             are real (RadioStatus.FrequencyDisplay/ModeDisplay, RxImage.DetectedModeText); M1/
-             LineProgress/SNR/Slant/Buffer/FramesToday/LogSize have no backing property anywhere in
-             the app (see RxImagePaneViewModel.DetectedMode's own doc comment on why per-line SNR/
-             slant tracking doesn't exist) and are literal placeholders matching mock2's own exact
-             values/wording, same precedent as the Receive tab's own scaffolding cards. -->
+             TxControlsPaneViewModel's own SWR-cutoff design for why. Frequency/Mode/DetectedMode/
+             LineProgress/Slant/Buffer are real (RadioStatus.FrequencyDisplay/ModeDisplay,
+             RxImage.DetectedModeText/LineProgressText/SlantPpmStatusBarDisplay/
+             BufferedSampleCountStatusBarDisplay, spec/17-rx-telemetry-feasibility.md). Buffer here
+             deliberately drops mock2's own "· N XRUN" half, a separate still-unwired audio-engine
+             counter, not this decoder's own sample buffer. M1/SNR/FramesToday/LogSize have no
+             backing property anywhere in the app (true per-line SNR still doesn't exist) and are
+             literal placeholders matching mock2's own exact values/wording,
+             same precedent as the Receive tab's own scaffolding cards. -->
         <Border Grid.Row="3" Height="24" Background="{DynamicResource ScanlineStudioPanelBackgroundColor}" BorderBrush="{DynamicResource ScanlineStudioCardBorderColor}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,0">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="9">
@@ -1141,10 +1146,10 @@
                     <TextBlock Classes="readout" Text="{Binding RadioStatus.ModeDisplay}" VerticalAlignment="Center" />
                     <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.MemoryTag}" VerticalAlignment="Center" />
                     <TextBlock Classes="readout" Text="{Binding RxImage.DetectedModeText}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.LineProgressValue}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{Binding RxImage.LineProgressText}" VerticalAlignment="Center" />
                     <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.SnrValue}" VerticalAlignment="Center" />
                     <TextBlock Classes="readout" Text="{Binding RxImage.SlantPpmStatusBarDisplay}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.BufferValue}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{Binding RxImage.BufferedSampleCountStatusBarDisplay}" VerticalAlignment="Center" />
                 </StackPanel>
             </DockPanel>
         </Border>
