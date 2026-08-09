@@ -213,7 +213,7 @@ capturing, reset on a fresh `StartCaptureAsync`) — fixed to match. Full detail
 
 **Verified**: full solution build clean, full suite green — 1141 tests total (Core.Audio.Tests 17/17
 was 14, MiniAudio.Tests 57/57 was 56, Application.Tests 69/69 was 68, UI.Tests 120/120 was 119,
-Core.Sstv.Tests 662/662 unaffected). **NOT YET committed** — about to commit.
+Core.Sstv.Tests 662/662 unaffected). **COMMITTED and pushed (`27df200`).**
 
 **Auto-correct's "on/off" half — still deferred, genuinely bigger than "wire it."** `SlantTracker`
 (legacy's `AutoSlant`) is unconditionally constructed in `AnalogFmSstvDecoder.InitializeAfc`/mode-init
