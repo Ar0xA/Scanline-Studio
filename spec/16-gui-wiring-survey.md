@@ -29,6 +29,15 @@ actual ViewModel code rather than taking them at face value, and they held up.
 Controls already obviously fully wired (Logbook pane, TX macro token substitution, RadioStatus VFO
 frequency) get one line each per the brief; everything STUB/FAKE-LIVE/PARTIAL gets full detail.
 
+**Stale-as-of-shipping note (2026-08-09, added after this survey drove real work)**: this is a
+point-in-time snapshot, not a live-updated inventory. Three RX-telemetry wiring batches have since
+shipped several of the FAKE-LIVE fields named below to REAL — Sync&Slant card's Slant ppm/Sync
+offset/Auto-correct/Re-sync, Input-chain card's Device/Buffer/Clipping, Signal-quality card's Sync
+tone/Clip lo/hi, status bar's Slant/Buffer/line-progress, Frame-metadata card's Started row. See
+`spec/17-rx-telemetry-feasibility.md` for the up-to-date shipped/remaining breakdown of that slice
+specifically; this file's own tables below were NOT retroactively edited row-by-row and should not
+be trusted as current for those specific fields.
+
 **Auditor-verified (2026-08-09)**: the auditor spot-checked ~40 citations plus every REAL/PARTIAL
 claim it sampled, confirmed all quoted `en.json` literals verbatim, and found the survey trustworthy
 as the master inventory. 4 findings folded in: one missed FAKE-LIVE (TX image editor's canvas
@@ -72,7 +81,7 @@ Incoming-frame + Decode-activity (center), Frame-metadata/Unattended-RX/Session-
 
 | Control | Class | File:line | Note |
 |---|---|---|---|
-| Device / Squelch / BPF / Notch·AGC / Buffer / Clipping / Noise floor | FAKE-LIVE | `MainWindow.axaml:213-240` | All literal loc-key values (e.g. `Panes.RxInput.SquelchValue` → `"−38 dB"`, `Panes.RxInput.DeviceValue` → `"hw:2,0 L"`). |
+| Device / Squelch / BPF / Notch·AGC / Buffer / Clipping / Noise floor | FAKE-LIVE at the time of this survey | `MainWindow.axaml:213-240` | All were literal loc-key values (e.g. `Panes.RxInput.SquelchValue` → `"−38 dB"`) — since shipped REAL for Device/Buffer/Clipping specifically; see this file's own stale-as-of-shipping note above and `spec/17-rx-telemetry-feasibility.md`. |
 | Level L / Level R `ProgressBar`s | FAKE-LIVE | `MainWindow.axaml:242,244` | `Value="-14.2"`/`"-15.0"` hardcoded directly in XAML, not bound. |
 
 **Signal quality card** (`MainWindow.axaml:253-281`) — no per-line SNR/histogram computation exists in the decode pipeline.
