@@ -206,6 +206,24 @@ public sealed partial class SstvSessionService : ISstvSessionService
         remove => _decoder.ModeDetected -= value;
     }
 
+    /// <summary>See <see cref="ISstvSessionService.SlantPpm"/> / <see cref="ISstvDecoder.SlantPpm"/>.</summary>
+    public double? SlantPpm => _decoder.SlantPpm;
+
+    /// <summary>See <see cref="ISstvSessionService.SyncOffsetSamples"/> / <see cref="ISstvDecoder.SyncOffsetSamples"/>.</summary>
+    public int? SyncOffsetSamples => _decoder.SyncOffsetSamples;
+
+    /// <summary>See <see cref="ISstvSessionService.SignalPeakLevel"/> / <see cref="ISstvDecoder.SignalPeakLevel"/>.</summary>
+    public double SignalPeakLevel => _decoder.SignalPeakLevel;
+
+    /// <summary>See <see cref="ISstvSessionService.IsLevelOverdriven"/> / <see cref="ISstvDecoder.IsLevelOverdriven"/>.</summary>
+    public bool IsLevelOverdriven => _decoder.IsLevelOverdriven;
+
+    /// <summary>See <see cref="ISstvSessionService.SyncFrequencyCorrectionHz"/> / <see cref="ISstvDecoder.SyncFrequencyCorrectionHz"/>.</summary>
+    public double? SyncFrequencyCorrectionHz => _decoder.SyncFrequencyCorrectionHz;
+
+    /// <summary>See <see cref="ISstvSessionService.BufferedSampleCount"/> / <see cref="ISstvDecoder.BufferedSampleCount"/>.</summary>
+    public int BufferedSampleCount => _decoder.BufferedSampleCount;
+
     public event Action? MaintenanceWarningRaised;
 
     public event Action? MaintenanceWarningCleared;

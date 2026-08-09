@@ -96,11 +96,12 @@
             <TabItem Header="{loc:Translate MainWindow.Tabs.Receive}">
                 <Grid ColumnDefinitions="258,*,330" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
 
-                    <!-- Left column: real Mode card + 3 new visual-scaffolding-only cards (Sync &
-                         slant / Input chain / Signal quality) reproducing mock2's layout with
-                         hardcoded placeholder values; no real data/commands wired yet
-                         (spec/14-roadmap.md backlog covers exactly what each one is standing in
-                         for). mock2's Auto/Locked segment is shown (Auto statically checked -
+                    <!-- Left column: real Mode card + 3 cards (Sync & slant / Input chain / Signal
+                         quality) that started as pure mock2 scaffolding and are now PARTIALLY real;
+                         see each card's own comment below for exactly which rows are wired
+                         (spec/17-rx-telemetry-feasibility.md has the full per-field breakdown; the
+                         rest is still real, separate future work, not a UI-wiring gap). mock2's
+                         Auto/Locked segment is shown (Auto statically checked -
                          matches the real always-auto-detect behavior; "Locked" has no manual
                          lock-to-a-mode decode feature behind it, same visual-only convention as
                          the quick-mode pill grid below it - see RxImagePaneViewModel.DetectedMode's
@@ -156,31 +157,33 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Sync & slant: visual scaffolding only: no slant-tracking data
-                                 model exists yet (spec/14-roadmap.md backlog: "Manual ReSync
-                                 button"/"AFC toggle"). -->
-                            <Border Classes="card">
+                            <!-- Sync & slant: Slant ppm/Sync offset/Auto-correct/Re-sync are real,
+                                 wired to RxImagePaneViewModel (spec/17-rx-telemetry-feasibility.md).
+                                 Source/Reset/Advanced-timing remain unwired; see that doc for why
+                                 each one specifically (needs a product decision, or semantics
+                                 unverified against legacy). -->
+                            <Border Classes="card" DataContext="{Binding RxImage}">
                                 <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                     <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxSync.CardHeader}" />
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.Source}" />
                                         <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.SourceValue}" />
                                     </Grid>
-                                    <Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SlantPpm}" VerticalAlignment="Center" />
-                                        <NumericUpDown Grid.Column="1" Classes="tight" Increment="0.1" FormatString="+0.000;-0.000" Value="3.400" />
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SlantPpm}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding SlantPpmDisplay}" />
                                     </Grid>
-                                    <Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.OffsetPx}" VerticalAlignment="Center" />
-                                        <NumericUpDown Grid.Column="1" Classes="tight" Increment="1" Value="-12" />
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SyncOffset}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding SyncOffsetSamplesDisplay}" />
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.AutoCorrect}" />
-                                        <TextBlock Grid.Column="1" Classes="accentValue" Text="{loc:Translate Panes.RxSync.AutoCorrectValue}" />
+                                        <TextBlock Grid.Column="1" Classes="accentValue" Text="{Binding AutoCorrectDisplay}" />
                                     </Grid>
                                     <UniformGrid Columns="2" HorizontalAlignment="Stretch">
-                                        <Button Classes="small" Margin="0,0,3,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" />
-                                        <Button Classes="small" Margin="3,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" />
+                                        <Button Classes="small" Margin="0,0,3,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
+                                        <Button Classes="small" Margin="3,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </UniformGrid>
                                     <Expander Header="{loc:Translate Panes.RxSync.AdvancedTiming}" Padding="0" HorizontalAlignment="Stretch">
                                         <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,0">
@@ -205,9 +208,12 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Input chain: visual scaffolding only: none of this is measured
-                                 anywhere in ScanlineStudio.Core.Audio/Sstv today (spec/14-roadmap.md backlog). -->
-                            <Border Classes="card">
+                            <!-- Input chain: Buffer/Clipping are real, wired to RxImagePaneViewModel
+                                 (spec/17-rx-telemetry-feasibility.md). Device/Squelch/BPF/Notch·AGC/
+                                 NoiseFloor/Level L·R remain unwired; see that doc (Squelch/NoiseFloor
+                                 need a product decision, Notch is an unported filter, true L/R stereo
+                                 doesn't exist in this port's mono-only demod path). -->
+                            <Border Classes="card" DataContext="{Binding RxImage}">
                                 <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                     <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxInput.CardHeader}" />
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
@@ -228,11 +234,11 @@
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Buffer}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.BufferValue}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding BufferedSampleCountDisplay}" />
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Clipping}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.ClippingValue}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding ClippingDisplay}" />
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.NoiseFloor}" />
@@ -245,12 +251,14 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Signal quality: visual scaffolding only: no per-line SNR or
-                                 histogram computation exists in the decode pipeline
-                                 (spec/14-roadmap.md backlog). Plot placeholders are bare
-                                 Border Classes="plot" with no content, matching this pass's "no
-                                 new PlotView abstraction" rule. -->
-                            <Border Classes="card">
+                            <!-- Signal quality: Sync tone is real, wired to RxImagePaneViewModel
+                                 (spec/17-rx-telemetry-feasibility.md). SNR/Min-Max/histogram/Clip-Lo-Hi/
+                                 Black·White tone remain unwired; see that doc (no per-line SNR or
+                                 histogram computation exists in the decode pipeline; Black/White tone
+                                 isn't a well-defined measurement even in principle, unlike Sync tone).
+                                 Plot placeholders are bare Border Classes="plot" with no content,
+                                 matching this pass's "no new PlotView abstraction" rule. -->
+                            <Border Classes="card" DataContext="{Binding RxImage}">
                                 <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                     <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxSignal.CardHeader}" />
                                     <TextBlock Classes="caption" Text="{loc:Translate Panes.RxSignal.SnrPerLine}" />
@@ -267,7 +275,7 @@
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.SyncTone}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.SyncToneValue}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding SyncToneDisplay}" />
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.BlackTone}" />
@@ -1135,7 +1143,7 @@
                     <TextBlock Classes="readout" Text="{Binding RxImage.DetectedModeText}" VerticalAlignment="Center" />
                     <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.LineProgressValue}" VerticalAlignment="Center" />
                     <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.SnrValue}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.SlantValue}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{Binding RxImage.SlantPpmStatusBarDisplay}" VerticalAlignment="Center" />
                     <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.BufferValue}" VerticalAlignment="Center" />
                 </StackPanel>
             </DockPanel>

@@ -52,7 +52,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_UpdatedEvent_RefreshesImageOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
 
         Assert.Null(vm.Image);
         ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseUpdated();
@@ -65,7 +65,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_ModeDetectedEvent_UpdatesModeCardTextsOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
 
         Assert.Equal("—", vm.DetectedModeText);
         Assert.Equal("—", vm.LineTimeText);
@@ -81,6 +81,122 @@ public sealed class PaneViewModelTests
         Assert.Equal("Scottie 1", vm.DetectedModeText);
         Assert.Equal("138.2 ms", vm.LineTimeText);
         Assert.Equal("256", vm.LinesText);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_PollTelemetry_NoLockYet_ShowsPlaceholders()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
+
+        vm.PollTelemetry();
+
+        Assert.Equal("—", vm.SlantPpmDisplay);
+        Assert.Equal("—", vm.SyncOffsetSamplesDisplay);
+        Assert.Equal("—", vm.SyncToneDisplay);
+        // FakeLocalizationService.GetString returns the raw key (not the formatted string) --
+        // asserting the KEY selected still proves the not-locked branch fired, matching this file's
+        // own established ToneMapFormat precedent for testing GetString-based computed properties.
+        Assert.Equal("Panes.RxSync.AutoCorrectValue.NotLocked", vm.AutoCorrectDisplay);
+        Assert.Equal("Panes.RxInput.ClippingValue.Normal", vm.ClippingDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_PollTelemetry_Locked_ReflectsSessionValues()
+    {
+        var sstvSession = new FakeSstvSessionService
+        {
+            SlantPpm = 3.4,
+            SyncOffsetSamples = -12,
+            SyncFrequencyCorrectionHz = -0.18,
+            IsLevelOverdriven = true,
+            BufferedSampleCount = 1583,
+        };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
+
+        vm.PollTelemetry();
+
+        Assert.NotEqual("—", vm.SlantPpmDisplay);
+        Assert.NotEqual("—", vm.SyncOffsetSamplesDisplay);
+        Assert.NotEqual("—", vm.SyncToneDisplay);
+        Assert.Equal("Panes.RxSync.AutoCorrectValue.Locked", vm.AutoCorrectDisplay);
+        Assert.Equal("Panes.RxInput.ClippingValue.Overdriven", vm.ClippingDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_RequestReSyncCommand_DelegatesToTheSessionService()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
+
+        vm.RequestReSyncCommand.Execute(null);
+
+        Assert.Equal(1, sstvSession.RequestReSyncCallCount);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_SyncToneDisplay_MeasuredIsNominalMinusCorrectionMinusCalibrationOffset()
+    {
+        // Regression test for two real bugs an auditor round caught before this shipped:
+        // (1) a sign inversion -- SyncFrequencyCorrectionHz is a correction ADDED to a measurement to
+        //     pull it back toward nominal, so measured = nominal - CorrectionHz, not nominal + CorrectionHz;
+        // (2) a residual calibration-offset bias -- AfcTracker.ProcessSample folds a deliberate legacy
+        //     nudge (_calibrationOffsetHz, 3.125Hz wide/1.0Hz narrow) into the locked frequency BEFORE
+        //     computing CorrectionHz, so recovering the true measured Hz needs that offset subtracted
+        //     back out too: measured = nominal - CorrectionHz - calibrationOffsetHz.
+        // hz = -13.125 is chosen so both correction terms (13.125 - 3.125 = 10.0) cancel to a clean
+        // whole number, matching this exact worked example already documented in
+        // AnalogFmSstvDecoder.cs (measured=1210Hz, target=1200Hz -> CorrectionHz=-13.125) -- but here
+        // asserting the REAL true-measured-frequency value (1210.0), not the tracker's own internal
+        // locked-frequency value (1213.125) an earlier version of this fix stopped one step short at.
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { SyncFrequencyCorrectionHz = -13.125 };
+        var vm = new RxImagePaneViewModel(sstvSession, localization);
+        vm.PollTelemetry();
+
+        _ = vm.SyncToneDisplay;
+
+        Assert.Equal("Panes.RxSignal.SyncToneValueFormat", localization.LastKey);
+        Assert.Equal(2, localization.LastArgs.Length);
+        Assert.Equal(1210.0, (double)localization.LastArgs[0], precision: 3);
+        Assert.Equal(10.0, (double)localization.LastArgs[1], precision: 3);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_SyncToneDisplay_UsesNarrowFamilyNominalAndCalibrationOffset_ForMnMcModes()
+    {
+        // AnalogFmSstvDecoder.InitializeAfc targets 1900Hz (not 1200Hz), with a 1.0Hz (not 3.125Hz)
+        // calibration offset, for the narrow MN/MC family -- SyncFrequencyCorrectionHz itself carries
+        // no mode tag, so this pane must derive both from DetectedMode.NarrowModeCode.
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { SyncFrequencyCorrectionHz = 0.0 };
+        var vm = new RxImagePaneViewModel(sstvSession, localization);
+        var narrowMode = new SstvModeDefinition(
+            Id: "mn73", DisplayName: "MN73", VisCode: 55, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.YCbCrSequential, LineSegments: [], NarrowModeCode: 0x11);
+        sstvSession.RaiseModeDetected(narrowMode);
+        Dispatcher.UIThread.RunJobs();
+        vm.PollTelemetry();
+
+        _ = vm.SyncToneDisplay;
+
+        // 1900 (narrow nominal) - 0.0 (correction) - 1.0 (narrow calibration offset) = 1899.0.
+        Assert.Equal(1899.0, (double)localization.LastArgs[0], precision: 3);
+    }
+
+    [Fact]
+    public void RxTelemetryLocaleFormats_MatchEnJsonsRealValues_ForBothLockedAndOverdrivenCases()
+    {
+        // Real-value check independent of FakeLocalizationService (which returns the raw key, not
+        // the formatted string) -- same pattern as this file's own ToneMapFormat test above.
+        // Literal format strings copied from assets/locale/en.json; a drift there should be caught
+        // by updating this test, not silently diverging.
+        Assert.Equal("+3.4 ppm", string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:+0.0;-0.0} ppm", 3.4));
+        Assert.Equal("-12 samples", string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0} samples", -12));
+        // measured=1210.00Hz, delta=+10.00 -- nominal(1200) minus a -13.125 correction minus the
+        // 3.125Hz wide-band calibration offset, matching SyncToneDisplay's own regression test above.
+        Assert.Equal("1210.00 · +10.00", string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.00} · {1:+0.00;-0.00}", 1210.0, 10.0));
+        Assert.Equal("slant +3.4 ppm", string.Format(System.Globalization.CultureInfo.InvariantCulture, "slant {0:+0.0;-0.0} ppm", 3.4));
     }
 
     [AvaloniaFact]
