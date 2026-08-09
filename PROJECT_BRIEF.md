@@ -112,11 +112,36 @@ PARTIAL; (3)-(4) two label-consistency fixes (PARTIAL category had zero matching
 a `DataContext`-inheritance claim was imprecise about scope). All applied directly, re-verified for
 internal consistency (grep confirms no stale leftover text), committed together with the survey.
 
-**Next up: BLOCKED, waiting on user prioritization.** The survey is the deliverable the user asked
-for — next step is them picking which cards/screens to wire first (or asking for a recommended
-order). Do not start wiring anything from this survey without that direction; the old item-3 answer
-above ("re-ask rather than assume") applies here too, now at the whole-GUI scope instead of just
-Options.
+**Follow-up (2026-08-09): RX telemetry feasibility doc, done and auditor-verified.** User asked to
+"write out the DSP telemetry we need to add first. Verify if it's actually technically possible."
+`yoniq-old/YONIQ-main/` cloned locally (was already gitignored, not committed) for direct legacy
+verification. Reused the already-established Tier A/B/C investigation (`~/.claude/plans/steady-
+humming-osprey.md`, commit `cf76a08`) rather than re-deriving it, then researched 16 NEW fields the
+GUI survey found that Tier A/B/C never covered (Resync button, RX device name, AGC gain, luminance
+histogram, sync/black/white tone, line progress, buffer/XRUN, RX gain, squelch, dropped lines, etc.)
+against both this port's source and cloned legacy source.
+
+**Doc**: `spec/17-rx-telemetry-feasibility.md` (new, committed `46cd53a`). Classifies each field
+REAL-EASY (already computed, just needs wiring — e.g. line progress is literally already on every
+`LineDecoded` event, zero backend work), needs-a-decision-then-cheap, TIER-B-STYLE (no legacy
+concept, needs a product call), or NOT-POSSIBLE (architecturally blocked, e.g. RX gain — no software
+gain stage exists anywhere, legacy's own RX chain is hardware-gain-only too). Includes a recommended
+build order (cheapest/highest-value REAL-EASY items first).
+
+**Auditor round**: found and fixed one real error — the original squelch verdict ("zero legacy
+grounding") was wrong, caused by a mismatched `grep -a` search term (legacy spells it `SQ`, doc
+searched for "Squelch"/"Sense") that missed a real, narrower repeater-scoped legacy squelch feature
+(`m_RepSQ`, `CLMS::Sig`). Corrected the verdict and reasoning. Four smaller fixes also applied: XRUN
+counters need a real (small) `IAudioEngine` interface extension, not a pure existing-property read;
+AGC gain turned out cheaper than first claimed (zero backend change at all, not "promote to
+public"); two citation line-number slips; and a missed detail that legacy has two selectable RX
+level-meter types, of which this port only ports one.
+
+**Next up: BLOCKED, waiting on user prioritization.** Both documents (`spec/16-gui-wiring-survey.md`,
+`spec/17-rx-telemetry-feasibility.md`) are the deliverables asked for — next step is the user picking
+which cards/screens/telemetry fields to wire first (or asking for a recommended order; §17 already
+has one for the RX telemetry slice specifically). Do not start wiring anything from either survey
+without that direction.
 
 **Order after item 3/GUI-wiring gets unblocked** (stale framing, superseded by the above — kept for
 continuity only): RX history browser affordances → waterfall color/palette →
