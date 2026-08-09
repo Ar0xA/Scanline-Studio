@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging.Abstractions;
 using SixLabors.ImageSharp;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Settings;
@@ -14,7 +15,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
 
             await store.RecordAsync(entry);
@@ -36,12 +37,63 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
+    public async Task RecordAsync_RaisesRecorded_WithTheEntry_AfterTheWriteAndRetentionTrimComplete()
+    {
+        // Regression test for the RX-history live-update feature (batch 7): the only hook a live UI
+        // pane has for "a new frame just landed" -- Assert.Single below also proves it fires AFTER
+        // the row is genuinely queryable, not before the transaction/trim settles.
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+
+            ReceiveHistoryEntry? raised = null;
+            store.Recorded += e => raised = e;
+
+            await store.RecordAsync(entry);
+
+            Assert.NotNull(raised);
+            Assert.Equal(entry.Id, raised!.Id);
+            Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task RecordAsync_ASubscriberThatThrows_DoesNotFaultTheWrite()
+    {
+        // Same isolation reasoning as IReceivedImageBuffer.SaveAsync's own Saved-event fix (batch 4):
+        // a Recorded subscriber's own exception must not surface as if the write itself had failed --
+        // ReceiveHistoryRecorder (the sole production caller) has no idea a UI-layer subscriber even
+        // exists, and must not see its own successful insert reported as a failure.
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+            store.Recorded += _ => throw new InvalidOperationException("simulated subscriber failure");
+
+            await store.RecordAsync(entry); // must not throw
+
+            Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
     public async Task RecordAsync_ThenQueryAsync_RoundTripsNoteFlaggedAndAbandonedDecodeState()
     {
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", "qso-1", ReceiveDecodeState.Abandoned, Note: "faded fast", IsFlagged: true);
 
             await store.RecordAsync(entry);
@@ -65,7 +117,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
             await store.RecordAsync(new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "martin1", "/tmp/b.png", null, ReceiveDecodeState.Completed));
 
@@ -86,7 +138,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var old = DateTimeOffset.UtcNow.AddDays(-10);
             var recent = DateTimeOffset.UtcNow;
             await store.RecordAsync(new ReceiveHistoryEntry("old", old, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
@@ -117,7 +169,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             // 2026-08-09 20:00 at UTC-5 == 2026-08-10 01:00Z -- a real instant strictly AFTER UTC
             // midnight on the 10th.
@@ -150,7 +202,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var now = DateTimeOffset.UtcNow;
             await store.RecordAsync(new ReceiveHistoryEntry("first", now.AddMinutes(-5), "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
             await store.RecordAsync(new ReceiveHistoryEntry("second", now, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed));
@@ -184,7 +236,7 @@ public sealed class SqliteReceiveHistoryStoreTests
                 await image.SaveAsPngAsync(imagePath);
             }
 
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", imagePath, null, ReceiveDecodeState.Completed);
 
             IImageSource thumbnail = await store.LoadThumbnailAsync(entry, maxDimension: 4);
@@ -209,7 +261,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var directory = await store.GetImagesDirectoryAsync();
 
@@ -235,7 +287,7 @@ public sealed class SqliteReceiveHistoryStoreTests
                     new ReceiveHistorySettings { ImagesDirectory = "/custom/rx/history" },
                     ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings),
             };
-            var store = new SqliteReceiveHistoryStore(settingsStore, dbPath);
+            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var directory = await store.GetImagesDirectoryAsync();
 
@@ -253,7 +305,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var now = DateTimeOffset.UtcNow;
 
             // 33 entries, oldest to newest -- one more than the legacy-verified default of 32
@@ -290,7 +342,7 @@ public sealed class SqliteReceiveHistoryStoreTests
                     new ReceiveHistorySettings { MaxEntries = 2 },
                     ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings),
             };
-            var store = new SqliteReceiveHistoryStore(settingsStore, dbPath);
+            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var now = DateTimeOffset.UtcNow;
 
             await store.RecordAsync(new ReceiveHistoryEntry("first", now, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
@@ -324,7 +376,7 @@ public sealed class SqliteReceiveHistoryStoreTests
                 [ReceiveHistorySettings.SectionKey] = JsonDocument.Parse("""{"ImagesDirectory":"/custom/rx/history"}""").RootElement,
             };
             var settingsStore = new FakeSettingsStore { Settings = new AppSettings { Sections = sections } };
-            var store = new SqliteReceiveHistoryStore(settingsStore, dbPath);
+            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var now = DateTimeOffset.UtcNow;
 
             for (var i = 0; i < 33; i++)
@@ -348,7 +400,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            _ = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            _ = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var columns = await ReadColumnNamesAsync(dbPath);
 
@@ -412,7 +464,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             }
 
             // Constructing the store runs EnsureSchema, which must migrate this existing DB in place.
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var columns = await ReadColumnNamesAsync(dbPath);
             Assert.Contains("Note", columns);
@@ -460,7 +512,7 @@ public sealed class SqliteReceiveHistoryStoreTests
                 await insert.ExecuteNonQueryAsync();
             }
 
-            _ = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath); // first EnsureSchema: migrates and backfills "b" to Abandoned
+            _ = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath); // first EnsureSchema: migrates and backfills "b" to Abandoned
 
             await using (var correctionConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
             {
@@ -470,7 +522,7 @@ public sealed class SqliteReceiveHistoryStoreTests
                 await correct.ExecuteNonQueryAsync();
             }
 
-            var storeAgain = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath); // second EnsureSchema: must NOT re-backfill
+            var storeAgain = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath); // second EnsureSchema: must NOT re-backfill
 
             var results = await storeAgain.QueryAsync(new ReceiveHistoryFilter());
             Assert.Equal(ReceiveDecodeState.Completed, Assert.Single(results).DecodeState);
@@ -487,7 +539,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
 
             var updated = await store.SetNoteAsync("1", "weak signal, guessed at colors");
@@ -508,7 +560,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
 
             var updated = await store.SetFlaggedAsync("1", true);
@@ -529,7 +581,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
 
             var updated = await store.SetLinkedQsoIdAsync("1", "qso-42");
@@ -550,7 +602,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         var dbPath = TempDbPath();
         try
         {
-            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             Assert.False(await store.SetNoteAsync("missing", "note"));
             Assert.False(await store.SetFlaggedAsync("missing", true));
@@ -575,7 +627,7 @@ public sealed class SqliteReceiveHistoryStoreTests
                     new ReceiveHistorySettings { MaxEntries = 2 },
                     ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings),
             };
-            var store = new SqliteReceiveHistoryStore(settingsStore, dbPath);
+            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var now = DateTimeOffset.UtcNow;
 
             // "old-untouched" and "old-flagged" both start outside the newest-2 window once "third"
