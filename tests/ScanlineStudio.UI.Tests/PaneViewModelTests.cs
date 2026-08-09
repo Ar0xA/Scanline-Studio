@@ -36,6 +36,23 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RadioStatusViewModel_Constructed_PopulatesUtcClockDisplayImmediately()
+    {
+        // UpdateUtcClock() runs synchronously in the constructor (before the DispatcherTimer's own
+        // first tick), so this must already be populated without needing Dispatcher.UIThread.RunJobs()
+        // or advancing the timer at all.
+        var localization = new FakeLocalizationService();
+        var vm = new RadioStatusViewModel(new FakeRadioSessionService(), new FakeSstvSessionService(), localization, NullLogger<RadioStatusViewModel>.Instance);
+
+        Assert.Equal("RadioStatus.UtcValueFormat", vm.UtcClockDisplay);
+        // Regression guard (auditor nit): asserting only the locale KEY would still pass if
+        // DateTimeOffset.Now (local offset) were passed instead of UtcNow -- assert the actual arg's
+        // offset is zero, proving this is really UTC.
+        var passedInstant = Assert.IsType<DateTimeOffset>(localization.LastArgs[0]);
+        Assert.Equal(TimeSpan.Zero, passedInstant.Offset);
+    }
+
+    [AvaloniaFact]
     public void WaterfallPaneViewModel_PushedFrame_UpdatesLatestFrameOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
@@ -195,6 +212,40 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_PollTelemetry_ComputesAgcGainDisplay_FromSignalPeakLevel()
+    {
+        // Legacy's own LevelAgc.cs:103 formula: curMax = SignalPeakLevel * 32768.0 (rescaled back to
+        // legacy's int16-ish domain); agc = curMax > 32.0 ? 16384.0 / curMax : 16384.0 / 32.0.
+        // SignalPeakLevel = 0.5 -> curMax = 16384.0 -> agc = 1.0 exactly, an easy value to assert
+        // precisely rather than fighting floating-point rounding on an arbitrary input.
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { SignalPeakLevel = 0.5 };
+        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.PollTelemetry();
+        _ = vm.AgcGainDisplay;
+
+        Assert.Equal("Panes.RxInput.AgcValueFormat", localization.LastKey);
+        Assert.Equal(1.0, (double)localization.LastArgs[0], precision: 6);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_PollTelemetry_SignalPeakLevelAtOrBelowFloor_ClampsAgcGainToFloor()
+    {
+        // curMax <= 32.0 (SignalPeakLevel <= 32.0/32768.0) hits legacy's own floor branch --
+        // 16384.0 / 32.0 = 512.0 -- rather than a division that would blow up toward infinity as
+        // curMax approaches zero.
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { SignalPeakLevel = 0.0 };
+        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.PollTelemetry();
+        _ = vm.AgcGainDisplay;
+
+        Assert.Equal(512.0, (double)localization.LastArgs[0], precision: 6);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_Constructed_LoadsTheConfiguredCaptureDeviceName()
     {
         var sstvSession = new FakeSstvSessionService { ConfiguredCaptureDeviceName = "hw:2,0 L" };
@@ -214,6 +265,94 @@ public sealed class PaneViewModelTests
 
         Assert.Null(vm.CaptureDeviceName);
         Assert.Equal("—", vm.CaptureDeviceNameDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_SavedEvent_SetsFileSizeDisplayFromTheActualFileOnDisk()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Equal("—", vm.FileSizeDisplay);
+
+        var path = Path.Combine(Path.GetTempPath(), $"scanlinestudio-test-{Guid.NewGuid():N}.png");
+        File.WriteAllBytes(path, new byte[2048]);
+        try
+        {
+            ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseSaved(path, generation: 0);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(2048, vm.FileSizeBytes);
+            _ = vm.FileSizeDisplay;
+            Assert.Equal("Panes.RxFrameMeta.FileSizeValueFormat", localization.LastKey);
+            Assert.Equal(2.0, (double)localization.LastArgs[0], precision: 6);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_SavedEvent_GenerationMismatch_DropsTheStaleFileSize()
+    {
+        // Regression test for a real race an auditor round-2 review caught: a save that was in
+        // flight for an OLDER image must not overwrite FileSizeBytes once a newer image has already
+        // started (IReceivedImageBuffer.Generation moved on) by the time this event is processed --
+        // see OnSaved's own doc comment for why the comparison is against the BUFFER's generation,
+        // not a second counter tracked independently on this class.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var buffer = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
+        buffer.Generation = 5; // a newer image has since started
+
+        var path = Path.Combine(Path.GetTempPath(), $"scanlinestudio-test-{Guid.NewGuid():N}.png");
+        File.WriteAllBytes(path, new byte[100]);
+        try
+        {
+            buffer.RaiseSaved(path, generation: 3); // this save belongs to an OLDER generation
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Null(vm.FileSizeBytes);
+            Assert.Equal("—", vm.FileSizeDisplay);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_ResetsFileSizeBytesToNull()
+    {
+        // A fresh/restarted decode has no saved file of its own yet -- a stale size from the
+        // PREVIOUS frame must not linger next to the new frame's "Started" time.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        var path = Path.Combine(Path.GetTempPath(), $"scanlinestudio-test-{Guid.NewGuid():N}.png");
+        File.WriteAllBytes(path, new byte[100]);
+        try
+        {
+            ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseSaved(path, generation: 0);
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(100, vm.FileSizeBytes);
+
+            var mode = new SstvModeDefinition(
+                Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+                ColorEncoding: ColorEncoding.RgbSequential,
+                LineSegments: [new ScanSegment("R", 138.24)]);
+            sstvSession.RaiseModeDetected(mode);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Null(vm.FileSizeBytes);
+            Assert.Equal("—", vm.FileSizeDisplay);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [AvaloniaFact]
@@ -616,7 +755,7 @@ public sealed class PaneViewModelTests
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
 
-        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -639,7 +778,7 @@ public sealed class PaneViewModelTests
         // all (unlike RxImagePaneViewModel, which takes ISstvSessionService specifically for that
         // live binding) -- a live-buffer interaction is structurally impossible here, not just
         // unobserved, so there is nothing to fake/assert against for that half of the guarantee.
-        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -654,11 +793,16 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_DefaultsToTodayOnly_MatchingTheMock2DraftsOwnDefaultSelection()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.ShowTodayOnly);
-        var filter = Assert.Single(historyStore.QueryFilters);
+        // Construction now issues TWO queries: this Gallery-tab filter (index 0, RefreshAsync fires
+        // first) and FramesTodayCount's own separate always-"today" query (index 1) -- see
+        // RxHistoryPaneViewModel_Constructed_LoadsFramesTodayCount_UsingLocalTodayMatchingHowReceivedAtIsActuallyStored
+        // for that second query's own assertions.
+        Assert.Equal(2, historyStore.QueryFilters.Count);
+        var filter = historyStore.QueryFilters[0];
         Assert.NotNull(filter.From);
         Assert.Null(filter.To);
     }
@@ -667,13 +811,15 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_TogglingToAll_ReQueriesWithNoDateFilter()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         vm.ShowTodayOnly = false;
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(2, historyStore.QueryFilters.Count);
+        // 2 from construction (Gallery-tab filter + FramesTodayCount's own separate query) + 1 from
+        // this toggle's own re-query.
+        Assert.Equal(3, historyStore.QueryFilters.Count);
         var lastFilter = historyStore.QueryFilters[^1];
         Assert.Null(lastFilter.From);
         Assert.Null(lastFilter.To);
@@ -683,10 +829,55 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_Constructed_LoadsImagesDirectory_ForTheGalleryTabsStorageCard()
     {
         var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "/tmp/scanlinestudio-history" };
-        var vm = new RxHistoryPaneViewModel(historyStore, NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("/tmp/scanlinestudio-history", vm.ImagesDirectory);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_Constructed_LoadsFramesTodayCount_UsingLocalTodayMatchingHowReceivedAtIsActuallyStored()
+    {
+        // Regression test for a real, auditor-caught bug: this VM's own doc comment (and an earlier
+        // version of LoadFramesTodayCountAsync) claimed ReceivedAt is stored UTC and anchored this
+        // query to UTC midnight -- but ReceiveHistoryRecorder actually writes DateTimeOffset.Now
+        // (LOCAL offset), and SqliteReceiveHistoryStore's From/To filter is a lexicographic TEXT
+        // compare that only stays correct when the query's own offset matches the stored rows'. A
+        // UTC-anchored query would silently miss/double-count several hours of frames around every
+        // day boundary on any non-UTC machine (see SqliteReceiveHistoryStoreTests'
+        // QueryAsync_DateRangeCompareIsLexicographicOnStoredOffset_NotInstantBased for the store-level
+        // proof). This query must match ShowTodayOnly's own local `DateTime.Today` convention below
+        // exactly -- asserting a non-null From alone would not catch a UTC-vs-local regression.
+        // Captured before constructing the VM -- avoids a theoretical flake if this test happens to
+        // straddle local midnight between construction and the assertion below.
+        var expectedTodayAnchor = new DateTimeOffset(DateTime.Today);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("1", DateTimeOffset.Now, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("2", DateTimeOffset.Now, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
+            ],
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, vm.FramesTodayCount);
+        Assert.Equal("MainWindow.StatusBar.FramesTodayValueFormat", vm.FramesTodayDisplay);
+
+        // filters[0] is RefreshAsync's own Gallery-tab (ShowTodayOnly) query; filters[1] is this
+        // FramesTodayCount query -- both must now share the SAME local-offset "today" anchor.
+        Assert.Equal(2, historyStore.QueryFilters.Count);
+        var framesTodayFilter = historyStore.QueryFilters[1];
+        Assert.Equal(expectedTodayAnchor, framesTodayFilter.From);
+        Assert.Null(framesTodayFilter.To);
+
+        // Toggling the UNRELATED Gallery-tab filter must not change the status bar's own count --
+        // this is a genuinely separate, independent, load-once query.
+        vm.ShowTodayOnly = false;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, vm.FramesTodayCount);
     }
 
     private static QsoRecord SampleQsoRecord(string id = "1") =>
@@ -713,6 +904,29 @@ public sealed class PaneViewModelTests
 
         var entry = Assert.Single(vm.Entries);
         Assert.Equal("1", entry.Id);
+    }
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_Constructed_LoadsTotalLoggedCount_ViaASeparateUnfilteredQuery()
+    {
+        // "Log size" means the WHOLE logbook, independent of Entries' own current search filter
+        // (this pane's constructor defaults FromDate to 30 days back) -- the total-count query must
+        // be unfiltered (every LogbookQuery field null), not a copy of BuildCurrentQuery()'s own
+        // filtered query.
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        logbook.Records.Add(SampleQsoRecord("2"));
+
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, vm.TotalLoggedCount);
+        Assert.Equal("MainWindow.StatusBar.LogSizeValueFormat", vm.LogSizeDisplay);
+        // LoadTotalLoggedCountAsync fires after RefreshAsync in the constructor and is the last
+        // SearchAsync call made -- its query must be fully unfiltered.
+        Assert.Null(logbook.LastSearchQuery?.Callsign);
+        Assert.Null(logbook.LastSearchQuery?.From);
+        Assert.Null(logbook.LastSearchQuery?.To);
     }
 
     [AvaloniaFact]

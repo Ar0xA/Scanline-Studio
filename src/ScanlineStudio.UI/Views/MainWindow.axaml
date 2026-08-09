@@ -230,8 +230,12 @@
                                         <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.BpfValue}" />
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.NotchAgc}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.NotchAgcValue}" />
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Notch}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.NotchValue}" />
+                                    </Grid>
+                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Agc}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding AgcGainDisplay}" />
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Buffer}" />
@@ -488,15 +492,17 @@
                         </Border>
                     </Grid>
 
-                    <!-- Right column: mostly visual scaffolding still. Frame metadata's "Started"
-                         row is real (spec/17-rx-telemetry-feasibility.md), wired to
-                         RxImagePaneViewModel; its other fields (Callsign/OCR, QRZ lookup,
-                         Frequency/Mode/VIS, SNR/slant, dropped-lines, file size,
-                         note/override-callsign) and Unattended RX's scan/watch state have no
-                         backing data or feature at all yet (spec/14-roadmap.md backlog: "Frame
-                         metadata card"/"Unattended RX"). Session frames is a distinct placeholder
-                         list matching mock2's own Callsign/Mode/Meta text format; not a second copy
-                         of the real thumbnail strip, which lives in the Incoming-frame card above. -->
+                    <!-- Right column: mostly visual scaffolding still. Frame metadata's "Started" and
+                         "Size on disk" rows are real (spec/17-rx-telemetry-feasibility.md), wired to
+                         RxImagePaneViewModel (file size only populates once the frame's own save
+                         completes; see FileSizeBytes' own doc comment; a still-in-progress or
+                         abandoned/partial frame reads "—"). Its other fields (Callsign/OCR, QRZ
+                         lookup, Frequency/Mode/VIS, SNR/slant, dropped-lines, note/override-callsign)
+                         and Unattended RX's scan/watch state have no backing data or feature at all
+                         yet (spec/14-roadmap.md backlog: "Frame metadata card"/"Unattended RX").
+                         Session frames is a distinct placeholder list matching mock2's own
+                         Callsign/Mode/Meta text format; not a second copy of the real thumbnail
+                         strip, which lives in the Incoming-frame card above. -->
                     <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
                         <Border Grid.Row="0" Classes="card" DataContext="{Binding RxImage}">
                             <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
@@ -535,7 +541,7 @@
                                 </Grid>
                                 <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.FileSize}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.FileSizeValue}" />
+                                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding FileSizeDisplay}" />
                                 </Grid>
                                 <TextBlock Classes="caption" Text="{loc:Translate Panes.RxFrameMeta.NoteLabel}" />
                                 <TextBox Text="{loc:Translate Panes.RxFrameMeta.NoteValue}" />
@@ -1116,28 +1122,28 @@
 
         <!-- Bottom status bar (mock2's own persistent readout row): a slim flat bar (top border
              only, no full card chrome), not part of any tab or header card. Left/right split via
-             DockPanel matches mock2's own layout exactly - "frames today/log" pinned to the far
+             DockPanel matches mock2's own layout exactly ; "frames today/log" pinned to the far
              right edge, everything else flowing left. Receiving uses mock2's own accent-pill
              treatment (real IsReceiving, text "Receiving" not "RX" to match mock2's literal
-             wording); TX-inhibit stays an LED dot + label - a distinct alert state, not a mode
+             wording); TX-inhibit stays an LED dot + label ; a distinct alert state, not a mode
              indicator; mock2's own static render doesn't happen to show a not-inhibited state but
              the concept/wiring is real and kept per direct user request. TX-inhibit lights up when
              the last transmit attempt ended in an error/SWR-cutoff (TxControls.ErrorMessage); this
              app has no persistent transmit-lockout state to reflect more literally than that; see
              TxControlsPaneViewModel's own SWR-cutoff design for why. Frequency/Mode/DetectedMode/
-             LineProgress/Slant/Buffer are real (RadioStatus.FrequencyDisplay/ModeDisplay,
-             RxImage.DetectedModeText/LineProgressText/SlantPpmStatusBarDisplay/
-             BufferedSampleCountStatusBarDisplay, spec/17-rx-telemetry-feasibility.md). Buffer here
-             deliberately drops mock2's own "· N XRUN" half, a separate still-unwired audio-engine
-             counter, not this decoder's own sample buffer. M1/SNR/FramesToday/LogSize have no
-             backing property anywhere in the app (true per-line SNR still doesn't exist) and are
-             literal placeholders matching mock2's own exact values/wording,
-             same precedent as the Receive tab's own scaffolding cards. -->
+             LineProgress/Slant/Buffer/FramesToday/LogSize are real (RadioStatus.FrequencyDisplay/
+             ModeDisplay, RxImage.DetectedModeText/LineProgressText/SlantPpmStatusBarDisplay/
+             BufferedSampleCountStatusBarDisplay, RxHistory.FramesTodayDisplay, Logbook.LogSizeDisplay,
+             spec/17-rx-telemetry-feasibility.md). Buffer here deliberately drops mock2's own
+             "· N XRUN" half, a separate still-unwired audio-engine counter, not this decoder's own
+             sample buffer. M1/SNR still have no backing property anywhere in the app (true per-line
+             SNR still doesn't exist) and are literal placeholders matching mock2's own exact
+             values/wording, same precedent as the Receive tab's own scaffolding cards. -->
         <Border Grid.Row="3" Height="24" Background="{DynamicResource ScanlineStudioPanelBackgroundColor}" BorderBrush="{DynamicResource ScanlineStudioCardBorderColor}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,0">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="9">
-                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.FramesTodayValue}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.LogSizeValue}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{Binding RxHistory.FramesTodayDisplay}" VerticalAlignment="Center" />
+                    <TextBlock Classes="readout" Text="{Binding Logbook.LogSizeDisplay}" VerticalAlignment="Center" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="9">
                     <Border Classes="pill" Classes.accentPill="{Binding RadioStatus.IsReceiving}" VerticalAlignment="Center">

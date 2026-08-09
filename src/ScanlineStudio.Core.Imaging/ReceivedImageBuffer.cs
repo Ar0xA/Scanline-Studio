@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
@@ -23,13 +24,29 @@ namespace ScanlineStudio.Core.Imaging;
 ///
 /// <b>Snapshot contract</b> (Phase-3 plan decision #5): <see cref="Current"/> always returns a
 /// defensive copy, never a view into the decoder's own live/mutable buffer.</summary>
-public sealed class ReceivedImageBuffer : IReceivedImageBuffer
+public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
 {
     private static readonly IImageSource EmptyImage = new ArrayImageSource(1, 1, [new Rgb24(0, 0, 0)]);
 
     private readonly object _gate = new();
+    private readonly ILogger<ReceivedImageBuffer> _logger;
     private IImageSource _current = EmptyImage;
     private double? _progress;
+
+    // Auditor-caught, round 2: bumped on every OnModeDetected/OnDecodeRestarted -- both are the
+    // events that change what Current's IDENTITY means (a fresh image starting, or the current one
+    // being blanked on a restart), as opposed to OnLineDecoded, which only updates the SAME image's
+    // pixels. SaveAsync captures this alongside its own snapshot (both under the SAME lock read,
+    // right below) and hands it to Saved -- a subscriber compares that captured value against
+    // Generation's THEN-current value at whatever later point it actually applies the save's result,
+    // to detect a newer image having superseded the one that was actually saved. A first attempt at
+    // this (round 1) instead had the UI-side subscriber capture its OWN separately-incremented
+    // counter at Saved's callback-entry time -- too late: it missed the SAME-ORDER race during the
+    // encode+write+recorder's own directory-resolve window BEFORE Saved ever fires, which is the
+    // LIKELY interleaving for back-to-back bulk-WAV-decode restarts, not an unlikely edge case.
+    // Owning the counter here, captured at the true start of the save, closes that window instead of
+    // narrowing it.
+    private int _generation;
 
     // Completion-detection state -- same technique, same field shapes as
     // ReceiveHistoryRecorder.cs's own (independently-solved) version of this exact problem: the
@@ -40,8 +57,9 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
     private int? _previousLine;
     private int? _observedStep;
 
-    public ReceivedImageBuffer(ISstvDecoder decoder)
+    public ReceivedImageBuffer(ISstvDecoder decoder, ILogger<ReceivedImageBuffer> logger)
     {
+        _logger = logger;
         decoder.ModeDetected += OnModeDetected;
         decoder.LineDecoded += OnLineDecoded;
         decoder.DecodeRestarted += OnDecodeRestarted;
@@ -69,11 +87,31 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
         }
     }
 
+    public int Generation
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _generation;
+            }
+        }
+    }
+
     public event Action? Updated;
+
+    public event Action<string, int>? Saved;
 
     public Task SaveAsync(string path, CancellationToken ct = default)
     {
-        var snapshot = Current;
+        IImageSource snapshot;
+        int generation;
+        lock (_gate)
+        {
+            snapshot = _current;
+            generation = _generation;
+        }
+
         return Task.Run(
             () =>
             {
@@ -92,6 +130,22 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
                     }
                 });
                 image.Save(path);
+
+                // Isolated deliberately: this Task is the one RecordCompletedImageAsync (the sole
+                // production caller of SaveAsync) awaits before writing the RX history row -- an
+                // uncaught exception from a Saved subscriber (e.g. a live UI pane reacting to the
+                // path) would fault THIS task, so the file lands on disk with no history entry ever
+                // recorded for it, even though the save itself fully succeeded. Same reasoning as
+                // ReceiveHistoryRecorder's own fan-out handlers: a subscriber's own failure must
+                // never surface into/interrupt the operation it's just reacting to.
+                try
+                {
+                    Saved?.Invoke(path, generation);
+                }
+                catch (Exception ex)
+                {
+                    Log.SavedSubscriberFailed(_logger, path, ex);
+                }
             },
             ct);
     }
@@ -103,6 +157,7 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
             _previousLine = null;
             _observedStep = null;
             _progress = 0.0;
+            _generation++;
         }
 
         Updated?.Invoke();
@@ -159,6 +214,7 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
         {
             _current = EmptyImage;
             _progress = null;
+            _generation++;
         }
 
         Updated?.Invoke();
@@ -173,5 +229,11 @@ public sealed class ReceivedImageBuffer : IReceivedImageBuffer
         }
 
         return new ArrayImageSource(source.Width, source.Height, pixels);
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "A Saved event subscriber threw for {FilePath}")]
+        public static partial void SavedSubscriberFailed(ILogger logger, string filePath, Exception ex);
     }
 }

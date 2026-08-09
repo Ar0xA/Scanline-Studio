@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.UI.Imaging;
 
 namespace ScanlineStudio.UI.ViewModels;
@@ -21,6 +22,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private const int PreviewMaxDimension = 512;
 
     private readonly IReceiveHistoryStore _historyStore;
+    private readonly ILocalizationService _localization;
     private readonly ILogger<RxHistoryPaneViewModel> _logger;
 
     [ObservableProperty]
@@ -50,9 +52,38 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [ObservableProperty]
     private string _entryCountText = string.Empty;
 
-    public RxHistoryPaneViewModel(IReceiveHistoryStore historyStore, ILogger<RxHistoryPaneViewModel> logger)
+    /// <summary>Status bar's "frames today" readout -- a SEPARATE, independent query from
+    /// <see cref="ShowTodayOnly"/>'s own Gallery-tab filter (always "today," regardless of whatever
+    /// the Gallery tab's own All/Today toggle currently shows), so the status bar doesn't silently
+    /// change meaning based on unrelated Gallery UI state. Loaded once at construction, same
+    /// "best-effort, not re-fetched live" convention as <c>TxControlsPaneViewModel.OutputDeviceName</c>/
+    /// <c>RxImagePaneViewModel.CaptureDeviceName</c> -- a new frame arriving doesn't currently bump
+    /// this count until the pane is reconstructed (spec/17-rx-telemetry-feasibility.md: no
+    /// history-changed event exists anywhere in this codebase to hook a live refresh off of).
+    ///
+    /// <b>Auditor-caught correction</b>: an earlier version of this comment/implementation anchored
+    /// to UTC midnight on the claim that <c>ReceivedAt</c> is always stored UTC -- FALSE.
+    /// <c>ReceiveHistoryRecorder.RecordCompletedImageAsync</c>/<c>RecordAbandonedImageAsync</c> both
+    /// write <c>DateTimeOffset.Now</c> (LOCAL offset), and <c>SqliteReceiveHistoryStore</c>'s
+    /// `From`/`To` filter is a lexicographic TEXT compare on `ToString("O")`, which only stays
+    /// correct when the query's own offset matches the stored rows' -- a UTC-anchored query against
+    /// locally-offset rows silently misses or double-counts several hours' worth of frames around
+    /// every day boundary on any non-UTC machine. Fixed to match <see cref="ShowTodayOnly"/>'s own
+    /// `DateTime.Today` (local) convention below -- the two filters are now genuinely consistent, not
+    /// a "separate, pre-existing inconsistency" as an earlier version of this comment claimed.
+    ///
+    /// Also includes <see cref="ReceiveDecodeState.Abandoned"/> (partial) entries alongside
+    /// <see cref="ReceiveDecodeState.Completed"/> ones -- <see cref="ReceiveHistoryFilter"/> has no
+    /// `DecodeState` field to narrow by, so this counts every row received today, not just
+    /// successfully completed images.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FramesTodayDisplay))]
+    private int _framesTodayCount;
+
+    public RxHistoryPaneViewModel(IReceiveHistoryStore historyStore, ILocalizationService localization, ILogger<RxHistoryPaneViewModel> logger)
     {
         _historyStore = historyStore;
+        _localization = localization;
         _logger = logger;
 
         Entries.CollectionChanged += (_, _) => UpdateEntryCountText();
@@ -62,15 +93,32 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         // the pane empty rather than blocking construction; RefreshCommand lets the user retry.
         _ = RefreshAsync();
         _ = LoadImagesDirectoryAsync();
+        _ = LoadFramesTodayCountAsync();
     }
 
     public ObservableCollection<RxHistoryEntryViewModel> Entries { get; } = [];
 
+    public string FramesTodayDisplay => _localization.GetString("MainWindow.StatusBar.FramesTodayValueFormat", FramesTodayCount);
+
     private void UpdateEntryCountText() => EntryCountText = Entries.Count switch
     {
-        1 => "1 frame",
-        var count => $"{count} frames",
+        1 => _localization.GetString("Panes.RxHistory.EntryCountSingular"),
+        var count => _localization.GetString("Panes.RxHistory.EntryCountFormat", count),
     };
+
+    private async Task LoadFramesTodayCountAsync()
+    {
+        try
+        {
+            var todayEntries = await _historyStore.QueryAsync(new ReceiveHistoryFilter(From: new DateTimeOffset(DateTime.Today)));
+            FramesTodayCount = todayEntries.Count;
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, same reasoning as LoadImagesDirectoryAsync -- the status bar just shows 0.
+            Log.LoadFramesTodayCountFailed(_logger, ex);
+        }
+    }
 
     partial void OnShowTodayOnlyChanged(bool value) => _ = RefreshAsync();
 
@@ -164,6 +212,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "GetImagesDirectoryAsync failed")]
         public static partial void GetImagesDirectoryFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading the frames-today count failed")]
+        public static partial void LoadFramesTodayCountFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh invoked: showTodayOnly={ShowTodayOnly}")]
         public static partial void RefreshInvoked(ILogger logger, bool showTodayOnly);
