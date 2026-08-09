@@ -243,7 +243,7 @@ control), an untested `OnPropertyChanged` re-raise, and an AVT test that never e
 its own name claimed. Full details: `spec/17`.
 
 **Verified**: full solution build clean, full suite green — Core.Sstv.Tests 666/666 (was 662, +4),
-UI.Tests 124/124 (was 120, +4), everything else unaffected. **NOT YET committed** — about to commit.
+UI.Tests 124/124 (was 120, +4), everything else unaffected. **COMMITTED and pushed (`ec0734d`).**
 
 **§17's REAL-EASY list is now fully closed.** Remaining items on that page all need explicit product
 decisions first (Source labels, Advanced timing, Reset button semantics, squelch), or are real new
