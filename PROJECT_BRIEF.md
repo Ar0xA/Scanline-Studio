@@ -165,12 +165,36 @@ mid-decode measured the not-yet-decoded (zeroed/black) rows, showing a wildly wr
 black" reading for the entire time a user watched a live decode. Fixed by row-limiting to
 `Progress * Height` rows, placeholder shown while idle.
 
-**Remaining on §17's REAL-EASY list**: Frames today/Log size, File size, UTC clock, AGC gain
-(client-side, zero backend — genuinely trivial); Buffer·XRUN (needs a small `IAudioEngine`
-interface extension first, not pure wiring); Auto-correct's "on/off" half (needs exposing legacy's
-`AutoSlant` setting, currently hardcoded on, plus an AVT case). None of these were picked up yet —
-next session should either continue this list or check with the user on priority, per the
-"go ahead and start wiring the cheap wins" authorization's original scope.
+**Batch 4 SHIPPED**: UTC clock (`RadioStatusViewModel.UtcClockDisplay`, 1s `DispatcherTimer`), AGC
+gain (`RxImagePaneViewModel.AgcGainDisplay`, pure client-side derivation from `SignalPeakLevel`,
+auditor-verified exact match to legacy's `LevelAgc.cs:103` formula), status bar's "frames today"/
+"log size" (new independent counts on `RxHistoryPaneViewModel`/`LogbookPaneViewModel`), and
+Frame-metadata's "Size on disk" (new `IReceivedImageBuffer.Saved`/`Generation` API — turned out to
+need real new plumbing, not a one-line wire, since no save-completion hook existed anywhere a live
+pane could reach).
+
+**Two real bugs caught across 3 rounds of auditor review, both fixed**: (1) a genuine UTC-vs-local
+blocker in the frames-today query — `ReceiveHistoryRecorder` actually writes `DateTimeOffset.Now`
+(local), not UTC as this code originally assumed, and the SQLite store's date filter is a
+lexicographic TEXT compare that only stays correct when the query's offset matches; fixed to match
+`ShowTodayOnly`'s own local convention, new store-level regression test added
+(`SqliteReceiveHistoryStoreTests.QueryAsync_DateRangeCompareIsLexicographicOnStoredOffset_NotInstantBased`).
+(2) A save/restart ordering race in the new "Size on disk" readout took 2 fix attempts: round 1's
+fix (a same-class counter) only narrowed the window; round 2 moved generation-tracking into
+`IReceivedImageBuffer` itself (new `Generation` property, captured under the same lock as the
+buffer's own image snapshot at `SaveAsync`'s true invocation), which round 3 confirmed genuinely
+closes it. Also fixed: a `Saved` subscriber's own exception could fault the save `Task` that
+`ReceiveHistoryRecorder` awaits, silently losing a history row for an otherwise-successful save
+(isolated with try/catch + new `ILogger<ReceivedImageBuffer>`). Full details: `spec/17`.
+
+**Verified**: full solution build clean, full suite green — 1135 tests total (Core.Imaging.Tests
+28/28 was 24, Core.Logbook.Tests 65/65 was 64, UI.Tests 119/119 was 118 pre-batch-4, Core.Sstv.Tests
+662/662 unaffected). **NOT YET committed** — about to commit.
+
+**Remaining on §17's REAL-EASY list**: Buffer·XRUN (needs a small `IAudioEngine` interface extension
+first, not pure wiring); Auto-correct's "on/off" half (needs exposing legacy's `AutoSlant` setting,
+currently hardcoded on, plus an AVT case). Batch 5, not yet started — per the user's "tick those
+items off" instruction, this is next.
 
 **After the RX telemetry slice is done**, next in `spec/14-roadmap.md`'s proposed order: RX history
 browser affordances → waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail

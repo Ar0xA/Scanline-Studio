@@ -79,7 +79,7 @@
                           </StackPanel>
                           <TextBlock Grid.Row="0" Grid.Column="1" Classes="readout" FontSize="15"
                                      HorizontalAlignment="Right" VerticalAlignment="Center"
-                                     Text="{loc:Translate RadioStatus.UtcValue}" />
+                                     Text="{Binding UtcClockDisplay}" />
 
                           <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="4">
                               <Border Classes="pill"><TextBlock Text="{loc:Translate RadioStatus.BwValue}" /></Border>

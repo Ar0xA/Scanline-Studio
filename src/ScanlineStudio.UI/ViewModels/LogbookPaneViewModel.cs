@@ -43,6 +43,17 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isEditing;
 
+    /// <summary>Status bar's "log size" readout -- a SEPARATE, unfiltered query
+    /// (<c>new LogbookQuery()</c>, every field null), independent of whatever <see cref="Entries"/>'
+    /// own current search filter currently shows (which defaults to the last 30 days, per this
+    /// pane's own construction-time default below) -- "log size" means the whole logbook, not
+    /// today's/this-month's search results. Loaded once at construction, same "best-effort, not
+    /// re-fetched live" convention as this pane's sibling telemetry properties elsewhere in this
+    /// session's work; a newly-logged QSO doesn't bump this count until the pane is reconstructed.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LogSizeDisplay))]
+    private int _totalLoggedCount;
+
     // Add/Edit form fields -- every QsoRecord field except Id (generated) and ReceivedImageId (no
     // UI source for it yet -- see the plan's Gallery-linking exclusion).
     [ObservableProperty]
@@ -118,6 +129,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FromDate = new DateTimeOffset(DateTime.UtcNow.Date.AddDays(-30), TimeSpan.Zero);
 
         _ = RefreshAsync();
+        _ = LoadTotalLoggedCountAsync();
     }
 
     public ObservableCollection<QsoRecord> Entries { get; } = [];
@@ -125,6 +137,23 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     public IReadOnlyList<RadioModeOption> AvailableModes { get; }
 
     public IReadOnlyList<SstvModeDefinition> AvailableSstvModes { get; }
+
+    public string LogSizeDisplay => _localization.GetString("MainWindow.StatusBar.LogSizeValueFormat", TotalLoggedCount);
+
+    private async Task LoadTotalLoggedCountAsync()
+    {
+        try
+        {
+            var all = await _logbook.SearchAsync(new LogbookQuery(null, null, null));
+            TotalLoggedCount = all.Count;
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, same reasoning as RxHistoryPaneViewModel.LoadFramesTodayCountAsync --
+            // the status bar just shows 0.
+            Log.LoadTotalLoggedCountFailed(_logger, ex);
+        }
+    }
 
     /// <summary>Both dates are built as UTC calendar dates, never taken as-is from the
     /// <c>DatePicker</c>-bound property (which emits a LOCAL-offset <see cref="DateTimeOffset"/>) and
@@ -410,6 +439,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SearchAsync failed; logbook list stays as-is")]
         public static partial void SearchFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading the total-logged count failed")]
+        public static partial void LoadTotalLoggedCountFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh completed: {Count} entries")]
         public static partial void RefreshCompleted(ILogger logger, int count);

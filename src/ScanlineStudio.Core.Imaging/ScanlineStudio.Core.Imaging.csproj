@@ -4,6 +4,7 @@
     <ProjectReference Include="..\ScanlineStudio.Settings\ScanlineStudio.Settings.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
     <!-- Text-rendering companion for ITransmitImagePreparer.ApplyOverlay: see LICENSES.md's
          entry (same Six Labors Split License v1.0 as the base package, verified separately). -->

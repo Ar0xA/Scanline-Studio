@@ -159,13 +159,61 @@ time a user watched it, only becoming accurate on the final line. Fixed by row-l
 computation to `Progress * Height` rows, with the readout showing "—" while idle rather than a
 misleading number.
 
-Remaining, cheapest/highest-value first (all REAL-EASY, mostly pure wiring, no new DSP):
-1. Frames today/Log size, File size, UTC clock, AGC gain (client-side derivation, zero backend) —
-   trivial wiring or one-line additions, no risk.
-2. Buffer·XRUN — needs a small `IAudioEngine` interface extension + `FakeAudioEngine` update first
+**Batch 4 SHIPPED (2026-08-09)**: RadioHeaderView's UTC clock (new `RadioStatusViewModel.UtcClockDisplay`,
+a 1s `DispatcherTimer` tick, matching `RxImagePaneViewModel`'s own telemetry-poll pattern), Input-chain's
+AGC gain (`RxImagePaneViewModel.AgcGainDisplay`, pure client-side derivation from the already-real
+`SignalPeakLevel` per `LevelAgc.cs:103`'s exact formula — no new backend property, splitting the
+formerly-combined "Notch·AGC" row into two separate rows so AGC could go real without implying Notch
+was real too), status bar's "frames today"/"log size" (new independent counts on
+`RxHistoryPaneViewModel`/`LogbookPaneViewModel` respectively — deliberately decoupled from each pane's
+own current search/filter state, both loaded once at construction, best-effort), and Frame-metadata's
+"Size on disk" (new `IReceivedImageBuffer.Saved` event, raised by the concrete `ReceivedImageBuffer.SaveAsync`
+after its write completes — the original REAL-EASY citation above assumed `IReceivedImageBuffer` itself
+already had a save-completion hook a live pane could subscribe to; on inspection it didn't, since the
+sole production writer, `ReceiveHistoryRecorder`, is a wholly separate class in a different layer with
+no reference back to whatever pane is displaying `Current` — so this needed one new interface member,
+not just a wiring pass, closer in scope to batch 3's capture-device work than a one-line add). Two
+rounds of auditor review; fixed two pre-existing `RxHistoryPaneViewModel` tests broken by the new
+frames-today query (an extra `QueryAsync` call at construction the tests' filter-count assertions
+hadn't accounted for).
+
+**Real bugs caught by auditor review, both fixed before shipping**: (1) round 1, a genuine
+UTC-vs-local blocker — `LoadFramesTodayCountAsync` anchored its query to UTC midnight on the false
+assumption that `ReceivedAt` is always stored UTC, but `ReceiveHistoryRecorder` actually writes
+`DateTimeOffset.Now` (local offset), and `SqliteReceiveHistoryStore`'s date-range filter is a
+lexicographic TEXT compare on `ToString("O")` that only stays correct when the query's own offset
+matches the stored rows' — the UTC-anchored query silently missed/double-counted several hours of
+frames around every day boundary on any non-UTC machine. Fixed to match `ShowTodayOnly`'s own local
+`DateTime.Today` convention (the two filters are now genuinely consistent, collapsing what an earlier
+version of this doc/code wrongly called "a separate, pre-existing inconsistency"). New store-level
+test (`SqliteReceiveHistoryStoreTests.QueryAsync_DateRangeCompareIsLexicographicOnStoredOffset_NotInstantBased`)
+proves the lexicographic-compare hazard directly. (2) round 1→2, a save/restart ordering race in
+`RxImagePaneViewModel`'s new "Size on disk" readout — a round-1 fix (a same-class counter captured at
+the `Saved` event's own callback-entry time) only narrowed the race window instead of closing it: the
+part that mattered was the encode+write+recorder's-own-directory-resolve window *before* `Saved` ever
+fires, and a `ModeDetected` landing there (the LIKELY interleaving for back-to-back bulk-WAV-decode
+restarts, not an edge case) would already have bumped a same-class counter before the round-1 handler
+ever ran. Round 2 fix: `IReceivedImageBuffer` itself now owns a `Generation` counter (bumped on
+`ModeDetected`/`DecodeRestarted`, the two events that change `Current`'s identity), captured at
+`SaveAsync`'s true invocation time and threaded through `Saved(path, generation)` — the pane compares
+that captured value against the buffer's own then-current `Generation` instead of a second,
+independently-drifting counter. Also fixed, same round: a `Saved` subscriber's own exception could
+fault the `Task` that `ReceiveHistoryRecorder.RecordCompletedImageAsync` awaits, silently losing the
+history row for an image that had, in fact, saved successfully — isolated with a try/catch inside
+`ReceivedImageBuffer.SaveAsync` (new `ILogger<ReceivedImageBuffer>` dependency added for this). Round
+3 (the auditor's own verification of round 2's fix) confirmed the generation-token race is genuinely
+closed — captured under the same lock as the buffer's own snapshot, provably before any encode/write
+work runs — with one accepted residual sliver (a `ModeDetected` landing in the recorder's own
+pre-`SaveAsync` setup, no image work, is still invisible to the guard; documented in
+`RxImagePaneViewModel.OnSaved`'s own doc comment, not worth the extra plumbing to close for a cosmetic
+readout) and one comment-accuracy fix (the doc comment had wrongly implied the recorder's own
+directory-resolve step was covered by the guard; corrected).
+
+Remaining:
+1. Buffer·XRUN — needs a small `IAudioEngine` interface extension + `FakeAudioEngine` update first
    (not a pure existing-property read, per the audit correction above), still cheap but budget for
    that extra step.
-3. Auto-correct's "on/off" HALF still not wired (the "locked" half shipped in batch 1) — needs
+2. Auto-correct's "on/off" HALF still not wired (the "locked" half shipped in batch 1) — needs
    exposing legacy's real `AutoSlant` setting (currently hardcoded on) plus an explicit AVT case, not
    just a null check — slightly bigger than it looks, see the table entry above.
 
