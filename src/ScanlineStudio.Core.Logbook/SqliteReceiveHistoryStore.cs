@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
 using ScanlineStudio.Abstractions.Imaging;
@@ -14,14 +15,18 @@ namespace ScanlineStudio.Core.Logbook;
 /// would be exactly the Core-to-Core edge <c>ReceivedImageBuffer</c>'s own doc comment (in
 /// <c>Core.Imaging</c>) says must never happen, just the mirrored direction. A local
 /// <see cref="IImageSource"/> holder here is cheap enough that sharing isn't worth the coupling.</summary>
-public sealed class SqliteReceiveHistoryStore : IReceiveHistoryStore
+public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 {
     private readonly string _connectionString;
     private readonly ISettingsStore _settingsStore;
+    private readonly ILogger<SqliteReceiveHistoryStore> _logger;
 
-    public SqliteReceiveHistoryStore(ISettingsStore settingsStore, string? dbFilePath = null)
+    public event Action<ReceiveHistoryEntry>? Recorded;
+
+    public SqliteReceiveHistoryStore(ISettingsStore settingsStore, ILogger<SqliteReceiveHistoryStore> logger, string? dbFilePath = null)
     {
         _settingsStore = settingsStore;
+        _logger = logger;
 
         var path = dbFilePath ?? GetDefaultDbFilePath();
         var directory = Path.GetDirectoryName(path);
@@ -133,6 +138,18 @@ public sealed class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
         await TrimToRetentionLimitAsync(connection, ct).ConfigureAwait(false);
+
+        // Isolated deliberately, same reasoning as IReceivedImageBuffer.SaveAsync's own Saved-event
+        // fix: a subscriber's own exception must not surface as if THIS write had failed -- the
+        // insert (and trim) above already fully succeeded by this point.
+        try
+        {
+            Recorded?.Invoke(entry);
+        }
+        catch (Exception ex)
+        {
+            Log.RecordedSubscriberFailed(_logger, entry.Id, ex);
+        }
     }
 
     /// <summary>Legacy's real retention behavior (verified: see <see cref="ReceiveHistorySettings.DefaultMaxEntries"/>'s
@@ -344,5 +361,11 @@ public sealed class SqliteReceiveHistoryStore : IReceiveHistoryStore
         public int Height { get; }
 
         public ReadOnlySpan<Rgb24> GetScanline(int y) => _pixels.AsSpan(y * Width, Width);
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "A Recorded event subscriber threw for entry {EntryId}")]
+        public static partial void RecordedSubscriberFailed(ILogger logger, string entryId, Exception ex);
     }
 }

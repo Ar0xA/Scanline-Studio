@@ -21,7 +21,9 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 ## Legacy History-tab navigation affordances (step nav, history→template drag-in, clipboard)
 
 - **Legacy**: `Main.h`'s `TabHist` page controls — `UDHist` (a `TUpDown` spinner for step
-  prev/next through history), `SBLatest` ("jump to most recent" speed button), `HistStat` (a status
+  prev/next through history), `SBPrim` (jump to the newest buffered frame, `Main.cpp:15851-15857`),
+  `SBLatest` (despite its name, actually jumps to the OLDEST buffered frame still in the ring buffer,
+  `Main.cpp:6407-6413` — see this entry's own Citation correction below), `HistStat` (a status
   label). `HistView.cpp`'s `THistViewDlg::PBMouseMove` calls `BeginDrag(TRUE,0)` on a history
   thumbnail; `Main.cpp`'s `TabTemp`/`TabTX` drag-accept handlers check
   `pHistView->IsPBox(Source) >= 0` and, on drop, insert a `CDrawPic` item into the template
@@ -30,23 +32,43 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
   (`SBCopyClick` → `CopyBitmap(pBitmapHist)`) copies the *selected history image* to the clipboard;
   `SBPaste` (`SBPasteClick` → `PasteBitmap(pBitmapTXM,...)`, then `AdjustPage(pgTX)`) pastes clipboard
   content *into* the TX slot — an asymmetric pair, not a matched copy/paste-to-TX pair.
-- **Replacement**: partial. [[spec/07-image-pipeline]]'s new `RxHistoryPane` (a dockable, always-
-  visible thumbnail grid, not a modal dialog or a page you must switch to) covers click-to-view
-  browsing; the TX Controls pane's inline stock/template picker plus its existing file-browse flow
-  cover picking a TX source image.
-- **Not carried forward this pass — the real gap**: there is no history→TX/template compositing path
-  at all in the new design — selecting a `RxHistoryPane` entry only loads a read-only preview
+- **Replacement**: partial, updated 2026-08-09 (batch 7). [[spec/07-image-pipeline]]'s
+  `RxHistoryPane` (a dockable, always-visible thumbnail grid, not a modal dialog or a page you must
+  switch to) covers click-to-view browsing — click-to-select-any-thumbnail is a strict superset of
+  `UDHist`'s own step-prev/next spinner (any entry reachable in one click, not just the immediate
+  neighbor), so direct step-through nav is deliberately NOT being added as a separate control; this
+  is a considered scope decision, not an oversight. "Jump to most recent" IS now real — a new
+  `SelectLatestCommand`/"Latest" button (`RxHistoryPaneViewModel.cs`), since mock2's own Gallery draft
+  has no slot for it. **Citation correction**: this ports legacy's `SBPrim` speed button (`Main.cpp:15851-15857`,
+  `UDHist->Position = 0`), not `SBLatest` despite that name's misleading English reading — legacy's
+  ring-buffer nav maps `Position` to a slot via `UpdateHist`'s `n = (m_wPnt-1) - Position`
+  (`Main.cpp:6277-6281`), so `Position = 0` (`SBPrim`) is the newest slot while `SBLatestClick`
+  (`Main.cpp:6407-6413`) actually sets `Position = RxHist.m_Head.m_Cnt-1`, the OLDEST slot still
+  buffered — `SBLatest`'s own real behavior (jump to oldest) is deliberately NOT carried over here.
+  The list itself (and the Receive tab's Previous-frames strip, same shared VM instance) now also
+  refreshes live as new frames land (`IReceiveHistoryStore.Recorded`), fixing a real, separately-tracked
+  gap (spec/16-gui-wiring-survey.md's own PARTIAL finding) that made "jump to newest" meaningless
+  before this fix — the list never included the actual latest frame without a manual refresh. The TX
+  Controls pane's inline stock/template picker plus its existing file-browse flow cover picking a TX
+  source image.
+- **Not carried forward this pass — the real gap**: there is still no history→TX/template compositing
+  path at all in the new design — selecting a `RxHistoryPane` entry only loads a read-only preview
   ([[spec/07-image-pipeline]]), it cannot be dragged into a template or the TX slot the way legacy's
-  drag-in could. Also dropped: direct step-through navigation (`UDHist`-style), one-click
-  jump-to-latest, and both clipboard buttons (copying a history image out, pasting into TX). Clipboard
-  paste as *file-picker-adjacent* TX input is separately named as in-scope in
-  [[spec/07-image-pipeline]]'s TX flow step 1 ("file, clipboard paste, or webcam/screen-capture
-  frame") but has no clipboard-specific UI affordance built yet — same underlying gap either way.
-- **Impact**: users who relied on rapid keyboard/spinner-driven step-through of RX history, or on
-  dragging a history thumbnail directly into a TX template to compose it, or on OS clipboard
-  copy-from-history/paste-to-TX, need to use file-based load/save instead for now (save the history
-  image to a file, then load it via the TX picker). Revisit if this turns out to matter in practice —
-  logged here rather than silently dropped per CLAUDE.md's removal rule.
+  drag-in could. Also still dropped: both clipboard buttons (copying a history image out, pasting into
+  TX) — investigated 2026-08-09 and deliberately deferred, not just skipped: Avalonia's cross-platform
+  `IClipboard` has no first-class bitmap/image API (only `SetDataObjectAsync`/`GetDataAsync` against
+  arbitrary format strings), so a genuinely cross-platform, actual-image-data clipboard copy (matching
+  legacy's real `CopyBitmap`/`PasteBitmap` behavior, not a lower-fidelity file-reference copy) needs
+  its own research pass into what format string(s) Windows/Linux/macOS clipboard consumers actually
+  honor — not a same-batch wiring job. Clipboard paste as *file-picker-adjacent* TX input is separately
+  named as in-scope in [[spec/07-image-pipeline]]'s TX flow step 1 ("file, clipboard paste, or
+  webcam/screen-capture frame") but has no clipboard-specific UI affordance built yet — same
+  underlying gap either way.
+- **Impact**: users who relied on dragging a history thumbnail directly into a TX template to compose
+  it, or on OS clipboard copy-from-history/paste-to-TX, need to use file-based load/save instead for
+  now (save the history image to a file, then load it via the TX picker). Step-through nav and
+  jump-to-latest are both now covered (see Replacement above). Revisit clipboard/drag-in if this turns
+  out to matter in practice — logged here rather than silently dropped per CLAUDE.md's removal rule.
 
 ## CItems custom-item plugin ABI
 

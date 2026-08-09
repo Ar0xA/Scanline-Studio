@@ -45,6 +45,20 @@ public sealed record ReceiveHistoryFilter(string? ModeId = null, DateTimeOffset?
 
 public interface IReceiveHistoryStore
 {
+    /// <summary>Fires with the entry once <see cref="RecordAsync"/>'s write completes (including its
+    /// own retention-trim pass, so a subscriber never gets notified about a row that was already
+    /// trimmed away in the same call) -- the only hook a live UI pane has for "a new frame just
+    /// landed in history," letting the Gallery tab's own list and the Receive tab's "Previous frames"
+    /// strip (same shared <c>RxHistoryPaneViewModel</c> singleton, spec/16-gui-wiring-survey.md's own
+    /// PARTIAL finding: neither refreshed live before this) stay current during an active session
+    /// instead of only at construction/manual-refresh/filter-change. Raised on whatever thread the
+    /// underlying write completes on -- <c>ReceiveHistoryRecorder</c>'s own callers run this from a
+    /// decode-thread <c>Task.Run</c>, not the UI thread -- so a subscriber must marshal to the UI
+    /// thread itself, same "subscriber's own responsibility" contract as
+    /// <see cref="IReceivedImageBuffer.Saved"/>'s own doc comment (a deliberately identical shape to
+    /// that already-established event).</summary>
+    event Action<ReceiveHistoryEntry>? Recorded;
+
     Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default);
 
     /// <summary>Same <see cref="IImageSource"/>-only contract as <see cref="IStockImageLibrary"/> —

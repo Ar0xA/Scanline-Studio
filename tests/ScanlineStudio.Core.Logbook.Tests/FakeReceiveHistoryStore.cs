@@ -9,6 +9,14 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
     public ConcurrentBag<ReceiveHistoryEntry> RecordedEntries { get; } = [];
 
+    public event Action<ReceiveHistoryEntry>? Recorded;
+
+    /// <summary>Test-only hook, not currently invoked by <see cref="RecordAsync"/> itself --
+    /// <c>ReceiveHistoryRecorderTests</c> only exercises the recording path, never a
+    /// <see cref="Recorded"/> subscriber, but this satisfies the interface without leaving the event
+    /// entirely dead (CS0067), matching the sibling fake's own <c>RaiseRecorded</c> convention.</summary>
+    public void RaiseRecorded(ReceiveHistoryEntry entry) => Recorded?.Invoke(entry);
+
     public Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<ReceiveHistoryEntry>>(RecordedEntries.ToList());
 

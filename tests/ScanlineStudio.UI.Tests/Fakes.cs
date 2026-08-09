@@ -469,7 +469,13 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
     public List<ReceiveHistoryFilter> QueryFilters { get; } = [];
 
+    /// <summary>Tracks every <see cref="LoadThumbnailAsync"/> call's (entry, requested dimension) --
+    /// lets a test prove a preview was (or, for the flicker-fix regression, was NOT) re-decoded.</summary>
+    public List<(string EntryId, int MaxDimension)> ThumbnailLoadCalls { get; } = [];
+
     public string ImagesDirectory { get; set; } = "/tmp/scanlinestudio-history";
+
+    public event Action<ReceiveHistoryEntry>? Recorded;
 
     /// <summary>Actually applies the filter (unlike a bare stub) so a test can verify the
     /// Gallery tab's All/Today wiring, not just that some entries render.</summary>
@@ -492,17 +498,29 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
             results = results.Where(e => e.ReceivedAt <= filter.To.Value);
         }
 
-        return Task.FromResult<IReadOnlyList<ReceiveHistoryEntry>>(results.ToList());
+        // Matches SqliteReceiveHistoryStore.QueryAsync's own real "ORDER BY ReceivedAt DESC" -- added
+        // for SelectLatestCommand's own test coverage (batch 7), which relies on Entries already
+        // being newest-first, same as production.
+        return Task.FromResult<IReadOnlyList<ReceiveHistoryEntry>>(results.OrderByDescending(e => e.ReceivedAt).ToList());
     }
 
     public Task<IImageSource> LoadThumbnailAsync(ReceiveHistoryEntry entry, int maxDimension, CancellationToken ct = default)
-        => Task.FromResult(ThumbnailToReturn ?? throw new InvalidOperationException("No thumbnail configured."));
+    {
+        ThumbnailLoadCalls.Add((entry.Id, maxDimension));
+        return Task.FromResult(ThumbnailToReturn ?? throw new InvalidOperationException("No thumbnail configured."));
+    }
 
     public Task RecordAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
     {
         RecordedEntries.Add(entry);
+        Recorded?.Invoke(entry);
         return Task.CompletedTask;
     }
+
+    /// <summary>Test-only: raises <see cref="Recorded"/> WITHOUT going through <see cref="RecordAsync"/>
+    /// -- lets a test simulate "another component recorded something" independently of this fake's
+    /// own <see cref="RecordedEntries"/> tracking.</summary>
+    public void RaiseRecorded(ReceiveHistoryEntry entry) => Recorded?.Invoke(entry);
 
     public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => Task.FromResult(ImagesDirectory);
 
