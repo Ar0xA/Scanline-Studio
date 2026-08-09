@@ -95,15 +95,20 @@ Incoming-frame + Decode-activity (center), Frame-metadata/Unattended-RX/Session-
 
 ### Center column
 
-**Spectrum & waterfall card** (`MainWindow.axaml:303-343`)
+**Spectrum & waterfall card** (`MainWindow.axaml:311-395`) — **UPDATED 2026-08-09, batches 8a/8b**:
+every row in this card is now REAL; the whole card was FAKE-LIVE/STUB when this survey was
+originally written. See `PROJECT_BRIEF.md`'s batch 8a/8b entries and `spec/14-roadmap.md`'s waterfall
+color/palette item for the full auditor-reviewed implementation history — not re-derived here.
 
 | Control | Class | File:line | Note |
 |---|---|---|---|
-| Spectrum plot (left half) | STUB | `MainWindow.axaml:310` | Empty `Border Classes="plot"` — no separate spectrum-only control exists. |
-| Waterfall control (right half) | REAL | `MainWindow.axaml:311`, `WaterfallPaneView.axaml`, `WaterfallPaneViewModel.cs` | Genuinely live: `ISstvSessionService.Waterfall.Frames` pushed from the audio drain thread, coalesced onto the UI thread (`WaterfallPaneViewModel.cs:29-53`), rendered by `Controls/WaterfallControl`. This is the one real plot in the app. |
-| Bins/px, Start, Span `NumericUpDown`s | FAKE-LIVE | `MainWindow.axaml:315,319,323` | Hardcoded `Value="4"/"1000"/"1600"`, no binding. |
-| Gain / Zero `Slider`s | FAKE-LIVE | `MainWindow.axaml:327,331` | Hardcoded `Value="60"/"20"`, no binding. |
-| Both/Spec/WF view segment | STUB | `MainWindow.axaml:333-339` | No `Command`/binding, purely cosmetic `IsChecked="True"` on "Both". |
+| Spectrum plot (left half) | REAL | `MainWindow.axaml:337`, `Controls/SpectrumTraceControl.cs`, `Controls/SpectrumTraceMath.cs` | New (batch 8b): live FFT amplitude-vs-frequency trace, legacy-real SSTV control-tone markers derived from the currently-locked `SstvModeDefinition`, optional peak-hold overlay. Shares `WaterfallControl`'s `ZeroDb`/`GainDb` normalization window. |
+| Waterfall control (right half) | REAL | `MainWindow.axaml:345`, `WaterfallPaneView.axaml`, `WaterfallPaneViewModel.cs`, `Controls/WaterfallControl.cs`, `Controls/WaterfallPalette.cs` | Live per `ISstvSessionService.Waterfall.Frames` as before; now colorized via a 6-stop heatmap gradient (batch 8a, was flat grayscale when this survey was written). |
+| Bins/px `NumericUpDown` | REAL (read-only) | `MainWindow.axaml:355` | New (batch 8b): `IsEnabled="False"` computed telemetry readout (`SpectrumTraceControl.BinsPerPixel`, pushed via a `Mode=OneWayToSource` binding), not a user input — was previously hardcoded `Value="4"`. |
+| Start, Span `NumericUpDown`s | REAL | `MainWindow.axaml:359,363` | New (batch 8b): bound to `WaterfallPaneViewModel.StartHz`/`SpanHz`, controlling the frequency window both plots render — was previously hardcoded `Value="1000"/"1600"`. |
+| Gain / Zero `Slider`s | REAL | `MainWindow.axaml:371,381` | New (batch 8a): bound to `WaterfallPaneViewModel.GainDb`/`ZeroDb`, defaults measured against real captured `.mmv` audio — was previously hardcoded `Value="60"/"20"`. |
+| Peak hold `CheckBox` | REAL | `MainWindow.axaml:384` | New (batch 8b): no mock2 slot existed for this control before batch 8b added it (documented addition, same class as batch 7's "Latest" button) — bound to `WaterfallPaneViewModel.PeakHoldEnabled`. |
+| Both/Spec/WF view segment | REAL | `MainWindow.axaml:387-389` | New (batch 8b): bound to `WaterfallPaneViewModel.IsViewBoth`/`IsViewSpectrumOnly`/`IsViewWaterfallOnly`, driving `ColumnDefinition.Width` via `WaterfallViewModeToColumnWidthConverter` — was previously cosmetic-only `IsChecked="True"` on "Both" with no binding on any of the three.
 
 **Incoming frame card** (`MainWindow.axaml:344-425`)
 
@@ -327,7 +332,7 @@ Window-level Save/Cancel/Reset-ALL machinery is REAL throughout (`SaveCommand` p
 | Language `ComboBox` | REAL | `OptionsWindowView.axaml:24-32` | `AvailableCultures`/`SelectedCulture`, genuinely calls `ILocalizationService.SetCultureAsync` on Save. |
 | Remember-window-position checkbox | STUB | `OptionsWindowView.axaml:40-42` | `IsEnabled="False"` — no window-geometry persistence exists. |
 | JPEG quality `NumericUpDown` | STUB | `OptionsWindowView.axaml:47-49` | `IsEnabled="False"`, `Value="85"` literal. |
-| 7 waterfall/spectrum color buttons (Low/High/FFT-BG/FFT-Signal/FFT-History/FFT-Sync/FFT-Freq) | STUB | `OptionsWindowView.axaml:63-69` | All `IsEnabled="False"` — the new flat-design palette isn't per-element customizable yet. |
+| 7 waterfall/spectrum color buttons (Low/High/FFT-BG/FFT-Signal/FFT-History/FFT-Sync/FFT-Freq) | STUB | `OptionsWindowView.axaml:63-69` | All `IsEnabled="False"` — deliberately, not an oversight: re-confirmed during batch 8 (spec/14-roadmap.md's now-DONE waterfall color/palette item) that the new flat design intentionally has ONE fixed palette, not 7 user-customizable colors (this row's own help text already said so before batch 8 started). The waterfall/spectrum RENDERING is real color now (batches 8a/8b); these 7 per-element pickers were never that item's actual gap and staying disabled is not new/regressed scope. |
 | Reset section | REAL | `OptionsWindowView.axaml:74` | `ResetGeneralToDefaultCommand`. |
 
 ### Audio tab
