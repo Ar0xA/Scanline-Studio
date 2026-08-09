@@ -224,6 +224,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default) => Task.FromResult(ConfiguredPlaybackDeviceName);
 
+    public string? ConfiguredCaptureDeviceName { get; set; }
+
+    public Task<string?> GetConfiguredCaptureDeviceNameAsync(CancellationToken ct = default) => Task.FromResult(ConfiguredCaptureDeviceName);
+
     public double? SlantPpm { get; set; }
 
     public int? SyncOffsetSamples { get; set; }

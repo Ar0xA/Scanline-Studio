@@ -275,6 +275,36 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public async Task GetConfiguredCaptureDeviceNameAsync_ValidDevice_ReturnsItsName()
+    {
+        var (service, _, _, _, _, _) = CreateService();
+
+        var name = await service.GetConfiguredCaptureDeviceNameAsync();
+
+        Assert.Equal("Capture", name);
+    }
+
+    [Fact]
+    public async Task GetConfiguredCaptureDeviceNameAsync_NoCaptureDeviceConfigured_ReturnsNull_NotThrow()
+    {
+        var (service, _, _, _, _, _) = CreateService(captureDeviceId: null);
+
+        var name = await service.GetConfiguredCaptureDeviceNameAsync();
+
+        Assert.Null(name);
+    }
+
+    [Fact]
+    public async Task GetConfiguredCaptureDeviceNameAsync_ConfiguredDeviceNoLongerPresent_ReturnsNull_NotThrow()
+    {
+        var (service, _, _, _, _, _) = CreateService(captureDeviceId: "capture-vanished");
+
+        var name = await service.GetConfiguredCaptureDeviceNameAsync();
+
+        Assert.Null(name);
+    }
+
+    [Fact]
     public async Task TransmitAsync_KeysPttOnThenOffAroundPlayback()
     {
         var (service, _, _, _, radioSession, _) = CreateService();
