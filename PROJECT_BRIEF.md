@@ -249,10 +249,51 @@ UI.Tests 124/124 (was 120, +4), everything else unaffected. **COMMITTED and push
 decisions first (Source labels, Advanced timing, Reset button semantics, squelch), or are real new
 DSP/feature builds, or are architecturally not possible — none are "quick wiring" candidates.
 
-**After the RX telemetry slice is done**, next in `spec/14-roadmap.md`'s proposed order: RX history
-browser affordances → waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail
-items (waterfall/CW-ID may end up partially absorbing pieces of the still-unsplit "Options dialogs"
-item).
+**Batch 7 SHIPPED (2026-08-09): RX history browser affordances.** User: "work on RX history and keep
+in mind to map it to gui items when/if need or required" — checked `MainWindow.axaml`'s actual
+Gallery-tab layout and mock2's own draft before adding anything; deliberately did NOT add a
+step-through prev/next spinner (superseded by the existing click-to-select-any-thumbnail grid, a
+strict superset) and deliberately DEFERRED clipboard image copy-out (Avalonia's `IClipboard` has no
+first-class bitmap API, confirmed via `strings` on `Avalonia.Base.dll` — only generic
+`IDataObject`/format-string plumbing, needing its own cross-platform research pass) — both logged as
+considered scope decisions in `docs/removed-features.md`, not silent omissions. What shipped: new
+`IReceiveHistoryStore.Recorded` event (`SqliteReceiveHistoryStore` fires it after insert+retention-trim,
+isolated with try/catch so a subscriber's exception can't fault the write) wired into
+`RxHistoryPaneViewModel`, so the Gallery list and the Receive tab's Previous-frames strip (same shared
+VM) now refresh live as frames land, not just at construction/manual-refresh/filter-change — closes
+`spec/16-gui-wiring-survey.md`'s own PARTIAL finding. New `SelectLatestCommand`/"Latest" button ports
+legacy's real `SBPrim` speed button (`Main.cpp:15851-15857`) — **not** `SBLatest`, which despite its
+English name actually jumps to the OLDEST buffered frame (`Main.cpp:6407-6413`, traced via
+`UpdateHist`'s ring-buffer mapping at `Main.cpp:6277-6281`) — a citation error the auditor caught and
+I independently re-verified against the cloned legacy source before fixing it everywhere (including a
+matching slip in a test comment the auditor's own review didn't cover).
+
+**Three rounds of auditor review, the third catching something no isolated-VM test could have found.**
+Round 1: a vacuous selection-preservation test (fixed to assert object-identity against the freshly
+rebuilt list, not just `Entry.Id` equality), a preview-flicker/redundant-redecode bug (new
+`_previewedEntryId` tracking field), a stale-refresh race (new monotonic `_refreshGeneration` token),
+and `SqliteReceiveHistoryStore`'s new `ILogger` param made required instead of optional-with-fallback
+to match established DI precedent (all 23 test call sites bulk-updated). Round 2: traced the SBPrim/
+SBLatest citation precisely against `Main.cpp`, and flagged that the flicker fix was a **no-op in the
+real app** — confirmed by reflecting directly against the real `Avalonia.Controls.dll`
+(`SelectingItemsControl.SelectedItemProperty`'s `DefaultBindingMode` is `TwoWay`), meaning
+`Entries.Clear()` pushes a transient `null` into the VM's `SelectedEntry` — and hence nulls the
+preview — *before* the live-refresh re-select line runs, defeating the round-1 fix despite it passing
+every isolated-VM test. Fixed with an `_isRepopulating` guard flag plus an explicit post-refresh
+reconcile step. Added a genuine regression test using a real Avalonia `ListBox` with the same TwoWay
+binding `MainWindow.axaml` uses — verified non-vacuous by disabling the fix and confirming the test
+fails (2 thumbnail decodes instead of 1) before re-enabling it. Round 3: one closing nit (the
+post-refresh reconcile needed to also bump the new `_previewGeneration` token so a slow in-flight
+decode can't resurrect a just-cleared preview) — fixed, confirmed EQUIVALENT-WITH-RISKS/ready to
+commit.
+
+**Verified**: full solution build clean (0 warnings, 0 errors), full suite green — 1657/1657 tests
+(UI.Tests 129/129 was 124, Core.Logbook.Tests 67/67 unaffected, everything else unaffected).
+**COMMITTED (`1df5eac`)** — not yet pushed.
+
+**Next in `spec/14-roadmap.md`'s proposed order**: waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK
+subsystem → small tail items (waterfall/CW-ID may end up partially absorbing pieces of the
+still-unsplit "Options dialogs" item, still blocked on user scoping input, see Item 3 above).
 
 ## Previously (2026-08-08) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
 
