@@ -125,6 +125,53 @@ public class AutoSyncTests
     }
 
     [Fact]
+    public void Branch1Threshold_SwitchesBetween5xAnd2xTheBaseMultiplier_BasedOnAutoSlantEnabled()
+    {
+        // Regression test for a real legacy-parity bug an auditor plan-review caught before this
+        // shipped: Main.cpp:3910/:3917 use `(KRSA->Checked ? 5 : 2) * m_Mult` for branch 1's own
+        // threshold, not a constant -- this port previously hardcoded the `5` side unconditionally,
+        // correct only before an Auto Slant toggle existed to ever make the `2` side reachable.
+        //
+        // Verified via LastBranch1ThresholdForTests directly rather than an empirically-tuned
+        // real-audio splice scenario: the threshold moves BOTH of branch 1's own comparisons in
+        // opposite directions at once (a looser "small step" ceiling but a stricter "large jump"
+        // floor, or vice versa), so a splice sized to trigger at one threshold and not the other would
+        // be fragile and non-obvious to maintain -- a direct property read is the more precise,
+        // more robust check for this specific fix.
+        // branch 1's own threshold is only ever computed while `n < 4` -- CountAutoSyncCluster's own
+        // "how many of the last 16 readings cluster near the current position" count, per
+        // PerfectlySyncedSignal_NeverTriggersAutoSync's own doc comment a CLEAN signal stays clustered
+        // (n>=4) almost immediately after warmup and essentially never revisits n<4 -- so this reuses
+        // SuddenPositionJump_EventuallyTriggersAutoSync's own splice technique (a real discontinuity in
+        // the raw sample stream) purely to scatter the cluster at least once, not to provoke a trigger.
+        var mode = SstvModeRegistry.Robot36;
+        var samples = EncodeRealTransmission(mode, out _);
+        var spliceIndex = samples.Length * 15 / 100;
+        const int spliceSamples = 150;
+        var spliced = new float[samples.Length + spliceSamples];
+        Array.Copy(samples, 0, spliced, 0, spliceIndex);
+        Array.Copy(samples, spliceIndex, spliced, spliceIndex + spliceSamples, samples.Length - spliceIndex);
+
+        var enabledDecoder = new AnalogFmSstvDecoder(11025, autoSlantEnabled: true);
+        enabledDecoder.PushSamples(spliced);
+        var thresholdWhenEnabled = enabledDecoder.LastBranch1ThresholdForTests;
+
+        var disabledDecoder = new AnalogFmSstvDecoder(11025, autoSlantEnabled: false);
+        disabledDecoder.PushSamples(spliced);
+        var thresholdWhenDisabled = disabledDecoder.LastBranch1ThresholdForTests;
+
+        Assert.NotNull(thresholdWhenEnabled);
+        Assert.NotNull(thresholdWhenDisabled);
+        // Exact 5:2 ratio, both derived from the SAME base multiplier (same mode/sample rate for both
+        // decoders) -- cross-multiplied to avoid integer-division rounding rather than dividing either
+        // side directly.
+        Assert.Equal(thresholdWhenEnabled!.Value * 2, thresholdWhenDisabled!.Value * 5);
+        // Sanity: the two values must actually differ, ruling out a no-op fix that always picks one
+        // branch of the ternary regardless of the flag.
+        Assert.NotEqual(thresholdWhenEnabled, thresholdWhenDisabled);
+    }
+
+    [Fact]
     public async Task Avt_NeverRunsAutoSyncBookkeepingAtAll()
     {
         // AVT exclusion is free via InitializeSlant nulling _slantTracker for AVT (ApplySlantTracking

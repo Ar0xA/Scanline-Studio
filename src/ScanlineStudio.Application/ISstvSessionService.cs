@@ -135,6 +135,11 @@ public interface ISstvSessionService : IAsyncDisposable
 
     bool IsLevelOverdriven { get; }
 
+    /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.AutoSlantEnabled"/>
+    /// -- restart-only, safe to read once at construction (no polling needed, this decoder is a DI
+    /// singleton with no live-reconfigure path).</summary>
+    bool AutoSlantEnabled { get; }
+
     double? SyncFrequencyCorrectionHz { get; }
 
     int BufferedSampleCount { get; }

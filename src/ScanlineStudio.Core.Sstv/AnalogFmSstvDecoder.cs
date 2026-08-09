@@ -317,6 +317,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private int _autoSyncBaseMult; // port of m_Mult
     private int _autoSyncDiff; // port of m_AutoSyncDiff
     private int _autoSyncTriggerCountForTests; // test-only: how many times TryAutoSync itself (not manual ReSync) has applied a correction
+    private int? _lastBranch1ThresholdForTests; // test-only: the (_autoSlantEnabled ? 5 : 2) * _autoSyncBaseMult value branch 1 last actually used
 
     // Auto Stop (sys.m_AutoStop, Main.cpp:3930-3937/:3942-3943/:3957) -- the erratic/weak-signal
     // detector sharing AutoStopJob with Auto Sync above. m_AutoStopCnt is genuinely shared: Auto
@@ -545,13 +546,24 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // that it matches any single real legacy Lock state.
     private readonly bool _autoStopEnabled;
 
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false)
+    // Port of legacy's real KRSA->Checked (Main.cpp:1863's Define/AutoSlant .ini key) -- gates only
+    // SlantTracker's own correction-commit branch in ApplySlantTracking (KRSA->Checked's exact scope
+    // per SlantTracker.cs's own doc comment, Main.cpp:3968-4018), not the drift-detection bookkeeping,
+    // which runs unconditionally either way, same reasoning as _autoSyncEnabled/_autoStopEnabled
+    // above. ALSO gates TryAutoSync's own branch-1 threshold (Main.cpp:3910/:3917's
+    // `(KRSA->Checked ? 5 : 2)*m_Mult`) -- auditor plan-review finding: KRSA->Checked is read at that
+    // SEPARATE call site too, not just the slant-commit block; this port previously hardcoded the `5`
+    // side only because this flag didn't exist yet. Restart-only, same reasoning as _afcEnabled above.
+    private readonly bool _autoSlantEnabled;
+
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true)
     {
         _sampleRate = sampleRate;
         _afcEnabled = afcEnabled;
         _autoSyncEnabled = autoSyncEnabled;
         _autoStopEnabled = autoStopEnabled;
         _syncRestartEnabled = syncRestartEnabled;
+        _autoSlantEnabled = autoSlantEnabled;
         _demodulator = new HilbertFmDemodulator(sampleRate);
         _searchBandpassFilter = new SearchBandpassFilter(sampleRate);
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
@@ -991,6 +1003,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// bug to fix by coupling them.</summary>
     public bool IsLevelOverdriven => _levelAgc.CurMax >= 24578.0;
 
+    /// <summary>See <see cref="ISstvDecoder.AutoSlantEnabled"/>. Plain restart-only field readback --
+    /// see <see cref="_autoSlantEnabled"/>'s own doc comment for what this gates.</summary>
+    public bool AutoSlantEnabled => _autoSlantEnabled;
+
     /// <summary>See <see cref="ISstvDecoder.SyncFrequencyCorrectionHz"/>. Same shape as
     /// <see cref="SlantPpm"/>'s fix above, for the same reason: <see cref="_afcTracker"/>, like
     /// <see cref="_slantTracker"/>, is deliberately NOT nulled by <see cref="AbandonInProgressImage"/>
@@ -1215,13 +1231,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // (Main.cpp:3968). AVT exclusion is free: InitializeSlant nulls _slantTracker for AVT, and
     // ApplySlantTracking already returns immediately in that case, before ever reaching this call.
     //
-    // KRSA->Checked (Main.cpp:3886's own entry gate, and the branch-1 threshold ternary at :3910)
-    // resolves to a CONSTANT true in this port -- there is no Auto Slant on/off toggle here
-    // (InitializeSlant runs unconditionally for every non-AVT mode) -- so the outer gate is always
-    // satisfied regardless of sys.m_AutoStop/sys.m_AutoSync's own values (only the individual trigger
-    // conditions below carry their own separate `sys.m_AutoSync &&`/`sys.m_AutoStop &&` terms, via
-    // _autoSyncEnabled/_autoStopEnabled), and branch 1's threshold is always `5 * m_Mult`, never
-    // `2 * m_Mult`. `!m_ASDis` is similarly omitted from every condition below: verified `m_ASDis` is
+    // KRSA->Checked (Main.cpp:3886's own entry gate, plus the branch-1 threshold ternary at :3910/:3917)
+    // -- Main.cpp:3886's own OUTER gate (AutoStop||AutoSync||KRSA->Checked) was never ported as a gate
+    // at all: this method's own bookkeeping (below) runs unconditionally regardless of any of the
+    // three flags' values, matching every reachable state that outer OR can produce anyway (only the
+    // individual trigger conditions below carry their own separate `sys.m_AutoSync &&`/`sys.m_AutoStop
+    // &&` terms, via _autoSyncEnabled/_autoStopEnabled) -- so _autoSlantEnabled adds no new gate here
+    // either. It DOES gate branch 1's own threshold below (`_autoSlantEnabled ? 5 : 2` times the base
+    // multiplier, porting Main.cpp:3910/:3917's `(KRSA->Checked ? 5 : 2)*m_Mult` exactly) -- an earlier
+    // version of this port hardcoded `5 * m_Mult` unconditionally, correct only while no Auto Slant
+    // toggle existed to ever make the `2` side reachable (auditor plan-review finding before
+    // _autoSlantEnabled was added). `!m_ASDis` is similarly omitted from every condition below: verified `m_ASDis` is
     // set to 1 only while replaying the legacy RX staging buffer after a sample-rate/slant
     // recalculation (UpdateSampFreq/RedrawSSTV, Main.cpp:5601-5864) -- a buffered-line-replay mechanism
     // this port doesn't have, so it is provably always false here.
@@ -1260,12 +1280,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // Branch 1 (Main.cpp:3906-3929): can only fire once per image
                 // (!_slantCorrectionsDisabledForRestOfImage, port of !m_AutoSyncCount). Two-part test:
                 // (a) a small, non-noisy step from the immediately preceding observation, AND (b) a
-                // real, large jump from the last stable reference.
+                // real, large jump from the last stable reference. Threshold is `(KRSA->Checked ? 5 :
+                // 2) * m_Mult` in legacy (Main.cpp:3910/:3917) -- auditor plan-review finding: this
+                // port previously hardcoded the `5` side unconditionally, correct only before
+                // _autoSlantEnabled existed to ever make the `2` side reachable.
+                var branch1Threshold = (_autoSlantEnabled ? 5 : 2) * _autoSyncBaseMult;
+                _lastBranch1ThresholdForTests = branch1Threshold;
                 if (_autoSyncEnabled && signalStrongEnough && _pendingSkipSamples == 0
                     && n >= 2 && _autoSyncReferencePosition is { } reference
                     && !_slantCorrectionsDisabledForRestOfImage
-                    && Math.Abs(currentPosition - previousPosition) <= 5 * _autoSyncBaseMult
-                    && Math.Abs(currentPosition - reference) >= 5 * _autoSyncBaseMult)
+                    && Math.Abs(currentPosition - previousPosition) <= branch1Threshold
+                    && Math.Abs(currentPosition - reference) >= branch1Threshold)
                 {
                     TriggerAutoSync(currentPosition);
                     _autoStopCnt = Math.Max(0, _autoStopCnt - 1); // Main.cpp:3925
@@ -3832,6 +3857,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// auto-resyncs on a good signal) needs to observe THIS specifically staying at 0.</summary>
     internal int AutoSyncTriggerCountForTests => _autoSyncTriggerCountForTests;
 
+    /// <summary>Test-only: the actual <c>(_autoSlantEnabled ? 5 : 2) * _autoSyncBaseMult</c> value
+    /// branch 1 last computed and used for its own two threshold comparisons (auditor plan-review
+    /// finding, batch 6) -- <see langword="null"/> until branch 1 has evaluated at least once
+    /// (requires <c>n &lt; 4</c>, where <c>n</c> is <see cref="CountAutoSyncCluster"/>'s own
+    /// "how many of the last 16 readings cluster near the current position" count -- NOT a simple
+    /// observation-index warmup counter; a clean, well-synced signal stays clustered (<c>n &gt;= 4</c>)
+    /// almost immediately and can revisit <c>n &lt; 4</c> later too, e.g. right after a genuine sync
+    /// glitch). Lets a test verify the SELECTED threshold directly, without needing to empirically tune
+    /// a real-audio splice scenario that happens to trigger at one threshold value but not the other --
+    /// both threshold values move the trigger window in opposite directions simultaneously (a looser
+    /// "small step" ceiling but a stricter "large jump" floor, or vice versa), which the existing
+    /// splice-based tests in AutoSyncTests.cs were never designed to isolate.</summary>
+    internal int? LastBranch1ThresholdForTests => _lastBranch1ThresholdForTests;
+
     /// <summary>Test-only visibility into Auto Sync's own observation counter (port of
     /// <c>m_AutoStopACnt</c>) -- gates the 8-line warmup and the 14-vs-10 cluster threshold.</summary>
     internal int AutoSyncObservationCountForTests => _autoSyncObservationCount;
@@ -4124,13 +4163,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // the full design and the two rounds of plan-readiness review this went through.
                 TryAutoSync(_mode!);
 
-                if (_slantCorrectionsDisabledForRestOfImage)
+                if (_slantCorrectionsDisabledForRestOfImage || !_autoSlantEnabled)
                 {
                     // m_AutoSyncCount (Main.cpp:3968), set by a successful ReSync and cleared only at
                     // the next reception's start (:4994): the history/counter bookkeeping legacy runs
                     // unconditionally keeps running, the whole correction branch does not. Deliberately
                     // NOT `ProcessLine(relative)`-and-discard -- see ProcessLineHistoryOnly's own doc
                     // comment (SlantTracker.cs) for what that would additionally (and wrongly) mutate.
+                    // !_autoSlantEnabled routes here too (KRSA->Checked false, Main.cpp:3968's own outer
+                    // condition on the whole 3968-4018 block) -- same "keep history, never commit" path,
+                    // not a separate skip. NOT "SlantPpm stays null" (an earlier version of this
+                    // comment wrongly claimed that, caught by a test actually asserting it and failing):
+                    // SlantTracker.DriftPpm reads 0.0 (non-null) from construction onward regardless of
+                    // this flag, since _currentSampleRate starts equal to _sampleRate
+                    // (SlantTracker.cs:80) -- what actually stays true is SlantPpm never MOVES from
+                    // that 0.0 default, since _currentSampleRate is only ever reassigned inside
+                    // ProcessLine's own commit path, which this branch never reaches. That exactly
+                    // matches legacy leaving SSTVSET.m_SampFreq untouched when the checkbox is off.
                     _slantTracker.ProcessLineHistoryOnly(relative);
                 }
                 else

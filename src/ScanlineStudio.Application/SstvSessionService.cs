@@ -218,6 +218,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <summary>See <see cref="ISstvSessionService.IsLevelOverdriven"/> / <see cref="ISstvDecoder.IsLevelOverdriven"/>.</summary>
     public bool IsLevelOverdriven => _decoder.IsLevelOverdriven;
 
+    /// <summary>See <see cref="ISstvSessionService.AutoSlantEnabled"/> / <see cref="ISstvDecoder.AutoSlantEnabled"/>.</summary>
+    public bool AutoSlantEnabled => _decoder.AutoSlantEnabled;
+
     /// <summary>See <see cref="ISstvSessionService.SyncFrequencyCorrectionHz"/> / <see cref="ISstvDecoder.SyncFrequencyCorrectionHz"/>.</summary>
     public double? SyncFrequencyCorrectionHz => _decoder.SyncFrequencyCorrectionHz;
 

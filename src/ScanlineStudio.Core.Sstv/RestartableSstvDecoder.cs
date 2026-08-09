@@ -54,6 +54,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private readonly bool _syncRestartEnabled;
     private readonly bool _autoSyncEnabled;
     private readonly bool _autoStopEnabled;
+    private readonly bool _autoSlantEnabled;
     private readonly long _warningThresholdSamples;
     private readonly long _criticalThresholdSamples;
     private readonly object _gate = new();
@@ -87,20 +88,21 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false)
-        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples, syncRestartEnabled, autoSyncEnabled, autoStopEnabled)
+    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true)
+        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples, syncRestartEnabled, autoSyncEnabled, autoStopEnabled, autoSlantEnabled)
     {
     }
 
     /// <summary>Test-only seam for injecting short thresholds instead of the real 12h/13h ones --
     /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
     /// trigger is sample-count-based, not wall-clock-based.</summary>
-    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false)
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true)
     {
         _afcEnabled = afcEnabled;
         _syncRestartEnabled = syncRestartEnabled;
         _autoSyncEnabled = autoSyncEnabled;
         _autoStopEnabled = autoStopEnabled;
+        _autoSlantEnabled = autoSlantEnabled;
         _warningThresholdSamples = warningThresholdSamples;
         _criticalThresholdSamples = criticalThresholdSamples;
         _inner = CreateInner();
@@ -257,6 +259,12 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
+    /// <summary>Reads this WRAPPER's own stored flag, not the inner decoder's -- unlike the
+    /// swap-affected telemetry below, this is immutable for the wrapper's whole lifetime (restart-only,
+    /// same reasoning as every constructor-injected toggle here), so there's no post-swap caveat to
+    /// document and no need to take <see cref="_gate"/> to read it.</summary>
+    public bool AutoSlantEnabled => _autoSlantEnabled;
+
     /// <summary>Forwards to whichever inner instance is current. Same post-swap caveat as
     /// <see cref="SignalPeakLevel"/> above -- NOT reliably <see langword="false"/> immediately
     /// after a restart, since the triggering chunk is forwarded to the fresh inner and pre-lock
@@ -314,7 +322,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private AnalogFmSstvDecoder CreateInner()
     {
-        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled);
+        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled);
         decoder.LineDecoded += OnLineDecoded;
         decoder.ModeDetected += OnModeDetected;
         decoder.DecodeRestarted += OnDecodeRestarted;

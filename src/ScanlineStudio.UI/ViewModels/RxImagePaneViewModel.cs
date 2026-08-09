@@ -177,6 +177,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _sstvSession = sstvSession;
         _localization = localization;
         _logger = logger;
+        AutoSlantEnabled = sstvSession.AutoSlantEnabled;
 
         _receivedImage.Updated += OnUpdated;
         _receivedImage.Saved += OnSaved;
@@ -248,13 +249,61 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// on-screen px readout for this quantity to port).</summary>
     public string SyncOffsetSamplesDisplay => SyncOffsetSamples is { } offset ? _localization.GetString("Panes.RxSync.OffsetSamplesFormat", offset) : "—";
 
-    /// <summary>Locked/not-locked half only -- <see cref="SlantPpm"/> non-null means the tracker is
-    /// actively correcting. Deliberately does NOT expose an on/off toggle: legacy's real <c>AutoSlant</c>
-    /// setting (<c>Mmsstv.ini AutoSlant=1</c>) is hardcoded on in this port, with no user-facing
-    /// setting yet to reflect -- see spec/17-rx-telemetry-feasibility.md.</summary>
-    public string AutoCorrectDisplay => SlantPpm is not null
-        ? _localization.GetString("Panes.RxSync.AutoCorrectValue.Locked")
-        : _localization.GetString("Panes.RxSync.AutoCorrectValue.NotLocked");
+    /// <summary>Whether legacy's real <c>AutoSlant</c> setting (<c>ISstvSessionService.AutoSlantEnabled</c>)
+    /// is on -- a plain synchronous read at construction, not an <c>[ObservableProperty]</c>: this is
+    /// documented restart-only (the decoder is a DI singleton with no live-reconfigure path), unlike
+    /// the genuinely-live telemetry polled every 250ms elsewhere in this pane.</summary>
+    public bool AutoSlantEnabled { get; }
+
+    /// <summary>Four-way state, not just locked/not-locked. Checked in this order:
+    /// <list type="number">
+    /// <item>AVT (<see cref="DetectedMode"/>'s <c>Id == "avt"</c> -- a plain string on a DTO already in
+    /// <c>Abstractions.Sstv</c>, not a <c>Core.Sstv</c>/<c>SstvModeRegistry</c> reference, which this
+    /// UI-layer class must not touch) -- literal <c>"—"</c>, matching every other "nothing to show"
+    /// state on this pane (<see cref="CaptureDeviceNameDisplay"/>, <see cref="ClipLoHiDisplay"/>), not
+    /// a locale key.</item>
+    /// <item><see cref="AutoSlantEnabled"/> false -- genuinely off now, not a placeholder. Checked
+    /// BEFORE <see cref="SlantPpm"/>, deliberately: <see cref="SlantPpm"/> is non-null (reading exactly
+    /// <c>0.0</c>) from the moment a non-AVT mode locks, REGARDLESS of this flag's value -- see
+    /// <see cref="ISstvSessionService.AutoSlantEnabled"/>'s own doc comment for why (a genuinely
+    /// unverified assumption in an earlier version of this design, caught by a decoder-level test
+    /// actually failing once written, not by inspection). A naive "<see cref="SlantPpm"/> is null"
+    /// check could never distinguish "off" at all.</item>
+    /// <item><see cref="AutoSlantEnabled"/> true and <see cref="SlantPpm"/> non-null -- "Locked". This
+    /// fires from the very FIRST decoded line of a reception, not after genuine convergence: the
+    /// underlying tracker reports a non-null <c>0.0</c> "no drift measured yet" the instant it's
+    /// constructed, with no property-level distinction from a later genuine zero-ppm reading
+    /// (pre-existing shape of this readout from before this batch, unchanged here). In practice this
+    /// label tracks "a reception is active," not "a slant correction has actually locked" -- an
+    /// auditor-caught imprecision in this label's own name, not a new bug this batch introduces or
+    /// one worth renaming given it predates this batch.</item>
+    /// <item><see cref="AutoSlantEnabled"/> true and <see cref="SlantPpm"/> null -- "on, not locked
+    /// yet". Auditor-caught correction: an earlier version of this comment wrongly claimed this is
+    /// only reachable in a brief pane-construction startup window. Actually reachable for the ENTIRE
+    /// idle period whenever no reception is active: <see cref="ISstvDecoder.SlantPpm"/> returns null
+    /// whenever the decoder's own mode is null, which is true both before the very first reception AND
+    /// between every subsequent one (<c>EndOfImage</c>/<c>AbandonInProgressImage</c> both null it) --
+    /// i.e. most of a typical session's runtime, not a narrow window.</item>
+    /// </list></summary>
+    public string AutoCorrectDisplay
+    {
+        get
+        {
+            if (DetectedMode?.Id == "avt")
+            {
+                return "—";
+            }
+
+            if (!AutoSlantEnabled)
+            {
+                return _localization.GetString("Panes.RxSync.AutoCorrectValue.Off");
+            }
+
+            return SlantPpm is not null
+                ? _localization.GetString("Panes.RxSync.AutoCorrectValue.Locked")
+                : _localization.GetString("Panes.RxSync.AutoCorrectValue.OnNotLocked");
+        }
+    }
 
     /// <summary>Sync-tone nominal target -- 1900Hz for the narrow MN/MC family, 1200Hz otherwise
     /// (<c>AnalogFmSstvDecoder.InitializeAfc</c>'s own <c>syncTargetHz</c> selection, keyed off
@@ -352,6 +401,10 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         OnPropertyChanged(nameof(LineTimeText));
         OnPropertyChanged(nameof(LinesText));
         OnPropertyChanged(nameof(SyncToneDisplay));
+        // AutoCorrectDisplay's own AVT check reads DetectedMode.Id directly -- without this, switching
+        // into/out of AVT wouldn't re-evaluate the "—" case until some OTHER property change happened
+        // to fire first (e.g. SlantPpm's own [NotifyPropertyChangedFor]).
+        OnPropertyChanged(nameof(AutoCorrectDisplay));
         // Auditor-caught gap: LineProgressText depends on DetectedMode.ImageHeight too, not just
         // Progress -- without this, a fresh detection renders "line -- / --" until the SECOND
         // decoded line (ReceivedImageBuffer subscribes to ModeDetected before this VM does, so its
