@@ -137,16 +137,31 @@ AGC gain turned out cheaper than first claimed (zero backend change at all, not 
 public"); two citation line-number slips; and a missed detail that legacy has two selectable RX
 level-meter types, of which this port only ports one.
 
-**Next up: BLOCKED, waiting on user prioritization.** Both documents (`spec/16-gui-wiring-survey.md`,
-`spec/17-rx-telemetry-feasibility.md`) are the deliverables asked for — next step is the user picking
-which cards/screens/telemetry fields to wire first (or asking for a recommended order; §17 already
-has one for the RX telemetry slice specifically). Do not start wiring anything from either survey
-without that direction.
+**Unblocked (2026-08-09): user said "go ahead and start wiring the cheap wins, do have auditor do
+verification though."** Working `spec/17-rx-telemetry-feasibility.md`'s REAL-EASY list in the
+recommended build order, each batch getting 2 rounds of auditor review (plan-free — these are
+wiring/plumbing changes, not DSP ports, so no plan-review round, just post-implementation code
+audit) before commit+push, matching this session's established process elsewhere.
 
-**Order after item 3/GUI-wiring gets unblocked** (stale framing, superseded by the above — kept for
-continuity only): RX history browser affordances → waterfall color/palette →
-OCR/QRZ lookup → CW-ID/FSK subsystem → small tail items, per `spec/14-roadmap.md`'s own proposed
-order (waterfall/CW-ID may end up partially absorbing pieces of item 3 once it's actually split).
+**Batch 1 SHIPPED (`17162c1`)**: Sync&Slant card (Slant ppm, Sync offset, Auto-correct "locked"
+half, Re-sync button), Input-chain card (Buffer, Clipping), Signal-quality card (Sync tone), status
+bar Slant. 2 new `ISstvSessionService` pass-through properties. Auditor caught 2 real bugs in the
+sync-tone math (a sign inversion that would've shown a station's frequency offset mirrored, and a
+missed +3.125Hz/+1.0Hz legacy calibration-offset term) before shipping — both fixed, regression
+tests added tracing the exact worked example already documented in `AnalogFmSstvDecoder.cs`.
+
+**Batch 2 SHIPPED (`0b5d291`)**: Status bar line-progress readout (from `IReceivedImageBuffer.Progress`,
+already-computed, zero new backend), Frame-metadata card's "Started" timestamp (new client-side
+capture at `ModeDetected`), and status bar Buffer readout (opportunistic, reused a batch-1 property
+against a second display site). No blockers either round; one real risk fixed (missing
+property-change notification could show a stale/wrong line total for one frame after a fresh mode
+detection).
+
+**Next up**: batch 3 (RX device name — mirrors the existing TX pattern; luminance histogram/Clip
+Lo-Hi — pure image-domain, no DSP), then whatever's left on §17's list. After the RX telemetry slice
+is done, next in `spec/14-roadmap.md`'s proposed order: RX history browser affordances → waterfall
+color/palette → OCR/QRZ lookup → CW-ID/FSK subsystem → small tail items (waterfall/CW-ID may end up
+partially absorbing pieces of the still-unsplit "Options dialogs" item).
 
 ## Previously (2026-08-08) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
 
