@@ -291,9 +291,58 @@ commit.
 (UI.Tests 129/129 was 124, Core.Logbook.Tests 67/67 unaffected, everything else unaffected).
 **COMMITTED (`1df5eac`)** — not yet pushed.
 
-**Next in `spec/14-roadmap.md`'s proposed order**: waterfall color/palette → OCR/QRZ lookup → CW-ID/FSK
-subsystem → small tail items (waterfall/CW-ID may end up partially absorbing pieces of the
-still-unsplit "Options dialogs" item, still blocked on user scoping input, see Item 3 above).
+**Waterfall color/palette: user confirmed "Full item"** despite this doc's own prior deprioritization
+note (asked explicitly via AskUserQuestion since the roadmap entry says "re-confirm before starting,
+don't silently reprioritize"). Full plan + 2 rounds of auditor plan-review before any code (UI design
+touching a "worth real design attention" visualization surface, spec/09-ui.md) -- plan-review caught
+3 real blockers on paper before implementation: the proposed dB normalization range would have
+saturated every real signal to solid red (fixed by actually measuring real captured audio -- fed all
+8 `.mmv` golden-vector fixtures through the real `WaterfallSource`, not guessed); the mocked
+Bins/px+Start+Span controls were over-determined (3 independent knobs for 2 real degrees of freedom,
+fixed by making Bins/px a read-only computed readout); and a naive `IsVisible`-based Both/Spec/WF
+toggle would have left a half-empty card (fixed by driving `ColumnDefinition.Width` directly).
+Scoped down from the roadmap's full inventory to what's realistic: interactive notch-filter marker
+deferred (no notch-filter DSP block exists anywhere in `Core.Sstv`, confirmed by grep -- that's really
+"build a new audio DSP feature," its own future backlog item) and the debug "digital scope" tool/
+dedicated signal meter deferred (no mock2 slot for either, and the roadmap's own text already judges
+the debug scope "probably the lowest-value item in this list") -- to be documented in
+spec/14-roadmap.md once the shippable pieces (batches A+B) are both done.
+
+**Batch 8a SHIPPED (2026-08-09): waterfall gradient palette + Gain/Zero wiring.** Replaced flat
+grayscale with a 6-stop SDR-style heatmap (WSJT-X/SDR++/GQRX convention, not legacy's flat
+black/white -- spec/06 exempts this visualization from strict port fidelity), preserving legacy's
+real Low=weak/High=strong semantic (verified against `Main.cpp`/`ComLib.cpp`'s `InitColorTable` --
+legacy's own internal color-table index order is inverted, the port keeps the EXTERNAL semantic, not
+that inversion). Wired mock2's previously-fake "Gain"/"Zero" sliders to real
+`WaterfallControl.GainDb`/`ZeroDb`, defaults measured (not guessed) from real captured audio: real
+signal peaks 38-46dB, noise floor -50 to -65dB (this port's FFT magnitude is unnormalized, not a
+conventional -100..0 dBFS scale).
+
+**3 rounds of auditor code review caught 2 real bugs**, both non-vacuously tested (verified by
+temporarily disabling each fix and confirming the regression test actually failed first): (1)
+`Dispose()` left stale `_colorHistory`/`_bins` behind, so switching away from the Receive tab (whose
+non-selected `TabItem` content detaches, calling `Dispose`) permanently blanked the waterfall for the
+rest of the session on switching back -- the next frame's init-guard silently skipped recreating the
+bitmap. (2) A new parallel `_dbHistory` buffer (needed so a slider drag recolors already-rendered
+rows, not just future ones) zero-filled on allocation, indistinguishable from a real 0dB reading --
+the first slider move on a fresh session could flood never-written rows solid red; fixed with a
+`float.NegativeInfinity` sentinel. Also discovered mid-review: Avalonia's HEADLESS test renderer does
+NOT reliably round-trip raw pixel bytes through `WriteableBitmap.Lock()` (confirmed via a throwaway
+diagnostic -- a real, environment-specific artifact, not a production bug), so pixel-level tests read
+the control's own managed buffer via reflection instead of the bitmap; BGRA byte order itself was
+separately confirmed via one real (non-headless) Avalonia render on this dev box's real second
+monitor -- R=247/G=115/B=34 for a 46dB signal, matching the calculated expected value and ruling out
+a swapped R/B (which would have shown blue, not orange-red).
+
+**Verified**: full solution build clean (0 warnings, 0 errors), `UI.Tests` 145/145 (was 129).
+**COMMITTED and pushed (`1cc4568`).**
+
+**Next**: Batch 8b (FFT/scope spectrum trace view + Both/Spec/WF toggle + peak-hold + zoom/bandwidth
+controls) -- plan already auditor-approved (READY-TO-BUILD) alongside batch 8a's, not yet
+implemented. See the plan-review verdict above for the mode-derived marker-frequency design (uses
+`SstvModeDefinition.NarrowModeCode`/`LuminanceMinHz`/`LuminanceMaxHz`, already-verified port
+infrastructure, not new research) and the `ModeDetected`-must-marshal-to-UI-thread nit still to apply
+during implementation.
 
 ## Previously (2026-08-08) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
 
