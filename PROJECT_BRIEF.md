@@ -337,12 +337,49 @@ a swapped R/B (which would have shown blue, not orange-red).
 **Verified**: full solution build clean (0 warnings, 0 errors), `UI.Tests` 145/145 (was 129).
 **COMMITTED and pushed (`1cc4568`).**
 
-**Next**: Batch 8b (FFT/scope spectrum trace view + Both/Spec/WF toggle + peak-hold + zoom/bandwidth
-controls) -- plan already auditor-approved (READY-TO-BUILD) alongside batch 8a's, not yet
-implemented. See the plan-review verdict above for the mode-derived marker-frequency design (uses
-`SstvModeDefinition.NarrowModeCode`/`LuminanceMinHz`/`LuminanceMaxHz`, already-verified port
-infrastructure, not new research) and the `ModeDetected`-must-marshal-to-UI-thread nit still to apply
-during implementation.
+**Batch 8b SHIPPED (2026-08-09): FFT spectrum trace view + Both/Spec/WF toggle + peak-hold + zoom.**
+New `SpectrumTraceControl` fills mock2's previously-empty "Spectrum" plot placeholder: real
+amplitude-vs-frequency line trace, markers at legacy's real SSTV control-tone frequencies derived
+from the currently-locked `SstvModeDefinition` (reuses `SstvModeRegistry.cs`'s own already-verified
+`NarrowModeCode is not null ? 1900.0 : 1200.0` sync-tone pattern, not re-derived), an optional
+peak-hold overlay (legacy `sys.m_FFTStg`, time-based not frame-based decay so it's frame-rate
+independent), sharing `WaterfallControl`'s `ZeroDb`/`GainDb` normalization window for its vertical
+scale so both plots stay visually consistent. Wired mock2's remaining fake controls: Bins/px became
+a read-only computed readout (was three independent knobs for two real degrees of freedom, per
+auditor plan-review); Start/Span drive a continuous frequency window (legacy's own zoom is 3 discrete
+presets, a deliberate generalization); the Both/Spec/WF segment now really toggles plot visibility via
+a new `WaterfallViewModeToColumnWidthConverter` driving `ColumnDefinition.Width` directly (not
+`IsVisible` alone, which would leave the collapsed plot's own Star column at half-width). New
+Peak-hold checkbox (no mock2 slot, same class of justified addition as batch 7's "Latest" button).
+
+**3 rounds of plan-review + 2 rounds of code-review caught real issues at both stages.** Plan-review:
+the proposed dB range would have saturated every real signal to solid red (fixed in batch 8a via
+actual measurement against real `.mmv` captures); Bins/px/Start/Span were over-determined; a naive
+`IsVisible` toggle would leave a half-empty card. Code-review: `ModeDetected` needed explicit
+UI-thread marshaling (fires on the audio drain thread, same class of bug as batch 4's telemetry
+work); `BinsPerPixel` was being computed inside `Render()`, mutating the binding graph mid-render --
+moved to `ArrangeOverride`, verified with a REAL headless layout pass (`Window.Show()`+`RunJobs()`,
+confirmed empirically that a bare property set does NOT exercise real Avalonia layout, so the fix
+needed a genuinely different test technique than every other control test in this codebase); a `Pen`
+was being allocated per line segment in the trace's hot path (~300 allocations/render at 21fps); a
+narrow-mode marker-set citation slip (1200Hz must be in the fixed base set unconditionally to match
+legacy's real narrow-mode markers, `Main.cpp:3269-3270`) -- the auditor's own round-2 "matches legacy
+exactly" claim had an arithmetic error, self-caught and corrected in round 3.
+
+**The auditor also raised a real Avalonia-vs-WPF uncertainty they could not resolve from their own
+environment** (does `ColumnDefinition.Width` even bind against a `DataContext`, a classic WPF
+failure mode) -- verified empirically rather than assumed either way: two throwaway harnesses in a
+real (non-headless) window, the second using the ACTUAL production converter class with the exact
+XAML syntax from `MainWindow.axaml`, confirmed Avalonia 11's `ColumnDefinition` genuinely does bind
+correctly (unlike WPF). Same "verify, don't guess" discipline used for BGRA byte order in batch 8a.
+
+**Verified**: full solution build clean (0 warnings, 0 errors), full suite green -- 1698/1698 tests
+(`UI.Tests` 171/171, was 145; everything else unaffected). **COMMITTED and pushed (`71a7daf`).**
+
+**Waterfall color/palette item is now fully shipped.** `spec/14-roadmap.md` updated: interactive
+notch-filter marker and the debug "digital scope"/signal-strength-meter sub-items explicitly deferred
+(documented reasoning, not silently dropped) -- no notch-filter DSP block exists anywhere in
+`Core.Sstv` (confirmed by grep), and no mock2 slot exists for the other two.
 
 ## Previously (2026-08-08) — Occupied bandwidth investigated and abandoned; "Tone map" freebie shipped instead.
 
