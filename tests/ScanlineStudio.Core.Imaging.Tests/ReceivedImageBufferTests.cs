@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 
@@ -18,7 +19,7 @@ public sealed class ReceivedImageBufferTests
     public void OnLineDecoded_CopiesWholeImage_NotJustTheReportedRow()
     {
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         var pixels = new Rgb24[4];
         pixels[0] = new Rgb24(1, 1, 1);
         pixels[1] = new Rgb24(2, 2, 2);
@@ -39,7 +40,7 @@ public sealed class ReceivedImageBufferTests
     public void Current_ReturnsSnapshot_UnaffectedByLaterMutationOfTheLiveBuffer()
     {
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         var pixels = new Rgb24[4];
         pixels[0] = new Rgb24(1, 1, 1);
         var liveImage = new MutableTestImageSource(2, 2, pixels);
@@ -55,7 +56,7 @@ public sealed class ReceivedImageBufferTests
     public void OnDecodeRestarted_ResetsToAnEmptyImage()
     {
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         var pixels = new Rgb24[4];
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, new MutableTestImageSource(2, 2, pixels)));
 
@@ -69,7 +70,7 @@ public sealed class ReceivedImageBufferTests
     public void Updated_FiresOnBothLineDecodedAndDecodeRestarted()
     {
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         var updateCount = 0;
         buffer.Updated += () => updateCount++;
 
@@ -83,7 +84,7 @@ public sealed class ReceivedImageBufferTests
     public void Progress_FreshBuffer_IsNull()
     {
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
 
         Assert.Null(buffer.Progress);
     }
@@ -92,7 +93,7 @@ public sealed class ReceivedImageBufferTests
     public void Progress_AfterModeDetected_IsZero()
     {
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
 
         decoder.RaiseModeDetected(TestMode);
 
@@ -104,7 +105,7 @@ public sealed class ReceivedImageBufferTests
     {
         // 10-row image, single-row-per-event family (step unknowable from just one event).
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         decoder.RaiseModeDetected(TestMode);
         var image = new MutableTestImageSource(1, 10, new Rgb24[10]);
 
@@ -118,7 +119,7 @@ public sealed class ReceivedImageBufferTests
     {
         // Single-row-per-event family: step = 1.
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         decoder.RaiseModeDetected(TestMode);
         var image = new MutableTestImageSource(1, 10, new Rgb24[10]);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image));
@@ -133,7 +134,7 @@ public sealed class ReceivedImageBufferTests
     {
         // PD/MP/RM8/RM12-shaped: Line advances by 2 per event.
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         decoder.RaiseModeDetected(TestMode);
         var image = new MutableTestImageSource(1, 10, new Rgb24[10]);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image));
@@ -150,7 +151,7 @@ public sealed class ReceivedImageBufferTests
         // must read exactly 1.0, not 10.0/10.0's own asymptotic near-miss for paired families --
         // this pins the snap-to-1.0 behavior directly, not just that it happens to equal 1.0 here.
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         decoder.RaiseModeDetected(TestMode);
         var image = new MutableTestImageSource(1, 10, new Rgb24[10]);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image));
@@ -165,7 +166,7 @@ public sealed class ReceivedImageBufferTests
     public void Progress_DecodeRestarted_ResetsToNull()
     {
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         decoder.RaiseModeDetected(TestMode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, new MutableTestImageSource(1, 10, new Rgb24[10])));
 
@@ -178,7 +179,7 @@ public sealed class ReceivedImageBufferTests
     public async Task SaveAsync_WritesARealPngFileMatchingCurrentPixels()
     {
         var decoder = new FakeSstvDecoder();
-        var buffer = new ReceivedImageBuffer(decoder);
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         var pixels = new[] { new Rgb24(10, 20, 30) };
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, new MutableTestImageSource(1, 1, pixels)));
         var path = Path.Combine(Path.GetTempPath(), $"yoniq-received-image-test-{Guid.NewGuid()}.png");
@@ -192,6 +193,108 @@ public sealed class ReceivedImageBufferTests
             Assert.Equal(10, pixel.R);
             Assert.Equal(20, pixel.G);
             Assert.Equal(30, pixel.B);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_RaisesSaved_WithTheDestinationPath()
+    {
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, new MutableTestImageSource(1, 1, new[] { new Rgb24(1, 2, 3) })));
+        var path = Path.Combine(Path.GetTempPath(), $"yoniq-received-image-test-{Guid.NewGuid()}.png");
+
+        string? raisedPath = null;
+        buffer.Saved += (p, _) => raisedPath = p;
+
+        try
+        {
+            await buffer.SaveAsync(path);
+            Assert.Equal(path, raisedPath);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task SaveAsync_ASavedSubscriberThatThrows_DoesNotFaultTheSaveTask()
+    {
+        // Regression test for a real bug an auditor caught: Saved is raised INSIDE SaveAsync's own
+        // Task.Run body, and ReceiveHistoryRecorder (the sole production caller of SaveAsync) awaits
+        // that exact Task before recording the RX history row. An uncaught subscriber exception would
+        // fault the save itself, so a fully-successful image write would still lose its history row.
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, new MutableTestImageSource(1, 1, new[] { new Rgb24(1, 2, 3) })));
+        var path = Path.Combine(Path.GetTempPath(), $"yoniq-received-image-test-{Guid.NewGuid()}.png");
+
+        buffer.Saved += (_, _) => throw new InvalidOperationException("simulated subscriber failure");
+
+        try
+        {
+            // Must complete without throwing, and the file must still have been written -- the
+            // subscriber's own failure must not undo or fault the underlying save.
+            await buffer.SaveAsync(path);
+            Assert.True(File.Exists(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Generation_BumpsOnModeDetectedAndOnDecodeRestarted_NotOnLineDecoded()
+    {
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
+
+        Assert.Equal(0, buffer.Generation);
+
+        decoder.RaiseModeDetected(TestMode);
+        Assert.Equal(1, buffer.Generation);
+
+        // Same image, just a new decoded row -- must NOT bump the generation.
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, new MutableTestImageSource(1, 1, new[] { new Rgb24(1, 2, 3) })));
+        Assert.Equal(1, buffer.Generation);
+
+        decoder.RaiseDecodeRestarted(TestMode);
+        Assert.Equal(2, buffer.Generation);
+    }
+
+    [Fact]
+    public async Task SaveAsync_RaisesSaved_WithTheGenerationCapturedAtInvocationTime_NotAtCompletionTime()
+    {
+        // Regression test for a real race an auditor round-2 review caught: the generation must be
+        // captured when SaveAsync is CALLED (alongside its own snapshot of Current), not whenever the
+        // background write happens to finish -- otherwise a ModeDetected arriving WHILE the save is
+        // still in flight would already have bumped Generation before Saved ever fires, making every
+        // save look "stale" even though it correctly captured the frame that was current when the
+        // caller actually invoked it.
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
+        decoder.RaiseModeDetected(TestMode);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, new MutableTestImageSource(1, 1, new[] { new Rgb24(1, 2, 3) })));
+        var path = Path.Combine(Path.GetTempPath(), $"yoniq-received-image-test-{Guid.NewGuid()}.png");
+
+        int? raisedGeneration = null;
+        buffer.Saved += (_, g) => raisedGeneration = g;
+
+        try
+        {
+            var saveTask = buffer.SaveAsync(path);
+            // Simulates a NEW mode detection arriving while the save above is still in flight.
+            decoder.RaiseModeDetected(TestMode);
+            await saveTask;
+
+            Assert.Equal(1, raisedGeneration);
+            Assert.Equal(2, buffer.Generation);
         }
         finally
         {

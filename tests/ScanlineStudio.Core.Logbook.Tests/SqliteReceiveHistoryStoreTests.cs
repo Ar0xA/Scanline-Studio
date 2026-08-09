@@ -104,6 +104,47 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
+    public async Task QueryAsync_DateRangeCompareIsLexicographicOnStoredOffset_NotInstantBased()
+    {
+        // Regression test for a real bug an auditor caught in the UI layer: RxHistoryPaneViewModel's
+        // "frames today" status-bar count originally queried UTC midnight, on the (false) assumption
+        // that ReceivedAt is always stored UTC -- but ReceiveHistoryRecorder.RecordCompletedImageAsync/
+        // RecordAbandonedImageAsync both actually write DateTimeOffset.Now (LOCAL offset). This
+        // store's own From/To filter (EnsureSchema's ReceivedAt TEXT column, compared via SQLite's
+        // default BINARY collation on ToString("O")) is a LEXICOGRAPHIC TEXT compare, not an
+        // instant-based one -- so a query whose own offset differs from the stored rows' offset can
+        // silently miss a row that IS chronologically in range once real instants are compared.
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), dbPath);
+
+            // 2026-08-09 20:00 at UTC-5 == 2026-08-10 01:00Z -- a real instant strictly AFTER UTC
+            // midnight on the 10th.
+            var storedAtLocalOffset = new DateTimeOffset(2026, 8, 9, 20, 0, 0, TimeSpan.FromHours(-5));
+            await store.RecordAsync(new ReceiveHistoryEntry("1", storedAtLocalOffset, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+
+            // A query anchored on the SAME offset as the write finds it -- this is the property the
+            // "local Today" fix (matching ReceiveHistoryRecorder's own local-offset writes) relies on.
+            var matchingOffsetQuery = new ReceiveHistoryFilter(From: new DateTimeOffset(2026, 8, 9, 0, 0, 0, TimeSpan.FromHours(-5)));
+            Assert.Single(await store.QueryAsync(matchingOffsetQuery));
+
+            // The SAME real instant is >= UTC midnight on the 10th (2026-08-10T01:00:00Z >=
+            // 2026-08-10T00:00:00Z), so an instant-based compare WOULD find it here too -- but the
+            // stored string "2026-08-09T20:00:00.0000000-05:00" sorts BEFORE the query string
+            // "2026-08-10T00:00:00.0000000+00:00" (day-digit '0' < '1' is the first difference),
+            // so the lexicographic compare misses it. This is exactly the class of bug a UTC-anchored
+            // query hit against these locally-offset rows in production.
+            var utcMidnightNextDayQuery = new ReceiveHistoryFilter(From: new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
+            Assert.Empty(await store.QueryAsync(utcMidnightNextDayQuery));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
     public async Task QueryAsync_OrdersMostRecentFirst()
     {
         var dbPath = TempDbPath();

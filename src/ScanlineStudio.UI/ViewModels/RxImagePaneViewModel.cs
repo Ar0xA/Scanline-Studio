@@ -128,6 +128,13 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(BufferedSampleCountStatusBarDisplay))]
     private int _bufferedSampleCount;
 
+    /// <summary>Backs <see cref="AgcGainDisplay"/> -- see that property's own doc comment for the
+    /// derivation. Never <see langword="null"/>, same lifetime as
+    /// <see cref="ISstvSessionService.SignalPeakLevel"/> itself.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AgcGainDisplay))]
+    private double _signalPeakLevel;
+
     /// <summary>The currently (or most recently) auto-detected RX mode -- real data from
     /// <see cref="ISstvSessionService.ModeDetected"/>. There is no manual "lock to a specific
     /// mode" decode feature in this port (<see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder"/>
@@ -138,6 +145,21 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [ObservableProperty]
     private SstvModeDefinition? _detectedMode;
 
+    /// <summary>Frame-metadata card's "Size on disk" row -- real, but only for a COMPLETED save: set
+    /// from <see cref="IReceivedImageBuffer.Saved"/> (fired once <see cref="IReceivedImageBuffer.SaveAsync"/>'s
+    /// write finishes), the only hook a live pane has to "what file did this frame end up as" -- the
+    /// production writer, <c>ReceiveHistoryRecorder</c>, is a wholly separate class in a different
+    /// layer with no reference back to this pane. Reset to <see langword="null"/> on every fresh
+    /// <see cref="OnModeDetected"/> (a new/restarted decode has no saved file yet), same lifetime
+    /// rule as <see cref="StartedAt"/>. An abandoned/partial image's own save (which
+    /// <c>ReceiveHistoryRecorder</c> deliberately routes around <see cref="IReceivedImageBuffer.SaveAsync"/>
+    /// for -- see that class's own doc comment) never raises this event, so this stays "—" for a
+    /// frame that gets superseded before completing, matching every other placeholder in this
+    /// pane.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FileSizeDisplay))]
+    private long? _fileSizeBytes;
+
     public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogger<RxImagePaneViewModel> logger)
     {
         _receivedImage = sstvSession.ReceivedImage;
@@ -146,6 +168,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _logger = logger;
 
         _receivedImage.Updated += OnUpdated;
+        _receivedImage.Saved += OnSaved;
         sstvSession.ModeDetected += OnModeDetected;
 
         _telemetryTimer = new DispatcherTimer(TelemetryPollInterval, DispatcherPriority.Background, (_, _) => PollTelemetry());
@@ -188,6 +211,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// disambiguate a bare time-of-day against).</summary>
     public string StartedDisplay => StartedAt is { } startedAt
         ? _localization.GetString("Panes.RxFrameMeta.StartedValueFormat", startedAt.UtcDateTime)
+        : "—";
+
+    /// <summary>See <see cref="FileSizeBytes"/>'s own doc comment for what sets/clears this. Shown in
+    /// kB (matching mock2's own "198 kB" wording), not a raw byte count.</summary>
+    public string FileSizeDisplay => FileSizeBytes is { } bytes
+        ? _localization.GetString("Panes.RxFrameMeta.FileSizeValueFormat", bytes / 1024.0)
         : "—";
 
     /// <summary>Legacy's own "Sync &amp; slant" readout formula (<c>TMmsstv::DrawSlantInfo</c>,
@@ -271,6 +300,24 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         ? _localization.GetString("Panes.RxInput.ClippingValue.Overdriven")
         : _localization.GetString("Panes.RxInput.ClippingValue.Normal");
 
+    /// <summary>Legacy's own AGC gain (<c>CLVL::m_agc</c>, <c>sstv.h:233</c>), derived client-side
+    /// from the already-real <see cref="SignalPeakLevel"/> -- no new backend property needed
+    /// (spec/17-rx-telemetry-feasibility.md's own audit correction: <c>LevelAgc.cs:103</c>'s
+    /// <c>_agc = curMax &gt; 32.0 ? 16384.0 / curMax : 16384.0 / 32.0</c> is a pure function of the
+    /// already-exposed peak level). <see cref="SignalPeakLevel"/> is this port's own <c>[0,~1.0]</c>
+    /// scale, so it's rescaled back to legacy's int16-ish domain (<c>*32768.0</c>) before applying
+    /// legacy's exact formula, matching <c>SignalPeakLevel</c>'s own doc comment for that
+    /// conversion.</summary>
+    public string AgcGainDisplay
+    {
+        get
+        {
+            var curMax = SignalPeakLevel * 32768.0;
+            var agc = curMax > 32.0 ? 16384.0 / curMax : 16384.0 / 32.0;
+            return _localization.GetString("Panes.RxInput.AgcValueFormat", agc);
+        }
+    }
+
     [RelayCommand]
     private void RequestReSync() => _sstvSession.RequestReSync();
 
@@ -284,6 +331,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         SyncFrequencyCorrectionHz = _sstvSession.SyncFrequencyCorrectionHz;
         IsLevelOverdriven = _sstvSession.IsLevelOverdriven;
         BufferedSampleCount = _sstvSession.BufferedSampleCount;
+        SignalPeakLevel = _sstvSession.SignalPeakLevel;
     }
 
     partial void OnDetectedModeChanged(SstvModeDefinition? value)
@@ -308,6 +356,54 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         {
             DetectedMode = mode;
             StartedAt = DateTimeOffset.UtcNow;
+            FileSizeBytes = null;
+        });
+    }
+
+    /// <summary>Auditor round 2 finding: a round-1 version of this staleness guard captured its OWN
+    /// counter at THIS method's own entry -- too late. The window that matters starts at
+    /// <see cref="IReceivedImageBuffer.SaveAsync"/>'s own invocation (the encode + disk write it
+    /// performs), and a superseding <see cref="ISstvSessionService.ModeDetected"/> landing anywhere
+    /// in THAT window -- the likely interleaving for back-to-back bulk-WAV-decode restarts, not an
+    /// edge case -- would already have bumped a same-class counter before this method ever ran,
+    /// defeating the check. Comparing against <see cref="IReceivedImageBuffer.Generation"/> instead
+    /// closes that window: it's captured by the buffer itself, under the same lock as its own
+    /// snapshot, at <c>SaveAsync</c>'s true start (see <see cref="IReceivedImageBuffer.Saved"/>'s own
+    /// doc comment) and handed to this method as
+    /// <paramref name="generation"/>, then compared here against the buffer's OWN then-current value
+    /// -- not a second, independently-incremented counter on this class that could drift out of
+    /// step. A residual sliver stays open, deliberately accepted rather than fixed (auditor round 3):
+    /// a <c>ModeDetected</c> landing in the recorder's own pre-<c>SaveAsync</c> setup (settings
+    /// resolve + directory creation, no image work) is invisible to this guard -- closing it would
+    /// need threading a generation from the recorder's own completion handler into
+    /// <c>SaveAsync</c>'s caller, more API churn than a cosmetic readout justifies.</summary>
+    private void OnSaved(string path, int generation)
+    {
+        long length;
+        try
+        {
+            length = new FileInfo(path).Length;
+        }
+        catch (Exception ex)
+        {
+            // Best-effort -- a race against a concurrent delete/move of a file this pane itself just
+            // finished writing is not expected, but must not crash the save-completion callback.
+            Log.ReadSavedFileSizeFailed(_logger, ex);
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_receivedImage.Generation != generation)
+            {
+                // A newer image has started (or the current one was blanked by a restart) at some
+                // point between this save being invoked and this post actually running -- this size
+                // belongs to a frame that's no longer the one on screen. Drop it rather than show a
+                // stale reading.
+                return;
+            }
+
+            FileSizeBytes = length;
         });
     }
 
@@ -364,5 +460,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured RX capture device name failed")]
         public static partial void LoadCaptureDeviceNameFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the just-saved RX image's file size failed")]
+        public static partial void ReadSavedFileSizeFailed(ILogger logger, Exception ex);
     }
 }
