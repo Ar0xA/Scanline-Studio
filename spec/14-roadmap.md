@@ -4502,13 +4502,31 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   "History-tab navigation" entry) — step-through nav, one-click jump-to-latest, clipboard
   copy-out/paste-in. `IReceiveHistoryStore`/`ReceiveHistoryEntry` already has the query surface
   this would sit on top of (this session's own Gallery-metadata work extended it further).
-- [ ] **Waterfall color/palette rendering** — still plain grayscale: no 7-color palette
-  (gradient/FFT-background/trace/peak-hold/sync-marker/freq-marker), no separate FFT/scope trace
-  view, no peak-hold/persistence overlay, no zoom/bandwidth-range presets, no interactive
-  notch-filter marker, no signal-strength meter. Sizes Low-to-Medium-high individually; this doc's
-  own Phase-4+ section already deliberately deprioritized this as "a complete inventory, not a
-  priority push" — re-confirm that's still the right call before starting, don't silently
-  reprioritize just because it's on this list.
+- [x] **Waterfall color/palette rendering** — **DONE (2026-08-09), batches 8a+8b.** User explicitly
+  confirmed "full item" (asked directly since this entry's own text flagged re-confirming the prior
+  deprioritization first). Shipped: 6-stop SDR-style heatmap gradient replacing flat grayscale
+  (`WaterfallControl`/`WaterfallPalette`, batch 8a, commit `1cc4568`) with `Gain`/`Zero` sliders
+  wired to a real dB-normalization window (defaults measured against real captured `.mmv` audio, not
+  guessed); a new `SpectrumTraceControl` FFT amplitude-vs-frequency trace with legacy-real SSTV
+  control-tone markers (sync/black/leader/white, mode-derived), a peak-hold overlay (legacy
+  `sys.m_FFTStg`, time-based decay), and continuous Start/Span zoom (generalizing legacy's 3 discrete
+  presets) plus a working Both/Spec/WF view toggle (batch 8b, commit `71a7daf`). Both batches went
+  through full plan + multi-round auditor review (this visualization is explicitly NOT a legacy port,
+  spec/06-sstv-dsp.md, so review focused on internal-consistency/UI-design risk, not DSP equivalence)
+  — see `PROJECT_BRIEF.md`'s batch 8a/8b entries for the real bugs caught (a `Dispose()` lifecycle
+  bug, an unwritten-history-row color-flood bug, a `Render()`-time binding-graph mutation, a
+  narrow-mode marker citation slip) and the empirical verifications performed (BGRA byte order and
+  `ColumnDefinition.Width`-binding-resolves-in-Avalonia both confirmed via real non-headless renders,
+  not assumed).
+  - **Deliberately deferred, not silently dropped** (documented here per this doc's own convention,
+    not `docs/removed-features.md` since nothing is being REMOVED — these never existed in this port):
+    **interactive notch-filter marker** — no notch-filter DSP block exists anywhere in
+    `ScanlineStudio.Core.Sstv` (confirmed by `grep`, not assumed); building the marker without a
+    backing filter would be decoration with no function. This is really "add a new audio notch-filter
+    DSP feature," out of this item's own scope — needs its own future backlog entry if wanted.
+    **Dedicated signal-strength meter, legacy debug "digital scope" tool** — no mock2 slot exists for
+    either, and this doc's own original text already judged the debug scope "probably the lowest-value
+    item in this list."
 - [ ] **OCR/QRZ lookup** — no OCR anywhere; QRZ needs new API-key config (legacy hardcoded a
   personal account password, not being resurrected). Large, genuinely new feature, not a port.
 - [ ] **CW-ID / FSK station-ID subsystem** — real, working legacy feature (TX CW-ID tone + RX
