@@ -52,7 +52,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_UpdatedEvent_RefreshesImageOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Null(vm.Image);
         ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseUpdated();
@@ -65,7 +65,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_ModeDetectedEvent_UpdatesModeCardTextsOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("—", vm.DetectedModeText);
         Assert.Equal("—", vm.LineTimeText);
@@ -88,7 +88,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var localization = new FakeLocalizationService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("—", vm.StartedDisplay);
 
@@ -112,7 +112,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("MainWindow.StatusBar.LineProgressValueNoLock", vm.LineProgressText);
 
@@ -144,7 +144,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_PollTelemetry_NoLockYet_ShowsPlaceholders()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
 
@@ -169,7 +169,7 @@ public sealed class PaneViewModelTests
             IsLevelOverdriven = true,
             BufferedSampleCount = 1583,
         };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
 
@@ -185,7 +185,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { BufferedSampleCount = 1583 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.BufferedSampleCountStatusBarDisplay;
@@ -195,10 +195,93 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_Constructed_LoadsTheConfiguredCaptureDeviceName()
+    {
+        var sstvSession = new FakeSstvSessionService { ConfiguredCaptureDeviceName = "hw:2,0 L" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("hw:2,0 L", vm.CaptureDeviceName);
+        Assert.Equal("hw:2,0 L", vm.CaptureDeviceNameDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_NoCaptureDeviceConfigured_CaptureDeviceNameDisplayShowsPlaceholder()
+    {
+        var sstvSession = new FakeSstvSessionService { ConfiguredCaptureDeviceName = null };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.CaptureDeviceName);
+        Assert.Equal("—", vm.CaptureDeviceNameDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_UpdatedEvent_ComputesClipFractions_FromTheDecodedRowsOnly()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        // 2x2 image: row 0 = 1 pure-black + 1 pure-white pixel; row 1 = 2 mid-gray. Progress=1.0
+        // (fully decoded) -- both rows count, so 25% clipped each way.
+        var image = new ArrayImageSource(2, 2,
+        [
+            new Rgb24(0, 0, 0), new Rgb24(255, 255, 255),
+            new Rgb24(128, 128, 128), new Rgb24(128, 128, 128),
+        ]);
+        var fakeBuffer = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
+        fakeBuffer.Current = image;
+        fakeBuffer.Progress = 1.0;
+        fakeBuffer.RaiseUpdated();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0.25, vm.ClippedBlackFraction, precision: 3);
+        Assert.Equal(0.25, vm.ClippedWhiteFraction, precision: 3);
+        Assert.NotEqual("—", vm.ClipLoHiDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_UpdatedEvent_MidDecode_OnlyMeasuresRowsActuallyWritten()
+    {
+        // Regression test for a real bug an auditor round caught before this shipped: computing over
+        // the WHOLE mode-sized canvas mid-decode measures how much of the canvas hasn't been drawn
+        // yet (undecoded rows are zeroed Rgb24 -- pure black), not real image content. Row 0 here is
+        // pure white (as if already decoded); row 1 is pure black (as if still zeroed/undecoded).
+        // With Progress=0.5 (only row 0 "decoded"), the clip stats must reflect ONLY row 0 -- 0% black,
+        // 100% white -- not the whole-canvas 50%/50% (or worse, 100% black if row 1 dominated).
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        var image = new ArrayImageSource(1, 2,
+        [
+            new Rgb24(255, 255, 255),
+            new Rgb24(0, 0, 0),
+        ]);
+        var fakeBuffer = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
+        fakeBuffer.Current = image;
+        fakeBuffer.Progress = 0.5;
+        fakeBuffer.RaiseUpdated();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0.0, vm.ClippedBlackFraction, precision: 3);
+        Assert.Equal(1.0, vm.ClippedWhiteFraction, precision: 3);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_NoProgressYet_ClipLoHiDisplayShowsPlaceholder_NotAMisleadingReading()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Null(vm.Progress);
+        Assert.Equal("—", vm.ClipLoHiDisplay);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_RequestReSyncCommand_DelegatesToTheSessionService()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.RequestReSyncCommand.Execute(null);
 
@@ -222,7 +305,7 @@ public sealed class PaneViewModelTests
         // locked-frequency value (1213.125) an earlier version of this fix stopped one step short at.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SyncFrequencyCorrectionHz = -13.125 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
         vm.PollTelemetry();
 
         _ = vm.SyncToneDisplay;
@@ -241,7 +324,7 @@ public sealed class PaneViewModelTests
         // no mode tag, so this pane must derive both from DetectedMode.NarrowModeCode.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SyncFrequencyCorrectionHz = 0.0 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
         var narrowMode = new SstvModeDefinition(
             Id: "mn73", DisplayName: "MN73", VisCode: 55, ImageWidth: 320, ImageHeight: 256,
             ColorEncoding: ColorEncoding.YCbCrSequential, LineSegments: [], NarrowModeCode: 0x11);

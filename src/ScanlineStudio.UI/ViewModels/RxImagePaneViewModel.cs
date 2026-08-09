@@ -3,6 +3,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Sstv;
@@ -41,6 +42,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     private readonly IReceivedImageBuffer _receivedImage;
     private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
+    private readonly ILogger<RxImagePaneViewModel> _logger;
     private readonly DispatcherTimer _telemetryTimer;
     private readonly object _gate = new();
     private bool _postScheduled;
@@ -54,7 +56,21 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// (same coalesced <see cref="IReceivedImageBuffer.Updated"/> event), not polled separately.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(LineProgressText))]
+    [NotifyPropertyChangedFor(nameof(ClipLoHiDisplay))]
     private double? _progress;
+
+    /// <summary>Fraction of the current image's pixels clipped to pure black/white -- see
+    /// <see cref="ScanlineStudio.UI.Imaging.LuminanceClipStatistics"/> for the computation (pure
+    /// image-domain arithmetic, no legacy grounding, not audio DSP). Recomputed over the whole image
+    /// on every <see cref="OnUpdated"/>, same cadence/cost class as this pane's own existing
+    /// <see cref="Image"/> bitmap conversion.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ClipLoHiDisplay))]
+    private double _clippedBlackFraction;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ClipLoHiDisplay))]
+    private double _clippedWhiteFraction;
 
     /// <summary>When the most recently DETECTED decode began -- captured at
     /// <see cref="ISstvSessionService.ModeDetected"/>, which fires both for a fresh detection and a
@@ -70,6 +86,24 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StartedDisplay))]
     private DateTimeOffset? _startedAt;
+
+    /// <summary>The CONFIGURED RX capture device's display name (see
+    /// <see cref="ISstvSessionService.GetConfiguredCaptureDeviceNameAsync"/>'s own doc comment for
+    /// the "configured, not necessarily currently in-flight" caveat) -- backs mock2's Receive tab
+    /// "Device" field, exact mirror of <c>TxControlsPaneViewModel.OutputDeviceName</c>'s own
+    /// pattern. <see langword="null"/> until the best-effort initial load below completes, or if no
+    /// device is configured / the configured device is no longer present. Loaded once at
+    /// construction, not re-fetched on a live settings change while this pane stays open -- same
+    /// convention as the TX-side property. NOTE: unlike this property, the TX-side
+    /// <c>TxControlsPaneViewModel.OutputDeviceName</c> is itself real but NOT actually wired to any
+    /// control in `TxControlsPaneView.axaml` today (that row still binds a static loc-key literal,
+    /// `spec/16-gui-wiring-survey.md`'s own PARTIAL finding) -- an existing, separate gap, out of
+    /// scope for this RX-focused pass; not fixed here.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CaptureDeviceNameDisplay))]
+    private string? _captureDeviceName;
+
+    public string CaptureDeviceNameDisplay => CaptureDeviceName ?? "—";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SlantPpmDisplay))]
@@ -104,17 +138,20 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [ObservableProperty]
     private SstvModeDefinition? _detectedMode;
 
-    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization)
+    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogger<RxImagePaneViewModel> logger)
     {
         _receivedImage = sstvSession.ReceivedImage;
         _sstvSession = sstvSession;
         _localization = localization;
+        _logger = logger;
 
         _receivedImage.Updated += OnUpdated;
         sstvSession.ModeDetected += OnModeDetected;
 
         _telemetryTimer = new DispatcherTimer(TelemetryPollInterval, DispatcherPriority.Background, (_, _) => PollTelemetry());
         _telemetryTimer.Start();
+
+        _ = LoadCaptureDeviceNameAsync();
     }
 
     public string DetectedModeText => DetectedMode?.DisplayName ?? "—";
@@ -134,6 +171,17 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     public string LineProgressText => Progress is { } progress && DetectedMode is { } mode
         ? _localization.GetString("MainWindow.StatusBar.LineProgressValueFormat", (int)Math.Round(progress * mode.ImageHeight), mode.ImageHeight)
         : _localization.GetString("MainWindow.StatusBar.LineProgressValueNoLock");
+
+    /// <summary>Signal-quality card's "Clip lo/hi" row -- real percentages over the rows actually
+    /// decoded so far (see <see cref="ClippedBlackFraction"/>'s own doc comment for what's being
+    /// measured and what it isn't: no legacy grounding, pure image-domain stat). "—" while idle
+    /// (<see cref="Progress"/> null -- no decode in progress or completed image to measure yet),
+    /// matching this pane's own placeholder convention for every other readout -- auditor-caught:
+    /// an earlier version computed over the whole undecoded (all-black) canvas in this state and
+    /// showed a misleading "100% clipped black."</summary>
+    public string ClipLoHiDisplay => Progress is not null
+        ? _localization.GetString("Panes.RxSignal.ClipLoHiValueFormat", ClippedBlackFraction * 100.0, ClippedWhiteFraction * 100.0)
+        : "—";
 
     /// <summary>Frame-metadata card's "Started" row -- real, UTC time-of-day only (matching mock2's
     /// own "14:20:54Z" shape), not a full date (this pane has no multi-day session concept to
@@ -282,8 +330,39 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
                 _postScheduled = false;
             }
 
-            Image = ImageSourceBitmapConverter.ToBitmap(_receivedImage.Current);
-            Progress = _receivedImage.Progress;
+            var current = _receivedImage.Current;
+            Image = ImageSourceBitmapConverter.ToBitmap(current);
+            var progress = _receivedImage.Progress;
+            Progress = progress;
+
+            // Auditor-caught bug: computing over the WHOLE mode-sized canvas mid-decode measures how
+            // much of the canvas hasn't been drawn yet (undecoded rows are zeroed Rgb24 -- pure
+            // black), not real image content. Limit to rows actually written so far, using the same
+            // Progress fraction LineProgressText already derives a row count from. Progress is
+            // guaranteed exactly 1.0 on the completing event (IReceivedImageBuffer.Progress's own
+            // doc comment), so the completed-image case still gets a full-image pass.
+            var decodedRowCount = progress is { } p ? (int)Math.Round(p * current.Height) : 0;
+            (ClippedBlackFraction, ClippedWhiteFraction) = LuminanceClipStatistics.Compute(current, decodedRowCount);
         });
+    }
+
+    private async Task LoadCaptureDeviceNameAsync()
+    {
+        try
+        {
+            CaptureDeviceName = await _sstvSession.GetConfiguredCaptureDeviceNameAsync();
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, same reasoning as TxControlsPaneViewModel.LoadOutputDeviceNameAsync -- a
+            // failure here leaves the field null (no device shown) rather than blocking construction.
+            Log.LoadCaptureDeviceNameFailed(_logger, ex);
+        }
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured RX capture device name failed")]
+        public static partial void LoadCaptureDeviceNameFailed(ILogger logger, Exception ex);
     }
 }

@@ -208,17 +208,18 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Input chain: Buffer/Clipping are real, wired to RxImagePaneViewModel
-                                 (spec/17-rx-telemetry-feasibility.md). Device/Squelch/BPF/Notch·AGC/
-                                 NoiseFloor/Level L·R remain unwired; see that doc (Squelch/NoiseFloor
-                                 need a product decision, Notch is an unported filter, true L/R stereo
-                                 doesn't exist in this port's mono-only demod path). -->
+                            <!-- Input chain: Device/Buffer/Clipping are real, wired to
+                                 RxImagePaneViewModel (spec/17-rx-telemetry-feasibility.md). Squelch/
+                                 BPF/Notch·AGC/NoiseFloor/Level L·R remain unwired; see that doc
+                                 (Squelch/NoiseFloor need a product decision, Notch is an unported
+                                 filter, true L/R stereo doesn't exist in this port's mono-only demod
+                                 path). -->
                             <Border Classes="card" DataContext="{Binding RxImage}">
                                 <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                     <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxInput.CardHeader}" />
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Device}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.DeviceValue}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding CaptureDeviceNameDisplay}" />
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Squelch}" />
@@ -251,13 +252,17 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Signal quality: Sync tone is real, wired to RxImagePaneViewModel
-                                 (spec/17-rx-telemetry-feasibility.md). SNR/Min-Max/histogram/Clip-Lo-Hi/
-                                 Black·White tone remain unwired; see that doc (no per-line SNR or
-                                 histogram computation exists in the decode pipeline; Black/White tone
-                                 isn't a well-defined measurement even in principle, unlike Sync tone).
-                                 Plot placeholders are bare Border Classes="plot" with no content,
-                                 matching this pass's "no new PlotView abstraction" rule. -->
+                            <!-- Signal quality: Sync tone and Clip lo/hi are real, wired to
+                                 RxImagePaneViewModel (spec/17-rx-telemetry-feasibility.md; Clip lo/hi
+                                 is pure image-domain pixel-luminance arithmetic over the already-
+                                 decoded image, not audio DSP, and has no legacy equivalent; a new,
+                                 non-legacy-grounded statistic). SNR/Min-Max/histogram/Black·White tone
+                                 remain unwired; see that doc (no per-line SNR or histogram computation
+                                 exists in the decode pipeline; Black/White tone isn't a well-defined
+                                 measurement even in principle, unlike Sync tone). Plot placeholders
+                                 are bare Border Classes="plot" with no content, matching this pass's
+                                 "no new PlotView abstraction" rule; the histogram PLOT itself stays
+                                 unbuilt even though its underlying Clip-lo/hi numbers are now real. -->
                             <Border Classes="card" DataContext="{Binding RxImage}">
                                 <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
                                     <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxSignal.CardHeader}" />
@@ -271,7 +276,7 @@
                                     <Border Classes="plot" Height="46" />
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.ClipLoHi}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.ClipLoHiValue}" />
+                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding ClipLoHiDisplay}" />
                                     </Grid>
                                     <Grid Classes="kv" ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.SyncTone}" />
