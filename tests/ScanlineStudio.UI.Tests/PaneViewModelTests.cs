@@ -201,14 +201,28 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_BufferedSampleCountStatusBarDisplay_ReflectsSessionValue()
     {
         var localization = new FakeLocalizationService();
-        var sstvSession = new FakeSstvSessionService { BufferedSampleCount = 1583 };
+        var sstvSession = new FakeSstvSessionService { BufferedSampleCount = 1583, CaptureOverrunCount = 7 };
         var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.BufferedSampleCountStatusBarDisplay;
 
         Assert.Equal("MainWindow.StatusBar.BufferValueFormat", localization.LastKey);
-        Assert.Equal(new object[] { 1583 }, localization.LastArgs);
+        Assert.Equal(new object[] { 1583, 7 }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_BufferedSampleCountDisplay_ReflectsSessionValue()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { BufferedSampleCount = 1583, CaptureOverrunCount = 7 };
+        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.PollTelemetry();
+        _ = vm.BufferedSampleCountDisplay;
+
+        Assert.Equal("Panes.RxInput.BufferValueFormat", localization.LastKey);
+        Assert.Equal(new object[] { 1583, 7 }, localization.LastArgs);
     }
 
     [AvaloniaFact]

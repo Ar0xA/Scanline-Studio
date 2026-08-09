@@ -26,9 +26,27 @@ public sealed class FakeAudioEngine : IAudioEngine
     private readonly List<float> _playbackSamples = [];
     private bool _disposed;
 
+    private int _captureOverrunCount;
+
     public bool IsCapturing { get; private set; }
 
     public bool IsPlaying { get; private set; }
+
+    /// <summary>Test-settable -- this fake has no real overrun mechanism of its own to drive it, so a
+    /// test that needs a specific value sets it directly rather than provoking a real drop. Auditor
+    /// round 1 (batch-5 wiring) caught this NOT actually enforcing <see cref="IAudioEngine.CaptureOverrunCount"/>'s
+    /// own documented contract ("0 when capture isn't running, reset by a fresh StartCaptureAsync")
+    /// the way this file's own round-2 fix already enforces for the Lifecycle-error contract
+    /// elsewhere -- a test against this fake could see a nonzero reading in a state the real engine
+    /// can never produce. Fixed the same way: <see cref="StartCaptureAsync"/> resets the backing
+    /// field, and the getter forces <c>0</c> whenever <see cref="IsCapturing"/> is
+    /// <see langword="false"/>, matching <c>MiniAudioEngine.CaptureOverrunCount</c>'s own real
+    /// behavior (its capture session is null/unpublished in exactly that state).</summary>
+    public int CaptureOverrunCount
+    {
+        get => IsCapturing ? _captureOverrunCount : 0;
+        set => _captureOverrunCount = value;
+    }
 
     public event Action<ReadOnlyMemory<float>>? SamplesCaptured;
 
@@ -59,6 +77,7 @@ public sealed class FakeAudioEngine : IAudioEngine
         LastRequestedCapturePeriodSizeInFrames = periodSizeInFrames;
         LastRequestedCapturePeriods = periods;
         LastRequestedChannelSource = channelSource;
+        _captureOverrunCount = 0;
         IsCapturing = true;
         return Task.CompletedTask;
     }

@@ -224,6 +224,32 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <summary>See <see cref="ISstvSessionService.BufferedSampleCount"/> / <see cref="ISstvDecoder.BufferedSampleCount"/>.</summary>
     public int BufferedSampleCount => _decoder.BufferedSampleCount;
 
+    /// <summary>See <see cref="ISstvSessionService.CaptureOverrunCount"/>. Absorbs the narrow,
+    /// documented race <c>MiniAudioEngine.CaptureOverrunCount</c>'s own doc comment describes (a
+    /// concurrent <see cref="StopReceivingAsync"/> disposing the capture session between that
+    /// property's field read and its underlying native call) -- auditor-caught: this property is
+    /// polled every 250ms by <c>RxImagePaneViewModel</c>'s telemetry timer, an ordinary "user clicks
+    /// Stop RX mid-poll" interleaving reachable on every real session, and a <c>DispatcherTimer</c>
+    /// tick exception has nowhere safe to land (this port's own global unhandled-exception handler
+    /// only logs, it doesn't recover). <c>0</c> is not a fallback value here -- it IS the documented
+    /// contract value for "capture isn't running", so this doesn't hide a real failure, it just
+    /// reaches the same answer a clean read would have found a moment later.</summary>
+    public int CaptureOverrunCount
+    {
+        get
+        {
+            try
+            {
+                return _audioEngine.CaptureOverrunCount;
+            }
+            catch (ObjectDisposedException)
+            {
+                Log.CaptureOverrunCountRaceObserved(_logger);
+                return 0;
+            }
+        }
+    }
+
     public event Action? MaintenanceWarningRaised;
 
     public event Action? MaintenanceWarningCleared;
@@ -672,6 +698,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "TX volume set to {Percent}%")]
         public static partial void TxVolumeSet(ILogger logger, int percent);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "CaptureOverrunCount read raced a concurrent StopReceivingAsync; reporting 0")]
+        public static partial void CaptureOverrunCountRaceObserved(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "PTT keyed")]
         public static partial void PttKeyed(ILogger logger);

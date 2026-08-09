@@ -114,10 +114,11 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     public event Action<ReadOnlyMemory<float>>? SamplesCaptured;
 
     /// <summary>Piece Engine 5a: diagnostic pass-through to the active capture session's own
-    /// <see cref="MiniAudioCaptureSession.OverrunCount"/> (piece Engine 0) -- not part of
-    /// <see cref="IAudioEngine"/> itself (no interface change), same pattern as the session types'
-    /// own extra diagnostic members (e.g. <c>TimedOutDuringClose</c>) that go beyond what any
-    /// interface requires. 0 when capture isn't started, matching "nothing to report" rather than
+    /// <see cref="MiniAudioCaptureSession.OverrunCount"/> (piece Engine 0). Now promoted onto
+    /// <see cref="IAudioEngine.CaptureOverrunCount"/> itself (spec/17-rx-telemetry-feasibility.md's
+    /// status-bar "Buffer · XRUN" readout) -- an earlier revision of this comment claimed this was
+    /// deliberately NOT part of the interface; that's no longer true, see the interface's own doc
+    /// comment for why. 0 when capture isn't started, matching "nothing to report" rather than
     /// throwing -- except for the same narrow, documented race
     /// <see cref="EnqueuePlaybackSamples"/> has (round-3-engine-review honesty fix): a concurrent
     /// <see cref="StopCaptureAsync"/> disposing the session between this property's field read and
