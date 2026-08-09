@@ -1134,9 +1134,11 @@
              LineProgress/Slant/Buffer/FramesToday/LogSize are real (RadioStatus.FrequencyDisplay/
              ModeDisplay, RxImage.DetectedModeText/LineProgressText/SlantPpmStatusBarDisplay/
              BufferedSampleCountStatusBarDisplay, RxHistory.FramesTodayDisplay, Logbook.LogSizeDisplay,
-             spec/17-rx-telemetry-feasibility.md). Buffer here deliberately drops mock2's own
-             "· N XRUN" half, a separate still-unwired audio-engine counter, not this decoder's own
-             sample buffer. M1/SNR still have no backing property anywhere in the app (true per-line
+             spec/17-rx-telemetry-feasibility.md). Buffer's own "· N XRUN" half (a separate
+             audio-engine dropped-frame counter, not this decoder's own sample buffer) is real too
+             now, recombined into mock2's original single format; see
+             RxImagePaneViewModel.BufferedSampleCountStatusBarDisplay's own doc comment. M1/SNR still
+             have no backing property anywhere in the app (true per-line
              SNR still doesn't exist) and are literal placeholders matching mock2's own exact
              values/wording, same precedent as the Receive tab's own scaffolding cards. -->
         <Border Grid.Row="3" Height="24" Background="{DynamicResource ScanlineStudioPanelBackgroundColor}" BorderBrush="{DynamicResource ScanlineStudioCardBorderColor}" BorderThickness="0,1,0,0">

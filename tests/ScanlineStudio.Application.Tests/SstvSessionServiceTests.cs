@@ -588,4 +588,60 @@ public sealed class SstvSessionServiceTests
 
         Assert.Equal(ExpectedPlaybackSamples.Select(s => s * 0.5f), audioEngine.PlaybackSamples);
     }
+
+    [Fact]
+    public void CaptureOverrunCount_UnderlyingEngineThrowsObjectDisposed_ReportsZeroInstead()
+    {
+        // Regression test for a real bug an auditor caught (batch-5 wiring, round 1): a concurrent
+        // StopReceivingAsync can dispose the underlying capture session between IAudioEngine.CaptureOverrunCount's
+        // own field read and its native call, surfacing ObjectDisposedException -- MiniAudioEngine's
+        // own doc comment documents this exact narrow race. RxImagePaneViewModel polls THIS property
+        // every 250ms on a DispatcherTimer tick with nothing to catch an uncaught exception there, so
+        // this pass-through must absorb the race rather than propagate it -- 0 is the correct,
+        // documented "capture isn't running" value in that state, not a fallback masking a real
+        // failure.
+        var audioEngine = new ThrowingCaptureOverrunCountAudioEngine();
+        var deviceEnumerator = new FakeAudioDeviceEnumerator();
+        var settingsStore = new FakeSettingsStore { Settings = new AppSettings() };
+        var service = new SstvSessionService(
+            audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(),
+            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+
+        var result = service.CaptureOverrunCount;
+
+        Assert.Equal(0, result);
+    }
+
+    /// <summary>Throws <see cref="ObjectDisposedException"/> from <see cref="CaptureOverrunCount"/>
+    /// only -- every other member is unreachable by <see cref="CaptureOverrunCount_UnderlyingEngineThrowsObjectDisposed_ReportsZeroInstead"/>
+    /// (a plain property read, no construction-time engine calls), so they throw
+    /// <see cref="NotImplementedException"/> rather than pretending to a fuller contract this test
+    /// doesn't need.</summary>
+    private sealed class ThrowingCaptureOverrunCountAudioEngine : IAudioEngine
+    {
+        public int CaptureOverrunCount => throw new ObjectDisposedException(nameof(ThrowingCaptureOverrunCountAudioEngine));
+
+        public event Action<ReadOnlyMemory<float>>? SamplesCaptured
+        {
+            add { }
+            remove { }
+        }
+
+        public Task StartCaptureAsync(
+            AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+            int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+            CancellationToken ct = default) => throw new NotImplementedException();
+
+        public Task StopCaptureAsync() => throw new NotImplementedException();
+
+        public Task StartPlaybackAsync(
+            AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+            bool stereoTx = false, CancellationToken ct = default) => throw new NotImplementedException();
+
+        public Task StopPlaybackAsync() => throw new NotImplementedException();
+
+        public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) => throw new NotImplementedException();
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 }
