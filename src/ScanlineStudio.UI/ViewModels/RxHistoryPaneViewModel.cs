@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
@@ -15,7 +16,13 @@ namespace ScanlineStudio.UI.ViewModels;
 /// <see cref="ScanlineStudio.Abstractions.Imaging.IReceivedImageBuffer"/> at all — selecting a
 /// history entry loads a separate, read-only <see cref="PreviewImage"/>; browsing history must
 /// never appear to interrupt or corrupt a live RX decode in progress
-/// (<c>RxImagePaneViewModel</c> owns that live binding exclusively).</summary>
+/// (<c>RxImagePaneViewModel</c> owns that live binding exclusively).
+///
+/// <b>Live-updates now (batch 7, spec/16-gui-wiring-survey.md's own PARTIAL finding fixed)</b>:
+/// subscribes to <see cref="IReceiveHistoryStore.Recorded"/>, so both the Gallery tab's own list and
+/// the Receive tab's "Previous frames" strip (same shared DI-singleton instance,
+/// <c>MainViewModel.RxHistory</c>) refresh automatically as new frames land during an active
+/// session, not just at construction/manual-refresh/filter-change as before.</summary>
 public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 {
     private const int ThumbnailMaxDimension = 96;
@@ -24,6 +31,42 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private readonly IReceiveHistoryStore _historyStore;
     private readonly ILocalizationService _localization;
     private readonly ILogger<RxHistoryPaneViewModel> _logger;
+
+    // Auditor-caught race (batch 7): RefreshAsync captures its own `filter` at entry and is called
+    // fire-and-forget from multiple independent triggers now (OnRecorded, OnShowTodayOnlyChanged, the
+    // user's own RefreshCommand click) -- two overlapping calls can't corrupt Entries itself (no
+    // await between Clear() and the Add loop, both resume on the UI thread), but WHICHEVER call
+    // finishes LAST wins, even if it started first and is now describing a stale filter. A live
+    // session raises the trigger rate from "user clicks" to "every decoded frame," making this newly
+    // reachable in practice, not just in theory. Bumped at the START of every RefreshAsync call
+    // (before its own await); a call whose captured generation no longer matches this field's
+    // then-current value by the time it's about to mutate Entries silently discards its own results
+    // instead of applying them.
+    private int _refreshGeneration;
+
+    // Auditor-caught UX issue (batch 7): every RefreshAsync call builds brand-new
+    // RxHistoryEntryViewModel instances, so even after re-selecting the SAME logical entry by
+    // Entry.Id, OnSelectedEntryChanged still sees a different object reference and (without this
+    // field) would null PreviewImage and re-decode the same file from disk -- a visible flicker on
+    // every incoming frame while a user is just looking at an old one. Tracks which entry's preview
+    // is ACTUALLY currently loaded, independent of RxHistoryEntryViewModel's own object identity.
+    private string? _previewedEntryId;
+
+    // Auditor round-2 catch (batch 7): the Gallery/Previous-frames ListBox's SelectedItem binding is
+    // TwoWay by default (confirmed via reflection against Avalonia.Controls.Primitives
+    // .SelectingItemsControl.SelectedItemProperty's DirectPropertyMetadata), so RefreshAsync's own
+    // Entries.Clear() synchronously pushes SelectedEntry = null back into this VM *before* the
+    // re-select a few lines later runs -- without this flag, that transient null would already have
+    // cleared _previewedEntryId and PreviewImage, making the _previewedEntryId skip in
+    // OnSelectedEntryChanged a no-op for the exact case it exists to fix. Set around the
+    // Clear()/repopulate/re-select block only.
+    private bool _isRepopulating;
+
+    // Auditor round-2 nit (batch 7): LoadPreviewAsync has no ordering guard against overlapping
+    // calls (rapid selection changes) -- bumped at the start of every LoadPreviewAsync call, checked
+    // immediately before it applies its own result, same "discard a superseded async result" pattern
+    // as _refreshGeneration above.
+    private int _previewGeneration;
 
     [ObservableProperty]
     private RxHistoryEntryViewModel? _selectedEntry;
@@ -86,8 +129,13 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         _localization = localization;
         _logger = logger;
 
-        Entries.CollectionChanged += (_, _) => UpdateEntryCountText();
+        Entries.CollectionChanged += (_, _) =>
+        {
+            UpdateEntryCountText();
+            SelectLatestCommand.NotifyCanExecuteChanged();
+        };
         UpdateEntryCountText();
+        _historyStore.Recorded += OnRecorded;
 
         // Best-effort initial load -- a failure here (e.g. history store not reachable yet) leaves
         // the pane empty rather than blocking construction; RefreshCommand lets the user retry.
@@ -122,6 +170,41 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
     partial void OnShowTodayOnlyChanged(bool value) => _ = RefreshAsync();
 
+    /// <summary>Marshals to the UI thread itself -- <see cref="IReceiveHistoryStore.Recorded"/>'s own
+    /// doc comment documents that it can fire from a decode-thread <c>Task.Run</c>, not the UI
+    /// thread, same "subscriber's own responsibility" contract already established for
+    /// <c>RxImagePaneViewModel.OnSaved</c>. Re-runs the SAME full query+re-thumbnail pass a manual
+    /// Refresh click does (no lighter "just prepend one entry" path) -- simplest correct option, and
+    /// this event fires at most once per completed/abandoned image (not once per line), so the cost
+    /// class matches an ordinary user-triggered refresh, not a hot per-sample path that would need
+    /// coalescing the way <see cref="IReceivedImageBuffer.Updated"/> does.</summary>
+    private void OnRecorded(ReceiveHistoryEntry entry) => Dispatcher.UIThread.Post(() =>
+    {
+        _ = RefreshAsync();
+        _ = LoadFramesTodayCountAsync();
+    });
+
+    private bool CanSelectLatest() => Entries.Count > 0;
+
+    /// <summary>"Jump to most recent" -- port of legacy's real <c>SBPrim</c> speed button, NOT
+    /// <c>SBLatest</c> despite that name's misleading English reading (auditor-caught citation error
+    /// in an earlier version of this comment): legacy's history nav is a ring buffer read via
+    /// <c>UDHist-&gt;Position</c>, mapped in <c>UpdateHist</c> (<c>Main.cpp:6277-6281</c>) as
+    /// <c>n = (m_wPnt-1) - Position</c> -- <c>SBPrimClick</c> (<c>Main.cpp:15851-15857</c>) sets
+    /// <c>Position = 0</c>, which resolves to <c>n = m_wPnt-1</c>, the ring buffer's own most-recently-
+    /// written slot (newest). <c>SBLatestClick</c> (<c>Main.cpp:6407-6413</c>) actually sets
+    /// <c>Position = RxHist.m_Head.m_Cnt-1</c> -- the OLDEST slot still in the buffer -- and is
+    /// deliberately NOT carried over here (see `docs/removed-features.md`'s own updated entry). No
+    /// slot for either legacy button exists in mock2's own Gallery-tab draft (a plain
+    /// click-any-thumbnail grid, no step-nav spinner or jump button drawn), so this is new UI, not a
+    /// wiring pass; added because the underlying "jump to newest" gap is real and legacy-documented,
+    /// not invented. <see cref="Entries"/> is already newest-first
+    /// (<c>SqliteReceiveHistoryStore.QueryAsync</c>'s own <c>ORDER BY ReceivedAt DESC</c>), so
+    /// "newest" is simply the first entry already loaded -- no new query needed, unlike
+    /// <see cref="RefreshAsync"/>.</summary>
+    [RelayCommand(CanExecute = nameof(CanSelectLatest))]
+    private void SelectLatest() => SelectedEntry = Entries.FirstOrDefault();
+
     private async Task LoadImagesDirectoryAsync()
     {
         try
@@ -139,6 +222,17 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private async Task RefreshAsync()
     {
         Log.RefreshInvoked(_logger, ShowTodayOnly);
+
+        // Captured BEFORE the query -- batch 7 made this method run far more often than before
+        // (every IReceiveHistoryStore.Recorded event during an active session, not just a manual
+        // click/filter change), and every refresh below builds brand-new RxHistoryEntryViewModel
+        // instances (a record, no identity beyond reference equality) -- without re-selecting by ID
+        // after repopulating, a user actively browsing history would have their selection (and the
+        // preview it drives) silently wiped every time a new frame lands, a real UX regression this
+        // batch would otherwise introduce.
+        var selectedEntryId = SelectedEntry?.Entry.Id;
+        var generation = ++_refreshGeneration;
+
         var filter = ShowTodayOnly
             ? new ReceiveHistoryFilter(From: new DateTimeOffset(DateTime.Today))
             : new ReceiveHistoryFilter();
@@ -173,10 +267,52 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             thumbnails.Add(new RxHistoryEntryViewModel(entry, thumbnail));
         }
 
-        Entries.Clear();
-        foreach (var item in thumbnails)
+        if (generation != _refreshGeneration)
         {
-            Entries.Add(item);
+            // A newer RefreshAsync call has already started (and will apply ITS OWN results) since
+            // this one began -- discard this stale result rather than overwrite Entries with an
+            // out-of-date filter's data.
+            Log.RefreshDiscardedAsStale(_logger);
+            return;
+        }
+
+        // Guards the transient SelectedEntry = null that Entries.Clear() below pushes back through
+        // the Gallery ListBox's TwoWay SelectedItem binding, before the re-select a few lines down
+        // runs -- see _isRepopulating's own doc comment.
+        _isRepopulating = true;
+        try
+        {
+            Entries.Clear();
+            foreach (var item in thumbnails)
+            {
+                Entries.Add(item);
+            }
+
+            // Re-select by Entry.Id, not by object reference (every item above is a freshly-constructed
+            // record) -- if the previously-selected frame no longer matches the current filter (e.g. it
+            // aged out of ShowTodayOnly's own window) or was trimmed by retention, SelectedEntry simply
+            // stays null, matching what already happens on a manual Refresh/filter-change today; this
+            // isn't a regression, only a preservation of the CASE that already worked.
+            if (selectedEntryId is not null)
+            {
+                SelectedEntry = Entries.FirstOrDefault(e => e.Entry.Id == selectedEntryId);
+            }
+        }
+        finally
+        {
+            _isRepopulating = false;
+        }
+
+        // The previously-selected entry genuinely didn't survive this refresh (filtered out/trimmed)
+        // -- reconcile the preview state OnSelectedEntryChanged was prevented from touching above.
+        if (SelectedEntry is null && _previewedEntryId is not null)
+        {
+            _previewedEntryId = null;
+            PreviewImage = null;
+            // Auditor round-3 nit: also invalidate any in-flight LoadPreviewAsync for the
+            // now-cleared entry -- otherwise a slow decode racing this reconcile could still land
+            // afterward and set PreviewImage for an entry that's no longer selected or listed.
+            _previewGeneration++;
         }
 
         Log.RefreshCompleted(_logger, Entries.Count);
@@ -185,6 +321,28 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     partial void OnSelectedEntryChanged(RxHistoryEntryViewModel? value)
     {
         Log.SelectedEntryChanged(_logger);
+
+        if (_isRepopulating && value is null)
+        {
+            // See _isRepopulating's doc comment: this is Entries.Clear()'s own transient null flowing
+            // back through the TwoWay SelectedItem binding, not a real user deselection -- RefreshAsync
+            // is about to either re-select the same entry or reconcile _previewedEntryId itself once
+            // it knows whether the entry actually survived the refresh.
+            return;
+        }
+
+        if (value?.Entry.Id == _previewedEntryId)
+        {
+            // Auditor-caught (batch 7): a live-refresh-triggered re-select lands here with a
+            // brand-new RxHistoryEntryViewModel instance for the SAME logical entry (every refresh
+            // rebuilds all of them) -- without this check, every incoming frame would null
+            // PreviewImage and re-decode the same file from disk, a visible flicker for a user just
+            // looking at an old frame while new ones keep landing. The already-loaded PreviewImage
+            // is still correct for the same Entry.Id; skip the reload entirely.
+            return;
+        }
+
+        _previewedEntryId = value?.Entry.Id;
         PreviewImage = null;
         if (value is null)
         {
@@ -196,15 +354,32 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
     private async Task LoadPreviewAsync(ReceiveHistoryEntry entry)
     {
+        var generation = ++_previewGeneration;
+        Bitmap? image = null;
         try
         {
-            var image = await _historyStore.LoadThumbnailAsync(entry, PreviewMaxDimension);
-            PreviewImage = ImageSourceBitmapConverter.ToBitmap(image);
+            var loaded = await _historyStore.LoadThumbnailAsync(entry, PreviewMaxDimension);
+            image = ImageSourceBitmapConverter.ToBitmap(loaded);
         }
         catch (Exception ex)
         {
             Log.LoadPreviewFailed(_logger, ex);
-            PreviewImage = null;
+        }
+
+        if (generation != _previewGeneration)
+        {
+            // A newer selection has already started its own load since this one began -- applying
+            // this result now would show a preview for an entry the user is no longer looking at.
+            return;
+        }
+
+        PreviewImage = image;
+        if (image is null && entry.Id == _previewedEntryId)
+        {
+            // Auditor round-2 nit (batch 7): a failed load must not leave _previewedEntryId pointing
+            // at an entry whose preview never actually loaded -- otherwise re-selecting the SAME entry
+            // later hits the skip above and the preview stays blank forever instead of retrying.
+            _previewedEntryId = null;
         }
     }
 
@@ -227,6 +402,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh completed: {Count} entries")]
         public static partial void RefreshCompleted(ILogger logger, int count);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh discarded -- a newer refresh already started")]
+        public static partial void RefreshDiscardedAsStale(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SelectedEntry changed")]
         public static partial void SelectedEntryChanged(ILogger logger);

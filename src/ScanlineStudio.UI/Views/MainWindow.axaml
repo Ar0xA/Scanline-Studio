@@ -832,7 +832,12 @@
                          From/To fields); mock2's band/Unlogged/Flagged/free-text filters and
                          sort-by-callsign/SNR are omitted; ReceiveHistoryEntry has no frequency/
                          callsign/grid field to filter or sort by, and LinkedQsoId is never set
-                         non-null by any code path today (spec/14-roadmap.md backlog). -->
+                         non-null by any code path today (spec/14-roadmap.md backlog). This list
+                         (and the Receive tab's own Previous-frames strip, same shared VM instance)
+                         now refreshes live as new frames land, not just at construction/manual-
+                         refresh/filter-change (batch 7, IReceiveHistoryStore.Recorded). New real
+                         "Latest" button below (SelectLatestCommand) is a port of legacy's own
+                         SBLatest speed button, new UI since mock2's own draft has no slot for it. -->
                     <Border Grid.Column="0" Classes="card">
                         <DockPanel LastChildFill="True">
                             <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*">
@@ -844,7 +849,7 @@
                                  button (kept exactly as-is, not replaced by the mock's plain
                                  ToggleButtons) alongside the literal 14MHz/Unlogged/Flagged
                                  toggles and sort combo. -->
-                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto"
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                                   ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,4">
                                 <TextBox Watermark="{loc:Translate Panes.RxHistory.SearchWatermark}" />
                                 <Border Grid.Column="1" Classes="segment">
@@ -861,7 +866,18 @@
                                     <ComboBoxItem Content="{loc:Translate Panes.RxHistory.SortCallsign}" />
                                     <ComboBoxItem Content="{loc:Translate Panes.RxHistory.SortSnr}" />
                                 </ComboBox>
-                                <Button Grid.Column="6" Classes="small" Content="{loc:Translate Panes.RxHistory.Refresh}" Command="{Binding RefreshCommand}" />
+                                <!-- Real: port of legacy's SBPrim "jump to most recent" speed button;
+                                     NOT SBLatest despite that name's misleading English reading
+                                     (SBLatest actually jumps to the OLDEST buffered frame; see
+                                     RxHistoryPaneViewModel.SelectLatest's own doc comment for the
+                                     full Main.cpp citation trail, and docs/removed-features.md's
+                                     "History-tab navigation" entry). No slot for this in mock2's own
+                                     draft, added as new UI since the underlying gap is real and
+                                     legacy-documented (spec/14-roadmap.md backlog item), not invented.
+                                     Selects Entries' own first item (already newest-first), no new
+                                     query. -->
+                                <Button Grid.Column="6" Classes="small" Content="{loc:Translate Panes.RxHistory.Latest}" Command="{Binding SelectLatestCommand}" />
+                                <Button Grid.Column="7" Classes="small" Content="{loc:Translate Panes.RxHistory.Refresh}" Command="{Binding RefreshCommand}" />
                             </Grid>
                             <TextBlock DockPanel.Dock="Top" Classes="caption"
                                        Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
