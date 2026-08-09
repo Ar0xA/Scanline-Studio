@@ -271,6 +271,7 @@
   "Panes.RxSessionFrames.Row15Mode": "M3",
   "Panes.RxSessionFrames.Row15Meta": "10:12Z · 14.230 · 18.0 dB",
   "Panes.RxHistory.Refresh": "Refresh",
+  "Panes.RxHistory.Latest": "Latest",
   "Panes.RxHistory.GalleryHeader": "Received",
   "Panes.RxHistory.FilterAll": "All",
   "Panes.RxHistory.FilterToday": "Today",

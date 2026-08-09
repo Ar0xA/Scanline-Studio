@@ -1,3 +1,5 @@
+using Avalonia.Controls;
+using Avalonia.Data;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -968,6 +970,152 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(2, vm.FramesTodayCount);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_RecordedEvent_RefreshesEntries()
+    {
+        // Regression test for batch 7's live-update fix (spec/16-gui-wiring-survey.md's own PARTIAL
+        // finding): before this, Entries only refreshed at construction/manual-refresh/filter-change,
+        // never as new frames actually landed during a session.
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Empty(vm.Entries);
+
+        var newEntry = new ReceiveHistoryEntry("new-1", DateTimeOffset.Now, "robot36", "/tmp/new.png", null, ReceiveDecodeState.Completed);
+        historyStore.EntriesToReturn.Add(newEntry);
+        historyStore.RaiseRecorded(newEntry);
+        Dispatcher.UIThread.RunJobs();
+
+        var entry = Assert.Single(vm.Entries);
+        Assert.Equal("new-1", entry.Entry.Id);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_RecordedEvent_PreservesTheCurrentSelectionAcrossTheRefresh()
+    {
+        // Regression test for a real UX regression the live-update fix would otherwise introduce:
+        // every refresh builds brand-new RxHistoryEntryViewModel instances (a record, no identity
+        // beyond reference equality), so without re-selecting by Entry.Id after repopulating, a user
+        // actively browsing history would have their selection (and its preview) silently wiped every
+        // time an unrelated new frame lands.
+        //
+        // Auditor-caught: asserting only `SelectedEntry!.Entry.Id == "selected"` is vacuous in a
+        // plain VM test -- there's no ListBox here to null SelectedEntry when Entries.Clear() runs
+        // (that side effect only exists via the real SelectedItem two-way binding in MainWindow.axaml),
+        // so even DELETING the re-select logic in RefreshAsync entirely would still leave the STALE
+        // pre-refresh instance sitting in SelectedEntry with the same Entry.Id, passing the same
+        // assertion. Asserting reference identity against the NEWLY repopulated Entries collection is
+        // what actually proves the re-select logic ran, not just that nothing happened to clobber the
+        // old reference.
+        var selectedEntry = new ReceiveHistoryEntry("selected", DateTimeOffset.Now, "robot36", "/tmp/selected.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [selectedEntry],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var originalSelectedInstance = vm.Entries.Single(e => e.Entry.Id == "selected");
+        vm.SelectedEntry = originalSelectedInstance;
+        Dispatcher.UIThread.RunJobs();
+
+        var unrelatedNewEntry = new ReceiveHistoryEntry("unrelated", DateTimeOffset.Now.AddSeconds(1), "robot36", "/tmp/unrelated.png", null, ReceiveDecodeState.Completed);
+        historyStore.EntriesToReturn.Add(unrelatedNewEntry);
+        historyStore.RaiseRecorded(unrelatedNewEntry);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(vm.SelectedEntry);
+        Assert.Equal("selected", vm.SelectedEntry!.Entry.Id);
+        // The real proof: a NEW instance from the repopulated collection, not the stale pre-refresh
+        // reference -- confirms RefreshAsync's own re-select-by-Id logic actually ran.
+        Assert.NotSame(originalSelectedInstance, vm.SelectedEntry);
+        Assert.Same(vm.Entries.Single(e => e.Entry.Id == "selected"), vm.SelectedEntry);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_RecordedEvent_ThroughARealListBoxTwoWayBinding_DoesNotFlickerThePreview()
+    {
+        // Auditor round-2 catch: the two tests above construct the VM in isolation, with no ListBox
+        // to null SelectedEntry when Entries.Clear() runs -- but MainWindow.axaml's real Gallery
+        // ListBox binds SelectedItem TwoWay (Avalonia's own default for SelectingItemsControl
+        // .SelectedItemProperty, confirmed via reflection against Avalonia.Controls.Primitives
+        // .SelectingItemsControl's DirectPropertyMetadata), so in the ACTUAL app, Entries.Clear()
+        // synchronously pushes SelectedEntry = null into this VM before RefreshAsync's own re-select
+        // line runs. The isolated-VM tests above could not have caught the _isRepopulating fix's own
+        // bug (an earlier version of this fix didn't guard that transient null, so the flicker this
+        // whole regression test class exists to prevent still happened in the real app despite both
+        // isolated tests passing). This test wires up a REAL ListBox with the same TwoWay binding to
+        // close that coverage gap.
+        var selectedEntry = new ReceiveHistoryEntry("selected", DateTimeOffset.Now, "robot36", "/tmp/selected.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [selectedEntry],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        var listBox = new ListBox { ItemsSource = vm.Entries };
+        listBox.Bind(ListBox.SelectedItemProperty, new Binding(nameof(RxHistoryPaneViewModel.SelectedEntry)) { Source = vm, Mode = BindingMode.TwoWay });
+        Dispatcher.UIThread.RunJobs();
+
+        listBox.SelectedItem = vm.Entries.Single(e => e.Entry.Id == "selected");
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(vm.PreviewImage);
+        var loadsBeforeRefresh = historyStore.ThumbnailLoadCalls.Count(c => c.EntryId == "selected" && c.MaxDimension == 512);
+        Assert.Equal(1, loadsBeforeRefresh);
+
+        var unrelatedNewEntry = new ReceiveHistoryEntry("unrelated", DateTimeOffset.Now.AddSeconds(1), "robot36", "/tmp/unrelated.png", null, ReceiveDecodeState.Completed);
+        historyStore.EntriesToReturn.Add(unrelatedNewEntry);
+        historyStore.RaiseRecorded(unrelatedNewEntry);
+        Dispatcher.UIThread.RunJobs();
+
+        // The real proof: selection survived a real ListBox's Clear()-driven transient null, AND the
+        // 512px preview was not re-decoded a second time for the same logical entry.
+        Assert.NotNull(vm.SelectedEntry);
+        Assert.Equal("selected", vm.SelectedEntry!.Entry.Id);
+        Assert.NotNull(vm.PreviewImage);
+        var loadsAfterRefresh = historyStore.ThumbnailLoadCalls.Count(c => c.EntryId == "selected" && c.MaxDimension == 512);
+        Assert.Equal(1, loadsAfterRefresh);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_SelectLatestCommand_SelectsTheNewestEntry()
+    {
+        // Port of legacy's real SBPrim "jump to most recent" speed button (NOT SBLatest, despite that
+        // name's misleading English reading -- see SelectLatest's own doc comment) -- Entries is already
+        // newest-first (FakeReceiveHistoryStore.QueryAsync now mirrors SqliteReceiveHistoryStore's own
+        // real ORDER BY ReceivedAt DESC), so this asserts SelectLatest picks Entries[0], not a
+        // re-derived "actually newest by timestamp" check.
+        var older = new ReceiveHistoryEntry("older", DateTimeOffset.Now.AddMinutes(-5), "robot36", "/tmp/older.png", null, ReceiveDecodeState.Completed);
+        var newer = new ReceiveHistoryEntry("newer", DateTimeOffset.Now, "robot36", "/tmp/newer.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore { EntriesToReturn = [older, newer] };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectLatestCommand.Execute(null);
+
+        Assert.NotNull(vm.SelectedEntry);
+        Assert.Equal("newer", vm.SelectedEntry!.Entry.Id);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_SelectLatestCommand_DisabledWhenNoEntries()
+    {
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.SelectLatestCommand.CanExecute(null));
+
+        var entry = new ReceiveHistoryEntry("1", DateTimeOffset.Now, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+        historyStore.EntriesToReturn.Add(entry);
+        historyStore.RaiseRecorded(entry);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SelectLatestCommand.CanExecute(null));
     }
 
     private static QsoRecord SampleQsoRecord(string id = "1") =>
