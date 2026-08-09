@@ -48,6 +48,29 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [ObservableProperty]
     private Bitmap? _image;
 
+    /// <summary>Real, already-computed fraction of the current decode's total rows -- see
+    /// <see cref="IReceivedImageBuffer.Progress"/>'s own doc comment for the exact-1.0-on-completion
+    /// guarantee this pane relies on. Read alongside <see cref="Image"/> in <see cref="OnUpdated"/>
+    /// (same coalesced <see cref="IReceivedImageBuffer.Updated"/> event), not polled separately.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LineProgressText))]
+    private double? _progress;
+
+    /// <summary>When the most recently DETECTED decode began -- captured at
+    /// <see cref="ISstvSessionService.ModeDetected"/>, which fires both for a fresh detection and a
+    /// mid-reception restart (<c>ISstvDecoder.DecodeRestarted</c>'s own doc comment); a restart
+    /// legitimately starts a new "Started" time here, since the prior image was abandoned. NOT
+    /// guaranteed to match "currently displayed" in one specific case (auditor-caught, deliberately
+    /// not fixed): Auto Stop's erratic/weak-signal abandonment fires <c>DecodeRestarted</c> with NO
+    /// follow-up <see cref="ModeDetected"/>, so <see cref="IReceivedImageBuffer"/> blanks
+    /// <c>Current</c>/<c>Progress</c> but this stays pinned to the abandoned image's start time --
+    /// a blank image next to a live-looking "Started" readout. <c>ISstvSessionService</c> doesn't
+    /// expose <c>DecodeRestarted</c> at all today, so clearing this on that path would need new API
+    /// surface; not worth adding for this one edge case.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StartedDisplay))]
+    private DateTimeOffset? _startedAt;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SlantPpmDisplay))]
     [NotifyPropertyChangedFor(nameof(SlantPpmStatusBarDisplay))]
@@ -68,6 +91,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BufferedSampleCountDisplay))]
+    [NotifyPropertyChangedFor(nameof(BufferedSampleCountStatusBarDisplay))]
     private int _bufferedSampleCount;
 
     /// <summary>The currently (or most recently) auto-detected RX mode -- real data from
@@ -102,6 +126,21 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     public string LineTimeText => DetectedMode is { } mode ? $"{mode.LineDurationMs:0.0} ms" : "—";
 
     public string LinesText => DetectedMode is { } mode ? mode.ImageHeight.ToString(CultureInfo.InvariantCulture) : "—";
+
+    /// <summary>Status bar's "line N / total" readout -- real, derived from <see cref="Progress"/>
+    /// times the detected mode's own <c>ImageHeight</c>. No separate line-index property exists on
+    /// this pane or the decoder; <see cref="Progress"/> is the one already-exposed source for this
+    /// (spec/17-rx-telemetry-feasibility.md).</summary>
+    public string LineProgressText => Progress is { } progress && DetectedMode is { } mode
+        ? _localization.GetString("MainWindow.StatusBar.LineProgressValueFormat", (int)Math.Round(progress * mode.ImageHeight), mode.ImageHeight)
+        : _localization.GetString("MainWindow.StatusBar.LineProgressValueNoLock");
+
+    /// <summary>Frame-metadata card's "Started" row -- real, UTC time-of-day only (matching mock2's
+    /// own "14:20:54Z" shape), not a full date (this pane has no multi-day session concept to
+    /// disambiguate a bare time-of-day against).</summary>
+    public string StartedDisplay => StartedAt is { } startedAt
+        ? _localization.GetString("Panes.RxFrameMeta.StartedValueFormat", startedAt.UtcDateTime)
+        : "—";
 
     /// <summary>Legacy's own "Sync &amp; slant" readout formula (<c>TMmsstv::DrawSlantInfo</c>,
     /// <c>Main.cpp:5535-5544</c>) -- see <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SlantPpm"/>
@@ -170,6 +209,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// wired here.</summary>
     public string BufferedSampleCountDisplay => _localization.GetString("Panes.RxInput.BufferValueFormat", BufferedSampleCount);
 
+    /// <summary>Same <see cref="BufferedSampleCount"/> value, second display site (status bar) --
+    /// a distinct property, same reasoning as <see cref="SlantPpmStatusBarDisplay"/>. Deliberately
+    /// drops the "· N XRUN" half of mock2's own combined "buffer 512 · 0 XRUN" wording: that's a
+    /// SEPARATE audio-engine capture-overrun counter, not this decoder's own sample buffer, and
+    /// isn't wired here yet (spec/17-rx-telemetry-feasibility.md) -- showing only the real half
+    /// rather than a real number next to a still-fake one.</summary>
+    public string BufferedSampleCountStatusBarDisplay => _localization.GetString("MainWindow.StatusBar.BufferValueFormat", BufferedSampleCount);
+
     /// <summary>Legacy's own red-meter-bar threshold, not an invented clipping percentage -- see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.IsLevelOverdriven"/>.</summary>
     public string ClippingDisplay => IsLevelOverdriven
@@ -198,11 +245,22 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         OnPropertyChanged(nameof(LineTimeText));
         OnPropertyChanged(nameof(LinesText));
         OnPropertyChanged(nameof(SyncToneDisplay));
+        // Auditor-caught gap: LineProgressText depends on DetectedMode.ImageHeight too, not just
+        // Progress -- without this, a fresh detection renders "line -- / --" until the SECOND
+        // decoded line (ReceivedImageBuffer subscribes to ModeDetected before this VM does, so its
+        // own Progress=0.0 reset -- swallowed by the generated setter's equality check on the very
+        // first line -- races ahead of DetectedMode updating here), and a mode change with a
+        // different ImageHeight can briefly show the PREVIOUS mode's total.
+        OnPropertyChanged(nameof(LineProgressText));
     }
 
     private void OnModeDetected(SstvModeDefinition mode)
     {
-        Dispatcher.UIThread.Post(() => DetectedMode = mode);
+        Dispatcher.UIThread.Post(() =>
+        {
+            DetectedMode = mode;
+            StartedAt = DateTimeOffset.UtcNow;
+        });
     }
 
     private void OnUpdated()
@@ -225,6 +283,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             }
 
             Image = ImageSourceBitmapConverter.ToBitmap(_receivedImage.Current);
+            Progress = _receivedImage.Progress;
         });
     }
 }
