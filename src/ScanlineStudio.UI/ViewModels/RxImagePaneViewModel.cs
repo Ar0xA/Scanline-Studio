@@ -128,6 +128,17 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(BufferedSampleCountStatusBarDisplay))]
     private int _bufferedSampleCount;
 
+    /// <summary>The audio ENGINE's own dropped-frame overrun count (<see cref="ISstvSessionService.CaptureOverrunCount"/>)
+    /// -- a genuinely different quantity from <see cref="BufferedSampleCount"/> above despite
+    /// feeding the same combined "buffer · XRUN" readout mock2 shows; see that property's own doc
+    /// comment for the distinction. Both halves are real now, so this pane recombines them back into
+    /// mock2's original single format instead of the real-only-half split batches 1/2 shipped
+    /// specifically because XRUN was still fake then.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BufferedSampleCountDisplay))]
+    [NotifyPropertyChangedFor(nameof(BufferedSampleCountStatusBarDisplay))]
+    private int _captureOverrunCount;
+
     /// <summary>Backs <see cref="AgcGainDisplay"/> -- see that property's own doc comment for the
     /// derivation. Never <see langword="null"/>, same lifetime as
     /// <see cref="ISstvSessionService.SignalPeakLevel"/> itself.</summary>
@@ -281,18 +292,17 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         ? _localization.GetString("Panes.RxSignal.SyncToneValueFormat", SyncToneNominalHz - hz - SyncToneCalibrationOffsetHz, -hz - SyncToneCalibrationOffsetHz)
         : "—";
 
-    /// <summary>The decoder's internal sample-history buffer -- a different quantity from the
-    /// audio-engine capture-overrun/XRUN counter (spec/17-rx-telemetry-feasibility.md), which isn't
-    /// wired here.</summary>
-    public string BufferedSampleCountDisplay => _localization.GetString("Panes.RxInput.BufferValueFormat", BufferedSampleCount);
+    /// <summary>The decoder's internal sample-history buffer, combined with the audio-engine's own
+    /// dropped-frame overrun count (<see cref="CaptureOverrunCount"/>) -- two genuinely different
+    /// quantities feeding mock2's own single combined "buffer 512 · 0 XRUN" readout. Batches 1/2
+    /// shipped only the buffer half here, deliberately dropping "· N XRUN" while it was still a
+    /// hardcoded fake -- both halves are real now, so this recombines them back into mock2's
+    /// original format (spec/17-rx-telemetry-feasibility.md).</summary>
+    public string BufferedSampleCountDisplay => _localization.GetString("Panes.RxInput.BufferValueFormat", BufferedSampleCount, CaptureOverrunCount);
 
-    /// <summary>Same <see cref="BufferedSampleCount"/> value, second display site (status bar) --
-    /// a distinct property, same reasoning as <see cref="SlantPpmStatusBarDisplay"/>. Deliberately
-    /// drops the "· N XRUN" half of mock2's own combined "buffer 512 · 0 XRUN" wording: that's a
-    /// SEPARATE audio-engine capture-overrun counter, not this decoder's own sample buffer, and
-    /// isn't wired here yet (spec/17-rx-telemetry-feasibility.md) -- showing only the real half
-    /// rather than a real number next to a still-fake one.</summary>
-    public string BufferedSampleCountStatusBarDisplay => _localization.GetString("MainWindow.StatusBar.BufferValueFormat", BufferedSampleCount);
+    /// <summary>Same values, second display site (status bar) -- a distinct property, same reasoning
+    /// as <see cref="SlantPpmStatusBarDisplay"/>.</summary>
+    public string BufferedSampleCountStatusBarDisplay => _localization.GetString("MainWindow.StatusBar.BufferValueFormat", BufferedSampleCount, CaptureOverrunCount);
 
     /// <summary>Legacy's own red-meter-bar threshold, not an invented clipping percentage -- see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.IsLevelOverdriven"/>.</summary>
@@ -332,6 +342,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         IsLevelOverdriven = _sstvSession.IsLevelOverdriven;
         BufferedSampleCount = _sstvSession.BufferedSampleCount;
         SignalPeakLevel = _sstvSession.SignalPeakLevel;
+        CaptureOverrunCount = _sstvSession.CaptureOverrunCount;
     }
 
     partial void OnDetectedModeChanged(SstvModeDefinition? value)

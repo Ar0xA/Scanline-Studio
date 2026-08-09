@@ -246,6 +246,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public int BufferedSampleCount { get; set; }
 
+    public int CaptureOverrunCount { get; set; }
+
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     public void RaiseModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
