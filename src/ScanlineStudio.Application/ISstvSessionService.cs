@@ -113,6 +113,23 @@ public interface ISstvSessionService : IAsyncDisposable
     /// <summary>Whether <see cref="SetPttLockAsync"/>'s lock is currently engaged.</summary>
     bool IsPttLocked { get; }
 
+    /// <summary>Pass-throughs of the underlying decoder's own read-only telemetry -- see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder"/>'s matching members for the full
+    /// contract (null-cases, freshness caveats, legacy citations). All are safe to read from any
+    /// thread, intended for a GUI to poll on a timer (their own doc comments say so explicitly) --
+    /// none of them are event-driven.</summary>
+    double? SlantPpm { get; }
+
+    int? SyncOffsetSamples { get; }
+
+    double SignalPeakLevel { get; }
+
+    bool IsLevelOverdriven { get; }
+
+    double? SyncFrequencyCorrectionHz { get; }
+
+    int BufferedSampleCount { get; }
+
     /// <summary>Manual-keying diagnostic aid: holds PTT keyed independent of any
     /// <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> call, until unlocked. Idempotent both
     /// ways. See the implementation's own doc comment for the exact failure-handling and
