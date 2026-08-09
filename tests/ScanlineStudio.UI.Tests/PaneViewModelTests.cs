@@ -84,6 +84,63 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_SetsStartedAt()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var localization = new FakeLocalizationService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization);
+
+        Assert.Equal("—", vm.StartedDisplay);
+
+        var before = DateTimeOffset.UtcNow;
+        var mode = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+        var after = DateTimeOffset.UtcNow;
+
+        Assert.NotEqual("—", vm.StartedDisplay);
+        Assert.NotNull(vm.StartedAt);
+        Assert.InRange(vm.StartedAt!.Value, before, after);
+        Assert.Equal("Panes.RxFrameMeta.StartedValueFormat", localization.LastKey);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_UpdatedEvent_SetsProgress_AndLineProgressTextReflectsIt()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization);
+
+        Assert.Equal("MainWindow.StatusBar.LineProgressValueNoLock", vm.LineProgressText);
+
+        var mode = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        // Still no-lock until a real Updated event carries a Progress value -- ModeDetected alone
+        // doesn't populate it.
+        Assert.Equal("MainWindow.StatusBar.LineProgressValueNoLock", vm.LineProgressText);
+
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = 0.5;
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseUpdated();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0.5, vm.Progress);
+        _ = vm.LineProgressText;
+        Assert.Equal("MainWindow.StatusBar.LineProgressValueFormat", localization.LastKey);
+        // Regression guard (auditor nit): the previous version of this test only checked which
+        // locale KEY fired, not the actual numbers -- a swapped ImageWidth/ImageHeight would have
+        // passed silently. 0.5 * 256 (ImageHeight, not the 320-wide ImageWidth) = 128.
+        Assert.Equal(new object[] { 128, 256 }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_PollTelemetry_NoLockYet_ShowsPlaceholders()
     {
         var sstvSession = new FakeSstvSessionService();
@@ -121,6 +178,20 @@ public sealed class PaneViewModelTests
         Assert.NotEqual("—", vm.SyncToneDisplay);
         Assert.Equal("Panes.RxSync.AutoCorrectValue.Locked", vm.AutoCorrectDisplay);
         Assert.Equal("Panes.RxInput.ClippingValue.Overdriven", vm.ClippingDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_BufferedSampleCountStatusBarDisplay_ReflectsSessionValue()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { BufferedSampleCount = 1583 };
+        var vm = new RxImagePaneViewModel(sstvSession, localization);
+
+        vm.PollTelemetry();
+        _ = vm.BufferedSampleCountStatusBarDisplay;
+
+        Assert.Equal("MainWindow.StatusBar.BufferValueFormat", localization.LastKey);
+        Assert.Equal(new object[] { 1583 }, localization.LastArgs);
     }
 
     [AvaloniaFact]
