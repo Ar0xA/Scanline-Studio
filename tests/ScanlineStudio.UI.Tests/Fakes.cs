@@ -59,7 +59,19 @@ internal sealed class FakeLocalizationService : ILocalizationService
         return Task.CompletedTask;
     }
 
-    public string GetString(string key, params object[] args) => key;
+    /// <summary>Captures the most recent call's key/args, in addition to still returning the raw
+    /// key -- lets a test verify the CALLER passed the right computed numeric arguments (e.g. a
+    /// display property's own arithmetic) without needing a real locale-file-backed formatter.</summary>
+    public string? LastKey { get; private set; }
+
+    public object[] LastArgs { get; private set; } = [];
+
+    public string GetString(string key, params object[] args)
+    {
+        LastKey = key;
+        LastArgs = args;
+        return key;
+    }
 }
 
 internal sealed class FakeWaterfallSource : IWaterfallSource, IDisposable
@@ -211,6 +223,18 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public string? ConfiguredPlaybackDeviceName { get; set; }
 
     public Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default) => Task.FromResult(ConfiguredPlaybackDeviceName);
+
+    public double? SlantPpm { get; set; }
+
+    public int? SyncOffsetSamples { get; set; }
+
+    public double SignalPeakLevel { get; set; }
+
+    public bool IsLevelOverdriven { get; set; }
+
+    public double? SyncFrequencyCorrectionHz { get; set; }
+
+    public int BufferedSampleCount { get; set; }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 

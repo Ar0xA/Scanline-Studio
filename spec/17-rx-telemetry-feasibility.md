@@ -129,19 +129,26 @@ build this one without further digging.
 
 ## Recommended build order, if this becomes the next work item
 
-Cheapest, highest-value first (all REAL-EASY, mostly pure wiring, no new DSP):
+**Batch 1 SHIPPED (2026-08-09)**: Slant ppm, Sync offset (relabeled from an invented "px" unit to
+real samples), Auto-correct "locked" readout, Re-sync button, Buffer, Clipping, and Sync tone (with
+the narrow-family 1900Hz nominal AND the legacy calibration-offset correctly subtracted out — both
+real bugs an auditor round caught before shipping, see `RxImagePaneViewModel.SyncToneDisplay`'s own
+doc comment for the full math). Status bar's Slant readout wired too, reusing the same property. Two
+new `ISstvSessionService` pass-through properties added for the underlying decoder telemetry. The
+dead "Reset" button (no real semantics, see below) was explicitly disabled rather than left silently
+inert next to the now-live Re-sync button.
+
+Remaining, cheapest/highest-value first (all REAL-EASY, mostly pure wiring, no new DSP):
 1. Line progress, Frames today/Log size, File size, UTC clock, "Started" timestamp, AGC gain
    (client-side derivation, zero backend) — trivial wiring or one-line additions, no risk.
-2. RX device name, Resync button — same shape as work already shipped this session (mirror an
-   existing pattern).
+2. RX device name — same shape as work already shipped this session (mirror an existing pattern).
 3. Buffer·XRUN — needs a small `IAudioEngine` interface extension + `FakeAudioEngine` update first
    (not a pure existing-property read, per the audit correction above), still cheap but budget for
    that extra step.
 4. Luminance histogram / Clip Lo-Hi — new but small imaging-utility function, no DSP risk.
-5. Sync-tone reformatting — pure display-layer change over an existing property.
-6. Auto-correct "locked" readout — cheap (`SlantPpm != null`), but the "on/off" HALF needs exposing
-   legacy's real `AutoSlant` setting (currently hardcoded on) plus an explicit AVT case, not just
-   the null check — slightly bigger than it looks, see the table entry above.
+5. Auto-correct's "on/off" HALF still not wired (the "locked" half shipped in batch 1) — needs
+   exposing legacy's real `AutoSlant` setting (currently hardcoded on) plus an explicit AVT case, not
+   just a null check — slightly bigger than it looks, see the table entry above.
 
 Then, only with explicit product decisions made first: "Source" (detection-method labels), Advanced
 timing (relabel as static reference vs. drop the card section), "Reset" button semantics, and
