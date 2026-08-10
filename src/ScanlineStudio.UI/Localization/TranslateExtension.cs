@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Avalonia.Data;
+using Avalonia.Data.Converters;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.DependencyInjection;
 using ScanlineStudio.Abstractions.Localization;
@@ -35,6 +36,11 @@ public sealed class TranslateExtension : MarkupExtension
 
     public object[] Args { get; set; } = [];
 
+    /// <summary>Optional display-only transform (e.g. <see cref="Converters.UppercaseInvariantConverter"/>)
+    /// applied on top of the localized string -- the stored/localized value itself is never touched,
+    /// same precedent as <c>FrequencyPresetButtonViewModel.Label</c>'s display-only uppercasing.</summary>
+    public IValueConverter? Converter { get; set; }
+
     public override object ProvideValue(IServiceProvider serviceProvider)
     {
         var localization = App.Services?.GetRequiredService<ILocalizationService>()
@@ -44,6 +50,7 @@ public sealed class TranslateExtension : MarkupExtension
         return new Binding(nameof(TranslateBindingSource.Value))
         {
             Source = new TranslateBindingSource(localization, Key, Args),
+            Converter = Converter,
         };
     }
 }

@@ -24,7 +24,8 @@ public sealed class RadioStatusViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         var preset = Assert.Single(vm.Presets);
-        Assert.Equal("40m SSTV", preset.Label);
+        // Uppercased for display only (mock2's label line is CSS text-transform:uppercase).
+        Assert.Equal("40M SSTV", preset.Label);
         Assert.Equal(42, vm.TxVolumePercent);
     }
 
@@ -81,7 +82,9 @@ public sealed class RadioStatusViewModelTests
         Assert.Equal(3_845_000, saved.FrequencyHz);
         Assert.Equal(RadioMode.Lsb, saved.Mode);
         var button = Assert.Single(vm.Presets);
-        Assert.Equal("80m SSTV", button.Label);
+        // Uppercased for display only (mock2's label line is CSS text-transform:uppercase) --
+        // the underlying stored Label above stays exactly as typed.
+        Assert.Equal("80M SSTV", button.Label);
     }
 
     [AvaloniaFact]

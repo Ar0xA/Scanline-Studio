@@ -125,8 +125,155 @@ that its size is fixed, so a scrollable fallback was added rather than letting e
 silently vanish below the visible area. Full solution build clean, `ScanlineStudio.UI.Tests`
 173/173 unaffected. **Committed (`aacfc07`), not yet pushed.**
 
-**Next up**: Phase 3 (Receive tab) — the largest remaining single tab, likely sub-batched by
-column given its size.
+**Phase 3 left column IN PROGRESS**: `RadioHeaderView.axaml` Favourites/Transceiver cards were
+STILL clipping post-Phase-2 despite repeated screenshot-based fixes (user caught it 3+ times) — root
+cause finally found via **real evidence, not screenshot guessing**: added a temporary debug-bounds
+dump (`RadioHeaderView.axaml.cs`, now removed) that printed real Avalonia `Bounds` for every
+`HeaderedContentControl` + children, and separately built a faithful **headless-Firefox render of
+the actual source mockup HTML** (`_ds/industry-.../styles.css` + local `@font-face` substitutes
+pointing at this repo's own embedded Barlow/Barlow-Condensed/DejaVu-Mono TTFs, no network fetch —
+so metrics match what Avalonia itself renders, not whatever Google-Fonts-online or system fallback
+Firefox would otherwise pick) with an injected `getBoundingClientRect()` overlay script. Both
+independently agreed: the VFO/Favourites/Transceiver group boxes' real stretched content height is
+**87px**, not the ~67px implied by **LAYOUT-SPEC.md's own stated "81" band height** — that spec
+value itself was wrong (or measured differently than assumed), and every prior fix attempt had been
+chasing a downstream symptom (ScrollViewer overhead, button margins) of an upstream budget that was
+simply ~20px too small. Fixed at the true root: `MainWindow.axaml`'s `Grid.RowDefinitions` band 2
+and `RadioHeaderView.axaml`'s own outer `Grid Height` both corrected from 81 → **102** (87 content +
+7+7 padding + 1 rounding/hairline). Re-verified after the fix with the same two methods (real-window
+bounds dump: Favourites content 59.3px used of 71.8px available, Transceiver 67.6px of 71.8px — both
+now with real margin, not a bare fit) plus a real screenshot, zoomed — confirmed clean, nothing
+clipping. Temporary debug diagnostic code removed from `RadioHeaderView.axaml.cs`. Full solution
+build clean, `ScanlineStudio.UI.Tests` 173/173 green. **Not yet committed** — the Favourites card's
+`ScrollViewer`-removal edit (a real but secondary simplification, made just before the row-height
+root cause was found) is still in place alongside the height fix; both should land in the same
+commit once the rest of Phase 3's left column is re-verified visually against the mockup.
+
+**Process note for the rest of Phase 3 (and 4-6)**: this headless-Firefox-with-local-fonts +
+injected-`getBoundingClientRect()` technique is now the preferred way to get exact target
+dimensions per card, per the user's own explicit direction — cross-check LAYOUT-SPEC.md's stated
+numbers against it rather than trusting the prose, since this is now the second time a LAYOUT-SPEC
+figure itself has been wrong (first was the CSS/Avalonia padding-order mixing found in Phase 0). The
+scratch harness lives at `/tmp/.../scratchpad/isolated.html` (session-local, not persisted) — extract
+the relevant markup slice from `SSTV Console.dc.html`, point at local `fonts/*.ttf` via a
+`local-fonts.css` override (disable the CSS's own `@import googleapis` line), inject the measurement
+`<script>`, render with `firefox --headless --screenshot out.png --window-size=W,H -profile <tmp
+profile dir> file://.../isolated.html`.
+
+Mode/Sync&slant/Input-chain/Signal-quality cards (the actual Phase 3 left-column content, distinct
+from the Phase-2 header row just fixed above) were already ported in an earlier session slice —
+segmented Auto/Locked control, disclosure toggle, L/R meters, kicker text, hatch placeholders — see
+prior commit history for that piece; still needs a final zoomed-screenshot pass now that the header
+row above it is the correct height (band-2 growing from 81→102 shifts everything below it down
+slightly, worth one more visual check before calling Phase 3's left column done).
+
+**Further fidelity fixes found after the band-height fix, via direct user visual comparison against
+the mockup HTML open in their own browser** (all applied, one still outstanding — see restart
+checklist below):
+
+1. **Preset-button casing** (`RadioStatusViewModel.cs`): `FrequencyPresetButtonViewModel.Label` and
+   `.FrequencyWithMode` rendered mixed-case ("Usb", "40m sstv") against mock2's uppercase convention
+   (CSS `text-transform:uppercase` on the label line; sideband abbreviations are conventionally
+   uppercase). Fixed as **display-only** uppercasing (`.ToUpperInvariant()` on the button-viewmodel's
+   own `Label`/mode string) — the underlying stored `Preset.Label` and the separate
+   `FrequencyPresetEditorRowViewModel` (used by "Edit list..." flyout) are untouched, so the user's
+   own typed casing survives round-trip through Save. 2 existing tests
+   (`RadioStatusViewModelTests.cs`) updated to expect the new uppercase display string.
+2. **Preset-button frequency precision**: same property used `0.000` (3-decimal MHz, e.g.
+   "14.230") while the rest of the codebase (`RadioStatusViewModel.FrequencyDisplay`,
+   `FrequencyPresetEditorRowViewModel`'s own text field) uses `0.000000` (6-decimal, Hz precision) —
+   user caught this by comparing button size against the mock ("bigger... because it has .00 behind
+   the frequency"). This wasn't just cosmetic: 3 decimals silently truncates real sub-kHz precision
+   on a preset. Fixed to match the established `0.000000` convention ("14.230000 USB").
+3. **Favourites card `ScrollViewer` removal**: the presets row no longer wraps in a `ScrollViewer` —
+   reverted to a plain `ItemsControl`/`WrapPanel`, relying on the atom-level `ClipToBounds="False"`
+   fix to let a genuinely-overflowing many-preset case bleed visibly rather than being silently
+   clipped by a ScrollViewer that was itself adding ~4px of unwanted overhead in the common case.
+   Per-item `Margin="0,0,4,4"` → `"0,0,4,0"` (the bottom margin was inflating the row's own height
+   against its DockPanel sibling).
+4. **Mini-chip background — investigated, NOT a bug.** User flagged "STEP 500 Hz etc. shouldn't be
+   white" — raw pixel-sampled the running app's screenshot (Python/PIL `getpixel`) and confirmed the
+   chip interior is `#F2F2F3` (`IndustryBg`), byte-identical to the surrounding card background, at
+   every sampled point. No fix made. If it still looks off on a real monitor (vs this sandbox's
+   screenshot), worth a fresh look, but there is no white-fill code path to find.
+
+**Corner-mark hairline bug + full header-row design-fidelity pass: SHIPPED this session (new
+session restart), not yet committed.** `design-fidelity` subagent confirmed usable after the
+restart (was blocked at end of prior session — the available-agent list doesn't hot-reload mid-session).
+User confirmed treating it as auditor-tier: use it whenever needed for UI verification.
+
+Applied the Opus-diagnosed corner-mark fix exactly as specified (Path-stroke replacing 2 filled
+Border boxes, all 8 instances in `Atoms.axaml`) — pixel-sampled personally first (1px hairline,
+full-strength, no blur, confirmed) before spawning verification.
+
+**Round 1 `design-fidelity` review** (whole VFO/Favourites/Transceiver row, not just the corner
+marks) found 12 real fidelity gaps beyond the corner-mark fix itself, most fixed this session:
+- Corner-mark/`.gbt`-notch placement was 1 DIP too far out (CSS offsets are relative to the padding
+  box, inside the border, not the border box) — `Margin` corrected -6→-5 (all 8 corners) and
+  `6,-6,0,0`→`7,-5,0,0` (the `.gbt` notch).
+- Group-box titles (FAVOURITES/TRANSCEIVER) weren't uppercased — new `UppercaseInvariantConverter`
+  (`Converters/UppercaseInvariantConverter.cs`) wired via a new optional `Converter` property added
+  to `{loc:Translate}` itself (`Localization/TranslateExtension.cs`), applied at just the 2 call
+  sites. Underlying localized string stays untouched (display-only), same precedent as the
+  preset-button uppercasing fixed earlier this session.
+- Halt/Store current Buttons were missing the `IndustryBtn` class, so they silently never picked up
+  Barlow Condensed SemiBold from the `Button.Industry.IndustryBtn` selector (ToggleButton has its
+  own separate rule, unaffected) — added to all 3 call sites.
+- Favourites' bottom-row minis (Edit list/Import/Scan) weren't actually right-aligned —
+  `HorizontalAlignment="Right"` on a child of a horizontal `StackPanel` is a no-op; restructured to
+  a `DockPanel`.
+- RX-level meter used literal pixel `Width="63"`/`Margin="78,0,0,0"` on what's actually a stretchy
+  `*` column — only "matched" the mockup's 63%/78% by coincidence at one specific window size; fixed
+  with nested star-column Grids (`ColumnDefinitions="63*,37*"` / `"78*,22*"`) so the proportions hold
+  at any width.
+- **Real functional bug, not cosmetic**: the TX-level slider's fill never tracked its own `Value` at
+  all — confirmed via a runtime `Bounds` dump (`DecreaseButton.Bounds.Width` read exactly `0`
+  regardless of testing `Value=50` or `Value=100`). Root-caused via reflection + `ilspycmd`
+  decompilation of `Avalonia.Controls.Primitives.Track`'s real `ComputeSliderLengths`/`ArrangeOverride`
+  (confirmed the math itself is correct) down to `PART_DecreaseButton`/`PART_IncreaseButton` not
+  inheriting `Stretch` `HorizontalAlignment` (Track hands them a correctly-computed proportional
+  Arrange rect, but non-Stretch alignment discards it in favor of their empty-content `DesiredSize`,
+  which is 0) — fixed with an explicit `HorizontalAlignment="Stretch"` on both RepeatButtons.
+  Verified empirically both via the Bounds dump (now proportional) and visually.
+- Border-form `.mini` chip text (`BW 2.7k`, `SPLIT OFF`, etc.) sampled pure black instead of
+  `IndustryText` — the style had no `Foreground` setter at all; added one.
+- Band-2's bottom 1px hairline divider was missing entirely — added a bottom-aligned `Border`.
+- "Store current" stays docked far-right (accepted as a deliberate, now-documented deviation from
+  the mockup's inline layout — this port's Presets collection is unbounded, unlike mock2's fixed
+  7-preset example).
+
+**Round 2 `design-fidelity` review** (verifying the round-1 fixes) found 8/10 confirmed clean, plus:
+- **Real bug**: the TX-slider Thumb rendered fully invisible (zero accent-800 pixels anywhere) —
+  the base Fluent `Thumb` ControlTheme's own template doesn't paint a bare `Background` property
+  Setter. Fixed with an explicit inline `Thumb.Template` (`<Border Background="{TemplateBinding
+  Background}"/>`).
+- **Real bug**: the CAT-link chip ("No CAT link"/linked state) missed every `Border.IndustryMini >
+  TextBlock` setter (font, size, weight, the just-added `Foreground` fix) because it nests its 2
+  TextBlocks inside a `Panel`, unreachable by a direct-child `>` selector — changed to a descendant
+  selector (3 selectors: base, `.active`, `.accentOutline`).
+- **Minor layout fix**: the new band-2 divider had been added as a bare overlay without reserving
+  space for it, so the cards grew from 87→89.3 DIP — fixed by bumping the header row's own bottom
+  `Margin` from 7→8.
+- **Doc nit**: added the "Store current" deliberate-deviation rationale as an inline comment (was
+  previously undocumented at that exact call site).
+
+Both rounds' remaining findings (RX-marker ±1px vertical nit, band-1 background color mismatch
+outside this row, Favourites subtitle/frequency-placeholder wording) are deliberately NOT fixed —
+logged here as one-line off-scope notes per the project's ADHD-scope convention, not silent gaps.
+
+**Verified**: full solution build clean (0 warnings/errors), `UI.Tests` 173/173 unaffected throughout
+every fix round. **Not yet committed** — `git status --short`: `PROJECT_BRIEF.md`, `assets/locale/en.json`,
+`Localization/TranslateExtension.cs`, `Styles/Atoms.axaml`, `ViewModels/RadioStatusViewModel.cs`,
+`Views/MainWindow.axaml`, `Views/RadioHeaderView.axaml`, `tests/.../RadioStatusViewModelTests.cs`
+(modified) + `Converters/UppercaseInvariantConverter.cs` (new) — all one logical unit, the Phase-2/3
+header-row fidelity fixes. Two pre-existing untracked dirs (`mockups/fixes/`, `mockups/split/` —
+scratch copies from earlier in this session) are NOT part of this commit; left alone.
+
+**Next**: resume Phase 3 left-column final verification (Mode/Sync&slant/Input-chain/Signal-quality —
+already ported, needs one more zoomed screenshot now that band-2's height is correct), then centre
+column (Spectrum·waterfall/Incoming-frame/Decode-activity), then right column (Frame-metadata/
+Unattended-RX/Session-frames/Macros) — use the `design-fidelity` subagent per card going forward,
+2 rounds each, matching the process just used here.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 

@@ -35,6 +35,17 @@
                  the 2 real group-box blueprint sites (Incoming-frame, Editor) opt in via
                  Classes="Industry blueprint" without a second control. -->
             <ControlTheme x:Key="IndustryGroupBoxTheme" TargetType="HeaderedContentControl">
+                <!-- ClipToBounds=False, set HERE not per call site (Phase 3 fix): FluentTheme's
+                     base HeaderedContentControl/ContentControl styling sets ClipToBounds=True,
+                     which clips this template's own -6px title notch overhang AND clips real
+                     content that (legitimately, e.g. an unbounded user-configured collection)
+                     exceeds a fixed-height ancestor's allotted cell — confirmed via a real-window
+                     screenshot on the Phase 2 radio header cards (titles were visibly cut off,
+                     Transceiver's TX-level row was missing entirely) before this fix. Setting it
+                     once on the ControlTheme itself, not as a local attribute on every call site,
+                     since every future group-box instance across the rest of this redesign would
+                     otherwise need the same one-line fix repeated by hand. -->
+                <Setter Property="ClipToBounds" Value="False" />
                 <Setter Property="Padding" Value="{StaticResource IndustryGbPadding}" />
                 <Setter Property="Template">
                     <ControlTemplate>
@@ -46,7 +57,7 @@
                             </Border>
                             <Border Background="{StaticResource IndustryBg}"
                                     Padding="{StaticResource IndustryGbtPadding}"
-                                    Margin="6,-6,0,0"
+                                    Margin="7,-5,0,0"
                                     HorizontalAlignment="Left" VerticalAlignment="Top">
                                 <ContentPresenter Content="{TemplateBinding Header}"
                                                    ContentTemplate="{TemplateBinding HeaderTemplate}" />
@@ -73,29 +84,53 @@
                                  top/left/right/bottom anchor differs). Needs a real-window visual
                                  confirmation once first consumed (Phase 3+) per this project's own
                                  "verify geometry-coordinate questions empirically" discipline. -->
-                            <Canvas Name="PART_CornerTL" Width="11" Height="11" Margin="-6,-6,0,0"
+                            <Canvas Name="PART_CornerTL" Width="11" Height="11" Margin="-5,-5,0,0"
                                     HorizontalAlignment="Left" VerticalAlignment="Top"
-                                    IsHitTestVisible="False" IsVisible="False">
-                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
-                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                                    IsHitTestVisible="False" IsVisible="False"
+                                    UseLayoutRounding="False">
+                                <Path Canvas.Left="0" Canvas.Top="0"
+                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      StrokeThickness="1"
+                                      Stretch="None"
+                                      UseLayoutRounding="False"
+                                      RenderOptions.EdgeMode="Aliased"
+                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
                             </Canvas>
-                            <Canvas Name="PART_CornerTR" Width="11" Height="11" Margin="0,-6,-6,0"
+                            <Canvas Name="PART_CornerTR" Width="11" Height="11" Margin="0,-5,-5,0"
                                     HorizontalAlignment="Right" VerticalAlignment="Top"
-                                    IsHitTestVisible="False" IsVisible="False">
-                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
-                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                                    IsHitTestVisible="False" IsVisible="False"
+                                    UseLayoutRounding="False">
+                                <Path Canvas.Left="0" Canvas.Top="0"
+                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      StrokeThickness="1"
+                                      Stretch="None"
+                                      UseLayoutRounding="False"
+                                      RenderOptions.EdgeMode="Aliased"
+                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
                             </Canvas>
-                            <Canvas Name="PART_CornerBL" Width="11" Height="11" Margin="-6,0,0,-6"
+                            <Canvas Name="PART_CornerBL" Width="11" Height="11" Margin="-5,0,0,-5"
                                     HorizontalAlignment="Left" VerticalAlignment="Bottom"
-                                    IsHitTestVisible="False" IsVisible="False">
-                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
-                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                                    IsHitTestVisible="False" IsVisible="False"
+                                    UseLayoutRounding="False">
+                                <Path Canvas.Left="0" Canvas.Top="0"
+                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      StrokeThickness="1"
+                                      Stretch="None"
+                                      UseLayoutRounding="False"
+                                      RenderOptions.EdgeMode="Aliased"
+                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
                             </Canvas>
-                            <Canvas Name="PART_CornerBR" Width="11" Height="11" Margin="0,0,-6,-6"
+                            <Canvas Name="PART_CornerBR" Width="11" Height="11" Margin="0,0,-5,-5"
                                     HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                    IsHitTestVisible="False" IsVisible="False">
-                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
-                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                                    IsHitTestVisible="False" IsVisible="False"
+                                    UseLayoutRounding="False">
+                                <Path Canvas.Left="0" Canvas.Top="0"
+                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      StrokeThickness="1"
+                                      Stretch="None"
+                                      UseLayoutRounding="False"
+                                      RenderOptions.EdgeMode="Aliased"
+                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
                             </Canvas>
                         </Grid>
                     </ControlTemplate>
@@ -106,8 +141,37 @@
                  site, NOT a group box: no .gbt title notch at all). Separate ControlTheme so
                  Classes="blueprint" is genuinely usable independently of IndustryGroupBox. Same
                  blocker-2 fix as IndustryGroupBoxTheme above — Margin-positioned 11x11 slots, not
-                 negative-coordinate Data. -->
+                 negative-coordinate Data.
+
+                 Phase 3 fix: the crosshair strokes rendered ~2x their intended 1px hairline weight
+                 (user-caught, "odd big + signs" — confirmed via a raw-pixel screenshot crop: the
+                 mini-chip's Border-drawn 1px borders render crisp/1px, these fill-based crosses
+                 rendered ~2px, blurred). Root-caused via a dedicated Opus subagent call after two
+                 failed attempts (UseLayoutRounding tweaks, EdgeMode="Aliased" alone) both still
+                 showed 2 full-strength device pixels, not an AA blend. Real cause: Avalonia's
+                 layout rounding (LayoutHelper.RoundLayoutSizeUp) uses Math.Ceiling, not
+                 round-to-nearest, and applies to anything LAYOUT-SIZED — a Width="1" Rectangle or
+                 Border.Background fill. At this window's ~1.2x render scale, ceil(1 x 1.2) = 2
+                 device px: a genuine 2-solid-pixel fill, which EdgeMode="Aliased" alone can't fix
+                 since both pixels are already full-strength, not antialiased. A Border/Path STROKE,
+                 by contrast, is a Skia pen width handed straight to the stroke rasterizer — it
+                 never goes through layout-rounding, so it stays a true 1px line regardless of
+                 scale. Fixed by replacing each corner's 2 filled Border boxes with ONE stroked
+                 Path per corner (this theme and IndustryGroupBoxTheme's own corner marks above),
+                 at half-pixel-offset coordinates (5.5, not 5) so the 1px pen lands on exactly one
+                 device pixel row/column, with UseLayoutRounding="False" on both the Canvas and the
+                 Path so nothing along that chain re-snaps the offset back to an integer.
+
+                 design-fidelity-agent-caught follow-up: the slot's own Margin was -6 on the outward
+                 sides (matching the OLD 12x12-inclusive-of-border sizing assumption), but the CSS
+                 `.corner` box is offset from the PADDING box (inside the 1px border), so it should
+                 start 5px outside the border, not 6, so it's corrected to -5 on all 8 corner-mark
+                 instances (this theme and IndustryGroupBoxTheme's PART_CornerTL/TR/BL/BR above),
+                 confirmed via a real headless-render pixel comparison against the mockup HTML. -->
+
             <ControlTheme x:Key="IndustryBlueprintBorderTheme" TargetType="ContentControl">
+                <!-- ClipToBounds=False, same Phase 3 fix/reasoning as IndustryGroupBoxTheme above. -->
+                <Setter Property="ClipToBounds" Value="False" />
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Grid>
@@ -116,21 +180,41 @@
                                 <ContentPresenter Content="{TemplateBinding Content}"
                                                    ContentTemplate="{TemplateBinding ContentTemplate}" />
                             </Border>
-                            <Canvas Width="11" Height="11" Margin="-6,-6,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False">
-                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
-                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            <Canvas Width="11" Height="11" Margin="-5,-5,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" UseLayoutRounding="False">
+                                <Path Canvas.Left="0" Canvas.Top="0"
+                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      StrokeThickness="1"
+                                      Stretch="None"
+                                      UseLayoutRounding="False"
+                                      RenderOptions.EdgeMode="Aliased"
+                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
                             </Canvas>
-                            <Canvas Width="11" Height="11" Margin="0,-6,-6,0" HorizontalAlignment="Right" VerticalAlignment="Top" IsHitTestVisible="False">
-                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
-                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            <Canvas Width="11" Height="11" Margin="0,-5,-5,0" HorizontalAlignment="Right" VerticalAlignment="Top" IsHitTestVisible="False" UseLayoutRounding="False">
+                                <Path Canvas.Left="0" Canvas.Top="0"
+                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      StrokeThickness="1"
+                                      Stretch="None"
+                                      UseLayoutRounding="False"
+                                      RenderOptions.EdgeMode="Aliased"
+                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
                             </Canvas>
-                            <Canvas Width="11" Height="11" Margin="-6,0,0,-6" HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False">
-                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
-                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            <Canvas Width="11" Height="11" Margin="-5,0,0,-5" HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False" UseLayoutRounding="False">
+                                <Path Canvas.Left="0" Canvas.Top="0"
+                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      StrokeThickness="1"
+                                      Stretch="None"
+                                      UseLayoutRounding="False"
+                                      RenderOptions.EdgeMode="Aliased"
+                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
                             </Canvas>
-                            <Canvas Width="11" Height="11" Margin="0,0,-6,-6" HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
-                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
-                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            <Canvas Width="11" Height="11" Margin="0,0,-5,-5" HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False" UseLayoutRounding="False">
+                                <Path Canvas.Left="0" Canvas.Top="0"
+                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      StrokeThickness="1"
+                                      Stretch="None"
+                                      UseLayoutRounding="False"
+                                      RenderOptions.EdgeMode="Aliased"
+                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
                             </Canvas>
                         </Grid>
                     </ControlTemplate>
@@ -315,17 +399,29 @@
                                    Value="{TemplateBinding Value, Mode=TwoWay}"
                                    IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
                                 <Track.DecreaseButton>
-                                    <RepeatButton Name="PART_DecreaseButton" Height="4" VerticalAlignment="Center"
+                                    <RepeatButton Name="PART_DecreaseButton" Classes="Industry" Height="4" MinWidth="0" MinHeight="0" Padding="0"
+                                                  HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                                   Focusable="False" BorderThickness="0" CornerRadius="0"
                                                   Background="{StaticResource IndustryAccent}" />
                                 </Track.DecreaseButton>
                                 <Track.IncreaseButton>
-                                    <RepeatButton Name="PART_IncreaseButton" Height="4" VerticalAlignment="Center"
+                                    <RepeatButton Name="PART_IncreaseButton" Classes="Industry" Height="4" MinWidth="0" MinHeight="0" Padding="0"
+                                                  HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                                   Focusable="False" BorderThickness="0" CornerRadius="0"
                                                   Background="Transparent" />
                                 </Track.IncreaseButton>
+                                <!-- Explicit inline Template (design-fidelity-agent-caught fix): the base
+                                     Fluent Thumb ControlTheme's own template doesn't paint the plain
+                                     Background property we set above, so the thumb rendered invisible,
+                                     forced visible with a one-Border template bound straight to it. -->
                                 <Thumb Name="PART_Thumb" Width="3" Height="12" Margin="0"
-                                       Background="{StaticResource IndustryAccent800}" />
+                                       Background="{StaticResource IndustryAccent800}">
+                                    <Thumb.Template>
+                                        <ControlTemplate>
+                                            <Border Background="{TemplateBinding Background}" />
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
                             </Track>
                         </Grid>
                     </ControlTemplate>
@@ -433,22 +529,27 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
-    <Style Selector="Border.IndustryMini > TextBlock">
+    <!-- Descendant combinator, not direct-child (design-fidelity-agent-caught fix): the CAT-link
+         chip nests its 2 TextBlocks inside a Panel (RadioHeaderView.axaml's CatLinked/CatNotLinked
+         pair), which a " > TextBlock" selector can't reach, so that one chip silently missed every
+         setter below (font, size, weight, and the IndustryText foreground fix). -->
+    <Style Selector="Border.IndustryMini TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="10" />
         <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
     </Style>
     <Style Selector="Border.IndustryMini.active">
         <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
         <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
     </Style>
-    <Style Selector="Border.IndustryMini.active > TextBlock">
+    <Style Selector="Border.IndustryMini.active TextBlock">
         <Setter Property="Foreground" Value="{StaticResource IndustryBg}" />
     </Style>
     <Style Selector="Border.IndustryMini.accentOutline">
         <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
     </Style>
-    <Style Selector="Border.IndustryMini.accentOutline > TextBlock">
+    <Style Selector="Border.IndustryMini.accentOutline TextBlock">
         <Setter Property="Foreground" Value="{StaticResource IndustryAccent700}" />
     </Style>
     <!-- Interaction states, item 18: hover = text-7% mix (NOT IndustryAccent100 — .mini is
