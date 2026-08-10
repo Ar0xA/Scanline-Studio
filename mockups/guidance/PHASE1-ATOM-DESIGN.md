@@ -85,6 +85,7 @@ but not sufficient — the old selector must also be prevented from matching new
 | `Button` | `Cards.axaml:107` | Height 19, Padding 10,0, Background, BorderBrush, BorderThickness, CornerRadius | `.mini` Button chips (want 17 tall), all 6 button heights |
 | `Button:pointerover/:pressed /template/ ContentPresenter` | `Cards.axaml:116,120` | old hover/press blue | every new button's hover/press |
 | `ToggleButton` | `Cards.axaml:158` | Height 19, Padding, Background, CornerRadius | `.mini` ToggleButton chips, item 16's toggle |
+| `ToggleButton:checked /template/ ContentPresenter` | `Cards.axaml:171` | old pressed-blue fill | every checked `.mini` ToggleButton chip (implementation-phase code-review gap — missing from this table's original pass, fixed alongside the implementation itself) |
 | `Slider` | `Cards.axaml:294` | MinHeight 18, Foreground `#0F62A8` | `IndustrySliderTheme` (MinHeight 18 breaks the 17px `.r2` row; old blue can land on the fill if the template uses `{TemplateBinding Foreground}`) |
 | `TextBox, ComboBox, NumericUpDown` | `Cards.axaml:260`, `ChromeOverrides.axaml:187` | Height 19, Padding 4,0, FontSize 11.5, Background, BorderBrush | `.input` (24/26), any `NumericUpDown`-based stepper |
 | `NumericUpDown` | `Cards.axaml:275`, `ChromeOverrides.axaml:202-214` | mono font, Height 19, right-align | stepper (once item 5 below reuses `NumericUpDown`) |
@@ -346,11 +347,15 @@ don't also apply. Template: a
 `Border` (1px `IndustryDivider`) containing a `Grid` of `[− button] [TextBlock/PART_TextBox value]
 [+ button]`, exact metrics: total height 22, buttons 18×22 (Barlow Condensed 600 12px,
 `IndustryAccent700`, hover fill `IndustryAccent100`), value cell `6,0,6,0` horizontal padding, 1px
-left+right borders, min-width **per-site** (52 default, 46/34/24 overridden — LAYOUT-SPEC §5 cites:
-Sync&slant's two steppers = 46; Spectrum·waterfall's Bins/px=24, Start/Span=34 — confirm these
-three exact site-to-width mappings against `PADDING-NORMALIZATION.md`'s own citations at build
-time). `MinWidth` set per-instance via the existing `NumericUpDown.MinWidth` property — no new
-styled property needed, it's inherited from `Control`.
+left+right borders. **Min-width numbers corrected post-implementation (code-review round)**: the
+52/46/34/24 values from LAYOUT-SPEC §5 are the VALUE CELL's own min-width, not the whole control's
+— `IndustryStepperTheme`'s `MinWidth` is set on the whole `NumericUpDown` (per-site override is a
+plain local `MinWidth` on the instance, same mechanism, different number), so each site's real
+value is value-cell-min-width + 38 (2×18px buttons + ~2px border): **90 default** (was written as
+52 here), **84/72/62** per-site (was written as 46/34/24) — Sync&slant's two steppers = 84,
+Spectrum·waterfall's Bins/px = 62, Start/Span = 72. Confirm these three exact site-to-width
+mappings against `PADDING-NORMALIZATION.md`'s own citations at build time; the +38 offset is fixed
+by the template's `18,*,18` column grid, not per-site.
 
 **Consequence, reversed from the original draft:** every Phase 2-6 site currently using
 `NumericUpDown` (waterfall Bins/px, Start/Span, Sync&slant's Slant-ppm/Offset-px) stays a
@@ -367,9 +372,10 @@ on sharing this one resource under a single name rather than declaring a duplica
 
 **Pitfall:** confirmed real (this is the class of bug `ChromeOverrides.axaml`'s own header warns
 about) — do not let `IndustryStepperTheme`'s template hardcode `Height="18"` on the spinner
-buttons or `MinWidth="52"` on the value cell as bare literals; per-site overrides (46/34/24) must
-reach the template via `TemplateBinding`/the control's own inherited `MinWidth`, not a literal
-baked into the `ControlTemplate`. Also confirm at implementation time which template parts
+buttons or `MinWidth="90"` on the whole control as bare literals; per-site overrides (84/72/62,
+corrected above) must reach the template via `TemplateBinding`/the control's own inherited
+`MinWidth`, not a literal baked into the `ControlTemplate`. Also confirm at implementation time
+which template parts
 `NumericUpDown.OnApplyTemplate` hard-requires (`PART_TextBox` at minimum; `PART_Spinner` if the
 `ButtonSpinner`-hosting variant (a) is used) — a replaced template must still name these parts
 correctly or `NumericUpDown`'s own value/increment logic breaks silently.

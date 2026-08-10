@@ -48,5 +48,8 @@
              StaticResource-consumed ScanlineStudioTxToggleButtonTheme, see AtomsTokens.axaml's own
              doc comment). -->
         <StyleInclude Source="avares://ScanlineStudio.UI/Styles/AtomsTokens.axaml" />
+        <!-- Reusable atom controls (Phase 1) built on AtomsTokens.axaml's resources — loaded after
+             it, still additive, no view yet consumes any of these. -->
+        <StyleInclude Source="avares://ScanlineStudio.UI/Styles/Atoms.axaml" />
     </Application.Styles>
 </Application>

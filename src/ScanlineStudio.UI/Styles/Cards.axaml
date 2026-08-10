@@ -104,7 +104,12 @@
         <Setter Property="ToolTip.ShowOnDisabled" Value="True" />
     </Style>
 
-    <Style Selector="Button">
+    <!-- :not(.Industry) exclusion (UI-redesign Phase 1, item 0b): the "Industry" marker class is
+         carried by every new-design control instance so this old bare-type selector can't leak
+         onto them while the two design systems coexist (mockups/guidance/PHASE1-ATOM-DESIGN.md
+         item 0b's collision table) — empirically confirmed a bare Style beats a named
+         ControlTheme's own setters, so this exclusion is load-bearing, not defensive. -->
+    <Style Selector="Button:not(.Industry)">
         <Setter Property="Height" Value="19" />
         <Setter Property="Padding" Value="10,0" />
         <Setter Property="FontWeight" Value="Normal" />
@@ -113,11 +118,11 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
-    <Style Selector="Button:pointerover /template/ ContentPresenter">
+    <Style Selector="Button:not(.Industry):pointerover /template/ ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlHoverColor}" />
         <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlHoverBorderColor}" />
     </Style>
-    <Style Selector="Button:pressed /template/ ContentPresenter">
+    <Style Selector="Button:not(.Industry):pressed /template/ ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlPressedColor}" />
     </Style>
     <!-- "accent" means the default action, not a filled blue pill. -->
@@ -155,14 +160,19 @@
         <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
     </Style>
 
-    <Style Selector="ToggleButton">
+    <!-- :not(.Industry) exclusion, same reason as Button above. -->
+    <Style Selector="ToggleButton:not(.Industry)">
         <Setter Property="Height" Value="19" />
         <Setter Property="Padding" Value="10,0" />
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />
         <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
-    <Style Selector="ToggleButton:checked /template/ ContentPresenter">
+    <!-- :not(.Industry) exclusion (UI-redesign Phase 1, item 0b): code-review-caught gap — this
+         selector was missing from the original collision table, so every checked .mini
+         ToggleButton chip (Gallery filter row, BOTH/SPEC/WF toggle) would have shown old
+         pressed-blue behind the label. -->
+    <Style Selector="ToggleButton:not(.Industry):checked /template/ ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlPressedColor}" />
         <Setter Property="BorderBrush" Value="#FF5A9AD4" />
     </Style>
@@ -257,7 +267,9 @@
         <Setter Property="Foreground" Value="#FF6B0F0F" />
     </Style>
 
-    <Style Selector="TextBox, ComboBox, NumericUpDown">
+    <!-- :not(.Industry) exclusion, same reason as Button above — ".input"/the stepper both need
+         this old field-metric selector to not apply to them. -->
+    <Style Selector="TextBox:not(.Industry), ComboBox:not(.Industry), NumericUpDown:not(.Industry)">
         <Setter Property="MinHeight" Value="19" />
         <Setter Property="Height" Value="19" />
         <Setter Property="FontSize" Value="11.5" />
@@ -272,7 +284,10 @@
          buttons themselves are a different story - see the ButtonSpinner ControlTheme
          replacement in App.axaml's Application.Resources for why that had to be a full
          template replacement rather than a Style override here. -->
-    <Style Selector="NumericUpDown">
+    <!-- :not(.Industry) exclusion, same reason as Button above — the new stepper reuses
+         NumericUpDown itself (mockups/guidance/PHASE1-ATOM-DESIGN.md item 5), so this old
+         mono-font/height selector must not apply to it. -->
+    <Style Selector="NumericUpDown:not(.Industry)">
         <Setter Property="MinHeight" Value="19" />
         <Setter Property="Height" Value="19" />
         <Setter Property="Padding" Value="4,0" />
@@ -291,7 +306,8 @@
     </Style>
 
     <!-- Rectangular Win32 slider thumb, sunken track. -->
-    <Style Selector="Slider">
+    <!-- :not(.Industry) exclusion, same reason as Button above. -->
+    <Style Selector="Slider:not(.Industry)">
         <Setter Property="MinHeight" Value="18" />
         <Setter Property="Foreground" Value="{DynamicResource ScanlineStudioAccentFillColor}" />
     </Style>
@@ -375,7 +391,8 @@
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioCardBorderColor}" />
         <Setter Property="Margin" Value="4,0" />
     </Style>
-    <Style Selector="Menu">
+    <!-- :not(.Industry) exclusion, same reason as Button above. -->
+    <Style Selector="Menu:not(.Industry)">
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioPanelBackgroundColor}" />
     </Style>
 
