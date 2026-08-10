@@ -88,7 +88,10 @@ control's internal structure changed) — fixed, plus added a test assertion and
 number in the design doc that would have mis-sized a later stepper site. New regression test
 (`IndustryStepperTests.cs`) verified non-vacuous — fails against the broken template, passes
 against the fix. Full solution build clean, `ScanlineStudio.UI.Tests` 173/173 (was 171). **Both
-committed, not yet pushed.**
+committed, not yet pushed.** One more small round-2 follow-up (`a44027b`): a wrong doc comment
+about the corner marks' crossing-point position, explicit `MinWidth`/`MinHeight="0"` on the
+stepper's spinner buttons (insurance against Fluent's own default minimum overflowing the fixed
+18px column), and the one remaining un-narrowed old selector.
 
 **Next up**: Phase 2 (chrome) — menu bar, radio header (VFO/Favourites/Transceiver), workspace tab
 strip, status bar. First fully-visible integration slice — the first phase where any real View
