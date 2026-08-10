@@ -30,12 +30,20 @@
          the fullHD-safe floor (per-pane alignment at that floor is a follow-up, not yet
          tuned). -->
 
-    <!-- UI-redesign Phase 2: outer bands now the LAYOUT-SPEC §1 fixed heights (26/81/26/*/25,
-         no Auto — the 3rd fixed band, the tab strip, is produced by the TabControl's own default
-         header-sizing behavior driven by TabItem.Height=26, not a literal 4th row here; see
-         Atoms.axaml's TabItem.Industry block comment for why no TabControl template replacement
-         was needed to achieve this split safely). -->
-    <Grid RowDefinitions="26,81,*,25">
+    <!-- UI-redesign Phase 2/3: outer bands per LAYOUT-SPEC §1, no Auto — the 3rd fixed band, the
+         tab strip, is produced by the TabControl's own default header-sizing behavior driven by
+         TabItem.Height=26, not a literal 4th row here; see Atoms.axaml's TabItem.Industry block
+         comment for why no TabControl template replacement was needed to achieve this split
+         safely. Band 2 corrected from LAYOUT-SPEC's stated 81 to 102: real-window debug-bounds
+         measurement PLUS a faithful headless-Firefox render of the source mockup HTML (local
+         Barlow/Barlow-Condensed/DejaVu-Mono @font-face substitutes, matching what this app
+         actually embeds, no network font fetch) both show the VFO/Favourites/Transceiver group
+         boxes' own natural stretched content height is 87px, not LAYOUT-SPEC's implied ~67 —
+         87 + the row's own 7px top/bottom padding = 101, +1 for browser rounding/hairline = 102.
+         This is what was actually cutting off Favourites' bottom row and Transceiver's TX-level
+         row (both previously blamed on card-internal layout, which was a real but secondary bug —
+         see RadioHeaderView.axaml's Favourites card comment). -->
+    <Grid RowDefinitions="26,102,*,25">
         <!-- Menu bar: mock2's own 6 top-level menus reproduced (File/Configurations/Rig & PTT/
              Calibration/Tools/Help), minus View: the fixed Receive/Transmit/Gallery TabControl
              below has nothing closable, so View's reopen-a-closed-pane purpose doesn't apply here
@@ -123,208 +131,159 @@
         <Grid Grid.Row="2">
         <TabControl Classes="Industry">
             <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Receive}">
-                <Grid ColumnDefinitions="258,*,330" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                <!-- Phase 3: 236,*,312 columns, gap 9, padding 9,11,9,8 (LAYOUT-SPEC §5 Band 4a /
+                     PADDING-NORMALIZATION.md), was 258,*,330 / gap 4 / uniform 4. -->
+                <Grid ColumnDefinitions="236,*,312" ColumnSpacing="{StaticResource IndustrySpacingGutter}" Margin="9,11,9,8">
 
-                    <!-- Left column: real Mode card + 3 cards (Sync & slant / Input chain / Signal
-                         quality) that started as pure mock2 scaffolding and are now PARTIALLY real;
-                         see each card's own comment below for exactly which rows are wired
-                         (spec/17-rx-telemetry-feasibility.md has the full per-field breakdown; the
-                         rest is still real, separate future work, not a UI-wiring gap). mock2's
-                         Auto/Locked segment is shown (Auto statically checked -
-                         matches the real always-auto-detect behavior; "Locked" has no manual
-                         lock-to-a-mode decode feature behind it, same visual-only convention as
-                         the quick-mode pill grid below it - see RxImagePaneViewModel.DetectedMode's
-                         own doc comment). The "Detected" label row was dropped: the active-mode
-                         dropdown right below now shows the same real DetectedModeDisplay value
-                         (DisplayName + VIS code, matching mock2's own "Scottie 1 — VIS 60"
-                         format exactly), so showing it twice was redundant once the dropdown
-                         itself carries it. -->
+                    <!-- Left column: re-skinned to Industry atoms (Phase 3). Every real binding
+                         preserved exactly (see original per-card comments migrated below); row SETS
+                         also preserved exactly as they exist today even where the mockup's own
+                         Input-chain row set differs (mockup shows "SNR est."/"DC offset" as its 5th/
+                         8th rows; this app's real telemetry has AGC gain/Noise floor there instead —
+                         keeping the real AgcGainDisplay binding, not relabeling to match a mockup
+                         row this app doesn't actually measure). Slant ppm/Sync offset stay
+                         READ-ONLY value rows, not interactive steppers, despite the mockup showing
+                         stepper controls there: RxImagePaneViewModel exposes these as formatted
+                         DISPLAY strings only (SlantPpmDisplay/SyncOffsetSamplesDisplay), not
+                         editable numeric properties — this port has no real "manually adjust slant"
+                         feature (Re-sync exists instead), so binding a stepper's Value to a string
+                         isn't possible without inventing a fake editable property; same
+                         preserve-real-behavior discipline as Phase 2's RX-level meter staying
+                         display-only. -->
                     <ScrollViewer Grid.Column="0">
-                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
-                            <Border Classes="card" DataContext="{Binding RxImage}">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxImage.ModeCardHeader}" />
-                                    <Border Classes="segment" HorizontalAlignment="Stretch">
-                                        <UniformGrid Columns="2" HorizontalAlignment="Stretch">
-                                            <RadioButton Classes="seg" GroupName="RxModeAutoLocked" IsChecked="True" Content="{loc:Translate Panes.RxImage.AutoLockedAuto}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
-                                            <RadioButton Classes="seg" GroupName="RxModeAutoLocked" Content="{loc:Translate Panes.RxImage.AutoLockedLocked}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
-                                        </UniformGrid>
-                                    </Border>
-                                    <ComboBox HorizontalAlignment="Stretch" SelectedIndex="0" ToolTip.Tip="{loc:Translate Panes.RxImage.ModeOverride.Help}">
+                        <!-- Margin top=6 (not the outer Grid's own padding — this is INSIDE the
+                             ScrollViewer): a ScrollViewer necessarily clips its content to its own
+                             viewport, so unlike a plain Grid cell (fixed via ClipToBounds=False on
+                             the atom itself), the FIRST card's title notch here still needs literal
+                             headroom reserved before it, or it clips against the viewport's own top
+                             edge regardless of the atom-level fix. -->
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Classes="Industry" Margin="0,6,0,0">
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxImage.ModeCardHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                    <!-- Segmented control needs BOTH Classes (for the item-0b marker
+                                       + IndustrySeg's Padding/interaction-state Style selectors)
+                                       AND an explicit Theme= (a ControlTheme is not applied by
+                                       Classes alone — same rule as every other named ControlTheme
+                                       atom in this file); missing Theme= here silently fell back to
+                                       Fluent's default RadioButton bullet-dot look, caught via a
+                                       real-window screenshot. Also needs a horizontal 2-column
+                                       Grid, not bare StackPanel children (StackPanel's default
+                                       Orientation is Vertical, which stacked the segments instead
+                                       of placing them side by side). -->
+                                    <Grid ColumnDefinitions="*,*" Margin="0,0,0,2">
+                                        <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" IsChecked="True" Content="{loc:Translate Panes.RxImage.AutoLockedAuto}" />
+                                        <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" Content="{loc:Translate Panes.RxImage.AutoLockedLocked}" />
+                                    </Grid>
+                                    <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" SelectedIndex="0" ToolTip.Tip="{loc:Translate Panes.RxImage.ModeOverride.Help}">
                                         <ComboBoxItem Content="{Binding DetectedModeDisplay}" />
                                     </ComboBox>
-                                    <UniformGrid Columns="4">
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC1}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC2}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SCDX}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M1}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M2}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M3}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M4}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.R36}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.R72}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD50}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD90}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD120}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD160}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD180}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD290}" HorizontalAlignment="Center" /></Border>
-                                        <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC2180}" HorizontalAlignment="Center" /></Border>
+                                    <UniformGrid Columns="4" Rows="4">
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC1}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SCDX}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M1}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M2}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M3}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M4}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.R36}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.R72}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD50}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD90}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD120}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD160}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD180}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD290}" /></Border>
+                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2180}" /></Border>
                                     </UniformGrid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.LineTime}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding LineTimeText}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.Lines}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding LinesText}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxImage.Remaining}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxImage.RemainingValue}" />
-                                    </Grid>
+                                    <StackPanel Classes="Industry IndustryRows">
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.LineTime}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LineTimeText}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.Lines}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LinesText}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.Remaining}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxImage.RemainingValue}" /></Grid></Border>
+                                    </StackPanel>
                                 </StackPanel>
-                            </Border>
+                            </HeaderedContentControl>
 
                             <!-- Sync & slant: Slant ppm/Sync offset/Auto-correct/Re-sync are real,
                                  wired to RxImagePaneViewModel (spec/17-rx-telemetry-feasibility.md).
-                                 Source/Reset/Advanced-timing remain unwired; see that doc for why
-                                 each one specifically (needs a product decision, or semantics
-                                 unverified against legacy). -->
-                            <Border Classes="card" DataContext="{Binding RxImage}">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxSync.CardHeader}" />
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.Source}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.SourceValue}" />
+                                 Source/Reset/Advanced-timing remain unwired. -->
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxSync.CardHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                    <StackPanel Classes="Industry IndustryRows">
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.Source}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.SourceValue}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SlantPpm}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SlantPpmDisplay}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SyncOffset}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncOffsetSamplesDisplay}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.AutoCorrect}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Foreground="{StaticResource IndustryAccent700}" Text="{Binding AutoCorrectDisplay}" /></Grid></Border>
+                                    </StackPanel>
+                                    <Grid ColumnDefinitions="*,*" ColumnSpacing="3">
+                                        <Button Classes="Industry IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
+                                        <Button Grid.Column="1" Classes="Industry IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SlantPpm}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding SlantPpmDisplay}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SyncOffset}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding SyncOffsetSamplesDisplay}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.AutoCorrect}" />
-                                        <TextBlock Grid.Column="1" Classes="accentValue" Text="{Binding AutoCorrectDisplay}" />
-                                    </Grid>
-                                    <UniformGrid Columns="2" HorizontalAlignment="Stretch">
-                                        <Button Classes="small" Margin="0,0,3,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
-                                        <Button Classes="small" Margin="3,0,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </UniformGrid>
-                                    <Expander Header="{loc:Translate Panes.RxSync.AdvancedTiming}" Padding="0" HorizontalAlignment="Stretch">
-                                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,0">
-                                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SampleClock}" />
-                                                <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.SampleClockValue}" />
-                                            </Grid>
-                                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.SyncWindow}" />
-                                                <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.SyncWindowValue}" />
-                                            </Grid>
-                                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.VisThreshold}" />
-                                                <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.VisThresholdValue}" />
-                                            </Grid>
-                                            <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                                <TextBlock Classes="label" Text="{loc:Translate Panes.RxSync.DropLine}" />
-                                                <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSync.DropLineValue}" />
-                                            </Grid>
-                                        </StackPanel>
-                                    </Expander>
+                                    <ToggleButton x:Name="AdvancedTimingToggle" Classes="Industry IndustryDisclosure" Theme="{StaticResource IndustryDisclosureToggleTheme}" Content="{loc:Translate Panes.RxSync.AdvancedTiming}" />
+                                    <StackPanel Classes="Industry IndustryRows" IsVisible="{Binding #AdvancedTimingToggle.IsChecked}">
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SampleClock}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.SampleClockValue}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SyncWindow}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.SyncWindowValue}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.VisThreshold}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.VisThresholdValue}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.DropLine}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.DropLineValue}" /></Grid></Border>
+                                    </StackPanel>
                                 </StackPanel>
-                            </Border>
+                            </HeaderedContentControl>
 
-                            <!-- Input chain: Device/Buffer/Clipping are real, wired to
-                                 RxImagePaneViewModel (spec/17-rx-telemetry-feasibility.md). Squelch/
-                                 BPF/Notch·AGC/NoiseFloor/Level L·R remain unwired; see that doc
-                                 (Squelch/NoiseFloor need a product decision, Notch is an unported
-                                 filter, true L/R stereo doesn't exist in this port's mono-only demod
-                                 path). -->
-                            <Border Classes="card" DataContext="{Binding RxImage}">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxInput.CardHeader}" />
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Device}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding CaptureDeviceNameDisplay}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Squelch}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.SquelchValue}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Bpf}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.BpfValue}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Notch}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.NotchValue}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Agc}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding AgcGainDisplay}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Buffer}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding BufferedSampleCountDisplay}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.Clipping}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding ClippingDisplay}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.NoiseFloor}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxInput.NoiseFloorValue}" />
-                                    </Grid>
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.LevelL}" />
-                                    <ProgressBar Height="6" Minimum="-60" Maximum="0" Value="-14.2" />
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxInput.LevelR}" />
-                                    <ProgressBar Height="6" Minimum="-60" Maximum="0" Value="-15.0" />
+                            <!-- Input chain: Device/Buffer/Clipping/AGC gain are real. Row SET
+                                 preserved as this app's real telemetry (not the mockup's own
+                                 "SNR est./DC offset" example rows, which this app doesn't compute -
+                                 see block comment above). -->
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxInput.CardHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                    <StackPanel Classes="Industry IndustryRows">
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Device}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding CaptureDeviceNameDisplay}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Squelch}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.SquelchValue}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Bpf}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.BpfValue}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Notch}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.NotchValue}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Agc}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AgcGainDisplay}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Buffer}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding BufferedSampleCountDisplay}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Clipping}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ClippingDisplay}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.NoiseFloor}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.NoiseFloorValue}" /></Grid></Border>
+                                    </StackPanel>
+                                    <StackPanel Spacing="3" Margin="0,4,0,0">
+                                        <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelL}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelLValue}" /></Grid>
+                                        <Grid Classes="IndustryMeter"><Border Classes="IndustryMeterTrack" Height="6" /><Border Classes="IndustryMeterFill" Height="6" Width="149" HorizontalAlignment="Left" /></Grid>
+                                        <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelR}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelRValue}" /></Grid>
+                                        <Grid Classes="IndustryMeter"><Border Classes="IndustryMeterTrack" Height="6" /><Border Classes="IndustryMeterFill" Height="6" Width="142" HorizontalAlignment="Left" /></Grid>
+                                    </StackPanel>
                                 </StackPanel>
-                            </Border>
+                            </HeaderedContentControl>
 
-                            <!-- Signal quality: Sync tone and Clip lo/hi are real, wired to
-                                 RxImagePaneViewModel (spec/17-rx-telemetry-feasibility.md; Clip lo/hi
-                                 is pure image-domain pixel-luminance arithmetic over the already-
-                                 decoded image, not audio DSP, and has no legacy equivalent; a new,
-                                 non-legacy-grounded statistic). SNR/Min-Max/histogram/Black·White tone
-                                 remain unwired; see that doc (no per-line SNR or histogram computation
-                                 exists in the decode pipeline; Black/White tone isn't a well-defined
-                                 measurement even in principle, unlike Sync tone). Plot placeholders
-                                 are bare Border Classes="plot" with no content, matching this pass's
-                                 "no new PlotView abstraction" rule; the histogram PLOT itself stays
-                                 unbuilt even though its underlying Clip-lo/hi numbers are now real. -->
-                            <Border Classes="card" DataContext="{Binding RxImage}">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxSignal.CardHeader}" />
-                                    <TextBlock Classes="caption" Text="{loc:Translate Panes.RxSignal.SnrPerLine}" />
-                                    <Border Classes="plot" Height="46" />
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.MinMax}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.MinMaxValue}" />
-                                    </Grid>
-                                    <TextBlock Classes="caption" Text="{loc:Translate Panes.RxSignal.LuminanceHistogram}" />
-                                    <Border Classes="plot" Height="46" />
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.ClipLoHi}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding ClipLoHiDisplay}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.SyncTone}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{Binding SyncToneDisplay}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.BlackTone}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.BlackToneValue}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.RxSignal.WhiteTone}" />
-                                        <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxSignal.WhiteToneValue}" />
-                                    </Grid>
+                            <!-- Signal quality: Sync tone and Clip lo/hi are real. SNR/Min-Max/
+                                 histogram/Black·White tone remain unwired (no per-line SNR or
+                                 histogram computation exists; Black/White tone isn't a well-defined
+                                 measurement even in principle, unlike Sync tone). -->
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" VerticalAlignment="Stretch" ClipToBounds="False">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxSignal.CardHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                    <TextBlock Classes="Industry IndustryKicker" Text="{loc:Translate Panes.RxSignal.SnrPerLine}" />
+                                    <Border Classes="IndustryHatchPanel" MinHeight="26" />
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.MinMax}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSignal.MinMaxValue}" /></Grid></Border>
+                                    <TextBlock Classes="Industry IndustryKicker" Text="{loc:Translate Panes.RxSignal.LuminanceHistogram}" />
+                                    <Border Classes="IndustryHatchPanel" MinHeight="26" />
+                                    <StackPanel Classes="Industry IndustryRows">
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.ClipLoHi}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ClipLoHiDisplay}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.SyncTone}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncToneDisplay}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.BlackTone}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSignal.BlackToneValue}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.WhiteTone}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSignal.WhiteToneValue}" /></Grid></Border>
+                                    </StackPanel>
                                 </StackPanel>
-                            </Border>
+                            </HeaderedContentControl>
                         </StackPanel>
                     </ScrollViewer>
 
