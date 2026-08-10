@@ -141,8 +141,15 @@
                  (the static Border form needs no ControlTheme — a plain Border + TextBlock, styled
                  entirely via bare Style rules below.) -->
             <ControlTheme x:Key="IndustryMiniButtonTheme" TargetType="Button">
+                <!-- MinHeight paired with Height (post-Phase-2-verification fix, same bug class as
+                     IndustryBtn*/Menu.Industry/TabItem.Industry — a ControlTheme's own Height
+                     Setter alone can still lose to a competing base-FluentTheme Style's MinHeight,
+                     since Style-vs-ControlTheme precedence applies regardless of which Theme is
+                     assigned; confirmed via a real-window screenshot on the sibling IndustryBtn26
+                     case). -->
                 <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
                 <Setter Property="Height" Value="17" />
+                <Setter Property="MinHeight" Value="17" />
                 <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
                 <Setter Property="FontSize" Value="10" />
                 <Setter Property="FontWeight" Value="Medium" />
@@ -162,6 +169,7 @@
             <ControlTheme x:Key="IndustryMiniToggleTheme" TargetType="ToggleButton">
                 <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
                 <Setter Property="Height" Value="17" />
+                <Setter Property="MinHeight" Value="17" />
                 <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
                 <Setter Property="FontSize" Value="10" />
                 <Setter Property="FontWeight" Value="Medium" />
@@ -269,6 +277,9 @@
                      buttons + ~2px border). Per-site overrides (value-cell 46/34/24) become 84/72/62
                      as a plain local MinWidth on the NumericUpDown instance at each call site. -->
                 <Setter Property="Height" Value="22" />
+                <!-- MinHeight paired with Height (post-Phase-2-verification fix, same bug class as
+                     every other Height-only atom found overflowing in a real composed layout). -->
+                <Setter Property="MinHeight" Value="22" />
                 <Setter Property="Template">
                     <ControlTemplate>
                         <ButtonSpinner Name="PART_Spinner" Theme="{StaticResource IndustrySpinnerTheme}"
@@ -590,28 +601,40 @@
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
+    <!-- MinHeight paired with Height on every variant below (post-Phase-2-verification fix): same
+         bug class already found and fixed on Menu.Industry/TabItem.Industry — Avalonia's layout
+         clamps Height up to MinHeight, so Height alone loses to whatever Fluent's own default
+         Button/ToggleButton MinHeight resource is. Confirmed real here too via a real-window
+         screenshot showing the Transceiver card's Receiving/Halt buttons and RX/TX level rows
+         overflowing their fixed-height container. -->
     <Style Selector="Button.Industry.IndustryBtn36">
         <Setter Property="Height" Value="36" />
+        <Setter Property="MinHeight" Value="36" />
         <Setter Property="FontSize" Value="12.5" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn26">
         <Setter Property="Height" Value="26" />
+        <Setter Property="MinHeight" Value="26" />
         <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn25">
         <Setter Property="Height" Value="25" />
+        <Setter Property="MinHeight" Value="25" />
         <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn24">
         <Setter Property="Height" Value="24" />
+        <Setter Property="MinHeight" Value="24" />
         <Setter Property="FontSize" Value="11" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn22">
         <Setter Property="Height" Value="22" />
+        <Setter Property="MinHeight" Value="22" />
         <Setter Property="FontSize" Value="11" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn21">
         <Setter Property="Height" Value="21" />
+        <Setter Property="MinHeight" Value="21" />
         <Setter Property="FontSize" Value="10.5" />
     </Style>
     <!-- Primary/secondary need /template/ ContentPresenter targeting — the same Fluent
@@ -661,6 +684,7 @@
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="CornerRadius" Value="0" />
         <Setter Property="Height" Value="26" />
+        <Setter Property="MinHeight" Value="26" />
         <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="ToggleButton.IndustryBtnPrimary /template/ ContentPresenter">
