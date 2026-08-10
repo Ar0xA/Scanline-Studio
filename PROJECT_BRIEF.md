@@ -52,11 +52,47 @@ actually vendored alongside the font files despite `LICENSES.md` claiming it (fi
 individually). Full solution build clean, full test suite green (1698+ existing tests unaffected,
 new `ScanlineStudio.UI.FontTests` 7/7). **Committed (`d427b1e`), not yet pushed.**
 
-**Next up**: Phase 1 (atoms) — the reusable primitives (group box, chips, steppers, buttons,
-tables, etc.) every later phase builds on. Needs its own auditor plan-review round before code per
-the same process. `mockups/guidance/` reference bundle (LAYOUT-SPEC.md, the mockup HTML, the
-`_ds/` design-system CSS) is now checked into git (was untracked) since it's the active source of
-truth for this whole effort.
+`mockups/guidance/` reference bundle (LAYOUT-SPEC.md, the mockup HTML, the `_ds/` design-system
+CSS) is now checked into git (was untracked) since it's the active source of truth for this whole
+effort.
+
+**Phase 1 SHIPPED (design doc `dc00f9e`, implementation `f8c2135`)**: `Styles/Atoms.axaml` — every
+reusable primitive (group box + blueprint corner marks, `.mini` chips ×3 forms, rows, kicker,
+stepper, track/slider, buttons ×6 heights, input, segmented control, table, thumbnail figure,
+hatch pattern, disclosure header) the later phases compose from. Purely additive; also makes the
+mandatory companion edit narrowing 10 old bare-type style selectors (`Cards.axaml`/`Tokens.axaml`/
+`ChromeOverrides.axaml`) so they don't leak onto new-design controls — confirmed necessary via a
+live probe (a plain old `Style` selector beats a named `ControlTheme`'s own setters in Avalonia,
+not the other way around).
+
+**Design went through 3 plan-review rounds** before any code: round 1 found the leakage-prevention
+approach only covered one direction (new atoms could still be silently overridden by old styles,
+not just the reverse), the original stepper design assumed `NumericUpDown` exposed spin-button
+parts it doesn't have, blueprint-corner color/site-count were wrong, and a hover color would have
+made an active `.mini` chip's text unreadable. Round 2 fixed all of that but the fix pass itself
+introduced 2 new errors (corner-mark site count wrong in the *other* direction — the VFO block
+actually does have corner marks — and the `.mini` hover fix picked the wrong analogy) plus a class-
+name collision between two unrelated atoms. Round 3: clean.
+
+**Implementation went through 2 code-review rounds.** Round 1 found the stepper's spin buttons
+were wired to template parts that belong to a completely different control (`ButtonSpinner`, not
+`NumericUpDown`) — confirmed against Avalonia 11.3.12's own shipped reference metadata, meaning
+clicking them would have done nothing at all, a fully non-functional control that would have
+shipped silently since nothing throws at XAML-load time for this class of bug. Also found: the
+hatch-fill pattern covered 25% of its tile instead of 50% (isolated dots, not continuous stripes),
+3 of 4 blueprint corner marks rendered inside their container instead of outside once actually
+measured against how Avalonia sizes `Path` shapes, the stepper's min-width was set on the wrong
+element, and one old style selector was missing from the leakage-prevention edit. Round 2: the
+stepper fix itself introduced a follow-up bug (a hover style that stopped being reachable once the
+control's internal structure changed) — fixed, plus added a test assertion and corrected a stale
+number in the design doc that would have mis-sized a later stepper site. New regression test
+(`IndustryStepperTests.cs`) verified non-vacuous — fails against the broken template, passes
+against the fix. Full solution build clean, `ScanlineStudio.UI.Tests` 173/173 (was 171). **Both
+committed, not yet pushed.**
+
+**Next up**: Phase 2 (chrome) — menu bar, radio header (VFO/Favourites/Transceiver), workspace tab
+strip, status bar. First fully-visible integration slice — the first phase where any real View
+file actually consumes these atoms.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
