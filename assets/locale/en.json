@@ -160,6 +160,8 @@
   "Panes.RxInput.NoiseFloor": "Noise floor",
   "Panes.RxInput.LevelL": "L",
   "Panes.RxInput.LevelR": "R",
+  "Panes.RxInput.LevelLValue": "-14.2",
+  "Panes.RxInput.LevelRValue": "-15.0",
   "Panes.RxInput.SquelchValue": "−38 dB",
   "Panes.RxInput.BpfValue": "1.0–2.5 kHz",
   "Panes.RxInput.NotchValue": "off",

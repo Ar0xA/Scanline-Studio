@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:ScanlineStudio.UI.ViewModels"
              xmlns:loc="using:ScanlineStudio.UI.Localization"
+             xmlns:conv="using:ScanlineStudio.UI.Converters"
              x:Class="ScanlineStudio.UI.Views.RadioHeaderView"
              x:DataType="vm:RadioStatusViewModel">
 
@@ -14,11 +15,22 @@
          PHASE2-CHROME-DESIGN.md §2, every real binding preserved verbatim (see per-card comments
          below for exactly which). Outer Grid wraps the 3-card row AND the ErrorMessage/
          MaintenanceMessage overlay in one cell (design doc §0's blocker-2 fix): both messages are
-         real, live, visibility-gated text that has to coexist with a FIXED 81px band without
-         growing it — rendered as a bottom-aligned overlay, only consuming space when actually
-         visible, instead of a normal document-flow sibling. -->
-    <Grid Height="81" Background="{StaticResource IndustryBg}">
-        <Grid ColumnDefinitions="Auto,*,272" ColumnSpacing="10" Margin="9,7,9,7" Classes="Industry">
+         real, live, visibility-gated text that has to coexist with a FIXED band without growing
+         it — rendered as a bottom-aligned overlay, only consuming space when actually visible,
+         instead of a normal document-flow sibling.
+
+         Phase 3 fix: band height corrected from LAYOUT-SPEC's stated 81 to 102 (see MainWindow.axaml's
+         Grid.RowDefinitions comment for the measurement — a faithful local-font headless-browser
+         render of the source mockup HTML showed the group boxes' own natural content height is
+         87px, not the ~67 LAYOUT-SPEC's "81" implied). Must stay equal to MainWindow.axaml's
+         Grid.RowDefinitions row-1 value; there is no single shared resource for it (both are
+         literals) since Grid.RowDefinitions can't consume a StaticResource in this Avalonia
+         version. -->
+    <Grid Height="102" Background="{StaticResource IndustryBg}">
+        <!-- Bottom margin 8, not 7 (design-fidelity round-2 fix): reserves the 1px the new
+             band-2 hairline divider (below) needs so the cards stay 87px content-height instead of
+             growing when the divider was added as a bare overlay on top of the existing budget. -->
+        <Grid ColumnDefinitions="Auto,*,272" ColumnSpacing="10" Margin="9,7,9,8" Classes="Industry">
 
             <!-- VFO card: one of this design's 3 real blueprint-corner sites (design doc §2).
                  Frequency readout and CAT-link status are real; sideband segment/BW·SPLIT·STEP·RIT
@@ -121,59 +133,75 @@
             <HeaderedContentControl Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}"
                              Padding="{StaticResource IndustryGbPaddingFav}" ClipToBounds="False">
                 <HeaderedContentControl.Header>
-                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.FavouritesHeader}" />
+                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.FavouritesHeader, Converter={x:Static conv:UppercaseInvariantConverter.Instance}}" />
                 </HeaderedContentControl.Header>
                 <StackPanel Spacing="5">
                     <DockPanel LastChildFill="True">
-                        <Button DockPanel.Dock="Right" Classes="Industry IndustryBtn36 IndustryBtnPrimary"
+                        <!-- Deliberate deviation from the mockup (design-fidelity round-1 finding,
+                             accepted not fixed): mock2's own "Store current" sits inline in the
+                             preset wrap-row at whatever position follows the last preset, moving as
+                             presets are added/removed. Docked to the card's far right instead so its
+                             position is stable and predictable regardless of preset count, since this
+                             port's Presets collection is unbounded/user-configured, unlike mock2's
+                             fixed 7-preset example (see the file's own comment above). -->
+                        <Button DockPanel.Dock="Right" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnPrimary"
                                 Content="{loc:Translate RadioStatus.StoreCurrent}"
                                 VerticalAlignment="Top"
                                 HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
-                        <!-- Code-review fix: band 2 is now a FIXED 81px row (was Auto pre-Phase-2),
-                             so an unbounded user-configured Presets collection (RadioStatusViewModel.cs,
-                             ObservableCollection, default empty) can no longer just grow the band the
-                             way it did in the old design when it wrapped to extra rows — design doc
-                             §2's own decision to "preserve current overflow behavior" assumed that
-                             growth was still possible. With more presets than one row fits, wrap
-                             instead of relying on undefined overflow/clip behavior from the fixed-
-                             height ancestor: every preset stays reachable via scroll, none silently
-                             vanish below the visible area. -->
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                            <ItemsControl ItemsSource="{Binding Presets}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel Orientation="Horizontal" />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:FrequencyPresetButtonViewModel">
-                                        <Button Classes="Industry IndustryBtn36 IndustryBtnSecondary"
-                                                Command="{Binding SelectCommand}"
-                                                CommandParameter="{Binding Preset}"
-                                                Margin="0,0,4,4">
-                                            <StackPanel Spacing="0">
-                                                <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}"
-                                                           FontSize="12.5" FontWeight="Medium"
-                                                           Foreground="{StaticResource IndustryText}"
-                                                           Text="{Binding FrequencyWithMode}" />
-                                                <TextBlock FontFamily="{StaticResource IndustryBodyFontFamily}"
-                                                           FontSize="9.5" FontWeight="Normal" LetterSpacing="0.57"
-                                                           Foreground="{StaticResource IndustryTextMuted62}"
-                                                           Text="{Binding Label}" />
-                                                <!-- .06em * 9.5px = 0.57 device px. -->
-                                            </StackPanel>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
+                        <!-- Real-window-measured fix (debug bounds dump, not screenshot guessing):
+                             the ScrollViewer + per-item Margin="0,0,4,4" this card previously used
+                             (to guard against an unbounded Presets collection overflowing the fixed
+                             81px band) together added ~12px more height than the band's own content
+                             budget (~51px after padding) has room for — the DockPanel's Store-current
+                             sibling is exactly IndustryBtn36's 36px, but the wrapped preset button's
+                             OWN bottom margin made ITS side of the DockPanel ~4px taller, and
+                             LastChildFill sizing takes the taller of the two, compounding with the
+                             second (hint+edit-buttons) row to overflow the card entirely — this is
+                             what was "falling off the bottom" of the card. Fix: drop the per-item
+                             bottom margin (right-margin only, matching a single-row layout; a
+                             genuinely multi-row WrapPanel would need it back, but that's the
+                             ALREADY-accepted-as-a-later-concern overflow case, not the default one
+                             actually visible today) and drop the ScrollViewer — reverts to the SAME
+                             plain-overflow handling the pre-Phase-2 old design always used for this
+                             exact unbounded collection, ClipToBounds="False" already lets an
+                             actually-overflowing WrapPanel bleed visibly rather than silently
+                             vanish, same as it does today. -->
+                        <ItemsControl ItemsSource="{Binding Presets}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:FrequencyPresetButtonViewModel">
+                                    <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary"
+                                            Command="{Binding SelectCommand}"
+                                            CommandParameter="{Binding Preset}"
+                                            Margin="0,0,4,0">
+                                        <StackPanel Spacing="0">
+                                            <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}"
+                                                       FontSize="12.5" FontWeight="Medium"
+                                                       Foreground="{StaticResource IndustryText}"
+                                                       Text="{Binding FrequencyWithMode}" />
+                                            <TextBlock FontFamily="{StaticResource IndustryBodyFontFamily}"
+                                                       FontSize="9.5" FontWeight="Normal" LetterSpacing="0.57"
+                                                       Foreground="{StaticResource IndustryTextMuted62}"
+                                                       Text="{Binding Label}" />
+                                            <!-- .06em * 9.5px = 0.57 device px. -->
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </DockPanel>
 
-                    <StackPanel Orientation="Horizontal" Spacing="5">
-                        <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
-                                   Foreground="{StaticResource IndustryTextMuted50}"
-                                   Text="{loc:Translate RadioStatus.FavouritesHint}" VerticalAlignment="Center" />
-                        <StackPanel Orientation="Horizontal" Spacing="3" HorizontalAlignment="Right">
+                    <!-- DockPanel, not a horizontal StackPanel (design-fidelity-agent-caught fix):
+                         HorizontalAlignment="Right" on a child of a horizontal StackPanel is a
+                         no-op (a StackPanel gives each child exactly its own desired size along the
+                         stacking axis, no extra space to align within), so the minis never actually
+                         reached the card's right edge as the mockup's `margin-left:auto` does. -->
+                    <DockPanel LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
                                     Content="{loc:Translate RadioStatus.EditFavouritesList}" />
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
@@ -181,7 +209,10 @@
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
                                     Content="{loc:Translate RadioStatus.ScanFavourites}" />
                         </StackPanel>
-                    </StackPanel>
+                        <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
+                                   Foreground="{StaticResource IndustryTextMuted50}" Margin="0,0,5,0"
+                                   Text="{loc:Translate RadioStatus.FavouritesHint}" VerticalAlignment="Center" />
+                    </DockPanel>
                 </StackPanel>
             </HeaderedContentControl>
 
@@ -202,7 +233,7 @@
             <HeaderedContentControl Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}"
                              Padding="{StaticResource IndustryGbPaddingFav}" ClipToBounds="False">
                 <HeaderedContentControl.Header>
-                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.TransceiverHeader}" />
+                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.TransceiverHeader, Converter={x:Static conv:UppercaseInvariantConverter.Instance}}" />
                 </HeaderedContentControl.Header>
                 <!-- Spacing=3, not 5 (fix): the mockup's Transceiver .gb has no gap override in its
                      own inline style, so it uses .gb's CSS default gap:3px — unlike Favourites,
@@ -213,21 +244,38 @@
                         <ToggleButton Classes="Industry IndustryBtn26 IndustryBtnPrimary"
                                       IsChecked="{Binding IsReceiving}" Content="{loc:Translate RadioStatus.Receiving}"
                                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
-                        <Button Grid.Column="1" Classes="Industry IndustryBtn26 IndustryBtnSecondary"
+                        <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary"
                                 Content="{loc:Translate RadioStatus.Halt}" Command="{Binding HaltReceivingCommand}"
                                 HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                     </Grid>
                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.RxLevelLabel}" VerticalAlignment="Center" />
+                        <!-- Fill/marker positions are mockup percentages (63%/78% of track width, LAYOUT-SPEC
+                             §7's own real example) — a literal pixel Width/Margin only matched by
+                             coincidence when the track happened to be ~100px wide; this column is
+                             actually "*" (stretchy), so proportional star-column Grids are used instead
+                             of a literal pixel value (design-fidelity-agent-caught fix). -->
                         <Grid Grid.Column="1" Classes="IndustryMeter" VerticalAlignment="Center">
                             <Border Classes="IndustryMeterTrack" Height="8" />
-                            <Border Classes="IndustryMeterFill" Height="8" Width="63" HorizontalAlignment="Left" />
-                            <Border Classes="IndustryMeterMarker" HorizontalAlignment="Left" Margin="78,0,0,0" />
+                            <Grid ColumnDefinitions="63*,37*">
+                                <Border Grid.Column="0" Classes="IndustryMeterFill" Height="8" HorizontalAlignment="Stretch" />
+                            </Grid>
+                            <Grid ColumnDefinitions="78*,22*">
+                                <Border Grid.Column="1" Classes="IndustryMeterMarker" HorizontalAlignment="Left" />
+                            </Grid>
                         </Grid>
                         <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{loc:Translate RadioStatus.RxLevelValue}" VerticalAlignment="Center" />
                     </Grid>
                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.TxVolumeLabel}" VerticalAlignment="Center" />
+                        <!-- Real bug found+fixed this session (not cosmetic): the fill/thumb never
+                             reflected Value at all (confirmed via a runtime Bounds dump — DecreaseButton
+                             Bounds.Width read exactly 0 regardless of Value=50 or 100) because
+                             PART_DecreaseButton/PART_IncreaseButton didn't inherit Stretch
+                             HorizontalAlignment, so Track's own computed proportional width was
+                             discarded in favor of their empty-content DesiredSize (0). Fixed in
+                             IndustrySliderTheme (Atoms.axaml) with an explicit HorizontalAlignment="Stretch"
+                             on both RepeatButtons. -->
                         <Slider Grid.Column="1" Classes="Industry h8" Theme="{StaticResource IndustrySliderTheme}"
                                 Value="{Binding TxVolumePercent}" Minimum="0" Maximum="100" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{Binding TxVolumePercent}" VerticalAlignment="Center" />
@@ -236,8 +284,15 @@
             </HeaderedContentControl>
         </Grid>
 
+        <!-- Band-2 bottom hairline (design-fidelity-agent-caught fix): the mockup's own CSS draws
+             this as a 1px border-bottom folded into the row's total height, which this port had
+             been missing entirely — added as a bottom-aligned divider rather than a Border
+             BorderThickness on the outer Grid so it doesn't add its own extra pixel on top of the
+             already-corrected 102px band height. -->
+        <Border Height="1" VerticalAlignment="Bottom" Background="{StaticResource IndustryDivider}" />
+
         <!-- Overlay row, design doc §0's blocker-2 fix: real, live, visibility-gated messages that
-             must coexist with the fixed 81px band without growing it. Bottom-aligned, only
+             must coexist with the fixed 102px band without growing it. Bottom-aligned, only
              consumes layout space when actually IsVisible. -->
         <StackPanel VerticalAlignment="Bottom" Margin="9,0,9,2" Spacing="1">
             <TextBlock Text="{Binding ErrorMessage}"
