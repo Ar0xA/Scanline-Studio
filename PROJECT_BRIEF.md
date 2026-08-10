@@ -93,9 +93,40 @@ about the corner marks' crossing-point position, explicit `MinWidth`/`MinHeight=
 stepper's spinner buttons (insurance against Fluent's own default minimum overflowing the fixed
 18px column), and the one remaining un-narrowed old selector.
 
-**Next up**: Phase 2 (chrome) — menu bar, radio header (VFO/Favourites/Transceiver), workspace tab
-strip, status bar. First fully-visible integration slice — the first phase where any real View
-file actually consumes these atoms.
+**Phase 2 SHIPPED (design doc `a369eb2`, implementation `aacfc07`)**: menu bar, radio header (VFO/
+Favourites/Transceiver), tab strip, status bar. **First phase that touches real views — the first
+visible change on screen.** Tab bodies themselves untouched (that's Phases 3-6); every real
+ViewModel binding preserved (frequency, CAT-link, preset recall + parameter, Receiving/Halt, TX
+volume with its load-bearing min/max, all 7 real menu commands, every status-bar readout) plus
+every prior deliberate mockup-deviation (dropped `cfg:` text, no VFO column divider, Receiving
+stays accent-blue not green, TX-inhibit LED kept, 3 separate status chips not merged).
+
+Plan-review (1 round, appropriate for a mostly-mechanical port): found 2 real blockers — a gap in
+Phase 1's own old-style collision list that the tab strip would have inherited (never caught since
+Phase 1 never built a `TabControl` atom to expose it), and two live, currently-shipped status
+messages (radio error/maintenance text) that had nowhere to go in a now-fixed-height band. Both
+fixed on paper before code.
+
+**Implementation made one deliberate, flagged departure from the design doc**: menu and tab-strip
+controls got re-skinned via plain style properties instead of full template replacement (the
+technique used everywhere else in this redesign), specifically because guessing Avalonia's
+internal Popup/tab-switching wiring wrong would silently break real functionality (dead submenus,
+blank tab bodies) with no error to catch it — a worse failure mode than a couple of cosmetic gaps
+(unstyled menu hover, default icon-gutter spacing). Code-review **approved the deviation** as
+sound engineering, backed by real in-repo precedent, but found the fix was incomplete: two band
+heights weren't actually locked to their fixed values (an easy-to-miss Avalonia behavior where a
+`MinHeight` resource can silently override a plain `Height` setter), which could have let the menu
+bar or tab strip render taller than intended depending on the exact Avalonia version's defaults.
+Fixed directly (explicit height pinning on both), then verified for real: launched the app,
+confirmed the corner accents render correctly composed into a real layout for the first time (not
+just in isolation), confirmed the menu and tab-switching still work, and fixed one more real gap
+found along the way — a header section that used to grow to fit its contents can't anymore now
+that its size is fixed, so a scrollable fallback was added rather than letting extra content
+silently vanish below the visible area. Full solution build clean, `ScanlineStudio.UI.Tests`
+173/173 unaffected. **Committed (`aacfc07`), not yet pushed.**
+
+**Next up**: Phase 3 (Receive tab) — the largest remaining single tab, likely sub-batched by
+column given its size.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
