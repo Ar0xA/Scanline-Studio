@@ -27,8 +27,11 @@
                  Notch-over-border recipe: bordered Grid + a second, later-drawn Border (background
                  IndustryBg, negative margin) holding the title, sitting visually on the border line.
                  Blueprint corner marks (item 1's own correction: color IndustryTextMuted55, NOT
-                 accent; 11×11px, 1px stroke, positioned outward at -6px, crossing point 5px past
-                 the border) are baked into this SAME template, gated by the "blueprint" class, so
+                 accent; each an 11×11px "+" cross whose own box sits outward at -6px/-6px from the
+                 border's corner, so its crossing point lands essentially ON the border corner
+                 (~-0.5px) while the arm tips reach 6px out — round-2 code-review fix: an earlier
+                 version of this comment wrongly said the crossing point itself was "5px past the
+                 border") are baked into this SAME template, gated by the "blueprint" class, so
                  the 2 real group-box blueprint sites (Incoming-frame, Editor) opt in via
                  Classes="Industry blueprint" without a second control. -->
             <ControlTheme x:Key="IndustryGroupBoxTheme" TargetType="HeaderedContentControl">
@@ -214,10 +217,17 @@
                                      ChromeOverrides.axaml's own existing ButtonSpinner-glyph
                                      convention, and avoids NoHardcodedAxamlStringsTests's blanket
                                      ban on literal Text=/Content=/Header= attributes. -->
+                                <!-- MinWidth/MinHeight="0" (round-2 code-review risk): the old
+                                     design's own ButtonSpinner theme (ChromeOverrides.axaml's
+                                     PART_IncreaseButton/PART_DecreaseButton) sets both explicitly,
+                                     strong evidence Fluent's RepeatButton imposes a non-zero
+                                     default minimum that would otherwise overflow this fixed
+                                     18px column and overlap the value TextBox. -->
                                 <RepeatButton Name="PART_DecreaseButton" Grid.Column="0"
                                               Background="Transparent" BorderThickness="0,0,1,0"
                                               BorderBrush="{StaticResource IndustryDivider}" CornerRadius="0"
-                                              Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                              Padding="0" MinWidth="0" MinHeight="0"
+                                              HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                               IsVisible="{TemplateBinding ShowButtonSpinner}">
                                     <Path Data="M 0 0 L 8 0" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -229,7 +239,8 @@
                                 <RepeatButton Name="PART_IncreaseButton" Grid.Column="2"
                                               Background="Transparent" BorderThickness="1,0,0,0"
                                               BorderBrush="{StaticResource IndustryDivider}" CornerRadius="0"
-                                              Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                              Padding="0" MinWidth="0" MinHeight="0"
+                                              HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                               IsVisible="{TemplateBinding ShowButtonSpinner}">
                                     <Path Data="M 0 4 L 8 4 M 4 0 L 4 8" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
