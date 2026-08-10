@@ -44,6 +44,13 @@
             <Color x:Key="IndustryNeutral200Color">#E7E7EA</Color>
             <Color x:Key="IndustryNeutral300Color">#D4D4D7</Color>
             <Color x:Key="IndustryAccent100Color">#EEF6FF</Color>
+            <!-- Added during Phase 1 plan-review (not in LAYOUT-SPEC.md §2's own table, which
+                 skips straight from 100 to 700): the primary button's hover state needs this ramp
+                 step specifically, confirmed against the source design-system CSS
+                 (_ds/.../styles.css:29, the accent-600 custom property). Accent700 is already used
+                 for group-box titles elsewhere on the same screen, so reusing it for a hover state
+                 too would be visually ambiguous. -->
+            <Color x:Key="IndustryAccent600Color">#597EA3</Color>
             <Color x:Key="IndustryAccent700Color">#416180</Color>
             <Color x:Key="IndustryAccent800Color">#2C455D</Color>
             <Color x:Key="IndustryAccent900Color">#1D2D3D</Color>
@@ -64,6 +71,7 @@
             <SolidColorBrush x:Key="IndustryNeutral200" Color="{StaticResource IndustryNeutral200Color}" />
             <SolidColorBrush x:Key="IndustryNeutral300" Color="{StaticResource IndustryNeutral300Color}" />
             <SolidColorBrush x:Key="IndustryAccent100" Color="{StaticResource IndustryAccent100Color}" />
+            <SolidColorBrush x:Key="IndustryAccent600" Color="{StaticResource IndustryAccent600Color}" />
             <SolidColorBrush x:Key="IndustryAccent700" Color="{StaticResource IndustryAccent700Color}" />
             <SolidColorBrush x:Key="IndustryAccent800" Color="{StaticResource IndustryAccent800Color}" />
             <SolidColorBrush x:Key="IndustryAccent900" Color="{StaticResource IndustryAccent900Color}" />
