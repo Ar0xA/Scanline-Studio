@@ -119,7 +119,7 @@
                  user-configured Presets collection rather than clipping to the mockup's fixed
                  7-preset example (design doc §2's own explicit decision). -->
             <HeaderedContentControl Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}"
-                             Padding="{StaticResource IndustryGbPaddingFav}">
+                             Padding="{StaticResource IndustryGbPaddingFav}" ClipToBounds="False">
                 <HeaderedContentControl.Header>
                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.FavouritesHeader}" />
                 </HeaderedContentControl.Header>
@@ -200,11 +200,15 @@
                  port follows the COMMENT's actual intent (secondary, not destructive-red), since
                  mock2's own Halt in this specific card is plain gray, not red. -->
             <HeaderedContentControl Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}"
-                             Padding="{StaticResource IndustryGbPaddingFav}">
+                             Padding="{StaticResource IndustryGbPaddingFav}" ClipToBounds="False">
                 <HeaderedContentControl.Header>
                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.TransceiverHeader}" />
                 </HeaderedContentControl.Header>
-                <StackPanel Spacing="5">
+                <!-- Spacing=3, not 5 (fix): the mockup's Transceiver .gb has no gap override in its
+                     own inline style, so it uses .gb's CSS default gap:3px — unlike Favourites,
+                     which explicitly overrides to gap:5px (PADDING-NORMALIZATION.md/LAYOUT-SPEC §3
+                     "5 (Favourites), 3 (Transceiver)"). -->
+                <StackPanel Spacing="3">
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="4">
                         <ToggleButton Classes="Industry IndustryBtn26 IndustryBtnPrimary"
                                       IsChecked="{Binding IsReceiving}" Content="{loc:Translate RadioStatus.Receiving}"
