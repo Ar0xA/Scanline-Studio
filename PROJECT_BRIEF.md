@@ -5,17 +5,33 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-09, latest, ACTIVE)
+## Resume here (2026-08-10, latest, ACTIVE)
 
 **Current status**: Must-implement backlog items 1-2 shipped/closed. Full GUI wiring survey done
-(`spec/16-gui-wiring-survey.md`). RX telemetry feasibility slice (`spec/17-rx-telemetry-feasibility.md`)
-fully shipped, batches 1-6. RX history browser affordances shipped (batch 7). **Waterfall color/palette
-rendering shipped and CLOSED** (batches 8a/8b, commits `1cc4568`/`71a7daf` — see below for detail).
+(`spec/16-gui-wiring-survey.md`), **and just refreshed to current (2026-08-10, see below)**. RX
+telemetry feasibility slice (`spec/17-rx-telemetry-feasibility.md`) fully shipped, batches 1-6. RX
+history browser affordances shipped (batch 7). **Waterfall color/palette rendering shipped and
+CLOSED** (batches 8a/8b, commits `1cc4568`/`71a7daf` — see below for detail).
 No further task is currently authorized by the user — the last exchange offered OCR/QRZ lookup or
 CW-ID/FSK subsystem as the next `spec/14-roadmap.md` backlog items and is awaiting a reply. **Read
 this file top-to-bottom is not required to resume** — the batch entries below (8a, 8b, 7, 6...) are
 kept for "what happened and why" detail; skip straight to whatever the user's next message asks for
 and consult a specific batch entry only if its reasoning becomes directly relevant again.
+
+**GUI wiring survey refresh (2026-08-10):** user asked how many UI items are now mapped to real
+functionality; the survey (`spec/16-gui-wiring-survey.md`) turned out to be a stale 2026-08-09
+snapshot that never got the row-by-row edit after RX-telemetry batches 1-8b shipped, despite an
+inline note flagging the staleness. Re-verified every affected row against current `.axaml`/VM code
+(a fork did the file-by-file work), refreshed ~28 rows (RX-telemetry batches 1-7, the macro-engine
+commit, waterfall 8a/8b), and found 2 controls the original survey missed (Gallery's "Latest"
+button, waterfall's Peak-hold checkbox). Auditor independently re-checked the refresh itself
+(TRUSTWORTHY-WITH-FIXES): every classification held up, but it caught a **false claim** (an
+"off-scope" note accusing `RxHistoryPaneViewModel` of a hardcoded-string bug that doesn't actually
+exist — wrong line range, the real code correctly localizes; removed), a **math gap** (the Summary
+table's counts hadn't folded in batch 8a/8b's changes at all), and several stale `RadioStatusViewModel.cs`/
+`MainWindow.axaml` line citations left over from before the refresh — all fixed. Updated totals:
+**~114 REAL, ~108 STUB, ~48 FAKE-LIVE, ~4 PARTIAL** (out of ~282 tracked; was ~94/~110/~71/~5 at the
+original 2026-08-09 snapshot). **Committed, not yet pushed.**
 
 User instruction governing all work in this subject: **"throughout the night keep working on the
 total list using the same process flow. IF you get stumped by bugs, solution directions, ask the
