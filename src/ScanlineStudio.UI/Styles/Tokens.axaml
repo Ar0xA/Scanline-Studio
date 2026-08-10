@@ -63,26 +63,30 @@
     <!-- Square corners everywhere, globally: the Aesthetic Directive's least negotiable rule.
          FluentTheme's default control themes expose CornerRadius as a themed property their own
          templates bind to, so overriding it here (rather than replacing whole templates) is enough. -->
-    <Style Selector="Button">
+    <!-- :not(.Industry) exclusion (UI-redesign Phase 1, item 0b): the "Industry" marker class is
+         carried by every new-design control instance so these old bare-type selectors can't leak
+         onto them while the two design systems coexist — same mitigation, same reasoning as
+         Cards.axaml's own copy of this comment. -->
+    <Style Selector="Button:not(.Industry)">
         <Setter Property="CornerRadius" Value="0" />
         <Setter Property="Padding" Value="{DynamicResource ScanlineStudioPaddingMedium}" />
     </Style>
-    <Style Selector="ToggleButton">
+    <Style Selector="ToggleButton:not(.Industry)">
         <Setter Property="CornerRadius" Value="0" />
         <Setter Property="Padding" Value="{DynamicResource ScanlineStudioPaddingMedium}" />
     </Style>
-    <Style Selector="ComboBox">
+    <Style Selector="ComboBox:not(.Industry)">
         <Setter Property="CornerRadius" Value="0" />
         <Setter Property="Padding" Value="{DynamicResource ScanlineStudioPaddingSmall}" />
     </Style>
-    <Style Selector="ComboBoxItem">
+    <Style Selector="ComboBoxItem:not(.Industry)">
         <Setter Property="CornerRadius" Value="0" />
         <Setter Property="Padding" Value="{DynamicResource ScanlineStudioPaddingSmall}" />
     </Style>
-    <Style Selector="TextBox">
+    <Style Selector="TextBox:not(.Industry)">
         <Setter Property="CornerRadius" Value="0" />
     </Style>
-    <Style Selector="CheckBox">
+    <Style Selector="CheckBox:not(.Industry)">
         <Setter Property="CornerRadius" Value="0" />
     </Style>
     <!-- FluentTheme's default TabItem header uses a much larger type-ramp size than every other
@@ -90,7 +94,8 @@
          comically oversized next to normal-sized buttons/labels right next to them); pinned down
          to a normal control-text size here, matching the Aesthetic Directive's "minimal padding,
          nothing oversized" rule. -->
-    <Style Selector="TabItem">
+    <!-- :not(.Industry) exclusion, same reason as above. -->
+    <Style Selector="TabItem:not(.Industry)">
         <Setter Property="CornerRadius" Value="0" />
         <!-- Cards.axaml sets the workspace tabs to 11.5; this only needs to stop FluentTheme's
              oversized default for tabs in windows Cards.axaml doesn't reach (Options). -->

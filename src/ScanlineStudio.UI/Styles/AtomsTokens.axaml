@@ -127,6 +127,96 @@
                  (LICENSES.md), not a new font dependency. -->
             <FontFamily x:Key="IndustryMonoFontFamily">avares://ScanlineStudio.UI/Assets/Fonts/DejaVuSansMono#DejaVu Sans Mono</FontFamily>
 
+            <!-- ================= Composite (asymmetric) paddings (Phase 1) =================
+                 The flat 2/3/4/5/6/7/9/11 spacing scale above can't express this design's real
+                 (mostly asymmetric) paddings on its own — these are sourced from
+                 mockups/guidance/PADDING-NORMALIZATION.md, not invented, per
+                 mockups/guidance/PHASE1-ATOM-DESIGN.md's own item-by-item citations. Word-suffixed
+                 names (no digit in the key), same NoThicknessSpacingMismatchTests constraint as the
+                 base scale above. -->
+            <Thickness x:Key="IndustryGbPadding">7,11,7,6</Thickness>
+            <Thickness x:Key="IndustryGbPaddingWide">8,11,8,6</Thickness>
+            <Thickness x:Key="IndustryGbPaddingWideDeep">8,11,8,7</Thickness>
+            <Thickness x:Key="IndustryGbPaddingFav">8,11,8,5</Thickness>
+            <Thickness x:Key="IndustryGbPaddingNested">6,10,6,5</Thickness>
+            <Thickness x:Key="IndustryGbtPadding">5,0,5,0</Thickness>
+            <Thickness x:Key="IndustryMiniPadding">5,1,5,1</Thickness>
+            <!-- Shared by the stepper's value cell (item 5) AND .input (item 8) — one canonical
+                 name, not two resources for the same value. -->
+            <Thickness x:Key="IndustryStepperValuePadding">6,0,6,0</Thickness>
+            <Thickness x:Key="IndustrySegOptPadding">10,2,10,2</Thickness>
+            <Thickness x:Key="IndustrySegOptPaddingStretched">6,3,6,3</Thickness>
+            <Thickness x:Key="IndustryTableCellPadding">5,2,5,2</Thickness>
+            <Thickness x:Key="IndustryTableCellPaddingNarrow">4,2,4,2</Thickness>
+            <!-- Thumbnail figure caption paddings (item 11): default shared by Previous
+                 frames/Saved templates/Recently sent; Gallery's own figcaption is genuinely larger,
+                 not a copy error (confirmed against PADDING-NORMALIZATION.md). -->
+            <Thickness x:Key="IndustryThumbnailCaptionPadding">4,2,4,2</Thickness>
+            <Thickness x:Key="IndustryThumbnailCaptionPaddingGallery">5,3,5,3</Thickness>
+
+            <!-- ================= Hatch fill brush (LAYOUT-SPEC.md §2, Phase 1) =================
+                 CSS: repeating-linear-gradient(135deg, accent-14% 0 6px, transparent 6px 12px). The
+                 12px period is measured ALONG the gradient axis (perpendicular to the visible
+                 stripes), so an axis-aligned tile reproducing the same visual period via simple
+                 translation needs side length = 12 * sqrt(2) ~= 16.97 (mockups/guidance/
+                 PHASE1-ATOM-DESIGN.md item 12's derivation), NOT a naive 12x12 tile.
+
+                 Implemented as the standard two-shape diagonal-stripe tiling technique (a single
+                 rotated rectangle inside an axis-aligned tile does NOT reliably tile seamlessly at
+                 the tile boundary — rejected during implementation, replaced with this instead):
+                 within one axis-aligned S=16.97 square tile, an NW corner triangle (legs S/2=8.4853,
+                 area S²/8) PLUS the mid-tile quadrilateral immediately below-right of it (area
+                 3S²/8) together cover exactly 50% of the tile — the correct duty cycle for a 6px
+                 stripe over a 12px period. CODE-REVIEW FIX (blocker 3): an earlier pass paired the
+                 NW triangle with an SE corner triangle instead of the mid-tile quadrilateral — same
+                 25% area as the NW triangle alone doubled, but the two triangles only meet at a
+                 single POINT under tiling (opposite tile corners), producing isolated bowtie shapes
+                 at ~17px spacing instead of continuous diagonal bands. The quadrilateral shares a
+                 full edge with the NW triangle of the adjacent tile, which is what actually forms
+                 the continuous band. Direction: this geometry produces "/"-direction bands, which
+                 IS correct for CSS's 135deg gradient axis (135deg points the gradient AXIS to
+                 bottom-right; the visible bands run perpendicular to that, i.e. "/" — an earlier
+                 pass's comment claiming "135deg = \" was backwards, the geometry itself was already
+                 right on this point).
+
+                 Stripe color is genuinely translucent (Accent at 14% = alpha 0x24), NOT an opaque
+                 pre-blend like the hairline/text colors above — this brush is a large fill used
+                 over BOTH the paper IndustryBg ground AND the editor canvas's IndustryNeutral200, so
+                 one pre-blended value can't be correct for both grounds (Phase 0's own §2
+                 translucency rule: opaque for hairlines/text on the paper ground, translucent where
+                 it composites over other content). -->
+            <DrawingBrush x:Key="IndustryHatchStripeBrush" TileMode="Tile"
+                          SourceRect="0,0,16.9706,16.9706" DestinationRect="0,0,16.9706,16.9706">
+                <DrawingBrush.Drawing>
+                    <GeometryDrawing Brush="#245980A6">
+                        <GeometryDrawing.Geometry>
+                            <GeometryGroup FillRule="NonZero">
+                                <!-- NW triangle: (0,0) to (8.4853,0) to (0,8.4853); area S^2/8 -->
+                                <PathGeometry>
+                                    <PathFigure StartPoint="0,0" IsClosed="True">
+                                        <LineSegment Point="8.4853,0" />
+                                        <LineSegment Point="0,8.4853" />
+                                    </PathFigure>
+                                </PathGeometry>
+                                <!-- Mid-tile quadrilateral (NOT a corner triangle): (16.9706,0) ->
+                                     (16.9706,8.4853) -> (8.4853,16.9706) -> (0,16.9706); area
+                                     3*S^2/8. Together with the NW triangle: total S^2/2 = 50%
+                                     coverage, and this shape shares a full edge with the NEXT
+                                     tile's own NW triangle under TileMode="Tile" repetition, forming
+                                     one continuous diagonal band rather than isolated bowties. -->
+                                <PathGeometry>
+                                    <PathFigure StartPoint="16.9706,0" IsClosed="True">
+                                        <LineSegment Point="16.9706,8.4853" />
+                                        <LineSegment Point="8.4853,16.9706" />
+                                        <LineSegment Point="0,16.9706" />
+                                    </PathFigure>
+                                </PathGeometry>
+                            </GeometryGroup>
+                        </GeometryDrawing.Geometry>
+                    </GeometryDrawing>
+                </DrawingBrush.Drawing>
+            </DrawingBrush>
+
         </ResourceDictionary>
     </Styles.Resources>
 
