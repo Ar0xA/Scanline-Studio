@@ -1,0 +1,810 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Reusable primitive layer for the "Industry" wireframe design system
+         (mockups/guidance/LAYOUT-SPEC.md, mockups/guidance/PHASE1-ATOM-DESIGN.md — the fully
+         auditor-reviewed spec this file implements, item numbers below refer to that doc).
+         ADDITIVE: loaded after ChromeOverrides.axaml in App.axaml, old Tokens/Cards/ChromeOverrides
+         stay in force until every view is ported (redesign plan Phase 7). Every new-design control
+         instance built here or consumed at a later-phase call site carries the "Industry" marker
+         class so the old design's own bare-type Style selectors (Cards.axaml/Tokens.axaml/
+         ChromeOverrides.axaml, now narrowed to ":not(.Industry)" as part of this same phase) don't
+         also apply — see item 0/0b for the full reasoning; empirically confirmed (not assumed)
+         that a bare Style's setters win over a same-priority ControlTheme's own setters, so this
+         marker is load-bearing, not defensive.
+
+         Structure note: only KEYED resources (ControlTheme, ControlTemplate with x:Key) live inside
+         Styles.Resources/ResourceDictionary below — every bare Style Selector="..." rule is a
+         top-level child of the root Styles element instead, per Avalonia's actual XAML shape
+         (Style elements aren't resources and can't nest inside a ResourceDictionary). -->
+
+    <Styles.Resources>
+        <ResourceDictionary>
+
+            <!-- ═══════════════════════ 1. Group box (.gb) ═══════════════════════
+                 TemplatedControl deriving HeaderedContentControl (not UserControl — a UserControl's
+                 XAML root IS its Content, which would let a caller's Content overwrite the chrome).
+                 Notch-over-border recipe: bordered Grid + a second, later-drawn Border (background
+                 IndustryBg, negative margin) holding the title, sitting visually on the border line.
+                 Blueprint corner marks (item 1's own correction: color IndustryTextMuted55, NOT
+                 accent; 11×11px, 1px stroke, positioned outward at -6px, crossing point 5px past
+                 the border) are baked into this SAME template, gated by the "blueprint" class, so
+                 the 2 real group-box blueprint sites (Incoming-frame, Editor) opt in via
+                 Classes="Industry blueprint" without a second control. -->
+            <ControlTheme x:Key="IndustryGroupBoxTheme" TargetType="HeaderedContentControl">
+                <Setter Property="Padding" Value="{StaticResource IndustryGbPadding}" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Grid>
+                            <Border BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1"
+                                    CornerRadius="0" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter Content="{TemplateBinding Content}"
+                                                   ContentTemplate="{TemplateBinding ContentTemplate}" />
+                            </Border>
+                            <Border Background="{StaticResource IndustryBg}"
+                                    Padding="{StaticResource IndustryGbtPadding}"
+                                    Margin="6,-6,0,0"
+                                    HorizontalAlignment="Left" VerticalAlignment="Top">
+                                <ContentPresenter Content="{TemplateBinding Header}"
+                                                   ContentTemplate="{TemplateBinding HeaderTemplate}" />
+                            </Border>
+                            <!-- Blueprint corner marks — present in every instance of this template,
+                                 visibility gated by the "blueprint" class (item 1's own correction:
+                                 only Incoming-frame/Editor opt in, the group box's own 2 real sites).
+
+                                 CODE-REVIEW FIX (blocker 2): the original negative-coordinate Path
+                                 Data + alignment-only approach put 3 of 4 corners INSIDE the box
+                                 instead of outward — Avalonia's Shape measure (Stretch.None) only
+                                 counts the POSITIVE extent of geometry data when sized purely by
+                                 alignment, so e.g. the Right-aligned TR corner's negative-x data
+                                 collapsed to a ~0-width desired size and got arranged flush with the
+                                 border instead of -6px past it. Fixed by giving each corner an
+                                 unambiguous, fixed 11x11 layout slot (matching the real CSS box size,
+                                 _ds/.../styles.css:83-95) positioned via explicit Margin, with the
+                                 cross drawn at LOCAL (0..11) coordinates inside that slot — the same
+                                 11x11 internal cross (vertical stroke at local x=5 spanning full
+                                 height, horizontal stroke at local y=5 spanning full width) is shared
+                                 identically by all four corners; only the slot's Margin/Alignment
+                                 differs per corner, matching the real CSS (all four `.corner`
+                                 instances share one `::before`/`::after` rule, only their own
+                                 top/left/right/bottom anchor differs). Needs a real-window visual
+                                 confirmation once first consumed (Phase 3+) per this project's own
+                                 "verify geometry-coordinate questions empirically" discipline. -->
+                            <Canvas Name="PART_CornerTL" Width="11" Height="11" Margin="-6,-6,0,0"
+                                    HorizontalAlignment="Left" VerticalAlignment="Top"
+                                    IsHitTestVisible="False" IsVisible="False">
+                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
+                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            </Canvas>
+                            <Canvas Name="PART_CornerTR" Width="11" Height="11" Margin="0,-6,-6,0"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    IsHitTestVisible="False" IsVisible="False">
+                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
+                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            </Canvas>
+                            <Canvas Name="PART_CornerBL" Width="11" Height="11" Margin="-6,0,0,-6"
+                                    HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                                    IsHitTestVisible="False" IsVisible="False">
+                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
+                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            </Canvas>
+                            <Canvas Name="PART_CornerBR" Width="11" Height="11" Margin="0,0,-6,-6"
+                                    HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                    IsHitTestVisible="False" IsVisible="False">
+                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
+                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            </Canvas>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <!-- Plain bordered container with corner marks (VFO block — item 1's 3rd blueprint
+                 site, NOT a group box: no .gbt title notch at all). Separate ControlTheme so
+                 Classes="blueprint" is genuinely usable independently of IndustryGroupBox. Same
+                 blocker-2 fix as IndustryGroupBoxTheme above — Margin-positioned 11x11 slots, not
+                 negative-coordinate Data. -->
+            <ControlTheme x:Key="IndustryBlueprintBorderTheme" TargetType="ContentControl">
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Grid>
+                            <Border BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1"
+                                    CornerRadius="0" Padding="{TemplateBinding Padding}">
+                                <ContentPresenter Content="{TemplateBinding Content}"
+                                                   ContentTemplate="{TemplateBinding ContentTemplate}" />
+                            </Border>
+                            <Canvas Width="11" Height="11" Margin="-6,-6,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False">
+                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
+                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            </Canvas>
+                            <Canvas Width="11" Height="11" Margin="0,-6,-6,0" HorizontalAlignment="Right" VerticalAlignment="Top" IsHitTestVisible="False">
+                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
+                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            </Canvas>
+                            <Canvas Width="11" Height="11" Margin="-6,0,0,-6" HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
+                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            </Canvas>
+                            <Canvas Width="11" Height="11" Margin="0,0,-6,-6" HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                                <Rectangle Canvas.Left="5" Canvas.Top="0" Width="1" Height="11" Fill="{StaticResource IndustryTextMuted55}" />
+                                <Rectangle Canvas.Left="0" Canvas.Top="5" Width="11" Height="1" Fill="{StaticResource IndustryTextMuted55}" />
+                            </Canvas>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <!-- ═══════════════════════ 2. .mini Button/ToggleButton forms ═══════════════════════
+                 (the static Border form needs no ControlTheme — a plain Border + TextBlock, styled
+                 entirely via bare Style rules below.) -->
+            <ControlTheme x:Key="IndustryMiniButtonTheme" TargetType="Button">
+                <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
+                <Setter Property="Height" Value="17" />
+                <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+                <Setter Property="FontSize" Value="10" />
+                <Setter Property="FontWeight" Value="Medium" />
+                <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Name="PART_Face" Background="Transparent"
+                                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <ControlTheme x:Key="IndustryMiniToggleTheme" TargetType="ToggleButton">
+                <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
+                <Setter Property="Height" Value="17" />
+                <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+                <Setter Property="FontSize" Value="10" />
+                <Setter Property="FontWeight" Value="Medium" />
+                <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Name="PART_Face" Background="Transparent"
+                                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <!-- ═══════════════════════ 5. Stepper — reuses NumericUpDown ═══════════════════════
+                 CODE-REVIEW FIX (blocker 1): NumericUpDown does NOT have PART_IncreaseButton/
+                 PART_DecreaseButton members — those belong to ButtonSpinner. NumericUpDown only
+                 recognizes Spinner (a ButtonSpinner) and TextBox template parts, wiring spin
+                 through Spinner.Spin -> OnSpin -> OnIncrement/OnDecrement. The original template's
+                 bare RepeatButtons with those names were invisible to NumericUpDown (confirmed
+                 against Avalonia 11.3.12's own reference metadata) — clicking them did nothing, and
+                 dropping ButtonSpinner also silently killed mouse-wheel/arrow-key spin (both live
+                 on ButtonSpinner, not NumericUpDown). Fixed: host a real ButtonSpinner (named
+                 PART_Spinner, itself carrying a named Theme — see IndustrySpinnerTheme below, this
+                 exact "named theme on a template-internal control" shape is already proven safe in
+                 this codebase at ChromeOverrides.axaml:83-84/93) wrapping the value TextBox as its
+                 Content. Named ControlTheme, never the bare {x:Type NumericUpDown} key (item 0's
+                 rule). Every stepper site carries Classes="Industry" ONLY — never IndustryInput
+                 (item 8's selector target), or it would also match .input and fight this template.
+
+                 CODE-REVIEW FIX (blocker 4): MinWidth belongs to the WHOLE control here, not just
+                 the value cell — LAYOUT-SPEC's 52/46/34/24 numbers are the value CELL's own
+                 min-width (confirmed: LAYOUT-SPEC.md:143/189), so each site's override must add the
+                 two 18px buttons + ~2px of borders (36+2=38) on top: default 52+38=90, and the
+                 46/34/24 sites become 84/72/62 at their own call sites. NumericUpDown.MinWidth is a
+                 perfectly normal Control property (not baked into a template literal), so a
+                 call-site-local MinWidth genuinely overrides this ControlTheme's own default Setter
+                 (Local value beats ControlTheme, per this project's own empirically-confirmed
+                 precedence rule) — the Grid's "*" middle column then naturally receives whatever
+                 width remains, without needing to reach inside the template at all. -->
+            <ControlTheme x:Key="IndustrySpinnerTheme" TargetType="ButtonSpinner">
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Background="Transparent" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="0">
+                            <Grid ColumnDefinitions="18,*,18">
+                                <!-- Glyphs as Path geometry, not a literal Text= character: matches
+                                     ChromeOverrides.axaml's own existing ButtonSpinner-glyph
+                                     convention, and avoids NoHardcodedAxamlStringsTests's blanket
+                                     ban on literal Text=/Content=/Header= attributes. -->
+                                <RepeatButton Name="PART_DecreaseButton" Grid.Column="0"
+                                              Background="Transparent" BorderThickness="0,0,1,0"
+                                              BorderBrush="{StaticResource IndustryDivider}" CornerRadius="0"
+                                              Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                              IsVisible="{TemplateBinding ShowButtonSpinner}">
+                                    <Path Data="M 0 0 L 8 0" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </RepeatButton>
+                                <ContentPresenter Name="PART_ContentPresenter" Grid.Column="1"
+                                                   Content="{TemplateBinding Content}"
+                                                   ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                   HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
+                                <RepeatButton Name="PART_IncreaseButton" Grid.Column="2"
+                                              Background="Transparent" BorderThickness="1,0,0,0"
+                                              BorderBrush="{StaticResource IndustryDivider}" CornerRadius="0"
+                                              Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                              IsVisible="{TemplateBinding ShowButtonSpinner}">
+                                    <Path Data="M 0 4 L 8 4 M 4 0 L 4 8" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </RepeatButton>
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+                <!-- Hover state (item 18: IndustryAccent100 fill on the glyph buttons) MUST live
+                     here, scoped to THIS theme via ControlTheme.Children + "^" (self), not as a
+                     top-level "NumericUpDown.Industry /template/ RepeatButton:pointerover" Style —
+                     auditor-caught regression: the /template/ combinator only does a single
+                     TemplatedParent hop, and after the ButtonSpinner-hosting fix these RepeatButtons'
+                     TemplatedParent is the ButtonSpinner, not the NumericUpDown, so a selector
+                     anchored on NumericUpDown can never reach them. -->
+                <ControlTheme.Children>
+                    <Style Selector="^ /template/ RepeatButton:pointerover">
+                        <Setter Property="Background" Value="{StaticResource IndustryAccent100}" />
+                    </Style>
+                </ControlTheme.Children>
+            </ControlTheme>
+
+            <ControlTheme x:Key="IndustryStepperTheme" TargetType="NumericUpDown">
+                <Setter Property="MinWidth" Value="90" />
+                <!-- 90 = 52 (default value-cell min-width, LAYOUT-SPEC.md:143) + 38 (2x18px
+                     buttons + ~2px border). Per-site overrides (value-cell 46/34/24) become 84/72/62
+                     as a plain local MinWidth on the NumericUpDown instance at each call site. -->
+                <Setter Property="Height" Value="22" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <ButtonSpinner Name="PART_Spinner" Theme="{StaticResource IndustrySpinnerTheme}"
+                                       AllowSpin="True" ShowButtonSpinner="True"
+                                       BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1">
+                            <!-- Classes="Industry" so old Cards.axaml/ChromeOverrides.axaml
+                                 TextBox:not(.Industry) selectors (height 19, padding 4,0, Fluent's
+                                 own hover tint on Border#PART_BorderElement) don't leak onto this
+                                 template-internal TextBox — cheap, safe regardless of whether a
+                                 template-literal value would already have won that fight. -->
+                            <TextBox Name="PART_TextBox" Classes="Industry" Background="Transparent" BorderThickness="0"
+                                     Padding="{StaticResource IndustryStepperValuePadding}"
+                                     FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="12" FontWeight="Medium"
+                                     TextAlignment="Right" VerticalContentAlignment="Center" />
+                        </ButtonSpinner>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <!-- ═══════════════════════ 6. .trk track/slider ═══════════════════════
+                 IndustrySliderTheme is a NAMED ControlTheme (item 0's rule) — never a bare
+                 {x:Type Slider} key, which would re-skin every live old-design Slider instantly. -->
+            <ControlTheme x:Key="IndustrySliderTheme" TargetType="Slider">
+                <Setter Property="MinHeight" Value="12" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Grid VerticalAlignment="Center">
+                            <Border Name="PART_TrackWell" Height="4" VerticalAlignment="Center" CornerRadius="0"
+                                    Background="{StaticResource IndustryNeutral300}" />
+                            <Track Name="PART_Track" Orientation="Horizontal"
+                                   Minimum="{TemplateBinding Minimum}"
+                                   Maximum="{TemplateBinding Maximum}"
+                                   Value="{TemplateBinding Value, Mode=TwoWay}"
+                                   IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
+                                <Track.DecreaseButton>
+                                    <RepeatButton Name="PART_DecreaseButton" Height="4" VerticalAlignment="Center"
+                                                  Focusable="False" BorderThickness="0" CornerRadius="0"
+                                                  Background="{StaticResource IndustryAccent}" />
+                                </Track.DecreaseButton>
+                                <Track.IncreaseButton>
+                                    <RepeatButton Name="PART_IncreaseButton" Height="4" VerticalAlignment="Center"
+                                                  Focusable="False" BorderThickness="0" CornerRadius="0"
+                                                  Background="Transparent" />
+                                </Track.IncreaseButton>
+                                <Thumb Name="PART_Thumb" Width="3" Height="12" Margin="0"
+                                       Background="{StaticResource IndustryAccent800}" />
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <!-- ═══════════════════════ 9. .seg segmented control ═══════════════════════
+                 Call sites need Classes="Industry IndustrySeg" (+ "stretched" where applicable) —
+                 RadioButton isn't itself an item-0b collision-table selector, but the Industry
+                 marker is still required for consistency with every other atom's convention
+                 (code-review nit: this requirement was previously undocumented at this site). -->
+            <ControlTheme x:Key="IndustrySegTheme" TargetType="RadioButton">
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Name="PART_Face" Margin="-1,0,0,0"
+                                Background="{StaticResource IndustrySurface}"
+                                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter Content="{TemplateBinding Content}" FontSize="11"
+                                               FontFamily="{StaticResource IndustryBodyFontFamily}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <!-- ═══════════════════════ 16. Disclosure header ("＋ ADVANCED TIMING") ═══════════════════════
+                 Plain borderless ToggleButton (header text + chevron) driving an IsVisible binding
+                 on a sibling content Panel — sidesteps Expander's pitfalls entirely rather than
+                 solving them (item 16's own conclusion). Call sites need Classes="Industry
+                 IndustryDisclosure" — ToggleButton IS an item-0b collision-table selector, so the
+                 Industry marker is load-bearing here, not just conventional (code-review nit: this
+                 requirement was previously undocumented at this site). -->
+            <ControlTheme x:Key="IndustryDisclosureToggleTheme" TargetType="ToggleButton">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Padding" Value="0,4,0,0" />
+                <Setter Property="HorizontalAlignment" Value="Left" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                            <StackPanel Orientation="Horizontal" Spacing="3">
+                                <!-- "+"/"−" glyph as Path geometry, not a literal Text= character —
+                                     same NoHardcodedAxamlStringsTests reasoning as the stepper
+                                     above; the checked-state Style below swaps Data to a
+                                     horizontal-only line for "−". -->
+                                <Path Name="PART_Chevron" Data="M 0 3 L 6 3 M 3 0 L 3 6"
+                                      Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1"
+                                      Width="6" Height="6" VerticalAlignment="Center" />
+                                <ContentPresenter Content="{TemplateBinding Content}" />
+                            </StackPanel>
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
+            <!-- ═══════════════════════ 17. Focus ring — DEFERRED to Phase 2 ═══════════════════════
+                 CODE-REVIEW FIX: an earlier pass defined ControlTemplate resources here and called
+                 the item done, but never wired them (no Setter Property="FocusAdorner" anywhere) —
+                 misleading dead code, worse than an honest gap. Verified by reflection against the
+                 real Avalonia 11.3.12 assemblies (not guessed): Control.FocusAdorner is typed
+                 ITemplate&lt;Control&gt; (single generic arg), but Avalonia's XAML ControlTemplate
+                 element implements IControlTemplate : ITemplate&lt;TemplatedControl,
+                 TemplateResult&lt;Control&gt;&gt; (a DIFFERENT, two-arg interface) — a bare
+                 ControlTemplate resource is not assignable to FocusAdorner without either an actual
+                 ITemplate&lt;Control&gt;-typed wrapper (e.g. FuncTemplate&lt;Control&gt;) or
+                 confirming Avalonia's XAML compiler does an implicit conversion for this specific
+                 property (unconfirmed either way). Item 17's own sequencing note already said this
+                 needed a real implementation-time spike, not a guess — correctly deferred to
+                 whichever Phase 2+ view first ships an interactive atom, at which point the actual
+                 working mechanism (FuncTemplate&lt;Control&gt; wiring vs. confirming the XAML
+                 conversion) gets resolved and this comment updated. Also still open from the
+                 design doc: the .seg-opt inward (-2px) focus-offset variant. -->
+
+        </ResourceDictionary>
+    </Styles.Resources>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════════════
+         Bare Style rules below — top-level children of Styles, not resources.
+         ═══════════════════════════════════════════════════════════════════════════════ -->
+
+    <!-- 1. Group box -->
+    <Style Selector="HeaderedContentControl.blueprint /template/ Canvas#PART_CornerTL,
+                      HeaderedContentControl.blueprint /template/ Canvas#PART_CornerTR,
+                      HeaderedContentControl.blueprint /template/ Canvas#PART_CornerBL,
+                      HeaderedContentControl.blueprint /template/ Canvas#PART_CornerBR">
+        <Setter Property="IsVisible" Value="True" />
+    </Style>
+    <Style Selector="TextBlock.IndustryGbTitle">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontSize" Value="9.5" />
+        <Setter Property="LetterSpacing" Value="1.33" />
+        <!-- .14em * 9.5px = 1.33 device px (LAYOUT-SPEC §6 pitfall 8). -->
+        <Setter Property="Foreground" Value="{StaticResource IndustryAccent700}" />
+    </Style>
+
+    <!-- 2. .mini chips — 3 forms. Every instance carries Classes="Industry IndustryMini" on the
+         Button/ToggleButton forms (Border form only needs IndustryMini — Border isn't in the old-
+         style collision table). -->
+    <Style Selector="Border.IndustryMini">
+        <Setter Property="Height" Value="17" />
+        <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Border.IndustryMini > TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontWeight" Value="Medium" />
+    </Style>
+    <Style Selector="Border.IndustryMini.active">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+    </Style>
+    <Style Selector="Border.IndustryMini.active > TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource IndustryBg}" />
+    </Style>
+    <Style Selector="Border.IndustryMini.accentOutline">
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+    </Style>
+    <Style Selector="Border.IndustryMini.accentOutline > TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource IndustryAccent700}" />
+    </Style>
+    <!-- Interaction states, item 18: hover = text-7% mix (NOT IndustryAccent100 — .mini is
+         structurally like .btn-secondary/.seg-opt, not the stepper's borderless accent glyphs;
+         IndustryAccent100 also breaks the active variant's readability), disabled = 45% opacity. -->
+    <Style Selector="Button.IndustryMini:pointerover /template/ Border#PART_Face">
+        <Setter Property="Background" Value="#121D1F20" />
+    </Style>
+    <Style Selector="Button.IndustryMini:pressed /template/ Border#PART_Face">
+        <Setter Property="Background" Value="#241D1F20" />
+    </Style>
+    <Style Selector="Button.IndustryMini:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryMini:pointerover /template/ Border#PART_Face">
+        <Setter Property="Background" Value="#121D1F20" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryMini:pressed /template/ Border#PART_Face">
+        <Setter Property="Background" Value="#241D1F20" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryMini:checked /template/ Border#PART_Face">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryMini:checked /template/ ContentPresenter">
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryMini:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
+    <!-- 3. Rows (.r2). IndustryRow is a Border (hosts the top-rule via BorderThickness/Brush —
+         Grid has no border properties, so the row's outer wrapper must be a Border; markup authors
+         put a Grid/DockPanel with the label/value layout AS the Border's Child). Separator via
+         :nth-child (empirically confirmed to work on a plain, hand-authored container's direct
+         children, not just ItemsControl-generated ones) — the DEFAULT for uniform .r2 stacks;
+         Classes="ruled"/"unruled" overrides for group boxes whose body mixes .r2 rows with non-row
+         content, where :nth-child's "count every child" semantics diverge from CSS's real
+         ".r2 + .r2" ("rule iff the immediately preceding sibling is ALSO .r2") — item 3's own
+         documented caveat. -->
+    <Style Selector="Border.IndustryRow">
+        <Setter Property="MinHeight" Value="16.5" />
+    </Style>
+    <Style Selector="StackPanel.IndustryRows > Border.IndustryRow:not(:nth-child(1)):not(.unruled)">
+        <Setter Property="BorderThickness" Value="0,1,0,0" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryRowRule6}" />
+    </Style>
+    <Style Selector="StackPanel.IndustryRows > Border.IndustryRow.ruled">
+        <Setter Property="BorderThickness" Value="0,1,0,0" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryRowRule6}" />
+    </Style>
+    <Style Selector="TextBlock.IndustryRowLabel">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="LineHeight" Value="16.5" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted62}" />
+    </Style>
+    <Style Selector="TextBlock.IndustryRowValue">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="LineHeight" Value="16.5" />
+        <Setter Property="LetterSpacing" Value="-0.22" />
+        <!-- -.02em * 11px = -0.22 device px. -->
+        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+    </Style>
+
+    <!-- 4. Kicker text -->
+    <Style Selector="TextBlock.IndustryKicker">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="LetterSpacing" Value="1.4" />
+        <!-- .14em * 10px = 1.4 device px. -->
+        <Setter Property="Foreground" Value="{StaticResource IndustryAccent700}" />
+    </Style>
+    <Style Selector="TextBlock.IndustryKicker.wide">
+        <Setter Property="LetterSpacing" Value="1.6" />
+        <!-- .16em * 10px = 1.6 device px — the VFO-only variant. -->
+    </Style>
+
+    <!-- 5. Stepper — interaction states. Glyph-button hover (item 18: IndustryAccent100) now lives
+         inside IndustrySpinnerTheme's own ControlTheme.Children (auditor-caught regression: the
+         RepeatButtons' TemplatedParent became the ButtonSpinner, not this NumericUpDown, once the
+         stepper started hosting a real ButtonSpinner — a selector anchored here could never reach
+         them). Only the disabled state stays a plain NumericUpDown-scoped rule. -->
+    <Style Selector="NumericUpDown.Industry:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
+    <!-- 6. .trk track/slider — per-site track height override (default 4, 6 or 8 per LAYOUT-SPEC
+         §5): set at the call site via Classes="Industry h6"/"h8"; track width, where fixed, is a
+         plain Width on the Slider itself, not a template concern (item 6's own note). -->
+    <Style Selector="Slider.Industry.h6 /template/ Border#PART_TrackWell,
+                      Slider.Industry.h6 /template/ RepeatButton#PART_DecreaseButton,
+                      Slider.Industry.h6 /template/ RepeatButton#PART_IncreaseButton">
+        <Setter Property="Height" Value="6" />
+    </Style>
+    <Style Selector="Slider.Industry.h8 /template/ Border#PART_TrackWell,
+                      Slider.Industry.h8 /template/ RepeatButton#PART_DecreaseButton,
+                      Slider.Industry.h8 /template/ RepeatButton#PART_IncreaseButton">
+        <Setter Property="Height" Value="8" />
+    </Style>
+    <Style Selector="Slider.Industry:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
+    <!-- Display-only meter (RX/TX level, L/R meters, POWER/ALC): a plain 3-element Grid, NOT a
+         Slider — LAYOUT-SPEC's own real example (RX lvl fill 63% thumb 78%) has fill% and thumb%
+         as independently different values, which a Slider's single Value can't represent.
+         FillPercent/MarkerPercent are represented by a per-instance Width binding at each call
+         site — no styled properties needed here beyond the visual. -->
+    <Style Selector="Grid.IndustryMeter">
+        <Setter Property="Height" Value="4" />
+    </Style>
+    <Style Selector="Border.IndustryMeterTrack">
+        <Setter Property="Background" Value="{StaticResource IndustryNeutral300}" />
+    </Style>
+    <Style Selector="Border.IndustryMeterFill">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+    </Style>
+    <!-- Marker Height (12) intentionally exceeds the Grid's own Height (4) — confirmed against
+         source CSS (SSTV Console.dc.html:41): ".trk b{top:-4px;width:3px;height:12px}" on a 4px
+         track means the marker overflows the track by 4px on each side, vertically centered via a
+         negative top offset. Not a bug (code-review nit, resolved): call sites center this marker
+         inside the Grid via VerticalAlignment="Center" rather than a literal negative-top offset
+         (Avalonia has no direct top-offset-outside-parent-bounds shorthand the way CSS does; a
+         centered 12px element inside a Grid whose row/cell height is 4 naturally overflows both
+         edges equally, same visual result). -->
+    <Style Selector="Border.IndustryMeterMarker">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent800}" />
+        <Setter Property="Width" Value="3" />
+        <Setter Property="Height" Value="12" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- 7. Buttons at 6 heights. Classes composition (IndustryBtn + IndustryBtn{N} +
+         IndustryBtnPrimary/Secondary), matching Cards.axaml's own established convention. Padding
+         is a deliberate, documented per-instance exemption (item 7/Summary's "padding exemption
+         policy") — NOT set here, cited from PADDING-NORMALIZATION.md §1b at each later-phase call
+         site. Every call site needs Classes="Industry IndustryBtn IndustryBtn{N}" — the base/height
+         selectors below require BOTH Industry and IndustryBtn (code-review risk fix): Button IS an
+         item-0b collision-table selector, so requiring Industry here means a call site that forgot
+         the marker renders fully unstyled (obviously wrong) instead of a half-old/half-new hybrid
+         (subtly wrong, e.g. old Height=19 silently fighting a new FontSize=12.5). -->
+    <Style Selector="Button.Industry.IndustryBtn">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Button.Industry.IndustryBtn36">
+        <Setter Property="Height" Value="36" />
+        <Setter Property="FontSize" Value="12.5" />
+    </Style>
+    <Style Selector="Button.Industry.IndustryBtn26">
+        <Setter Property="Height" Value="26" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Button.Industry.IndustryBtn25">
+        <Setter Property="Height" Value="25" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Button.Industry.IndustryBtn24">
+        <Setter Property="Height" Value="24" />
+        <Setter Property="FontSize" Value="11" />
+    </Style>
+    <Style Selector="Button.Industry.IndustryBtn22">
+        <Setter Property="Height" Value="22" />
+        <Setter Property="FontSize" Value="11" />
+    </Style>
+    <Style Selector="Button.Industry.IndustryBtn21">
+        <Setter Property="Height" Value="21" />
+        <Setter Property="FontSize" Value="10.5" />
+    </Style>
+    <!-- Primary/secondary need /template/ ContentPresenter targeting — the same Fluent
+         Button.accent-conflict trick ChromeOverrides.axaml already proves for the OLD design's own
+         primary button; these selectors are Classes-scoped (opt-in) already, so no item-0
+         collision risk. -->
+    <Style Selector="Button.IndustryBtnPrimary /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+    </Style>
+    <Style Selector="Button.IndustryBtnPrimary:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent600}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent600}" />
+    </Style>
+    <Style Selector="Button.IndustryBtnPrimary:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent700}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent700}" />
+    </Style>
+    <Style Selector="Button.IndustryBtnPrimary:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+    <Style Selector="Button.IndustryBtnSecondary /template/ ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryText}" />
+    </Style>
+    <Style Selector="Button.IndustryBtnSecondary:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#121D1F20" />
+    </Style>
+    <Style Selector="Button.IndustryBtnSecondary:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="#241D1F20" />
+    </Style>
+    <Style Selector="Button.IndustryBtnSecondary:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
+    <!-- 8. .input — a SEPARATE IndustryInput class, distinct from the bare Industry exclusion
+         marker (item 8's own N3 correction) — every .input instance carries BOTH
+         Classes="Industry IndustryInput"; the stepper's own NumericUpDown carries Industry only.
+         Per-type setters (VerticalContentAlignment isn't shared by the 3 types at the selector's
+         common base, same caveat ChromeOverrides.axaml already documents). The base selector below
+         requires BOTH classes (code-review risk fix, same reasoning as item 7's buttons above) —
+         TextBox/ComboBox/NumericUpDown are all item-0b collision-table selectors, so a call site
+         missing Industry renders fully unstyled instead of a silent old/new hybrid. -->
+    <Style Selector="TextBox.Industry.IndustryInput, ComboBox.Industry.IndustryInput, NumericUpDown.Industry.IndustryInput">
+        <Setter Property="Height" Value="24" />
+        <Setter Property="MinHeight" Value="24" />
+        <Setter Property="Padding" Value="{StaticResource IndustryStepperValuePadding}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Background" Value="{StaticResource IndustrySurface}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="TextBox.IndustryInput">
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+    </Style>
+    <Style Selector="ComboBox.IndustryInput">
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+    </Style>
+    <Style Selector="NumericUpDown.IndustryInput">
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+    </Style>
+    <!-- Mode <select>, height 26. -->
+    <Style Selector="ComboBox.IndustryInput.tall">
+        <Setter Property="Height" Value="26" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBox.IndustryInput:pointerover, ComboBox.IndustryInput:pointerover, NumericUpDown.IndustryInput:pointerover">
+        <Setter Property="BorderBrush" Value="#731D1F20" />
+        <!-- text-45% mix, item 18. -->
+    </Style>
+    <Style Selector="TextBox.IndustryInput:disabled, ComboBox.IndustryInput:disabled, NumericUpDown.IndustryInput:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
+    <!-- 9. .seg segmented control -->
+    <Style Selector="RadioButton.IndustrySeg">
+        <Setter Property="Padding" Value="{StaticResource IndustrySegOptPadding}" />
+    </Style>
+    <Style Selector="RadioButton.IndustrySeg.stretched">
+        <Setter Property="Padding" Value="{StaticResource IndustrySegOptPaddingStretched}" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+    </Style>
+    <!-- Interaction states, item 18: hover suppressed when checked (real source is
+         .seg-opt:not(:has(input:checked)):hover — Avalonia applies :pointerover and :checked
+         simultaneously, so the hover selector must explicitly exclude :checked or it washes ink
+         over the accent-filled selected segment). -->
+    <Style Selector="RadioButton.IndustrySeg:pointerover:not(:checked) /template/ Border#PART_Face">
+        <Setter Property="Background" Value="#121D1F20" />
+    </Style>
+    <Style Selector="RadioButton.IndustrySeg:checked /template/ Border#PART_Face">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+    </Style>
+    <Style Selector="RadioButton.IndustrySeg:checked /template/ ContentPresenter">
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+    </Style>
+    <Style Selector="RadioButton.IndustrySeg:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
+    <!-- 10. .table — plain Grid/ItemsControl table, NOT Avalonia.Controls.DataGrid (item 10's own
+         reasoning: LAYOUT-SPEC's tables are 4-9 columns x 5-6 STATIC rows, closer to the mockup's
+         real plain <table> than a scrolling/virtualized/sortable grid — fighting DataGrid's own
+         chrome system a second time for a 5-row static table is more work than a header Grid +
+         ItemsControl body). Package removal (Avalonia.Controls.DataGrid reference, Fluent.xaml
+         StyleInclude) belongs to whichever phase actually ports Decode-activity (Phase 3)/TX log
+         (Phase 4), NOT this phase — the package is still needed by the old-design DataGrid
+         instances until then. -->
+    <Style Selector="TextBlock.IndustryTableHeader">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="LetterSpacing" Value="0.88" />
+        <!-- .08em * 11px = 0.88 device px (LAYOUT-SPEC §6 pitfall 8). -->
+        <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted62}" />
+    </Style>
+    <Style Selector="Border.IndustryTableHeaderRule">
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="Padding" Value="{StaticResource IndustryTableCellPadding}" />
+    </Style>
+    <Style Selector="Border.IndustryTableHeaderRule.narrow">
+        <Setter Property="Padding" Value="{StaticResource IndustryTableCellPaddingNarrow}" />
+    </Style>
+    <Style Selector="TextBlock.IndustryTableCell">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="LetterSpacing" Value="-0.22" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+    </Style>
+    <Style Selector="Border.IndustryTableRowRule">
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryTableRule8}" />
+        <Setter Property="Padding" Value="{StaticResource IndustryTableCellPadding}" />
+    </Style>
+    <Style Selector="Border.IndustryTableRowRule.narrow">
+        <Setter Property="Padding" Value="{StaticResource IndustryTableCellPaddingNarrow}" />
+    </Style>
+
+    <!-- 11. Thumbnail figure — composed from existing atoms (IndustryHatchPanel below for the
+         placeholder body, IndustryMini Border form for the mode-badge chip) rather than a bespoke
+         templated control — every part of "figure" is already a plain Border/Grid/StackPanel
+         composition, no new template needed. Markup authors compose it per-site (AspectRatio drives
+         the MeasureOverride mechanism LAYOUT-SPEC §6 pitfall 4/5 already mandates for the Incoming-
+         frame's own height-driven ratio — that mechanism's concrete implementation is a Phase 3+
+         concern, reusing the same technique, not duplicated here). -->
+    <Style Selector="Border.IndustryThumbnail">
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="Border.IndustryThumbnailCaption">
+        <Setter Property="BorderThickness" Value="0,1,0,0" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="Padding" Value="{StaticResource IndustryThumbnailCaptionPadding}" />
+    </Style>
+    <Style Selector="Border.IndustryThumbnailCaption.gallery">
+        <Setter Property="Padding" Value="{StaticResource IndustryThumbnailCaptionPaddingGallery}" />
+    </Style>
+    <Style Selector="TextBlock.IndustryThumbnailCall">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+    </Style>
+    <Style Selector="TextBlock.IndustryThumbnailMeta">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+        <Setter Property="FontSize" Value="9" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted50}" />
+    </Style>
+
+    <!-- 12. Hatch panel — the brush itself (IndustryHatchStripeBrush) lives in AtomsTokens.axaml,
+         alongside the composite-Thickness resources — it's a resource, same layer as the other
+         tokens, not view-shaped like everything else in this file. This is just the bordered panel
+         atom that hosts it. -->
+    <Style Selector="Border.IndustryHatchPanel">
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Background" Value="{StaticResource IndustryHatchStripeBrush}" />
+    </Style>
+
+    <!-- 16. Disclosure header — .gbt group-box-title typography (NOT kicker text — item 16's own
+         correction), source text is mixed-case with CSS text-transform:uppercase, so markup
+         authors type it uppercase (matching item 4's kicker convention) rather than relying on a
+         text-transform Avalonia doesn't have. -->
+    <Style Selector="ToggleButton.IndustryDisclosure /template/ ContentPresenter">
+        <Setter Property="TextBlock.FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
+        <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
+        <Setter Property="TextBlock.FontSize" Value="9.5" />
+        <Setter Property="TextBlock.LetterSpacing" Value="1.33" />
+        <!-- .14em * 9.5px = 1.33 device px. -->
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryAccent700}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryDisclosure:checked /template/ Path#PART_Chevron">
+        <Setter Property="Data" Value="M 0 3 L 6 3" />
+    </Style>
+
+</Styles>
