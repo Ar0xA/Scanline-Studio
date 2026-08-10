@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="stylesheet" href="_ds/industry-2dd972b5-7c1a-47b9-9e99-97a887c80e15/styles.css">
+<script src="_ds/industry-2dd972b5-7c1a-47b9-9e99-97a887c80e15/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#E6E6E6}
+summary::marker,summary::-webkit-details-marker{display:none}
+canvas{display:block}
+.win{width:1920px;height:1080px;background:#F0F0F0;color:#101010;font-size:11.5px;font-family:'Segoe UI','Segoe UI Variable',system-ui,sans-serif;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.28);border-radius:0}
+.menu{height:26px;display:flex;align-items:center;gap:2px;padding:0 6px;background:#F0F0F0;border-bottom:1px solid #B9B9B9;font-size:13px;flex:none}
+.menu span.mi{padding:3px 8px;cursor:default}
+.menu span.mi:hover{background:#CDE1F5}
+.card{position:relative;background:#F0F0F0;border:1px solid #B9B9B9;border-radius:0;padding:12px 7px 5px;display:flex;flex-direction:column;gap:2px;min-height:0}
+.ch{position:absolute;top:-7px;left:6px;right:6px;font-size:11px;font-weight:400;display:flex;align-items:center;justify-content:space-between;gap:8px;pointer-events:none}
+.ch > *{background:#F0F0F0;padding:0 4px}
+.ch::before{content:"";position:absolute;left:0;top:7px;width:0}
+.row{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11.5px;min-height:17px;overflow:hidden}
+.row > .lbl,.row > .val{overflow:hidden;text-overflow:ellipsis}
+.lbl{color:#454545;white-space:nowrap}
+.val{font-family:'Cascadia Mono',Consolas,ui-monospace,monospace;font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mono{font-family:'Cascadia Mono',Consolas,ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.cap{font-size:11px;font-weight:400;color:#454545}
+.btn{height:24px;padding:0 10px;border:1px solid #A0A0A0;border-radius:0;background:#E9E9E9;font:400 12px 'Segoe UI',system-ui;color:#101010;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap}
+.btn:hover{background:#DCE9F5;border-color:#7EB4EA}
+.btn:active{background:#C4DDF5;border-color:#5A9AD4}
+.btna{background:#A8E0A8;border-color:#4E9A4E;color:#0F3D0F;font-weight:600}
+.btna:hover{background:#95D695;border-color:#3F8A3F}
+.btna:active{background:#7FC97F;border-color:#357535}
+.btns{height:20px;padding:0 7px;font-size:10.5px}
+.btnstop{background:#EFC0C0;border-color:#B45A5A;color:#5A1010;font-weight:600}
+.btnstop:hover{background:#E8AEAE;border-color:#A34E4E}
+.led{width:8px;height:8px;flex:none;border:1px solid #6E6E6E;background:#C8C8C8;display:inline-block}
+.ledon{background:#3FBF3F}
+.ledtx{background:#E04040}
+.pill{height:19px;padding:0 6px;border:1px solid #A0A0A0;border-radius:0;background:#FFF;font:400 11px 'Cascadia Mono',Consolas,monospace;color:#101010;display:inline-flex;align-items:center;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pilla{background:#0F62A8;border-color:#0B4C83;color:#FFF}
+.pillo{background:#E7F0DA;border-color:#8FAE6E;color:#2C4715}
+.seg{display:inline-flex;flex:none}
+.segi{height:22px;padding:0 9px;border:1px solid #A0A0A0;background:#E9E9E9;font-size:11.5px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;margin-left:-1px;color:#101010}
+.segi:first-child{border-radius:0;margin-left:0}
+.segi:last-child{border-radius:0}
+.segi:hover{background:#DCE9F5;border-color:#7EB4EA}
+.segia{background:#C4DDF5;border-color:#5A9AD4;color:#0B3E68;font-weight:600;position:relative;z-index:1;box-shadow:inset 0 1px 2px rgba(0,0,0,.14)}
+.segia:hover{background:#B6D4F0}
+.num{height:21px;flex:none;display:inline-flex;align-items:stretch;border:1px solid #A0A0A0;border-radius:0;background:#FFF;overflow:hidden}
+.num span{padding:0 8px;font-size:12px;font-variant-numeric:tabular-nums;min-width:44px;text-align:right;display:flex;align-items:center;justify-content:flex-end}
+.num b{display:flex;flex-direction:column;border-left:1px solid #A0A0A0;background:#E9E9E9;width:14px;align-items:center;justify-content:center;font-size:7px;color:#454545;line-height:1.3;font-weight:400}
+.cbx{height:22px;border:1px solid #A0A0A0;border-radius:0;background:#FFF;display:flex;align-items:center;justify-content:space-between;padding:0 8px;font-size:12.5px;gap:8px}
+.cbx i{color:#5D5D5D;font-style:normal;font-size:10px}
+.tin{height:21px;border:1px solid #A0A0A0;border-radius:0;background:#FFF;display:flex;align-items:center;padding:0 8px;font-size:12.5px;color:#1A1A1A}
+.trk{position:relative;height:4px;border-radius:0;background:#FFF;border:1px solid #A0A0A0;flex:1;min-width:40px}
+.trk i{position:absolute;left:0;top:0;bottom:0;background:#0F62A8}
+.trk b{position:absolute;top:-6px;width:9px;height:15px;background:#E9E9E9;border:1px solid #6E6E6E;transform:translateX(-4px)}
+.trk b::after{content:"";position:absolute;left:3px;right:3px;top:3px;bottom:3px;background:#B4B4B4}
+.bar{height:10px;border-radius:0;background:#FFF;border:1px solid #A0A0A0;overflow:hidden;flex:1}
+.bar i{display:block;height:100%;background:#0F62A8}
+.tabs{height:26px;display:flex;align-items:flex-end;gap:2px;padding:0 6px;background:#F0F0F0;border-bottom:1px solid #B9B9B9;flex:none}
+.tab{height:22px;padding:0 14px;border:1px solid #B9B9B9;border-bottom:0;background:#E4E4E4;font:400 12px 'Segoe UI',system-ui;color:#454545;cursor:pointer;position:relative;display:inline-flex;align-items:center;white-space:nowrap;margin-bottom:-1px}
+.tab:hover{background:#EDEDED;color:#101010}
+.ind{position:absolute;left:-1px;right:-1px;top:-1px;bottom:-1px;background:#F0F0F0;border:1px solid #B9B9B9;border-bottom:1px solid #F0F0F0;z-index:-1}
+.tab{isolation:isolate}
+.tab:has(.ind){background:#F0F0F0;color:#101010;font-weight:600}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{text-align:left;font-weight:600;color:#101010;font-size:11px;padding:3px 6px;background:#E4E4E4;border:1px solid #C8C8C8;white-space:nowrap}
+.tbl td{padding:2px 6px;border-bottom:1px solid #DCDCDC;font-family:'Cascadia Mono',Consolas,monospace;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl tbody tr:hover{background:#CDE1F5}
+.tbl tbody tr.hl-live{background:#FAF3AE}
+.tbl tbody tr.hl-log{background:#CFEFCF}
+.tbl tbody tr.hl-warn{background:#F3D9D9}
+.exp{border:1px solid #B9B9B9;border-radius:0;background:#E9E9E9}
+.exp summary{cursor:pointer;list-style:none;padding:5px 9px;font-size:12.5px;display:flex;align-items:center;justify-content:space-between;color:#1A1A1A}
+.exp summary:hover{background:#DCE9F5}
+.exp div.expb{padding:2px 9px 7px}
+.ph{background:#FFF;border:1px solid #A0A0A0;border-radius:0;background-image:repeating-linear-gradient(135deg,#E8E8E8 0 5px,#FFF 5px 10px)}
+.plot{background:#101010;border:1px solid #7A7A7A;border-radius:0;position:relative;overflow:hidden;min-height:0}
+.sb{height:24px;border-top:1px solid #B9B9B9;background:#F0F0F0;display:flex;align-items:center;gap:4px;padding:0 5px;font-size:11px;color:#101010;flex:none}
+.sbb{height:18px;padding:0 7px;border:1px solid #A0A0A0;background:#FFF;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-family:'Cascadia Mono',Consolas,monospace;font-size:10.5px}
+.sbg{background:#A8E0A8;border-color:#4E9A4E}
+.thumb{display:flex;flex-direction:column;border:1px solid #A0A0A0;border-radius:0;overflow:hidden;background:#FFF}
+.thumb figcaption{padding:2px 5px;display:flex;flex-direction:column;border-top:1px solid #C8C8C8;background:#F0F0F0}
+a{color:#0F62A8}
+a:hover{color:#0B4C83}
+</style>
+</helmet>
+
+<div class="win">
+
+  <div class="menu">
+    <span style="font-weight:600;padding:0 10px 0 4px">SSTV Console</span>
+    <span class="mi">File</span><span class="mi">Configurations</span><span class="mi">Rig &amp; PTT</span><span class="mi">Calibration</span><span class="mi">View</span><span class="mi">Tools</span><span class="mi">Help</span>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <span class="mono" style="font-size:12px;color:#5D5D5D">cfg: 20m-sstv-ic7300</span>
+      <span class="pillo" style="height:24px;font-size:12.5px;font-weight:600;padding:0 10px;border-radius:0;display:inline-flex;align-items:center">DL2QSK · JO31</span>
+    </span>
+  </div>
+
+  <div style="display:flex;align-items:stretch;gap:6px;padding:7px 9px 5px;flex:none">
+    <div class="card" style="flex-direction:row;align-items:center;gap:16px;padding:8px 16px">
+      <div style="display:flex;flex-direction:column;gap:1px">
+        <span class="cap">VFO A · RX · M1</span>
+        <span class="val" style="font-size:40px;line-height:1.05;font-weight:600;letter-spacing:-.01em">14.230<span style="color:#8A8A8A">.000</span></span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        <div class="seg">
+          <span class="segi segia">USB</span><span class="segi">LSB</span><span class="segi">FM</span>
+        </div>
+        <div style="display:flex;gap:4px"><span class="pill">BW 2.7k</span><span class="pill">SPLIT OFF</span></div>
+        <div style="display:flex;gap:4px"><span class="pill">STEP 500 Hz</span><span class="pill">RIT 0</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;padding-left:14px;border-left:1px solid #EDEDED">
+        <span class="val mono" style="font-size:15px">14:22:07 UTC</span>
+        <span class="pillo">CAT linked</span>
+        <span class="pill">S6 · SWR 1.3</span>
+      </div>
+    </div>
+
+    <div class="card" style="flex:1">
+      <div class="ch">Favourites<span class="cap" style="font-weight:400">M1…M7 recall · Shift+M store · double-click to rename</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <sc-for list="{{ favs }}" as="f" hint-placeholder-count="7">
+          <button class="btn" style="height:38px;flex-direction:column;align-items:flex-start;gap:0;padding:0 11px">
+            <span class="val" style="font-size:12.5px">{{ f.freq }} {{ f.sb }}</span>
+            <span style="font-weight:400;font-size:11px;color:#5D5D5D">{{ f.name }}</span>
+          </button>
+        </sc-for>
+        <button class="btn btna" style="height:38px">Store current</button>
+      </div>
+      <div style="display:flex;gap:5px"><span class="pill">Edit list…</span><span class="pill">Import</span><span class="pill">Scan M1–M3</span></div>
+    </div>
+
+    <div class="card" style="width:278px">
+      <div class="ch">Transceiver</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btna" style="flex:1">Receiving</button>
+        <button class="btn btnstop" style="flex:1">Halt</button>
+      </div>
+      <div class="row"><span class="lbl">RX level</span><span style="display:flex;align-items:center;gap:9px;flex:1;padding-right:2px"><span class="trk"><i style="width:63%"></i><b style="left:63%"></b></span></span><span class="val">−14.2</span></div>
+      <div class="row"><span class="lbl">TX level</span><span style="display:flex;align-items:center;gap:9px;flex:1;padding-right:2px"><span class="trk"><i style="width:74%"></i><b style="left:74%"></b></span></span><span class="val">−6.0</span></div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab" onClick="{{ tabRx }}" style="font-weight:600;color:#1A1A1A">Receive<sc-if value="{{ isRx }}" hint-placeholder-val="{{ true }}"><span class="ind"></span></sc-if></button>
+    <button class="tab" onClick="{{ tabTx }}">Transmit<sc-if value="{{ isTx }}"><span class="ind"></span></sc-if></button>
+    <button class="tab" onClick="{{ tabGal }}">Gallery<sc-if value="{{ isGal }}"><span class="ind"></span></sc-if></button>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:5px">
+      <span class="cap">Auto-detect</span>
+      <span class="pilla">Scottie 1 · VIS 60 · 98.4%</span>
+      <span class="pill">Sync lock 41 s</span>
+      <span class="pill">Slant +3.4 ppm</span>
+      <span class="pill">SNR 21.6 dB</span>
+      <span class="pillo">Autosave on</span>
+    </div>
+  </div>
+
+  <sc-if value="{{ isRx }}" hint-placeholder-val="{{ true }}">
+  <div style="flex:1;display:grid;grid-template-columns:258px 1fr 330px;gap:6px;padding:7px 9px;min-height:0">
+
+    <div style="display:flex;flex-direction:column;gap:6px;min-height:0">
+      <div class="card">
+        <div class="ch">Mode</div>
+        <div class="seg" style="width:100%"><span class="segi segia" style="flex:1">Auto</span><span class="segi" style="flex:1">Locked</span></div>
+        <div class="cbx"><span>Scottie 1 — VIS 60</span><i>⌄</i></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:3px">
+          <sc-for list="{{ modes }}" as="m" hint-placeholder-count="16">
+            <span class="pill" style="justify-content:center;height:20px;font-size:11px">{{ m }}</span>
+          </sc-for>
+        </div>
+        <div class="row"><span class="lbl">Line time</span><span class="val">138.240 ms</span></div>
+        <div class="row"><span class="lbl">Lines</span><span class="val">256 · 320×256</span></div>
+        <div class="row"><span class="lbl">Remaining</span><span class="val">01:12</span></div>
+      </div>
+
+      <div class="card">
+        <div class="ch">Sync &amp; slant</div>
+        <div class="row"><span class="lbl">Source</span><span class="val">VIS + 1200 Hz</span></div>
+        <div class="row"><span class="lbl">Slant ppm</span><span class="num"><span>+3.400</span><b>⌃<br>⌄</b></span></div>
+        <div class="row"><span class="lbl">Offset px</span><span class="num"><span>−12</span><b>⌃<br>⌄</b></span></div>
+        <div class="row"><span class="lbl">Auto-correct</span><span class="val" style="color:#0067C0">On · locked</span></div>
+        <div style="display:flex;gap:6px"><button class="btn btns" style="flex:1">Re-sync</button><button class="btn btns" style="flex:1">Reset</button></div>
+        <details class="exp"><summary>Advanced timing<span style="color:#5D5D5D;font-size:10px">⌄</span></summary>
+          <div class="expb">
+            <div class="row"><span class="lbl">Sample clock</span><span class="val">47 999.66 Hz</span></div>
+            <div class="row"><span class="lbl">Sync window</span><span class="val">±4.8 ms</span></div>
+            <div class="row"><span class="lbl">VIS threshold</span><span class="val">−26 dB</span></div>
+            <div class="row"><span class="lbl">Drop-line</span><span class="val">interpolate</span></div>
+          </div>
+        </details>
+      </div>
+
+      <div class="card">
+        <div class="ch">Input chain</div>
+        <div class="row"><span class="lbl">Device</span><span class="val">hw:2,0 L</span></div>
+        <div class="row"><span class="lbl">Squelch</span><span class="val">−38 dB</span></div>
+        <div class="row"><span class="lbl">BPF</span><span class="val">1.0–2.5 kHz</span></div>
+        <div class="row"><span class="lbl">Notch / AGC</span><span class="val">off · slow</span></div>
+        <div class="row"><span class="lbl">Buffer</span><span class="val">512 · 0 XRUN</span></div>
+        <div class="row"><span class="lbl">Clipping</span><span class="val">0.0%</span></div>
+        <div class="row"><span class="lbl">Noise floor</span><span class="val">−38.4 dB</span></div>
+        <div class="row" style="flex-direction:column;align-items:stretch;gap:3px">
+          <span style="display:flex;justify-content:space-between"><span class="lbl">L</span><span class="val">−14.2</span></span>
+          <span class="bar"><i style="width:63%"></i></span>
+          <span style="display:flex;justify-content:space-between"><span class="lbl">R</span><span class="val">−15.0</span></span>
+          <span class="bar"><i style="width:60%"></i></span>
+        </div>
+      </div>
+
+      <div class="card" style="flex:1;min-height:0">
+        <div class="ch">Signal quality</div>
+        <div class="row"><span class="cap">SNR per line</span><span class="val">14.8 / 24.1 dB</span></div>
+        <div class="ph" style="flex:1;min-height:14px"></div>
+        <div class="row"><span class="cap">Histogram</span><span class="val">clip 0.2% / 0.0%</span></div>
+        <div class="ph" style="flex:1;min-height:14px"></div>
+        <div class="row" style="gap:6px;overflow:hidden"><span class="lbl" style="overflow:hidden;text-overflow:ellipsis">Tones</span><span class="val" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis">1199.8 · 1500.1 · 2296.0</span></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-rows:170px 1fr 186px;gap:6px;min-height:0">
+      <div class="card">
+        <div class="ch">Spectrum &amp; waterfall<span class="cap" style="font-weight:400">1000…2600 Hz</span></div>
+        <div style="flex:1;display:grid;grid-template-columns:1fr 1fr 150px;gap:6px;min-height:0;overflow:hidden">
+          <div class="plot">
+            <canvas ref="{{ fft }}" width="760" height="240" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+            <span class="mono" style="position:absolute;left:7px;top:5px;font-size:10px;color:#9CC7EA">Avg 4 · Ref −40 dB</span>
+            <span class="mono" style="position:absolute;right:7px;bottom:4px;font-size:10px;color:#C7E0F4">Peak 2296 Hz −11.4 dB</span>
+          </div>
+          <div class="plot">
+            <canvas ref="{{ wf }}" width="760" height="240" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+            <span style="position:absolute;left:12.5%;top:0;bottom:0;width:1px;background:rgba(255,255,255,.45)"></span>
+            <span style="position:absolute;left:31.25%;right:18.75%;top:0;bottom:0;border-left:1px dashed rgba(255,255,255,.35);border-right:1px dashed rgba(255,255,255,.35)"></span>
+            <span class="mono" style="position:absolute;left:7px;top:5px;font-size:10px;color:#9CC7EA">2 lines / s</span>
+            <span class="mono" style="position:absolute;left:13.5%;bottom:4px;font-size:10px;color:#E8F1F8">1200</span>
+            <span class="mono" style="position:absolute;right:19.5%;bottom:4px;font-size:10px;color:#E8F1F8">1500–2300</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px;min-height:0;overflow:hidden">
+            <div class="row"><span class="lbl">Bins / px</span><span class="num"><span style="min-width:26px">2</span><b>⌃<br>⌄</b></span></div>
+            <div class="row"><span class="lbl">Start</span><span class="num"><span style="min-width:36px">900</span><b>⌃<br>⌄</b></span></div>
+            <div class="row"><span class="lbl">Span</span><span class="num"><span style="min-width:36px">1800</span><b>⌃<br>⌄</b></span></div>
+            <div class="row"><span class="lbl">Gain</span><span class="trk" style="max-width:54px"><i style="width:58%"></i><b style="left:58%"></b></span></div>
+            <div class="row"><span class="lbl">Zero</span><span class="trk" style="max-width:54px"><i style="width:34%"></i><b style="left:34%"></b></span></div>
+            <div class="seg" style="padding-top:2px"><span class="segi segia" style="height:22px;font-size:11px;padding:0 7px">Both</span><span class="segi" style="height:22px;font-size:11px;padding:0 7px">Spec</span><span class="segi" style="height:22px;font-size:11px;padding:0 7px">WF</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ch">Incoming frame<span class="cap" style="font-weight:400">line 168 / 256</span></div>
+        <div style="flex:1;display:flex;gap:6px;min-height:0">
+          <div class="plot" style="flex:none;height:100%;aspect-ratio:5 / 4">
+            <canvas ref="{{ img }}" width="640" height="512" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+          </div>
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;min-height:0">
+            <span class="cap">Previous frames</span>
+            <div style="flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:min-content;gap:6px;overflow-y:auto">
+              <sc-for list="{{ recent }}" as="r" hint-placeholder-count="6">
+                <figure class="thumb" style="margin:0">
+                  <div class="ph" style="width:100%;aspect-ratio:5 / 4;border:0;border-radius:0;position:relative"><span class="pill" style="position:absolute;left:4px;top:4px;height:18px;font-size:10px;background:#FFF">{{ r.mode }}</span></div>
+                  <figcaption>
+                    <span class="val" style="font-size:11.5px">{{ r.call }}</span>
+                    <span class="mono" style="font-size:10px;color:#8A8A8A">{{ r.t }}</span>
+                  </figcaption>
+                </figure>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btna">Save frame</button>
+          <button class="btn">Abort</button>
+          <button class="btn">Re-decode</button>
+          <button class="btn">Copy to TX</button>
+          <button class="btn">Log QSO</button>
+          <span class="bar" style="margin-left:6px"><i style="width:66%"></i></span>
+          <span class="val">168 / 256</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="ch">Decode activity</div>
+        <div style="flex:1;display:flex;gap:6px;min-height:0">
+          <table class="tbl" style="flex:1">
+            <thead><tr><th>UTC</th><th>Freq</th><th>Mode</th><th>Call · OCR</th><th>Grid · QRZ</th><th>SNR</th><th>Slant</th><th>Lines</th><th>State</th></tr></thead>
+            <tbody>
+              <sc-for list="{{ decodes }}" as="d" hint-placeholder-count="5">
+                <tr class="{{ d.cls }}"><td>{{ d.t }}</td><td>{{ d.f }}</td><td>{{ d.m }}</td><td>{{ d.c }}</td><td>{{ d.g }}</td><td>{{ d.s }}</td><td>{{ d.sl }}</td><td>{{ d.l }}</td><td>{{ d.st }}</td></tr>
+              </sc-for>
+            </tbody>
+          </table>
+          <div style="width:266px;border-left:1px solid #EDEDED;padding-left:10px;display:flex;flex-direction:column;gap:2px;min-height:0;overflow:hidden">
+            <span class="cap">Decoder trace</span>
+            <div class="mono" style="font-size:11px;line-height:1.6;color:#5D5D5D;display:flex;flex-direction:column">
+              <span>14:20:54 VIS 60 → Scottie 1 (98.4%)</span>
+              <span>14:20:54 sync locked, offset −12 px</span>
+              <span>14:21:03 slant +3.4 ppm applied</span>
+              <span>14:21:31 2 lines dropped, interpolated</span>
+              <span>14:21:58 callsign OCR → EA7KDT</span>
+              <span>14:22:07 line 168/256, SNR 21.6 dB</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:6px;min-height:0">
+      <div class="card">
+        <div class="ch">Frame metadata</div>
+        <div class="row"><span class="lbl">Callsign · OCR</span><span class="val">EA7KDT</span></div>
+        <div class="row"><span class="lbl">Grid / dist · QRZ</span><span class="val">IM76 · 1 842 km</span></div>
+        <div class="row"><span class="lbl">Frequency · CAT</span><span class="val">14.230.00 USB</span></div>
+        <div class="row"><span class="lbl">Mode / VIS</span><span class="val">Scottie 1 · 60</span></div>
+        <div class="row"><span class="lbl">Started</span><span class="val">14:20:54Z</span></div>
+        <div class="row"><span class="lbl">SNR / slant</span><span class="val">21.6 dB · +3.4</span></div>
+        <div class="row"><span class="lbl">OCR confidence</span><span class="val">0.91</span></div>
+        <div class="row"><span class="lbl">Dropped lines</span><span class="val">2 · interpolated</span></div>
+        <div class="row"><span class="lbl">Size on disk</span><span class="val">198 kB</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px;padding-top:2px">
+          <span class="cap" style="font-weight:400">Note</span>
+          <div class="tin">Sked · 2nd frame</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <span class="cap" style="font-weight:400">Override callsign</span>
+          <div class="tin" style="color:#8A8A8A">EA7KDT</div>
+        </div>
+        <div style="display:flex;gap:6px"><button class="btn btns" style="flex:1">Lookup QRZ</button><button class="btn btns" style="flex:1">Flag</button></div>
+      </div>
+
+      <div class="card">
+        <div class="ch">Unattended RX</div>
+        <div class="row"><span class="lbl">Watch</span><span class="val">M1 · M2 · M4</span></div>
+        <div class="row"><span class="lbl">Scan dwell</span><span class="val">90 s</span></div>
+        <div class="row"><span class="lbl">Alert</span><span class="val">sound + desktop</span></div>
+        <div class="row"><span class="lbl">Session</span><span class="val">4 frames / 38 min</span></div>
+      </div>
+
+      <div class="card" style="flex:1;min-height:0">
+        <div class="ch">Session frames</div>
+        <div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column">
+          <sc-for list="{{ gallery }}" as="g" hint-placeholder-count="15">
+            <div class="row" style="border-bottom:1px solid #F4F4F4"><span class="val" style="font-size:12px">{{ g.call }}</span><span class="lbl" style="font-size:11.5px">{{ g.mode }}</span><span class="mono" style="font-size:10.5px;color:#8A8A8A">{{ g.meta }}</span></div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isTx }}">
+  <div style="flex:1;display:grid;grid-template-columns:258px 1fr 330px;gap:6px;padding:7px 9px;min-height:0">
+    <div style="display:flex;flex-direction:column;gap:6px;min-height:0">
+      <div class="card">
+        <div class="ch">TX mode</div>
+        <div class="seg" style="width:100%"><span class="segi segia" style="flex:1">Auto</span><span class="segi" style="flex:1">Manual</span></div>
+        <div class="row"><span class="lbl">Auto picks</span><span class="val">match last RX</span></div>
+        <div class="cbx"><span>PD120 — VIS 95 · 126.0 s</span><i>⌄</i></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:3px">
+          <sc-for list="{{ modes }}" as="m" hint-placeholder-count="16">
+            <span class="pill" style="justify-content:center;height:20px;font-size:11px">{{ m }}</span>
+          </sc-for>
+        </div>
+        <div class="row"><span class="lbl">Duration</span><span class="val">126.0 s</span></div>
+        <div class="row"><span class="lbl">Geometry</span><span class="val">640×496</span></div>
+        <div class="row"><span class="lbl">VOX tone</span><span class="val">1900 Hz · 0.5 s</span></div>
+      </div>
+      <div class="card">
+        <div class="ch">Identification</div>
+        <div class="row"><span class="lbl">FSK ID</span><span class="val">DL2QSK</span></div>
+        <div class="row"><span class="lbl">CW ID</span><span class="val">18 WPM · 800 Hz</span></div>
+        <div class="row"><span class="lbl">Tail</span><span class="val">CW after frame</span></div>
+      </div>
+      <div class="card" style="flex:1;min-height:0">
+        <div class="ch">Output</div>
+        <div class="row"><span class="lbl">Device</span><span class="val">hw:2,0</span></div>
+        <div class="row"><span class="lbl">Drive</span><span class="trk" style="max-width:96px"><i style="width:74%"></i><b style="left:74%"></b></span><span class="val">−6.0</span></div>
+        <div class="row"><span class="lbl">ALC</span><span class="val" style="color:#0067C0">clear</span></div>
+        <div class="row"><span class="lbl">PWR / SWR</span><span class="val">40 W · 1.3 · 2.3k</span></div>
+        <div class="row"><span class="cap">Power / ALC meter</span><span class="val">peak −6.0 dBFS</span></div>
+        <div class="ph" style="flex:1;min-height:14px"></div>
+      </div>
+      <div class="card">
+        <div class="ch">Outgoing metadata</div>
+        <span class="cap">In the signal</span>
+        <div class="row"><span class="lbl">VIS code</span><span class="val">95 · PD120</span></div>
+        <div class="row"><span class="lbl">FSK ID</span><span class="val">DL2QSK</span></div>
+        <div class="row"><span class="lbl">CW ID</span><span class="val">DL2QSK · 18 WPM</span></div>
+        <span class="cap">Burned into the picture</span>
+        <div class="row"><span class="lbl">Callsign</span><span class="val">DL2QSK</span></div>
+        <div class="row"><span class="lbl">To station</span><span class="val">EA7KDT</span></div>
+        <div class="row"><span class="lbl">Grid / beam</span><span class="val">JO31 · 212°</span></div>
+        <div class="row"><span class="lbl">Report</span><span class="val">RSV 595</span></div>
+        <div class="row"><span class="lbl">Freq / mode</span><span class="val">14.230 · PD120</span></div>
+        <div class="row"><span class="lbl">Date / UTC</span><span class="val">05 AUG · 14:24Z</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch">Editor<span class="cap" style="font-weight:400">outgoing frame · 640×496 · PD120</span></div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span class="pilla">Move</span><span class="pill">Crop</span><span class="pill">Scale</span><span class="pill">Rotate</span><span class="pill">Text</span>
+        <span class="pill">Box</span><span class="pill">Line</span><span class="pill">Mask</span><span class="pill">Pick</span>
+        <span style="width:1px;height:18px;background:#E5E5E5;margin:0 4px"></span>
+        <span class="pill">Undo</span><span class="pill">Redo</span><span class="pill">Fit</span><span class="pill">100%</span>
+        <span style="margin-left:auto;display:flex;gap:4px"><span class="pill">Snap grid</span><span class="pill">Safe area</span><span class="pill">640×496</span></span>
+      </div>
+      <div style="flex:1;display:flex;gap:6px;min-height:0">
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px">
+          <div style="flex:1;position:relative;border:1px solid #E5E5E5;border-radius:0;background:#FAFAFA;display:grid;place-items:center;min-height:0;overflow:hidden">
+            <div class="ph" style="position:absolute;inset:0;border:0;border-radius:0"></div>
+            <span class="mono" style="position:relative;font-size:12px;color:#8A8A8A;text-align:center">image placeholder<br>drop file, paste, or capture from camera</span>
+            <div style="position:absolute;inset:14px;border:1px dashed #7FB2E5;border-radius:0"></div>
+            <div style="position:absolute;left:12px;top:12px;padding:4px 9px;border:1px solid #0078D4;border-radius:0;background:rgba(255,255,255,.9)"><span class="val" style="font-size:14px">DL2QSK</span></div>
+            <div style="position:absolute;right:12px;bottom:12px;padding:3px 8px;border:1px solid #0078D4;border-radius:0;background:rgba(255,255,255,.9)"><span class="mono" style="font-size:11px">EA7KDT · RSV 595 · 14.230 USB</span></div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px 16px">
+            <div class="row"><span class="lbl">Brightness</span><span class="trk" style="max-width:74px"><i style="width:50%"></i><b style="left:50%"></b></span><span class="val">0</span></div>
+            <div class="row"><span class="lbl">Contrast</span><span class="trk" style="max-width:74px"><i style="width:58%"></i><b style="left:58%"></b></span><span class="val">+8</span></div>
+            <div class="row"><span class="lbl">Saturation</span><span class="trk" style="max-width:74px"><i style="width:54%"></i><b style="left:54%"></b></span><span class="val">+4</span></div>
+            <div class="row"><span class="lbl">Gamma</span><span class="trk" style="max-width:74px"><i style="width:50%"></i><b style="left:50%"></b></span><span class="val">1.00</span></div>
+            <div class="row"><span class="lbl">Sharpen</span><span class="trk" style="max-width:74px"><i style="width:30%"></i><b style="left:30%"></b></span><span class="val">0.3</span></div>
+            <div class="row"><span class="lbl">Denoise</span><span class="trk" style="max-width:74px"><i style="width:20%"></i><b style="left:20%"></b></span><span class="val">0.2</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="btn btna">Transmit</button>
+            <button class="btn">Tune 5 s</button>
+            <button class="btn">Preview audio</button>
+            <button class="btn btnstop">Halt</button>
+            <span class="bar" style="margin-left:6px"><i style="width:0%"></i></span>
+            <span class="val">idle</span>
+          </div>
+        </div>
+        <div style="width:210px;display:flex;flex-direction:column;gap:6px;min-height:0">
+          <div class="card" style="padding:8px 9px;gap:4px">
+            <div class="ch" style="font-size:12.5px">Insert field</div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px">
+              <sc-for list="{{ fields }}" as="f" hint-placeholder-count="12">
+                <span class="pill" style="height:20px;font-size:10.5px">{{ f.tok }}</span>
+              </sc-for>
+            </div>
+            <div class="row"><span class="lbl">Source</span><span class="val" style="font-size:11.5px">last RX + station</span></div>
+            <div style="display:flex;gap:5px"><button class="btn btns" style="flex:1">Fill all</button><button class="btn btns" style="flex:1">Clear</button></div>
+          </div>
+          <div class="card" style="padding:8px 9px;gap:3px">
+            <div class="ch" style="font-size:12.5px">Text style</div>
+            <div class="row"><span class="lbl">Font / size</span><span class="val" style="font-size:11.5px">Semibold · 28 px</span></div>
+            <div class="row"><span class="lbl">Fill / stroke</span><span class="val" style="font-size:11.5px">white · 2 px</span></div>
+          </div>
+          <div class="card" style="padding:8px 9px;gap:5px;flex:1;min-height:0">
+            <div class="ch" style="font-size:12.5px">Saved templates</div>
+            <div style="flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:min-content;gap:6px">
+              <sc-for list="{{ templates }}" as="t" hint-placeholder-count="12">
+                <figure class="thumb" style="margin:0">
+                  <div class="ph" style="width:100%;aspect-ratio:4 / 3;border:0;border-radius:0;position:relative"><span class="pill" style="position:absolute;left:3px;top:3px;height:16px;font-size:9.5px;padding:0 5px;background:#FFF">{{ t.mode }}</span></div>
+                  <figcaption>
+                    <span class="val" style="font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.name }}</span>
+                    <span class="mono" style="font-size:9.5px;color:#8A8A8A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.fields }}</span>
+                  </figcaption>
+                </figure>
+              </sc-for>
+            </div>
+            <div style="display:flex;gap:5px"><button class="btn btna btns" style="flex:1">Fill &amp; send</button><button class="btn btns" style="flex:1">Save</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:6px;min-height:0">
+      <div class="card">
+        <div class="ch">Queue</div>
+        <div class="row"><span>1. sked_ea7kdt.png</span><span class="val">PD120</span></div>
+        <div class="row"><span>2. shack_02.jpg</span><span class="val">SC1</span></div>
+        <div class="row"><span class="lbl">Between frames</span><span class="val">wait 20 s</span></div>
+      </div>
+      <div class="card">
+        <div class="ch">Mode timing reference</div>
+        <table class="tbl">
+          <thead><tr><th>Mode</th><th>Lines</th><th>Line ms</th><th>Frame</th></tr></thead>
+          <tbody>
+            <tr><td>Scottie 1</td><td>256</td><td>428.22</td><td>109.6 s</td></tr>
+            <tr><td>Martin 1</td><td>256</td><td>446.45</td><td>114.3 s</td></tr>
+            <tr><td>PD120</td><td>496</td><td>508.48</td><td>126.0 s</td></tr>
+            <tr><td>PD180</td><td>496</td><td>754.24</td><td>187.0 s</td></tr>
+            <tr><td>Robot 36</td><td>240</td><td>150.00</td><td>36.0 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="ch">TX log</div>
+        <table class="tbl">
+          <thead><tr><th>UTC</th><th>Mode</th><th>Dur</th><th>Drive</th><th>SWR</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td>14:06:33</td><td>CW ID</td><td>4.2 s</td><td>−6.0</td><td>1.3</td><td>ok</td></tr>
+            <tr><td>14:04:12</td><td>PD120</td><td>126.0</td><td>−6.0</td><td>1.3</td><td>ok</td></tr>
+            <tr><td>13:48:02</td><td>SC1</td><td>109.6</td><td>−6.0</td><td>1.4</td><td>ok</td></tr>
+            <tr><td>13:31:55</td><td>PD120</td><td>126.0</td><td>−5.0</td><td>1.6</td><td>ALC hit</td></tr>
+            <tr><td>12:55:02</td><td>SC1</td><td>12.0</td><td>−6.0</td><td>2.7</td><td>inhibited</td></tr>
+          </tbody>
+        </table>
+        <div class="row"><span class="lbl">TX time today</span><span class="val">18 min 42 s</span></div>
+      </div>
+      <div class="card" style="flex:1;min-height:0">
+        <div class="ch">Recently sent — reuse</div>
+        <div style="flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:min-content;gap:6px">
+          <sc-for list="{{ templates }}" as="t" hint-placeholder-count="12">
+            <figure class="thumb" style="margin:0">
+              <div class="ph" style="width:100%;aspect-ratio:4 / 3;border:0;border-radius:0;position:relative"><span class="pill" style="position:absolute;left:3px;top:3px;height:16px;font-size:9.5px;padding:0 5px;background:#FFF">{{ t.mode }}</span></div>
+              <figcaption>
+                <span class="val" style="font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.name }}</span>
+                <span class="mono" style="font-size:9.5px;color:#8A8A8A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.fields }}</span>
+              </figcaption>
+            </figure>
+          </sc-for>
+        </div>
+        <div style="display:flex;gap:6px"><button class="btn btna btns" style="flex:1">Refill &amp; queue</button><button class="btn btns" style="flex:1">Open in editor</button></div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isGal }}">
+  <div style="flex:1;display:grid;grid-template-columns:1fr 330px;gap:6px;padding:7px 9px;min-height:0">
+    <div class="card">
+      <div class="ch">Received<span class="cap" style="font-weight:400">1 284 frames</span></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div class="tin" style="width:250px;color:#8A8A8A">callsign, grid, mode, note…</div>
+        <span class="pill">All</span><span class="pilla">Today</span><span class="pill">14 MHz</span><span class="pill">Unlogged</span><span class="pill">Flagged</span>
+        <span style="margin-left:auto;display:flex;gap:6px"><span class="pill">Sort: newest</span><span class="pill">Size: M</span></span>
+      </div>
+      <div style="flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:min-content;gap:6px;padding-top:2px">
+        <sc-for list="{{ gallery }}" as="g" hint-placeholder-count="15">
+          <figure class="thumb" style="margin:0">
+            <div class="ph" style="width:100%;aspect-ratio:5 / 4;border:0;border-radius:0;position:relative"><span class="pill" style="position:absolute;left:4px;top:4px;height:18px;font-size:10px;background:#FFF">{{ g.mode }}</span></div>
+            <figcaption>
+              <span class="val" style="font-size:12px">{{ g.call }}</span>
+              <span class="mono" style="font-size:10px;color:#8A8A8A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ g.meta }}</span>
+            </figcaption>
+          </figure>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;min-height:0">
+      <div class="card" style="flex:1;min-height:0">
+        <div class="ch">Selected frame</div>
+        <div class="ph" style="width:100%;aspect-ratio:5 / 4"></div>
+        <div class="row"><span class="lbl">File</span><span class="val">rx_…_EA7KDT.png</span></div>
+        <div class="row"><span class="lbl">Mode / SNR</span><span class="val">Scottie 1 · 21.6 dB</span></div>
+        <div class="row"><span class="lbl">Freq / time</span><span class="val">14.230 USB · 14:20Z</span></div>
+        <div class="row"><span class="lbl">Grid / dist</span><span class="val">IM76 · 1 842 km</span></div>
+        <div class="row"><span class="lbl">Log entry</span><span class="val" style="color:#0067C0">linked #4412</span></div>
+        <div style="display:flex;gap:6px;padding-top:2px"><button class="btn btna btns" style="flex:1">Open in log</button><button class="btn btns" style="flex:1">Export</button><button class="btn btns" style="flex:1">Re-decode</button></div>
+      </div>
+      <div class="card">
+        <div class="ch">Storage</div>
+        <div class="row"><span class="lbl">Folder</span><span class="val">~/sstv/rx</span></div>
+        <div class="row"><span class="lbl">Naming</span><span class="val">rx_%Y%m%d_%H%M_%call</span></div>
+        <div class="row"><span class="lbl">Sidecar</span><span class="val">JSON + EXIF</span></div>
+        <div class="row"><span class="lbl">Disk</span><span class="val">14.2 GB free</span></div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <div class="sb">
+    <span class="sbb sbg"><span class="led ledon"></span>Receiving</span>
+    <span class="sbb"><span class="led"></span>TX inhibited</span>
+    <span class="sbb">14.230.00 USB · M1</span>
+    <span class="sbb">Scottie 1 · VIS 60</span>
+    <span class="sbb">line 168 / 256</span>
+    <span class="sbb">SNR 21.6 dB</span>
+    <span class="sbb">slant +3.4 ppm</span>
+    <span class="sbb">48 000 Hz · 512 · 0 XRUN</span>
+    <span class="sbb" style="margin-left:auto">frames today 26</span>
+    <span class="sbb">log 4 412</span>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1940,&quot;height&quot;:1100}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tab: 'rx' };
+    this.img = React.createRef();
+    this.wf = React.createRef();
+    this.fft = React.createRef();
+    this.t = 0;
+    this.tick = this.tick.bind(this);
+  }
+
+  componentDidMount() { this.raf = requestAnimationFrame(this.tick); }
+  componentWillUnmount() { cancelAnimationFrame(this.raf); }
+
+  tick() {
+    this.t += 1;
+    const lines = 256;
+    const prog = Math.floor((this.t * 0.9) % (lines + 60));
+    this.drawFrame(this.img.current, Math.min(prog, lines));
+    this.drawWaterfall(this.wf.current);
+    this.drawSpectrum(this.fft.current);
+    this.raf = requestAnimationFrame(this.tick);
+  }
+
+  n(x) { const s = Math.sin(x * 12.9898) * 43758.5453; return s - Math.floor(s); }
+
+  drawFrame(cv, rows) {
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const w = cv.width, h = cv.height, total = 256, scale = h / total;
+    ctx.fillStyle = '#0d0d0d';
+    ctx.fillRect(0, 0, w, h);
+    for (let y = 0; y < rows; y++) {
+      const jitter = (this.n(y * 3.7) - 0.5) * 5;
+      if (this.n(y * 8.1) > 0.985) { ctx.fillStyle = '#9fb6c9'; ctx.fillRect(0, y * scale, w, scale + 1); continue; }
+      let g;
+      if (y < 118) {
+        const k = y / 118;
+        g = ctx.createLinearGradient(0, 0, w, 0);
+        g.addColorStop(0, 'rgb(' + Math.round(92 + k * 92) + ',' + Math.round(138 + k * 72) + ',' + Math.round(190 + k * 42) + ')');
+        g.addColorStop(1, 'rgb(' + Math.round(120 + k * 82) + ',' + Math.round(160 + k * 62) + ',' + Math.round(202 + k * 36) + ')');
+      } else if (y < 150) {
+        g = 'rgb(' + Math.round(56 + (y - 118)) + ',' + Math.round(70 + (y - 118)) + ',' + Math.round(84 + (y - 118) * 1.2) + ')';
+      } else {
+        const k = (y - 150) / 106;
+        g = 'rgb(' + Math.round(34 + k * 26) + ',' + Math.round(64 + k * 36) + ',' + Math.round(98 + k * 46) + ')';
+      }
+      ctx.fillStyle = g;
+      ctx.fillRect(jitter, y * scale, w, scale + 1);
+      if (y >= 150 && this.n(y * 5.3) > 0.72) {
+        ctx.fillStyle = 'rgba(214,234,255,0.22)';
+        ctx.fillRect(jitter + w * this.n(y * 2.1) * 0.6, y * scale, w * 0.28, Math.max(1, scale * 0.6));
+      }
+    }
+    if (rows > 70) {
+      ctx.fillStyle = 'rgba(255,248,226,0.88)';
+      ctx.beginPath(); ctx.arc(w * 0.72, 62 * scale, 20, 0, Math.PI * 2); ctx.fill();
+    }
+    if (rows > 210) {
+      ctx.font = "600 20px 'Cascadia Mono', Consolas, monospace";
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fillText('EA7KDT', 18, h - 22);
+    }
+    if (rows < total) {
+      const yy = rows * scale;
+      ctx.fillStyle = 'rgba(14,14,14,0.95)';
+      ctx.fillRect(0, yy, w, h - yy);
+      for (let i = 0; i < 260; i++) {
+        ctx.fillStyle = 'rgba(120,175,225,0.16)';
+        ctx.fillRect(this.n(i * 1.7 + this.t * 0.13) * w, yy + this.n(i * 3.3 + this.t * 0.09) * (h - yy), 2, 1);
+      }
+      ctx.fillStyle = '#4FA3E3';
+      ctx.fillRect(0, yy, w, 2);
+    }
+  }
+
+  wfColor(v) {
+    const stops = [[12, 12, 12], [0, 60, 110], [0, 120, 212], [199, 224, 244]];
+    const k = Math.max(0, Math.min(0.999, v)) * 3;
+    const i = Math.floor(k), f = k - i, a = stops[i], b = stops[i + 1];
+    return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * f) + ',' + Math.round(a[1] + (b[1] - a[1]) * f) + ',' + Math.round(a[2] + (b[2] - a[2]) * f) + ')';
+  }
+
+  drawWaterfall(cv) {
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const w = cv.width, bins = 150, bw = w / bins;
+    ctx.drawImage(cv, 0, 2);
+    for (let i = 0; i < bins; i++) {
+      const f = i / bins;
+      let v = 0.05 + this.n(i * 1.9 + this.t * 0.7) * 0.10;
+      if (f > 0.30 && f < 0.83) v += 0.30 + 0.34 * Math.abs(Math.sin(this.t * 0.06 + f * 7.5));
+      if (f > 0.10 && f < 0.14) v += (this.t % 6 < 3) ? 0.72 : 0.18;
+      ctx.fillStyle = this.wfColor(v);
+      ctx.fillRect(i * bw, 0, bw + 1, 2);
+    }
+  }
+
+  drawSpectrum(cv) {
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const w = cv.width, h = cv.height;
+    ctx.fillStyle = '#101010';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1;
+    for (let g = 1; g < 5; g++) {
+      ctx.beginPath(); ctx.moveTo(0, h * g / 5); ctx.lineTo(w, h * g / 5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(w * g / 5, 0); ctx.lineTo(w * g / 5, h); ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let x = 0; x <= w; x += 3) {
+      const f = x / w;
+      let v = 0.08 + this.n(x * 0.31 + this.t * 0.6) * 0.07;
+      if (f > 0.30 && f < 0.83) v += 0.34 + 0.26 * Math.sin(this.t * 0.07 + f * 9);
+      if (f > 0.10 && f < 0.14) v += (this.t % 6 < 3) ? 0.62 : 0.1;
+      ctx.lineTo(x, h - v * h * 0.92);
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0,120,212,0.45)';
+    ctx.fill();
+    ctx.strokeStyle = '#4FA3E3';
+    ctx.stroke();
+  }
+
+  renderVals() {
+    const t = this.state.tab;
+    const set = v => () => this.setState({ tab: v });
+    return {
+      isRx: t === 'rx', isTx: t === 'tx', isGal: t === 'gal',
+      tabRx: set('rx'), tabTx: set('tx'), tabGal: set('gal'),
+      img: this.img, wf: this.wf, fft: this.fft,
+      modes: ['SC1', 'SC2', 'SCDX', 'M1', 'M2', 'M3', 'M4', 'R36', 'R72', 'PD50', 'PD90', 'PD120', 'PD160', 'PD180', 'PD290', 'SC2-180'],
+      favs: [
+        { name: 'M1 · 20 m calling', freq: '14.230.00', sb: 'USB' },
+        { name: 'M2 · 20 m alternate', freq: '14.233.00', sb: 'USB' },
+        { name: 'M3 · 40 m EU', freq: '7.171.00', sb: 'LSB' },
+        { name: 'M4 · 15 m DX', freq: '21.340.00', sb: 'USB' },
+        { name: 'M5 · 10 m', freq: '28.680.00', sb: 'USB' },
+        { name: 'M6 · 2 m local', freq: '145.500.00', sb: 'FM' },
+        { name: 'M7 · ISS pass', freq: '145.800.00', sb: 'FM' }
+      ],
+      fields: [
+        { tok: 'HIS CALL' }, { tok: 'HIS GRID' }, { tok: 'HIS RSV' }, { tok: 'MY CALL' }, { tok: 'MY GRID' }, { tok: 'MY NAME' },
+        { tok: 'FREQ' }, { tok: 'MODE' }, { tok: 'UTC' }, { tok: 'DATE' }, { tok: 'DIST' }, { tok: 'BEAM' }
+      ],
+      templates: [
+        { name: 'Sked · portrait', mode: 'PD120', fields: 'HIS CALL · RSV · UTC' },
+        { name: 'Contest strip', mode: 'SC1', fields: 'HIS CALL · SERIAL' },
+        { name: 'ISS pass', mode: 'PD120', fields: 'GRID · BEAM · UTC' },
+        { name: 'Shack photo', mode: 'M1', fields: 'MY CALL · MY NAME' },
+        { name: 'QSL card', mode: 'PD180', fields: 'HIS CALL · FREQ · DATE' },
+        { name: 'Plain frame', mode: 'SC2', fields: 'MY CALL' },
+        { name: 'Sked · landscape', mode: 'PD120', fields: 'HIS CALL · RSV' },
+        { name: 'Antenna shot', mode: 'PD90', fields: 'MY CALL · GRID' },
+        { name: 'Field day', mode: 'M1', fields: 'HIS CALL · UTC' },
+        { name: 'Test pattern', mode: 'R36', fields: 'MODE · FREQ' },
+        { name: 'Greeting card', mode: 'PD180', fields: 'HIS CALL · MY NAME' },
+        { name: 'DX report', mode: 'SCDX', fields: 'HIS CALL · DIST' }
+      ],
+      recent: [
+        { call: 'I2NDT', mode: 'PD120', t: '14:02Z' },
+        { call: 'SP5QWB', mode: 'M1', t: '13:44Z' },
+        { call: 'G4XYZ', mode: 'SC2', t: '13:21Z' },
+        { call: 'OH2LK', mode: 'PD90', t: '12:58Z' },
+        { call: '—', mode: 'R36', t: '12:40Z' },
+        { call: 'F5BQP', mode: 'SC1', t: '12:11Z' }
+      ],
+      decodes: [
+        { t: '14:20:54', f: '14.230 USB', m: 'Scottie 1', c: 'EA7KDT', g: 'IM76', s: '21.6', sl: '+3.4', l: '168/256', st: 'decoding', cls: 'hl-live' },
+        { t: '14:02:11', f: '14.230 USB', m: 'PD120', c: 'I2NDT', g: 'JN45', s: '18.1', sl: '+3.2', l: '496/496', st: 'saved', cls: '' },
+        { t: '13:44:03', f: '14.233 USB', m: 'Martin 1', c: 'SP5QWB', g: 'KO02', s: '24.0', sl: '+3.5', l: '256/256', st: 'saved · logged', cls: 'hl-log' },
+        { t: '13:21:40', f: '14.230 USB', m: 'Scottie 2', c: 'G4XYZ', g: 'IO91', s: '12.7', sl: '+3.4', l: '256/256', st: 'saved', cls: '' },
+        { t: '12:40:09', f: '14.230 USB', m: 'Robot 36', c: '—', g: '—', s: '8.2', sl: '+3.4', l: '188/240', st: 'partial', cls: 'hl-warn' }
+      ],
+      gallery: [
+        { call: 'EA7KDT', mode: 'SC1', meta: '14:20Z · 14.230 · 21.6 dB' },
+        { call: 'I2NDT', mode: 'PD120', meta: '14:02Z · 14.230 · 18.1 dB' },
+        { call: 'SP5QWB', mode: 'M1', meta: '13:44Z · 14.233 · 24.0 dB' },
+        { call: 'G4XYZ', mode: 'SC2', meta: '13:21Z · 14.230 · 12.7 dB' },
+        { call: 'OH2LK', mode: 'PD90', meta: '12:58Z · 21.340 · 19.4 dB' },
+        { call: '—', mode: 'R36', meta: '12:40Z · 14.230 · 8.2 dB' },
+        { call: 'F5BQP', mode: 'SC1', meta: '12:11Z · 14.230 · 22.8 dB' },
+        { call: 'LZ1AQ', mode: 'PD120', meta: '11:52Z · 14.230 · 16.3 dB' },
+        { call: 'ON4CDU', mode: 'M2', meta: '11:30Z · 7.171 · 20.1 dB' },
+        { call: 'PA3FGH', mode: 'SC1', meta: '11:04Z · 14.230 · 25.6 dB' },
+        { call: 'YO3GHT', mode: 'PD180', meta: '10:47Z · 14.230 · 14.9 dB' },
+        { call: 'ISS', mode: 'PD120', meta: '10:12Z · 145.800 · 27.3 dB' },
+        { call: 'SM0KQL', mode: 'SC2', meta: '09:55Z · 14.230 · 17.7 dB' },
+        { call: 'DL8NBQ', mode: 'M1', meta: '09:31Z · 7.171 · 23.4 dB' },
+        { call: 'HA5PT', mode: 'R72', meta: '09:08Z · 14.230 · 11.2 dB' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

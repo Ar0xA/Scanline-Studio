@@ -1,0 +1,290 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:loc="using:ScanlineStudio.UI.Localization"
+             xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+             xmlns:sstv="using:ScanlineStudio.Abstractions.Sstv"
+             x:Class="ScanlineStudio.UI.Views.TxControlsPaneView"
+             x:DataType="vm:TxControlsPaneViewModel">
+
+    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
+
+        <!-- TX mode card: mode selector + favorite-mode quick buttons. Membership is user-
+             configured via the "Edit favorites..." popup, backed by TxPaneUiSettings.FavoriteModeIds. -->
+        <Border Classes="card">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.ModeLabel}" />
+                <!-- Auto/Manual segment replaces the old plain CheckBox as the real affordance
+                     for AutoFollowRxMode; same underlying real property, mock2's own control
+                     shape (a two-option segment reads better than a checkbox for this). -->
+                <Border Classes="segment">
+                    <UniformGrid Columns="2">
+                        <RadioButton Classes="seg" GroupName="TxModeAutoManual" IsChecked="{Binding AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualAuto}" />
+                        <RadioButton Classes="seg" GroupName="TxModeAutoManual" IsChecked="{Binding !AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualManual}" />
+                    </UniformGrid>
+                </Border>
+                <!-- Visual scaffolding only below this point (spec/14-roadmap.md backlog): "Auto
+                     picks" caption, quick-mode pill grid, Duration/Geometry/VOX-tone rows have no
+                     real data source. -->
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.AutoPicksLabel}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.AutoPicksValue}" />
+                </Grid>
+                <ComboBox ItemsSource="{Binding AvailableModes}"
+                          SelectedItem="{Binding SelectedMode}"
+                          HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="sstv:SstvModeDefinition">
+                            <TextBlock Text="{Binding DisplayName}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <UniformGrid Columns="4">
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC1}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC2}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SCDX}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M1}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M2}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M3}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M4}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.R36}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.R72}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD50}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD90}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD120}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD160}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD180}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD290}" HorizontalAlignment="Center" /></Border>
+                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC2180}" HorizontalAlignment="Center" /></Border>
+                </UniformGrid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.DurationLabel}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.DurationValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.GeometryLabel}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.GeometryValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.VoxToneLabel}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.VoxToneValue}" />
+                </Grid>
+                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxControls.FavoritesLabel}" />
+                <ItemsControl ItemsSource="{Binding FavoriteModes}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:FavoriteModeButtonViewModel">
+                            <Button Content="{Binding Mode.DisplayName}"
+                                    Command="{Binding SelectCommand}"
+                                    CommandParameter="{Binding Mode}"
+                                    Margin="0,0,4,4" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Classes="small" Content="{loc:Translate Panes.TxControls.EditFavorites}" HorizontalAlignment="Left">
+                    <Button.Flyout>
+                        <Flyout>
+                            <ItemsControl ItemsSource="{Binding FavoriteModeOptions}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:FavoriteModeOptionViewModel">
+                                        <CheckBox Content="{Binding Mode.DisplayName}" IsChecked="{Binding IsSelected}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
+            </StackPanel>
+        </Border>
+
+        <!-- Identification: visual scaffolding only; blocked on the missing operator-callsign/
+             profile setting (spec/14-roadmap.md's "TX macros / CW-ID" backlog). -->
+        <Border Classes="card">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxId.CardHeader}" />
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.FskId}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxId.FskIdValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.CwId}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxId.CwIdValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.Tail}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxId.TailValue}" />
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- Output: merged Drive slider (moved from the header's standalone card in
+             MainWindow.axaml; same underlying RadioStatus.TxVolumePercent value via ancestor
+             binding, not a second independent value) + a literal Device row, plus the real
+             per-capability meters and
+             SWR auto-cutoff. Each meter row only renders when the connected rig/backend actually
+             negotiated that capability; never a placeholder for an unsupported rig
+             (spec/14-roadmap.md's Piece 6 design decision). -->
+        <Border Classes="card">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.OutputLabel}" />
+                <Grid Classes="kv" ColumnDefinitions="Auto,*,Auto">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.DriveLabel}" VerticalAlignment="Center" />
+                    <Slider Grid.Column="1" Margin="4,0"
+                            Value="{Binding $parent[Window].((vm:MainViewModel)DataContext).RadioStatus.TxVolumePercent}"
+                            Minimum="0" Maximum="100" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Classes="value"
+                               Text="{Binding $parent[Window].((vm:MainViewModel)DataContext).RadioStatus.TxVolumePercent}"
+                               VerticalAlignment="Center" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.OutputDeviceLabel}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.OutputDeviceValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowPowerMeter}">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Power}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding LivePowerPercent}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowAlcMeter}">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Alc}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding LiveAlcLevel}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowSwrMeter}">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Swr}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding LiveSwrRatio}" />
+                </Grid>
+
+                <!-- SWR auto-cutoff: disabled/greyed out (not just unchecked) when the rig doesn't
+                     report SWR; a checked-but-non-functional toggle would be worse than no toggle. -->
+                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                    <CheckBox Content="{loc:Translate Panes.TxControls.SwrCutoffEnabled}"
+                              IsChecked="{Binding SwrCutoffEnabled}"
+                              IsEnabled="{Binding ShowSwrMeter}"
+                              ToolTip.Tip="{loc:Translate Panes.TxControls.SwrCutoffEnabled.Help}" />
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.SwrCutoffThresholdLabel}" VerticalAlignment="Center" />
+                    <TextBox Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
+                </StackPanel>
+
+                <!-- Visual scaffolding only below this point: none of these are exposed anywhere
+                     in ScanlineStudio.Core.Audio today (spec/14-roadmap.md backlog). ALC/Power/SWR
+                     values themselves are NOT duplicated here; the real conditional rows above
+                     already cover that. -->
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMap}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMapValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.TxClock}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.Telemetry.TxClockValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudio}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudioValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBw}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBwValue}" />
+                </Grid>
+                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxControls.Telemetry.MeterCaption}" />
+                <Border Classes="plot" MinHeight="20" />
+            </StackPanel>
+        </Border>
+
+        <!-- Stock/browse image source. -->
+        <Border Classes="card">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.StockLabel}" />
+                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:StockEntryViewModel">
+                            <Button Command="{Binding SelectCommand}"
+                                    CommandParameter="{Binding Entry}"
+                                    ToolTip.Tip="{Binding Entry.FileName}">
+                                <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />
+                            </Button>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <Button Content="{loc:Translate Panes.TxControls.SelectImage}"
+                        Command="{Binding SelectImageCommand}"
+                        HorizontalAlignment="Stretch" />
+                <TextBlock Classes="caption" Text="{Binding SelectedFileName}"
+                           IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                <Image Source="{Binding PreviewImage}"
+                       Stretch="Uniform"
+                       MaxHeight="160"
+                       IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            </StackPanel>
+        </Border>
+
+        <TextBlock Text="{Binding ErrorMessage}"
+                   Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
+                   TextWrapping="Wrap"
+                   IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+            <ToggleButton Content="{loc:Translate Panes.TxControls.Transmit}"
+                          Theme="{StaticResource ScanlineStudioTxToggleButtonTheme}"
+                          Command="{Binding TransmitCommand}"
+                          IsChecked="{Binding IsTransmitting, Mode=OneWay}"
+                          HorizontalAlignment="Stretch" />
+            <Button Classes="halt" Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
+        </StackPanel>
+
+        <!-- Outgoing metadata: visual scaffolding only; blocked on the same missing operator-
+             profile setting as Identification, plus a "to station"/report/QSO-context concept
+             that doesn't exist yet (spec/14-roadmap.md backlog). -->
+        <Border Classes="card">
+            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxOutgoing.CardHeader}" />
+                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxOutgoing.InSignalCaption}" />
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.VisCode}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.VisCodeValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.FskId}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxId.FskIdValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.CwId}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.CwIdValue}" />
+                </Grid>
+                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxOutgoing.BurnedCaption}" />
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.Callsign}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.CallsignValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.ToStation}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.ToStationValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.GridBeam}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.GridBeamValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.Report}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.ReportValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.FreqMode}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.FreqModeValue}" />
+                </Grid>
+                <Grid Classes="kv" ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.DateUtc}" />
+                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.DateUtcValue}" />
+                </Grid>
+            </StackPanel>
+        </Border>
+
+    </StackPanel>
+
+</UserControl>
