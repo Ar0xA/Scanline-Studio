@@ -30,7 +30,12 @@
          the fullHD-safe floor (per-pane alignment at that floor is a follow-up, not yet
          tuned). -->
 
-    <Grid RowDefinitions="Auto,Auto,*,Auto">
+    <!-- UI-redesign Phase 2: outer bands now the LAYOUT-SPEC §1 fixed heights (26/81/26/*/25,
+         no Auto — the 3rd fixed band, the tab strip, is produced by the TabControl's own default
+         header-sizing behavior driven by TabItem.Height=26, not a literal 4th row here; see
+         Atoms.axaml's TabItem.Industry block comment for why no TabControl template replacement
+         was needed to achieve this split safely). -->
+    <Grid RowDefinitions="26,81,*,25">
         <!-- Menu bar: mock2's own 6 top-level menus reproduced (File/Configurations/Rig & PTT/
              Calibration/Tools/Help), minus View: the fixed Receive/Transmit/Gallery TabControl
              below has nothing closable, so View's reopen-a-closed-pane purpose doesn't apply here
@@ -38,8 +43,19 @@
              TxControlsPaneViewModel.SelectImageCommand) and File > Exit are wired to real
              commands; every other item is IsEnabled="False" with a "not yet implemented" tooltip,
              the same convention as the Options window's own disabled-placeholder items. -->
-        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
-        <Menu Grid.Column="0" Height="26" Padding="4,0">
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
+        <!-- Brand label: mock2 has one, the pre-redesign app didn't (just menus directly) — new,
+             non-databound literal, three Runs so the "/" alone can carry the accent color per
+             LAYOUT-SPEC §5 Band 1. -->
+        <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="4,0,12,0"
+                   FontFamily="{StaticResource IndustryHeadingFontFamily}" FontSize="12"
+                   LetterSpacing="0.6">
+            <!-- .05em * 12px = 0.6 device px. -->
+            <Run Text="{loc:Translate MainWindow.Brand.Name}" Foreground="{StaticResource IndustryText}" />
+            <Run Text="{loc:Translate MainWindow.Brand.Slash}" Foreground="{StaticResource IndustryAccent}" />
+            <Run Text="{loc:Translate MainWindow.Brand.Suite}" Foreground="{StaticResource IndustryText}" />
+        </TextBlock>
+        <Menu Grid.Column="1" Classes="Industry">
             <MenuItem Header="{loc:Translate MainWindow.Menu.File}">
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.OpenImage}" InputGesture="Ctrl+O" Command="{Binding TxControls.SelectImageCommand}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.SaveFrameAs}" InputGesture="Ctrl+S" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
@@ -77,10 +93,15 @@
              the standard ham-radio placeholder "N0CALL" until the user sets a real one in
              Options, so the chip is always present like mock2's own. No cfg/grid alongside it,
              per direct user request: mock2 also shows a "cfg: <profile>" chip and a grid-locator
-             suffix here, both skipped since neither has a real backing concept yet. -->
-        <Border Grid.Column="1" Classes="pill softPill" BorderThickness="0"
-                Margin="0,0,8,0" VerticalAlignment="Center">
-            <TextBlock Text="{Binding CallsignDisplay}" FontWeight="Bold" />
+             suffix here, both skipped since neither has a real backing concept yet (preserved
+             product decision, UI-redesign Phase 2 design doc §1). -->
+        <Border Grid.Column="2" Classes="Industry IndustryMini accentOutline" BorderThickness="1"
+                Padding="8,1,8,1" Margin="0,0,8,0" VerticalAlignment="Center">
+            <!-- Overrides IndustryMini's default 10px/mono metrics — this chip's own spec (design
+               doc §1) is 12px with .08em letter-spacing = .08*12 = 0.96 device px, not the
+               standard chip size, so set directly on the TextBlock rather than relying on the
+               atom's own default Style. -->
+            <TextBlock Text="{Binding CallsignDisplay}" FontWeight="Medium" FontSize="12" LetterSpacing="0.96" />
         </Border>
         </Grid>
 
@@ -88,13 +109,20 @@
              Always visible regardless of which tab is active. -->
         <views:RadioHeaderView Grid.Row="1" DataContext="{Binding RadioStatus}" />
 
-        <!-- Fixed Receive/Transmit/Gallery tabs (spec/09-ui.md), replacing the former
+        <!-- Fixed Receive/Transmit/Gallery/Logbook tabs (spec/09-ui.md), replacing the former
              Dock.Avalonia DockControl. Each pane view-model is a plain DI singleton, rendered via
              ContentControl plus the app-wide ViewLocator (same auto-resolution Dock relied on before;
-             see ViewLocator.cs's own doc comment). This interim per-tab arrangement is deliberately
-             minimal: Pieces 4-6 replace each tab's content with the full mock2 card layout. -->
-        <TabControl Grid.Row="2">
-            <TabItem Header="{loc:Translate MainWindow.Tabs.Receive}">
+             see ViewLocator.cs's own doc comment).
+
+             UI-redesign Phase 2: TabControl keeps Fluent's own default template entirely (no
+             ControlTheme replacement — see Atoms.axaml's TabItem.Industry block comment); the
+             right-aligned status-chip row is a SIBLING in this same Grid.Row, not baked into any
+             shared control theme (design doc §0's blocker-2 fix — a shared TabControl theme reused
+             later by the Options window's own unrelated TabControl would otherwise inherit this
+             row bound against the wrong DataContext). -->
+        <Grid Grid.Row="2">
+        <TabControl Classes="Industry">
+            <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Receive}">
                 <Grid ColumnDefinitions="258,*,330" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
 
                     <!-- Left column: real Mode card + 3 cards (Sync & slant / Input chain / Signal
@@ -703,7 +731,7 @@
                     </Grid>
                 </Grid>
             </TabItem>
-            <TabItem Header="{loc:Translate MainWindow.Tabs.Transmit}">
+            <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Transmit}">
                 <Grid ColumnDefinitions="258,*,330" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
 
                     <!-- Left: TxControlsPaneView's own restyled Mode/Identification/Output/Stock
@@ -860,7 +888,7 @@
                     </ScrollViewer>
                 </Grid>
             </TabItem>
-            <TabItem Header="{loc:Translate MainWindow.Tabs.Gallery}">
+            <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Gallery}">
                 <Grid ColumnDefinitions="*,330" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}" DataContext="{Binding RxHistory}">
 
                     <!-- Received-frame grid: All/Today filter is real (IReceiveHistoryStore's own
@@ -1030,7 +1058,7 @@
                     </Grid>
                 </Grid>
             </TabItem>
-            <TabItem Header="{loc:Translate MainWindow.Tabs.Logbook}">
+            <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Logbook}">
                 <Grid ColumnDefinitions="*,380" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}" DataContext="{Binding Logbook}">
 
                     <!-- Left: search/browse. CallsignFilter is an exact, case-insensitive match
@@ -1170,6 +1198,37 @@
                 </Grid>
             </TabItem>
         </TabControl>
+        <!-- Right-aligned status-chip row: new UI surface (design doc §3), none of this existed
+             anywhere in the live app's tab-strip area before. Reuses real bindings where they
+             exist rather than inventing parallel ones: DetectedModeDisplay/AutoCorrectDisplay/
+             SlantPpmStatusBarDisplay are the SAME RxImagePaneViewModel properties the Receive tab's
+             own cards and the status bar below already use — this duplicates that surface (matches
+             LAYOUT-SPEC's own mockup, which shows slant/SNR on both bands, not a mistake). SNR and
+             Autosave have no backing property anywhere in this codebase (confirmed against
+             spec/16-gui-wiring-survey.md) — literal FAKE-LIVE placeholders, same established
+             convention as the status bar's own SnrValue. -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Height="26" Margin="0,0,6,0" Spacing="5">
+            <Border Classes="Industry IndustryMini" BorderThickness="1">
+                <TextBlock Text="{loc:Translate MainWindow.TabStrip.AutoDetect}" />
+            </Border>
+            <Border Classes="Industry IndustryMini active" BorderThickness="1">
+                <TextBlock Text="{Binding RxImage.DetectedModeDisplay}" />
+            </Border>
+            <Border Classes="Industry IndustryMini" BorderThickness="1">
+                <TextBlock Text="{Binding RxImage.AutoCorrectDisplay}" />
+            </Border>
+            <Border Classes="Industry IndustryMini" BorderThickness="1">
+                <TextBlock Text="{Binding RxImage.SlantPpmStatusBarDisplay}" />
+            </Border>
+            <Border Classes="Industry IndustryMini" BorderThickness="1">
+                <TextBlock Text="{loc:Translate MainWindow.TabStrip.SnrValue}" />
+            </Border>
+            <Border Classes="Industry IndustryMini accentOutline" BorderThickness="1">
+                <TextBlock Text="{loc:Translate MainWindow.TabStrip.AutosaveOn}" />
+            </Border>
+        </StackPanel>
+        </Grid>
 
         <!-- Bottom status bar (mock2's own persistent readout row): a slim flat bar (top border
              only, no full card chrome), not part of any tab or header card. Left/right split via
@@ -1192,28 +1251,64 @@
              have no backing property anywhere in the app (true per-line
              SNR still doesn't exist) and are literal placeholders matching mock2's own exact
              values/wording, same precedent as the Receive tab's own scaffolding cards. -->
-        <Border Grid.Row="3" Height="24" Background="{DynamicResource ScanlineStudioPanelBackgroundColor}" BorderBrush="{DynamicResource ScanlineStudioCardBorderColor}" BorderThickness="0,1,0,0">
-            <DockPanel Margin="12,0">
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="9">
-                    <TextBlock Classes="readout" Text="{Binding RxHistory.FramesTodayDisplay}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{Binding Logbook.LogSizeDisplay}" VerticalAlignment="Center" />
+        <!-- UI-redesign Phase 2: height corrected to LAYOUT-SPEC's real 25 (was a pre-existing
+             24px literal), all chips re-skinned to the .mini atom (design doc §4). Deliberately
+             kept as 3 separate Frequency/Mode/Memory chips, not merged into the mockup's one
+             interpolated string — merging independently-live-updating bindings into a single
+             formatted string is a real behavior change, not a pure re-skin (design doc §4's own
+             flagged deviation). DISK is new: no disk-space binding exists anywhere in this
+             codebase today, literal FAKE-LIVE placeholder matching the SnrValue/MemoryTag
+             precedent already established in this exact bar, not a real feature added in this
+             phase. The TX-inhibit LED keeps its existing Ellipse.led visual unchanged (not an
+             Industry atom — no LED/indicator-dot atom exists in Phase 1/2's inventory, and
+             inventing one wasn't called for by the design doc; this is real, kept per direct
+             user request, LAYOUT-SPEC's own static render just doesn't happen to show one). -->
+        <Border Grid.Row="3" Height="25" Classes="Industry" Background="{StaticResource IndustryBg}"
+                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="0,1,0,0">
+            <DockPanel Margin="8,4,8,4">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{Binding RxHistory.FramesTodayDisplay}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{Binding Logbook.LogSizeDisplay}" />
+                    </Border>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="9">
-                    <Border Classes="pill" Classes.accentPill="{Binding RadioStatus.IsReceiving}" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="3">
+                    <Border Classes="Industry IndustryMini" Classes.active="{Binding RadioStatus.IsReceiving}" BorderThickness="1">
                         <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" />
                     </Border>
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <Ellipse Classes="led" Classes.alert="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
                         <TextBlock Classes="readoutSmall" Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxInhibit.Help}" VerticalAlignment="Center" />
                     </StackPanel>
-                    <TextBlock Classes="readout" Text="{Binding RadioStatus.FrequencyDisplay}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{Binding RadioStatus.ModeDisplay}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.MemoryTag}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{Binding RxImage.DetectedModeText}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{Binding RxImage.LineProgressText}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{loc:Translate MainWindow.StatusBar.SnrValue}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{Binding RxImage.SlantPpmStatusBarDisplay}" VerticalAlignment="Center" />
-                    <TextBlock Classes="readout" Text="{Binding RxImage.BufferedSampleCountStatusBarDisplay}" VerticalAlignment="Center" />
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{Binding RadioStatus.FrequencyDisplay}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{Binding RadioStatus.ModeDisplay}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{loc:Translate MainWindow.StatusBar.MemoryTag}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{Binding RxImage.DetectedModeText}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{Binding RxImage.LineProgressText}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{loc:Translate MainWindow.StatusBar.SnrValue}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{Binding RxImage.SlantPpmStatusBarDisplay}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{Binding RxImage.BufferedSampleCountStatusBarDisplay}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1">
+                        <TextBlock Text="{loc:Translate MainWindow.StatusBar.DiskValue}" />
+                    </Border>
                 </StackPanel>
             </DockPanel>
         </Border>

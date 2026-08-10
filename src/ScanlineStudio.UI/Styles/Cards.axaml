@@ -339,8 +339,14 @@
         <Setter Property="Opacity" Value="1" />
     </Style>
 
-    <!-- Classic notebook tabs: the active tab merges into the page. -->
-    <Style Selector="TabItem">
+    <!-- Classic notebook tabs: the active tab merges into the page.
+         :not(.Industry) exclusion (UI-redesign Phase 2, item 0b collision-avoidance edit — a real
+         gap found while porting the tab strip: Phase 1's own collision inventory never included
+         TabControl/TabItem at all, since Phase 1 never built that atom family, so this selector was
+         missed during Phase 1's otherwise-complete narrowing pass. Without this, this bare Style's
+         Height=20/Padding 14,0 would win over IndustryTabItemTheme's own setters — empirically-
+         confirmed Style-beats-ControlTheme precedence, see Atoms.axaml's own header comment. -->
+    <Style Selector="TabItem:not(.Industry)">
         <Setter Property="FontSize" Value="11.5" />
         <Setter Property="MinHeight" Value="20" />
         <Setter Property="Height" Value="20" />
@@ -352,12 +358,12 @@
         <Setter Property="BorderThickness" Value="1,1,1,0" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
-    <Style Selector="TabItem:selected">
+    <Style Selector="TabItem:not(.Industry):selected">
         <Setter Property="Background" Value="{DynamicResource ScanlineStudioPanelBackgroundColor}" />
         <Setter Property="Foreground" Value="#FF101010" />
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
-    <Style Selector="TabItem:selected /template/ Border#PART_SelectedPipe">
+    <Style Selector="TabItem:not(.Industry):selected /template/ Border#PART_SelectedPipe">
         <Setter Property="IsVisible" Value="False" />
     </Style>
 

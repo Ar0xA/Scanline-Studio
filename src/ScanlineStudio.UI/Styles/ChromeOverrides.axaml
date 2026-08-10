@@ -244,13 +244,19 @@
     <Setter Property="CornerRadius" Value="0" />
   </Style>
 
-  <!-- ══ tabs: kill Fluent's pill + pipe, keep the notebook edge ════════ -->
-  <Style Selector="TabItem /template/ Border#PART_LayoutRoot">
+  <!-- ══ tabs: kill Fluent's pill + pipe, keep the notebook edge ════════
+       :not(.Industry) exclusion (UI-redesign Phase 2, item 0b collision-avoidance edit): both
+       rules reach directly into TabItem/TabControl's internal named template parts, bypassing
+       whatever the outer control's own Padding/Margin properties are set to (the same class of
+       direct-part-override mechanism this file already uses elsewhere, e.g. the NumericUpDown/
+       PART_TextBox rule) — without this exclusion, the new design's TabItem.Industry Padding
+       Setter would be silently overridden back to 0 by the first rule below. -->
+  <Style Selector="TabItem:not(.Industry) /template/ Border#PART_LayoutRoot">
     <Setter Property="CornerRadius" Value="0" />
     <Setter Property="Margin" Value="0" />
     <Setter Property="Padding" Value="0" />
   </Style>
-  <Style Selector="TabControl /template/ ItemsPresenter#PART_ItemsPresenter">
+  <Style Selector="TabControl:not(.Industry) /template/ ItemsPresenter#PART_ItemsPresenter">
     <Setter Property="Margin" Value="6,0,0,0" />
   </Style>
 

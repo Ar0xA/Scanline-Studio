@@ -649,6 +649,33 @@
         <Setter Property="Opacity" Value="0.45" />
     </Style>
 
+    <!-- Phase 2 addendum: ToggleButton is a separate type from Button in Avalonia (not a subtype —
+         confirmed by this codebase's own pre-existing Cards.axaml, which already styles
+         "Selector=Button" and "Selector=ToggleButton" as two independent, non-overlapping rules),
+         so the Button-typed IndustryBtn*/IndustryBtnPrimary selectors above do NOT match a
+         ToggleButton element at all. Needed for RadioHeaderView's Receiving toggle specifically
+         (a real two-way IsChecked binding, so it can't be swapped to a plain Button) — duplicated
+         narrowly for just the one height/variant this phase actually uses, not the full matrix. -->
+    <Style Selector="ToggleButton.Industry.IndustryBtn26">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Height" Value="26" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryBtnPrimary /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryBtnPrimary:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent600}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent600}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryBtnPrimary:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
     <!-- 8. .input — a SEPARATE IndustryInput class, distinct from the bare Industry exclusion
          marker (item 8's own N3 correction) — every .input instance carries BOTH
          Classes="Industry IndustryInput"; the stepper's own NumericUpDown carries Industry only.
@@ -816,6 +843,142 @@
     </Style>
     <Style Selector="ToggleButton.IndustryDisclosure:checked /template/ Path#PART_Chevron">
         <Setter Property="Data" Value="M 0 3 L 6 3" />
+    </Style>
+
+    <!-- ═══════════════════════ Phase 2: Menu / MenuItem (deferred by Phase 1) ═══════════════════════
+         DEVIATION from mockups/guidance/PHASE2-CHROME-DESIGN.md's suggested mechanism, made during
+         implementation and flagged for review: the design doc calls for full ControlTheme/
+         ControlTemplate replacement (citing FluentTheme's icon-column/chevron/min-height
+         resources). Implemented instead as plain, Classes-scoped Style Setters — NOT a template
+         replacement — because MenuItem's real template hosts a Popup for submenus (this app has
+         real, working multi-level menus: File > Open image, Configurations > 4 items, etc.), and
+         this port has no way to empirically verify the exact PART_Popup/PART_ItemsPresenter names
+         a from-scratch MenuItem template would need before shipping (unlike TabControl below,
+         where the existing ChromeOverrides.axaml already proves the real Fluent part names via a
+         working `/template/` reach). Getting a replaced MenuItem template's Popup wiring wrong
+         would silently break every submenu (File/Configurations/Rig & PTT/Calibration/Tools all
+         stop opening, no exception) — a far worse failure mode than this Setter-only approach's
+         one known limitation: Fluent's own icon-gutter column still reserves its usual space
+         before the text (no icon is ever set anywhere in this app, so it reads as a few extra
+         pixels of left padding, not a functional problem), and MenuItem's :pointerover hover fill
+         is NOT re-skinned to IndustryAccent100/IndustryAccent800 (Fluent's own hover highlight
+         mechanism's exact template part name is unknown without live source access) — Fluent's
+         own default hover visual is left in place rather than guessed at. Every property Setter
+         below IS known-safe: Background/Foreground/Padding/FontFamily/FontSize are standard
+         TemplateBinding-forwarded properties on every Avalonia templated control by convention,
+         the same category of property (not template-literal) that already lets Button/TabItem's
+         plain-Style atoms work elsewhere in this exact file. -->
+    <Style Selector="Menu.Industry">
+        <!-- Height + MinHeight together (code-review fix): Avalonia's layout clamps Height up to
+             MinHeight, so Height alone loses to Fluent's own MenuBarHeight resource (confirmed
+             present in the shipped Fluent theme assembly) — this band is now a FIXED 26px row
+             (Phase 2's own architectural point), so this can't be left to Fluent's default. Same
+             two-Setter pattern this file already uses for the .input atom. -->
+        <Setter Property="Height" Value="26" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="Padding" Value="{StaticResource IndustryMenuPadding}" />
+        <Setter Property="Background" Value="{StaticResource IndustryBg}" />
+    </Style>
+    <!-- Descendant selector (not a direct-child/Classes requirement per item): reaches every
+         MenuItem nested anywhere under an Industry-classed Menu, including submenu items, without
+         needing Classes="Industry" hand-added to ~30 individual MenuItem instances in
+         MainWindow.axaml. No old-design MenuItem collision exists to guard against (confirmed: no
+         bare "MenuItem" Style selector exists anywhere in Cards.axaml/Tokens.axaml/
+         ChromeOverrides.axaml), so this selector needs no :not(.Industry) exclusion partner. -->
+    <Style Selector="Menu.Industry MenuItem">
+        <Setter Property="Padding" Value="{StaticResource IndustryMenuItemPadding}" />
+        <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+    </Style>
+    <Style Selector="Menu.Industry MenuItem:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+    <!-- Code-review nit fix: the File menu's plain &lt;Separator/&gt; was left at Fluent's default
+         look, which the design doc explicitly said would clash — same descendant-selector,
+         no-collision reasoning as the MenuItem rules above. -->
+    <Style Selector="Menu.Industry Separator">
+        <Setter Property="Background" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="Height" Value="1" />
+        <Setter Property="Margin" Value="0,2" />
+    </Style>
+
+    <!-- ═══════════════════════ Phase 2: TabControl / TabItem ═══════════════════════
+         DEVIATION from mockups/guidance/PHASE2-CHROME-DESIGN.md's suggested mechanism, same
+         reasoning class as Menu/MenuItem above but with stronger in-repo evidence it's safe:
+         Cards.axaml's OWN existing (old-design) TabItem style already re-skins Height/Background/
+         Foreground/BorderBrush/BorderThickness/CornerRadius via plain Setters alone, with zero
+         ControlTemplate replacement, and that code is shipped/running today — direct proof THESE
+         SPECIFIC properties are ordinary TemplateBinding-forwarded properties on this Avalonia
+         version's real Fluent TabItem template, not template-literal values immune to Setters (the
+         trap class ChromeOverrides.axaml's Slider/ButtonSpinner work exists to route around).
+         Code-review correction: this proof does NOT extend to `Padding` — ChromeOverrides.axaml's
+         own PART_LayoutRoot rule zeroes Padding directly at the template part
+         (ChromeOverrides.axaml's "kill Fluent's pill + pipe" block), meaning the OLD design's own
+         Padding="14,0" (Cards.axaml) was never actually in effect and proves nothing either way;
+         nor does it extend to TextBlock.LetterSpacing, which has no old-design precedent on
+         TabItem at all (only the disclosure-header atom above uses this exact attached-property
+         mechanism, on a different control). Both are believed safe (ordinary Control-declared/
+         inheriting properties, same category as everything else here) but are NOT proven the way
+         Height/Background/etc. are — visually confirm tab label spacing/letter-spacing once this
+         phase is running for real, don't just trust this comment. Skipping
+         a full TabControl/TabItem template replacement also sidesteps the design doc's own
+         highest-flagged risk entirely (PART_ItemsPresenter/PART_SelectedContentHost naming — a
+         wrong name there produces a silently blank, non-functional tab body) — Fluent's own
+         default TabControl template keeps doing that job, verified today by the running app's own
+         4 working tabs. The header strip's 26px height falls out naturally: Fluent's default
+         TabControl template sizes its header row to Auto (confirmed by the current app already
+         working this way at TabItem Height=20), so setting Height=26 on Industry-classed TabItems
+         makes the whole strip 26px without touching TabControl itself at all.
+
+         Code-review fix: Height alone isn't sufficient — Avalonia's layout clamps Height up to
+         MinHeight, and the shipped Fluent theme assembly carries a TabItemMinHeight resource that
+         could exceed 26, silently winning over the Height Setter below exactly the same way
+         Menu.Industry's own gap (fixed above) would have. Old Cards.axaml TabItem rule proves this
+         for the OLD value (20 vs whatever Fluent's default was, since it visibly worked); it says
+         nothing about whether 26 clears the same resource, so pin MinHeight explicitly here too. -->
+    <Style Selector="TabItem.Industry">
+        <Setter Property="Height" Value="26" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="Padding" Value="{StaticResource IndustryTabItemPadding}" />
+        <Setter Property="Margin" Value="0" />
+        <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontSize" Value="11.5" />
+        <!-- LetterSpacing isn't a Control-level property (TabItem doesn't expose it directly,
+             unlike FontFamily/FontSize/Foreground which Control itself declares) — set via the
+             TextBlock attached property, same mechanism the disclosure-header atom above already
+             uses for the same reason. -->
+        <Setter Property="TextBlock.LetterSpacing" Value="1.035" />
+        <!-- .09em * 11.5px = 1.035 device px. -->
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <!-- Kills Fluent's own selected-pill/pipe the same way Cards.axaml's old TabItem style already
+         does (same PART_SelectedPipe name, proven real by that existing, shipped rule) — the new
+         design draws its own 2px accent bottom border via plain BorderThickness/BorderBrush
+         instead (proven-safe property class, see the block comment above). -->
+    <Style Selector="TabItem.Industry /template/ Border#PART_SelectedPipe">
+        <Setter Property="IsVisible" Value="False" />
+    </Style>
+    <Style Selector="TabItem.Industry:selected">
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+    </Style>
+    <Style Selector="TabItem.Industry:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource IndustryAccent700}" />
+    </Style>
+    <!-- Code-review fix: outer strip padding 6,0,6,0 (PADDING-NORMALIZATION.md §3 Band 3) was
+         dropped entirely when the old-design :not(.Industry) narrowing removed its own 6px
+         left-only inset (ChromeOverrides.axaml's "kill Fluent's pill + pipe" ItemsPresenter
+         margin rule) from Industry-classed TabControls — reach the same proven-real
+         PART_ItemsPresenter part directly, matching the mockup's actual (both-sides) padding
+         rather than the old design's left-only one. -->
+    <Style Selector="TabControl.Industry /template/ ItemsPresenter#PART_ItemsPresenter">
+        <Setter Property="Margin" Value="6,0,6,0" />
     </Style>
 
 </Styles>
