@@ -529,12 +529,23 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 /// type's own doc comment).</summary>
 public sealed record FrequencyPresetButtonViewModel(FrequencyPreset Preset, System.Windows.Input.ICommand SelectCommand)
 {
-    public string Label => Preset.Label;
+    /// <summary>Uppercased for display only (mock2's label line is CSS
+    /// <c>text-transform:uppercase</c>, a rendering rule, not a data rule) -- the user's own typed
+    /// casing is preserved in <see cref="Preset"/> and in the separate editor row view-model used
+    /// by the "Edit list..." flyout.</summary>
+    public string Label => Preset.Label.ToUpperInvariant();
 
     /// <summary>Top line of the two-line button content mock2's own Favourites card uses
-    /// (frequency + mode, e.g. "14.230 USB"), real -- computed from the same
-    /// <see cref="FrequencyPreset"/> the button already carries, not a second data source.</summary>
-    public string FrequencyWithMode => $"{Preset.FrequencyHz / 1_000_000.0:0.000} {Preset.Mode}";
+    /// (frequency + mode, e.g. "14.230.000 USB"), real -- computed from the same
+    /// <see cref="FrequencyPreset"/> the button already carries, not a second data source.
+    /// 6-decimal (Hz-precision) MHz format matches this same view-model's own
+    /// <see cref="RadioStatusViewModel.FrequencyDisplay"/> and
+    /// <see cref="FrequencyPresetEditorRowViewModel"/>'s text field, not the truncated 3-decimal
+    /// format this used before -- 3 decimals silently drops real sub-kHz precision on a preset
+    /// frequency, not just a cosmetic gap. Mode is uppercased for display (ham-radio sideband
+    /// abbreviations are conventionally written uppercase; <see cref="RadioMode"/>'s own enum
+    /// member casing, e.g. "Usb", is not).</summary>
+    public string FrequencyWithMode => $"{Preset.FrequencyHz / 1_000_000.0:0.000000} {Preset.Mode.ToString().ToUpperInvariant()}";
 }
 
 /// <summary>One editable row in the "Edit presets..." flyout. A plain mutable view-model (not a
