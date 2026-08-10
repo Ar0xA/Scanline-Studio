@@ -134,6 +134,11 @@
                  mockups/guidance/PHASE1-ATOM-DESIGN.md's own item-by-item citations. Word-suffixed
                  names (no digit in the key), same NoThicknessSpacingMismatchTests constraint as the
                  base scale above. -->
+            <!-- Menu bar (Phase 2): PADDING-NORMALIZATION.md §2 Band 1. -->
+            <Thickness x:Key="IndustryMenuPadding">6,1,6,1</Thickness>
+            <Thickness x:Key="IndustryMenuItemPadding">7,2,7,2</Thickness>
+            <!-- Tab strip (Phase 2): PADDING-NORMALIZATION.md §1 (.tabbtn2) / §2 Band 3. -->
+            <Thickness x:Key="IndustryTabItemPadding">11,5,11,4</Thickness>
             <Thickness x:Key="IndustryGbPadding">7,11,7,6</Thickness>
             <Thickness x:Key="IndustryGbPaddingWide">8,11,8,6</Thickness>
             <Thickness x:Key="IndustryGbPaddingWideDeep">8,11,8,7</Thickness>
