@@ -37,7 +37,16 @@
              Tokens.axaml so its selectors win on any overlapping property. -->
         <StyleInclude Source="avares://ScanlineStudio.UI/Styles/Cards.axaml" />
         <!-- Replacement ControlThemes for parts no Style selector can reach (Slider, ButtonSpinner)
-             plus the field-metric resource overrides. Must be last. -->
+             plus the field-metric resource overrides. Must be last of the OLD "Aesthetic
+             Directive" trio (Tokens/Cards/ChromeOverrides). -->
         <StyleInclude Source="avares://ScanlineStudio.UI/Styles/ChromeOverrides.axaml" />
+        <!-- New "Industry" design system (mockups/guidance/LAYOUT-SPEC.md), replacing the trio
+             above view-by-view per the redesign plan. ADDITIVE for now, not a replacement: loaded
+             after ChromeOverrides.axaml so its resources are available everywhere, but nothing
+             above is deleted until every view is ported (redesign plan's Phase 7), since an
+             in-place swap would throw immediately (TxControlsPaneView.axaml:238's
+             StaticResource-consumed ScanlineStudioTxToggleButtonTheme, see AtomsTokens.axaml's own
+             doc comment). -->
+        <StyleInclude Source="avares://ScanlineStudio.UI/Styles/AtomsTokens.axaml" />
     </Application.Styles>
 </Application>
