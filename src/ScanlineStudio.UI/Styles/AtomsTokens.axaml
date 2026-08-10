@@ -1,0 +1,125 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Design-token layer for the "Industry" wireframe design system
+         (mockups/guidance/LAYOUT-SPEC.md, mockups/guidance/SSTV Console.dc.html's id="2a" mockup):
+         steel-blue accent on a light technical ground, Barlow / Barlow Condensed, square corners,
+         hairline borders, blueprint corner marks. Supersedes the "Aesthetic Directive" in
+         spec/09-ui.md (flat WSJT-X/fldigi gray Win32/Qt chrome, Tokens.axaml/Cards.axaml/
+         ChromeOverrides.axaml) once every view is ported (redesign plan's Phase 7), until then
+         this file is ADDITIVE, loaded after ChromeOverrides.axaml in App.axaml so its resources
+         are available without touching the old ones (auditor-reviewed: an in-place replacement of
+         Tokens.axaml's resource keys throws at XAML load, since TxControlsPaneView.axaml:238
+         StaticResource-consumes ScanlineStudioTxToggleButtonTheme). Every resource here is
+         prefixed `Industry` specifically so it can never collide with an existing
+         ScanlineStudio*/bare Cards.axaml class name (Cards.axaml already owns `.chip`/`.primary`/
+         `.halt`/`.seg`/`.plate`/`.thumb`/`.canvas`/`.safeArea`/`.plot` at different metrics; reusing
+         those literal names would re-skin every not-yet-ported view mid-migration). -->
+
+    <Styles.Resources>
+        <ResourceDictionary>
+
+            <!-- ================= Color (LAYOUT-SPEC.md §2) =================
+                 "Opaque over ground" values are used directly (not translucent Color+Opacity
+                 composites) for hairlines/text per §2's own guidance: Avalonia composites
+                 translucent 1px borders differently from the browser and a translucent hairline
+                 over a panel edge reads doubled. This rule is scoped to 1px rules and text on the
+                 flat paper ground specifically; colors that must overlay live/dark content
+                 (waterfall overlay lines, the TX editor's safe-area rectangle, interactive-state
+                 hover/press tints) stay genuinely translucent; see the hatch-fill DrawingBrush and
+                 the interaction-state colors added in Styles/Atoms.axaml (Phase 1) for those. -->
+            <Color x:Key="IndustryBgColor">#F2F2F3</Color>
+            <Color x:Key="IndustrySurfaceColor">#E9E9EA</Color>
+            <Color x:Key="IndustryTextColor">#1D1F20</Color>
+            <Color x:Key="IndustryAccentColor">#5980A6</Color>
+            <Color x:Key="IndustryDividerColor">#D0D0D1</Color>
+            <Color x:Key="IndustryTextMuted42Color">#99999A</Color>
+            <Color x:Key="IndustryTextMuted50Color">#88898A</Color>
+            <Color x:Key="IndustryTextMuted55Color">#7D7E7F</Color>
+            <Color x:Key="IndustryTextMuted62Color">#6E6F70</Color>
+            <Color x:Key="IndustryTextMuted72Color">#595A5B</Color>
+            <Color x:Key="IndustryRowRule7Color">#E3E3E4</Color>
+            <Color x:Key="IndustryRowRule6Color">#E5E5E6</Color>
+            <Color x:Key="IndustryTableRule8Color">#E1E1E2</Color>
+            <Color x:Key="IndustryNeutral200Color">#E7E7EA</Color>
+            <Color x:Key="IndustryNeutral300Color">#D4D4D7</Color>
+            <Color x:Key="IndustryAccent100Color">#EEF6FF</Color>
+            <Color x:Key="IndustryAccent700Color">#416180</Color>
+            <Color x:Key="IndustryAccent800Color">#2C455D</Color>
+            <Color x:Key="IndustryAccent900Color">#1D2D3D</Color>
+
+            <SolidColorBrush x:Key="IndustryBg" Color="{StaticResource IndustryBgColor}" />
+            <SolidColorBrush x:Key="IndustrySurface" Color="{StaticResource IndustrySurfaceColor}" />
+            <SolidColorBrush x:Key="IndustryText" Color="{StaticResource IndustryTextColor}" />
+            <SolidColorBrush x:Key="IndustryAccent" Color="{StaticResource IndustryAccentColor}" />
+            <SolidColorBrush x:Key="IndustryDivider" Color="{StaticResource IndustryDividerColor}" />
+            <SolidColorBrush x:Key="IndustryTextMuted42" Color="{StaticResource IndustryTextMuted42Color}" />
+            <SolidColorBrush x:Key="IndustryTextMuted50" Color="{StaticResource IndustryTextMuted50Color}" />
+            <SolidColorBrush x:Key="IndustryTextMuted55" Color="{StaticResource IndustryTextMuted55Color}" />
+            <SolidColorBrush x:Key="IndustryTextMuted62" Color="{StaticResource IndustryTextMuted62Color}" />
+            <SolidColorBrush x:Key="IndustryTextMuted72" Color="{StaticResource IndustryTextMuted72Color}" />
+            <SolidColorBrush x:Key="IndustryRowRule7" Color="{StaticResource IndustryRowRule7Color}" />
+            <SolidColorBrush x:Key="IndustryRowRule6" Color="{StaticResource IndustryRowRule6Color}" />
+            <SolidColorBrush x:Key="IndustryTableRule8" Color="{StaticResource IndustryTableRule8Color}" />
+            <SolidColorBrush x:Key="IndustryNeutral200" Color="{StaticResource IndustryNeutral200Color}" />
+            <SolidColorBrush x:Key="IndustryNeutral300" Color="{StaticResource IndustryNeutral300Color}" />
+            <SolidColorBrush x:Key="IndustryAccent100" Color="{StaticResource IndustryAccent100Color}" />
+            <SolidColorBrush x:Key="IndustryAccent700" Color="{StaticResource IndustryAccent700Color}" />
+            <SolidColorBrush x:Key="IndustryAccent800" Color="{StaticResource IndustryAccent800Color}" />
+            <SolidColorBrush x:Key="IndustryAccent900" Color="{StaticResource IndustryAccent900Color}" />
+
+            <!-- ================= Spacing (LAYOUT-SPEC.md §2) =================
+                 Real steps are 2, 3, 4, 5, 6, 7, 9, 11, deliberately off a 4px grid, matching the
+                 reference apps this design imitates. Word-suffixed names, NOT a numeric suffix
+                 (e.g. NOT "IndustrySpacing4"): NoThicknessSpacingMismatchTests's regex
+                 ([A-Za-z]*Spacing[A-Za-z]*) requires letters only around the word "Spacing" with no
+                 digit anywhere in the matched resource-key span, so a numeric-suffixed name would
+                 silently stop being caught by that guard (confirmed against the live regex, not
+                 assumed), auditor round-2 finding N1. Two shapes of the same numbers, matching
+                 Tokens.axaml's existing established pattern: plain x:Double for double-typed
+                 properties (e.g. StackPanel.Spacing), Thickness for Padding/Margin (Avalonia's
+                 DynamicResource lookup runs no type converter, so a bare double used against a
+                 Thickness-typed property throws at runtime). -->
+            <x:Double x:Key="IndustrySpacingHairline">2</x:Double>
+            <x:Double x:Key="IndustrySpacingTight">3</x:Double>
+            <x:Double x:Key="IndustrySpacingSnug">4</x:Double>
+            <x:Double x:Key="IndustrySpacingCozy">5</x:Double>
+            <x:Double x:Key="IndustrySpacingBase">6</x:Double>
+            <x:Double x:Key="IndustrySpacingWide">7</x:Double>
+            <x:Double x:Key="IndustrySpacingGutter">9</x:Double>
+            <x:Double x:Key="IndustrySpacingGroup">11</x:Double>
+            <Thickness x:Key="IndustryPaddingHairline">2</Thickness>
+            <Thickness x:Key="IndustryPaddingTight">3</Thickness>
+            <Thickness x:Key="IndustryPaddingSnug">4</Thickness>
+            <Thickness x:Key="IndustryPaddingCozy">5</Thickness>
+            <Thickness x:Key="IndustryPaddingBase">6</Thickness>
+            <Thickness x:Key="IndustryPaddingWide">7</Thickness>
+            <Thickness x:Key="IndustryPaddingGutter">9</Thickness>
+            <Thickness x:Key="IndustryPaddingGroup">11</Thickness>
+            <!-- Composite (asymmetric) Thickness resources for this design's real paddings (a flat
+                 8-step scale cannot express e.g. the group-box's own 7,11,7,6 default) are added in
+                 Phase 1 alongside the atoms that consume them, sourced from
+                 mockups/guidance/PADDING-NORMALIZATION.md, not invented ad hoc per-view. -->
+
+            <!-- ================= Type (LAYOUT-SPEC.md §2) =================
+                 Folder-per-family URIs (Assets/Fonts/Barlow/, Assets/Fonts/BarlowCondensed/, not
+                 one shared Fonts/ folder): confirmed empirically that Avalonia's
+                 avares://Folder#FamilyName resolution searches every font in that folder for the
+                 closest weight match rather than filtering by family first, so a shared folder
+                 silently cross-resolved a Barlow Condensed request to plain Barlow Bold. See
+                 tests/ScanlineStudio.UI.FontTests's regression coverage for this. -->
+            <FontFamily x:Key="IndustryHeadingFontFamily">avares://ScanlineStudio.UI/Assets/Fonts/BarlowCondensed#Barlow Condensed</FontFamily>
+            <FontFamily x:Key="IndustryBodyFontFamily">avares://ScanlineStudio.UI/Assets/Fonts/Barlow#Barlow</FontFamily>
+            <!-- Bundled (not left to per-OS fallback, unlike LAYOUT-SPEC.md §2's own "mono is
+                 allowed to fall back to the OS"): nearly every pixel-exact width in this design
+                 (stepper value widths, table columns, the 40px frequency readout) is mono
+                 glyph-advance-width-driven, and per-OS metric drift (Cascadia Mono vs. Consolas vs.
+                 DejaVu Sans Mono) would silently break the design's own §7 pixel-measurement
+                 checklist. Reuses the project's already-vetted/licensed DejaVu Sans Mono
+                 (LICENSES.md), not a new font dependency. -->
+            <FontFamily x:Key="IndustryMonoFontFamily">avares://ScanlineStudio.UI/Assets/Fonts/DejaVuSansMono#DejaVu Sans Mono</FontFamily>
+
+        </ResourceDictionary>
+    </Styles.Resources>
+
+</Styles>
