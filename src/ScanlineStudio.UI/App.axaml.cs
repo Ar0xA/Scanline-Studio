@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
 using Microsoft.Extensions.DependencyInjection;
 using ScanlineStudio.UI.ViewModels;
 using ScanlineStudio.UI.Views;
@@ -21,6 +22,13 @@ public partial class App : Avalonia.Application
     // itself, with no constructor-injection route -- see that class's own doc comment). Every
     // other view-model must use real constructor injection; this is not a general service locator.
     public static IServiceProvider? Services { get; set; }
+
+    // Single source of truth for the app's default font family URI: BuildAvaloniaApp below is the
+    // actual load-bearing site (a typo here silently falls back to a system font, no exception, no
+    // failing build -- ScanlineStudio.UI.FontTests.IndustryFontResolutionTests references THIS
+    // constant rather than its own copy, specifically so a regression here is caught by that test
+    // instead of only by eyeballing a running window).
+    public const string DefaultFontFamilyUri = "avares://ScanlineStudio.UI/Assets/Fonts/Barlow#Barlow";
 
     public override void Initialize()
     {
@@ -43,9 +51,20 @@ public partial class App : Avalonia.Application
     }
 
     // Avalonia configuration, don't remove; also used by visual designer and by ScanlineStudio.Host's Program.cs.
+    //
+    // Default font family is embedded Barlow, not Avalonia's bundled Inter (mockups/guidance/
+    // LAYOUT-SPEC.md's Industry design system): confirmed via a real (non-headless-drawing) Skia
+    // probe that FontManagerOptions.DefaultFamilyName correctly drives FontFamily.Default
+    // resolution, so every un-styled TextBlock (and anything a Style selector's FontFamily setter
+    // can't reach -- ComboBox/ContextMenu/Flyout popups are separate top-levels, not children of
+    // the Window they visually appear under) still renders in Barlow rather than silently falling
+    // back to a system font.
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            .WithInterFont()
+            .With(new FontManagerOptions
+            {
+                DefaultFamilyName = DefaultFontFamilyUri,
+            })
             .LogToTrace();
 }

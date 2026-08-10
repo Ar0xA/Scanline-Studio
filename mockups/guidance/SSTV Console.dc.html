@@ -1,0 +1,1519 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/industry-2dd972b5-7c1a-47b9-9e99-97a887c80e15/styles.css">
+<script src="_ds/industry-2dd972b5-7c1a-47b9-9e99-97a887c80e15/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#e4e4e6;font-family:var(--font-body)}
+summary::marker,summary::-webkit-details-marker{display:none}
+canvas{display:block;image-rendering:pixelated}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.10);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1d1f20;color:#fff;border-radius:0;text-decoration:none}
+.dv-tname{font-family:var(--font-heading);font-size:15px;letter-spacing:.02em}
+.dv-opts{display:flex;flex-wrap:wrap;gap:36px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:10px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(29,31,32,.10);color:#1d1f20;border-radius:0;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font-size:12px;color:rgba(29,31,32,.6)}
+.dv-opt:target .dv-oid{background:#5980a6;color:#fff}
+.dv-next{margin:24px 0 0;font-size:12px;color:rgba(29,31,32,.55)}
+.pnl{position:relative;border:1px solid var(--color-divider);padding:9px 11px 11px;display:flex;flex-direction:column;gap:7px;min-height:0}
+.ph6{margin:0;font-family:var(--font-heading);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 55%,transparent);display:flex;justify-content:space-between;align-items:center}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;padding:2px 0}
+.row + .row{border-top:1px solid color-mix(in srgb,var(--color-text) 7%,transparent)}
+.lbl{color:color-mix(in srgb,var(--color-text) 62%,transparent);white-space:nowrap}
+.val{font:500 12px/1.2 ui-monospace,Menlo,monospace;letter-spacing:-.02em}
+.mono{font-family:ui-monospace,Menlo,monospace}
+.stepper{display:flex;align-items:center;border:1px solid var(--color-divider)}
+.stepper button{width:18px;height:22px;border:0;background:transparent;cursor:pointer;font:600 12px var(--font-heading);color:var(--color-accent-700);padding:0}
+.stepper button:hover{background:var(--color-accent-100)}
+.stepper span{min-width:52px;text-align:right;padding:0 6px;font:500 12px ui-monospace,Menlo,monospace;border-left:1px solid var(--color-divider);border-right:1px solid var(--color-divider);line-height:22px}
+.trk{position:relative;height:4px;background:var(--color-neutral-300);flex:1}
+.trk i{position:absolute;inset:0 auto 0 0;background:var(--color-accent)}
+.trk b{position:absolute;top:-4px;width:3px;height:12px;background:var(--color-accent-800)}
+.tabbtn{white-space:nowrap;position:relative;background:transparent;border:0;cursor:pointer;font:600 13px var(--font-heading);letter-spacing:.06em;text-transform:uppercase;color:var(--color-text);padding:9px 14px 8px}
+.tabbtn:hover{color:var(--color-accent-700)}
+.und{position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--color-accent)}
+.chip{font:500 10.5px ui-monospace,Menlo,monospace;padding:2px 7px;border:1px solid var(--color-divider);white-space:nowrap}
+.ph-fill{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--color-accent) 14%,transparent) 0 6px,transparent 6px 12px)}
+.mbar{display:flex;gap:1px;padding:1px 6px;border-bottom:1px solid var(--color-divider);font-size:12px}
+.mbar span{padding:2px 7px;cursor:default}
+.mbar span:hover{background:var(--color-accent-100);color:var(--color-accent-800)}
+.gb{position:relative;border:1px solid var(--color-divider);padding:11px 7px 6px;display:flex;flex-direction:column;gap:3px;min-height:0}
+.gbt{position:absolute;top:-6px;left:6px;background:var(--color-bg);padding:0 5px;font:600 9.5px var(--font-heading);letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-700);white-space:nowrap}
+.r2{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;line-height:1.5}
+.r2 + .r2{border-top:1px solid color-mix(in srgb,var(--color-text) 6%,transparent)}
+.v2{font:500 11px/1.5 ui-monospace,Menlo,monospace;letter-spacing:-.02em;white-space:nowrap}
+.tabbtn2{white-space:nowrap;position:relative;background:transparent;border:0;cursor:pointer;font:600 11.5px var(--font-heading);letter-spacing:.09em;text-transform:uppercase;color:var(--color-text);padding:5px 11px 4px}
+.tabbtn2:hover{color:var(--color-accent-700)}
+.sbc{font:500 11px ui-monospace,Menlo,monospace;padding:2px 9px;border:1px solid var(--color-divider);white-space:nowrap}
+.mini{font:500 10px ui-monospace,Menlo,monospace;padding:1px 5px;border:1px solid var(--color-divider);white-space:nowrap}
+.mbar{display:flex;gap:1px;padding:1px 6px;border-bottom:1px solid var(--color-divider);font-size:12px}
+.mbar span{padding:2px 7px;cursor:default}
+.mbar span:hover{background:var(--color-accent-100);color:var(--color-accent-800)}
+.gb{position:relative;border:1px solid var(--color-divider);padding:11px 7px 6px;display:flex;flex-direction:column;gap:3px;min-height:0}
+.gbt{position:absolute;top:-6px;left:6px;background:var(--color-bg);padding:0 5px;font:600 9.5px var(--font-heading);letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-700);white-space:nowrap}
+.r2{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:11px;line-height:1.5}
+.r2 + .r2{border-top:1px solid color-mix(in srgb,var(--color-text) 6%,transparent)}
+.v2{font:500 11px/1.5 ui-monospace,Menlo,monospace;letter-spacing:-.02em;white-space:nowrap}
+.tabbtn2{white-space:nowrap;position:relative;background:transparent;border:0;cursor:pointer;font:600 11.5px var(--font-heading);letter-spacing:.09em;text-transform:uppercase;color:var(--color-text);padding:5px 11px 4px}
+.tabbtn2:hover{color:var(--color-accent-700)}
+.mini{font:500 10px ui-monospace,Menlo,monospace;padding:1px 5px;border:1px solid var(--color-divider);white-space:nowrap}
+.knob{position:relative;width:46px;height:46px;border-radius:50%;border:1px solid var(--color-divider);display:grid;place-items:center}
+.knob i{position:absolute;width:1px;height:15px;background:var(--color-accent-800);top:4px;transform-origin:50% 19px}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Instrument build of <a class="dv-oid" href="#1a">1a</a> — WSJT-X / JS8Call / VARA grammar</span></div>
+<div class="dv-opts">
+<div class="dv-opt" id="2a">
+<div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Menu bar, dominant frequency readout with sideband and memory favourites, Qt group boxes, spectrum and waterfall side by side inside Receive above the frame, monospace decode table, segmented status bar. 1920×1080.</div>
+<div style="width:1920px;height:1080px;background:var(--color-bg);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-md);font-size:12px">
+
+  <div class="mbar">
+    <span style="font-family:var(--font-heading);letter-spacing:.05em;padding-right:12px">SSTV<span style="color:var(--color-accent)">/</span>CONSOLE</span>
+    <span>File</span><span>Configurations</span><span>Rig &amp; PTT</span><span>Calibration</span><span>View</span><span>Tools</span><span>Help</span>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <span class="mono" style="color:color-mix(in srgb,var(--color-text) 55%,transparent)">cfg: 20m-sstv-ic7300</span>
+      <span class="mini" style="border-color:var(--color-accent);color:var(--color-accent-800);font-size:12px;letter-spacing:.08em;padding:1px 8px">DL2QSK · JO31</span>
+    </span>
+  </div>
+
+  <div style="display:flex;align-items:stretch;gap:10px;padding:7px 9px;border-bottom:1px solid var(--color-divider)">
+    <div class="blueprint" style="display:flex;align-items:center;gap:14px;padding:5px 14px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div style="display:flex;flex-direction:column">
+        <span class="mini" style="border:0;padding:0;color:var(--color-accent-700);letter-spacing:.16em">VFO A · RX · M1</span>
+        <span class="mono" style="font-size:40px;line-height:1.02;letter-spacing:-.03em">14.230<span style="color:color-mix(in srgb,var(--color-text) 42%,transparent)">.000</span></span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="seg">
+          <label class="seg-opt" style="padding:2px 10px;font-size:11px"><input type="radio" name="b-sb" checked><span>USB</span></label>
+          <label class="seg-opt" style="padding:2px 10px;font-size:11px"><input type="radio" name="b-sb"><span>LSB</span></label>
+          <label class="seg-opt" style="padding:2px 10px;font-size:11px"><input type="radio" name="b-sb"><span>FM</span></label>
+        </div>
+        <div style="display:flex;gap:3px"><span class="mini">BW 2.7k</span><span class="mini">SPLIT OFF</span></div>
+        <div style="display:flex;gap:3px"><span class="mini">STEP 500 Hz</span><span class="mini">RIT 0</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;padding-left:14px;border-left:1px solid var(--color-divider)">
+        <span class="mono" style="font-size:15px">14:22:07<span class="lbl" style="font-size:10px"> UTC</span></span>
+        <span class="mini" style="border-color:var(--color-accent);color:var(--color-accent-700)">CAT LINKED</span>
+        <span class="mini">S6 · SWR 1.3</span>
+      </div>
+    </div>
+
+    <div class="gb" style="flex:1;padding:11px 8px 5px;gap:5px">
+      <span class="gbt">Favourites — recall frequency + sideband</span>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">
+        <sc-for list="{{ favs }}" as="f" hint-placeholder-count="7">
+          <button class="btn btn-secondary" style="height:36px;padding:0 10px;flex-direction:column;align-items:flex-start;gap:0;line-height:1.15">
+            <span class="mono" style="font-size:12.5px">{{ f.freq }} {{ f.sb }}</span>
+            <span class="lbl" style="font:400 9.5px var(--font-body);letter-spacing:.06em;text-transform:uppercase">{{ f.name }}</span>
+          </button>
+        </sc-for>
+        <button class="btn btn-primary" style="height:36px;padding:0 11px;font-size:12px">Store current</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px">
+        <span class="mini" style="border:0;padding:0;color:color-mix(in srgb,var(--color-text) 50%,transparent)">M1…M7 recall · ⇧M store · double-click to rename</span>
+        <span style="margin-left:auto;display:flex;gap:3px"><span class="mini">EDIT LIST</span><span class="mini">IMPORT</span><span class="mini">SCAN M1–M3</span></span>
+      </div>
+    </div>
+
+    <div class="gb" style="width:272px;padding:11px 8px 5px">
+      <span class="gbt">Transceiver</span>
+      <div style="display:flex;gap:4px">
+        <button class="btn btn-primary" style="height:26px;font-size:12px;padding:0 10px;flex:1">Receiving</button>
+        <button class="btn btn-secondary" style="height:26px;font-size:12px;padding:0 10px;flex:1">Halt</button>
+      </div>
+      <div class="r2" style="padding-top:3px"><span class="lbl">RX lvl</span><div class="trk" style="width:118px;height:8px"><i style="width:63%"></i><b style="left:78%"></b></div><span class="v2">−14.2</span></div>
+      <div class="r2"><span class="lbl">TX lvl</span><div class="trk" style="width:118px;height:8px"><i style="width:74%"></i><b style="left:74%"></b></div><span class="v2">−6.0</span></div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:stretch;border-bottom:1px solid var(--color-divider);padding:0 6px">
+    <button class="tabbtn2" onClick="{{ tab2Rx }}">Receive<sc-if value="{{ isRx2 }}" hint-placeholder-val="{{ true }}"><span class="und"></span></sc-if></button>
+    <button class="tabbtn2" onClick="{{ tab2Tx }}">Transmit<sc-if value="{{ isTx2 }}"><span class="und"></span></sc-if></button>
+    <button class="tabbtn2" onClick="{{ tab2Gal }}">Gallery<sc-if value="{{ isGal2 }}"><span class="und"></span></sc-if></button>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:5px">
+      <span class="mini">AUTO-DETECT</span>
+      <span class="mini" style="background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)">SCOTTIE 1 · VIS 60 · 98.4%</span>
+      <span class="mini">SYNC LOCK 41 s</span>
+      <span class="mini">SLANT +3.4 ppm</span>
+      <span class="mini">SNR 21.6 dB</span>
+      <span class="mini" style="border-color:var(--color-accent);color:var(--color-accent-700)">AUTOSAVE ON</span>
+    </div>
+  </div>
+
+  <sc-if value="{{ isRx2 }}" hint-placeholder-val="{{ true }}">
+  <div style="flex:1;display:grid;grid-template-columns:236px 1fr 312px;gap:9px;padding:11px 9px 8px;min-height:0">
+
+    <div style="display:flex;flex-direction:column;gap:11px;min-height:0">
+      <div class="gb"><span class="gbt">Mode</span>
+        <div class="seg" style="width:100%;margin-bottom:2px">
+          <label class="seg-opt" style="flex:1;justify-content:center;padding:3px 6px;font-size:11px"><input type="radio" name="b-md" checked><span>Auto</span></label>
+          <label class="seg-opt" style="flex:1;justify-content:center;padding:3px 6px;font-size:11px"><input type="radio" name="b-md"><span>Lock</span></label>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:2px">
+          <sc-for list="{{ modes }}" as="m" hint-placeholder-count="16">
+            <span class="mini" style="display:flex;justify-content:center">{{ m }}</span>
+          </sc-for>
+        </div>
+        <div class="r2" style="padding-top:3px"><span class="lbl">Line time</span><span class="v2">138.240 ms</span></div>
+        <div class="r2"><span class="lbl">Lines</span><span class="v2">256 · 320×256</span></div>
+        <div class="r2"><span class="lbl">Remaining</span><span class="v2">01:12</span></div>
+      </div>
+
+      <div class="gb"><span class="gbt">Sync &amp; slant</span>
+        <div class="r2"><span class="lbl">Source</span><span class="v2">VIS + 1200 Hz</span></div>
+        <div class="r2"><span class="lbl">Slant ppm</span><span class="stepper"><button>−</button><span style="min-width:46px">+3.400</span><button>+</button></span></div>
+        <div class="r2"><span class="lbl">Offset px</span><span class="stepper"><button>−</button><span style="min-width:46px">−12</span><button>+</button></span></div>
+        <div class="r2"><span class="lbl">Auto-correct</span><span class="v2" style="color:var(--color-accent-700)">ON · locked</span></div>
+        <div style="display:flex;gap:3px;padding-top:3px">
+          <button class="btn btn-secondary" style="height:22px;font-size:11px;padding:0 6px;flex:1">Re-sync</button>
+          <button class="btn btn-secondary" style="height:22px;font-size:11px;padding:0 6px;flex:1">Reset</button>
+        </div>
+        <details><summary style="cursor:pointer;list-style:none;font:600 9.5px var(--font-heading);letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-700);padding-top:4px">＋ Advanced timing</summary>
+          <div style="padding-top:3px">
+            <div class="r2"><span class="lbl">Sample clock</span><span class="v2">47 999.66 Hz</span></div>
+            <div class="r2"><span class="lbl">Sync window</span><span class="v2">±4.8 ms</span></div>
+            <div class="r2"><span class="lbl">VIS threshold</span><span class="v2">−26 dB</span></div>
+            <div class="r2"><span class="lbl">Drop-line</span><span class="v2">interpolate</span></div>
+          </div></details>
+      </div>
+
+      <div class="gb"><span class="gbt">Input chain</span>
+        <div class="r2"><span class="lbl">Device</span><span class="v2">hw:2,0 L</span></div>
+        <div class="r2"><span class="lbl">Squelch</span><span class="v2">−38 dB</span></div>
+        <div class="r2"><span class="lbl">BPF</span><span class="v2">1.0–2.5 kHz</span></div>
+        <div class="r2"><span class="lbl">Notch / AGC</span><span class="v2">off · slow</span></div>
+        <div class="r2"><span class="lbl">SNR est.</span><span class="v2">21.6 dB</span></div>
+        <div class="r2"><span class="lbl">Buffer</span><span class="v2">512 · 0 XRUN</span></div>
+        <div class="r2"><span class="lbl">Clipping</span><span class="v2">0.0%</span></div>
+        <div class="r2"><span class="lbl">DC offset</span><span class="v2">−0.0004</span></div>
+        <div class="r2" style="flex-direction:column;align-items:stretch;gap:3px;padding-top:4px">
+          <div style="display:flex;justify-content:space-between"><span class="lbl">L</span><span class="v2">−14.2</span></div>
+          <div class="trk" style="height:6px"><i style="width:63%"></i></div>
+          <div style="display:flex;justify-content:space-between"><span class="lbl">R</span><span class="v2">−15.0</span></div>
+          <div class="trk" style="height:6px"><i style="width:60%"></i></div>
+        </div>
+        <div class="r2"><span class="lbl">Noise floor</span><span class="v2">−38.4 dB</span></div>
+        <div class="r2"><span class="lbl">Sync jitter</span><span class="v2">0.6 ms rms</span></div>
+      </div>
+
+      <div class="gb" style="flex:1;min-height:0"><span class="gbt">Signal quality</span>
+        <span class="mini" style="border:0;padding:0;color:var(--color-accent-700);letter-spacing:.14em">SNR PER LINE</span>
+        <div class="ph-fill" style="flex:1;border:1px solid var(--color-divider);min-height:26px"></div>
+        <div class="r2"><span class="lbl">min / max</span><span class="v2">14.8 / 24.1 dB</span></div>
+        <span class="mini" style="border:0;padding:0;color:var(--color-accent-700);letter-spacing:.14em;padding-top:3px">LUMINANCE HISTOGRAM</span>
+        <div class="ph-fill" style="flex:1;border:1px solid var(--color-divider);min-height:26px"></div>
+        <div class="r2"><span class="lbl">clip lo / hi</span><span class="v2">0.2% / 0.0%</span></div>
+        <div class="r2"><span class="lbl">Sync 1200 Hz</span><span class="v2">1199.82 · −0.18</span></div>
+        <div class="r2"><span class="lbl">Black 1500 Hz</span><span class="v2">1500.11 · +0.11</span></div>
+        <div class="r2"><span class="lbl">White 2300 Hz</span><span class="v2">2296.04 · −3.96</span></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-rows:150px 1fr 147px;gap:11px;min-height:0">
+
+      <div class="gb" style="padding:11px 8px 6px"><span class="gbt">Spectrum · waterfall — 1000…2600 Hz</span>
+        <div style="flex:1;display:grid;grid-template-columns:1fr 1fr 146px;gap:7px;min-height:0;overflow:hidden">
+          <div style="border:1px solid var(--color-divider);background:var(--color-accent-900);position:relative;min-width:0;min-height:0">
+            <canvas ref="{{ fft3 }}" width="760" height="240" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+            <span class="mono" style="position:absolute;left:6px;top:4px;font-size:9.5px;color:#b5d9fd">SPECTRUM · AVG 4 · REF −40 dB</span>
+            <span class="mono" style="position:absolute;right:6px;bottom:3px;font-size:9.5px;color:#d6ebff">PEAK 2296 Hz −11.4 dB</span>
+          </div>
+          <div style="border:1px solid var(--color-divider);background:var(--color-accent-900);position:relative;min-width:0;min-height:0">
+            <canvas ref="{{ wf3 }}" width="760" height="240" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+            <span style="position:absolute;left:12.5%;top:0;bottom:0;width:1px;background:rgba(238,246,255,.55)"></span>
+            <span style="position:absolute;left:31.25%;right:18.75%;top:0;bottom:0;border-left:1px dashed rgba(238,246,255,.45);border-right:1px dashed rgba(238,246,255,.45)"></span>
+            <span class="mono" style="position:absolute;left:6px;top:4px;font-size:9.5px;color:#b5d9fd">WATERFALL · 2 l/s</span>
+            <span class="mono" style="position:absolute;left:13.5%;bottom:3px;font-size:9.5px;color:#eef6ff">1200</span>
+            <span class="mono" style="position:absolute;right:19.5%;bottom:3px;font-size:9.5px;color:#eef6ff">1500–2300</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:1px;min-height:0;overflow:hidden">
+            <div class="r2"><span class="lbl">Bins / px</span><span class="stepper"><button>−</button><span style="min-width:24px">2</span><button>+</button></span></div>
+            <div class="r2"><span class="lbl">Start</span><span class="stepper"><button>−</button><span style="min-width:34px">900</span><button>+</button></span></div>
+            <div class="r2"><span class="lbl">Span</span><span class="stepper"><button>−</button><span style="min-width:34px">1800</span><button>+</button></span></div>
+            <div class="r2"><span class="lbl">Gain</span><div class="trk" style="width:38px"><i style="width:58%"></i><b style="left:58%"></b></div><span class="lbl">Zero</span><div class="trk" style="width:38px"><i style="width:34%"></i><b style="left:34%"></b></div></div>
+            <div style="display:flex;gap:2px;padding-top:2px"><span class="mini" style="background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)">BOTH</span><span class="mini">SPEC</span><span class="mini">WF</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="gb blueprint" style="padding:11px 8px 7px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <span class="gbt">Incoming frame — line 168 / 256</span>
+        <div style="flex:1;display:flex;gap:9px;min-height:0">
+          <div class="duotone" style="flex:none;height:100%;aspect-ratio:5 / 4;background:var(--color-accent-900);display:block;overflow:hidden">
+            <canvas ref="{{ img3 }}" width="640" height="512" style="width:100%;height:100%;display:block"></canvas>
+          </div>
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px">
+            <div class="gb" style="flex:1;min-height:0;padding:10px 6px 5px;gap:4px"><span class="gbt">Previous frames</span>
+              <div style="flex:1;min-height:0;display:grid;grid-template-columns:repeat(2,1fr);grid-auto-rows:1fr;gap:6px">
+                <sc-for list="{{ recent }}" as="r" hint-placeholder-count="6">
+                  <figure style="display:flex;flex-direction:column;border:1px solid var(--color-divider);min-height:0">
+                    <div class="ph-fill" style="flex:1;position:relative;min-height:0"><span class="mini" style="position:absolute;left:3px;top:3px;background:var(--color-bg);font-size:9px">{{ r.mode }}</span></div>
+                    <figcaption style="margin:0;padding:2px 4px;border-top:1px solid var(--color-divider);display:flex;justify-content:space-between;gap:4px">
+                      <span class="v2" style="font-size:10px">{{ r.call }}</span>
+                      <span class="mono" style="font-size:9px;color:color-mix(in srgb,var(--color-text) 50%,transparent)">{{ r.t }}</span>
+                    </figcaption>
+                  </figure>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:4px;align-items:center;padding-top:4px">
+          <button class="btn btn-primary" style="height:25px;font-size:12px;padding:0 9px">Save frame</button>
+          <button class="btn btn-secondary" style="height:25px;font-size:12px;padding:0 9px">Abort</button>
+          <button class="btn btn-secondary" style="height:25px;font-size:12px;padding:0 9px">Re-decode</button>
+          <button class="btn btn-secondary" style="height:25px;font-size:12px;padding:0 9px">Copy to TX</button>
+          <button class="btn btn-secondary" style="height:25px;font-size:12px;padding:0 9px">Log QSO</button>
+          <div class="trk" style="height:6px;margin-left:6px"><i style="width:66%"></i></div>
+          <span class="v2">168 / 256</span>
+        </div>
+      </div>
+
+      <div class="gb" style="padding:11px 8px 6px"><span class="gbt">Decode activity</span>
+        <div style="display:flex;gap:9px;flex:1;min-height:0">
+          <table class="table" style="font-size:11px;flex:1">
+            <thead><tr>
+              <th style="padding:2px 5px">UTC</th><th style="padding:2px 5px">Freq</th><th style="padding:2px 5px">Mode</th>
+              <th style="padding:2px 5px">Call · OCR</th><th style="padding:2px 5px">Grid · QRZ</th><th style="padding:2px 5px">SNR</th>
+              <th style="padding:2px 5px">Slant</th><th style="padding:2px 5px">Lines</th><th style="padding:2px 5px">State</th>
+            </tr></thead>
+            <tbody>
+              <sc-for list="{{ decodes }}" as="d" hint-placeholder-count="5">
+                <tr>
+                  <td class="v2" style="padding:2px 5px">{{ d.t }}</td>
+                  <td class="v2" style="padding:2px 5px">{{ d.f }}</td>
+                  <td class="v2" style="padding:2px 5px">{{ d.m }}</td>
+                  <td class="v2" style="padding:2px 5px">{{ d.c }}</td>
+                  <td class="v2" style="padding:2px 5px">{{ d.g }}</td>
+                  <td class="v2" style="padding:2px 5px">{{ d.s }}</td>
+                  <td class="v2" style="padding:2px 5px">{{ d.sl }}</td>
+                  <td class="v2" style="padding:2px 5px">{{ d.l }}</td>
+                  <td class="v2" style="padding:2px 5px">{{ d.st }}</td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+          <div style="width:250px;border-left:1px solid var(--color-divider);padding-left:9px;display:flex;flex-direction:column">
+            <span class="mini" style="border:0;padding:0;color:var(--color-accent-700);letter-spacing:.14em">DECODER TRACE</span>
+            <div class="mono" style="font-size:10.5px;line-height:1.6;color:color-mix(in srgb,var(--color-text) 72%,transparent);display:flex;flex-direction:column">
+              <span>14:20:54 VIS 60 → Scottie 1 (98.4%)</span>
+              <span>14:20:54 sync locked, offset −12 px</span>
+              <span>14:21:03 slant +3.4 ppm applied</span>
+              <span>14:21:31 2 lines dropped, interpolated</span>
+              <span>14:21:58 callsign OCR → EA7KDT</span>
+              <span>14:22:07 line 168/256, SNR 21.6 dB</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:11px;min-height:0">
+      <div class="gb"><span class="gbt">Frame metadata</span>
+        <div class="r2"><span class="lbl">Callsign · OCR</span><span class="v2">EA7KDT</span></div>
+        <div class="r2"><span class="lbl">Grid / dist · QRZ</span><span class="v2">IM76 · 1 842 km</span></div>
+        <div class="r2"><span class="lbl">Frequency · CAT</span><span class="v2">14.230.00 USB</span></div>
+        <div class="r2"><span class="lbl">Mode / VIS</span><span class="v2">Scottie 1 · 60</span></div>
+        <div class="r2"><span class="lbl">Started</span><span class="v2">14:20:54Z</span></div>
+        <div class="r2"><span class="lbl">SNR / slant</span><span class="v2">21.6 dB · +3.4</span></div>
+        <div class="r2"><span class="lbl">File</span><span class="v2">rx_…_EA7KDT.png</span></div>
+        <div class="r2"><span class="lbl">OCR confidence</span><span class="v2">0.91</span></div>
+        <div class="r2"><span class="lbl">Dropped lines</span><span class="v2">2 · interpolated</span></div>
+        <div class="r2"><span class="lbl">Sidecar</span><span class="v2">JSON + EXIF</span></div>
+        <div class="r2"><span class="lbl">Size on disk</span><span class="v2">198 kB</span></div>
+        <div class="field" style="padding-top:4px"><label style="font-size:11px;margin-bottom:3px">Note</label><input class="input" style="min-height:24px;height:24px;padding:0 6px;font-size:11px" value="Sked · 2nd frame"></div>
+        <div class="field"><label style="font-size:11px;margin-bottom:3px">Override callsign</label><input class="input" style="min-height:24px;height:24px;padding:0 6px;font-size:11px" placeholder="EA7KDT"></div>
+        <div style="display:flex;gap:4px;padding-top:2px">
+          <button class="btn btn-secondary" style="height:22px;font-size:11px;padding:0 7px;flex:1">Lookup QRZ</button>
+          <button class="btn btn-secondary" style="height:22px;font-size:11px;padding:0 7px;flex:1">Flag</button>
+        </div>
+      </div>
+      <div class="gb"><span class="gbt">Unattended RX</span>
+        <div class="r2"><span class="lbl">Watch</span><span class="v2">M1 · M2 · M4</span></div>
+        <div class="r2"><span class="lbl">Scan dwell</span><span class="v2">90 s</span></div>
+        <div class="r2"><span class="lbl">Alert</span><span class="v2">sound + desktop</span></div>
+        <div class="r2"><span class="lbl">Session</span><span class="v2">4 frames / 38 min</span></div>
+        <div class="r2"><span class="lbl">Disk</span><span class="v2">14.2 GB free</span></div>
+      </div>
+      <div class="gb" style="flex:1;min-height:0"><span class="gbt">Session frames</span>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column">
+          <sc-for list="{{ gallery }}" as="g" hint-placeholder-count="15">
+            <div class="r2"><span class="v2">{{ g.call }}</span><span class="mini" style="border:0;padding:0">{{ g.mode }}</span><span class="mono" style="font-size:9.5px;color:color-mix(in srgb,var(--color-text) 50%,transparent)">{{ g.meta }}</span></div>
+          </sc-for>
+        </div>
+      </div>
+      <div class="gb"><span class="gbt">Macros</span>
+        <div style="display:flex;flex-wrap:wrap;gap:3px">
+          <span class="mini">F1 SAVE+LOG</span><span class="mini">F2 COPY TX</span><span class="mini">F3 RESYNC</span>
+          <span class="mini">F4 ABORT</span><span class="mini">F5 CALL CQ</span><span class="mini">F6 QSL</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isTx2 }}">
+  <div style="flex:1;display:grid;grid-template-columns:236px 1fr 312px;gap:9px;padding:11px 9px 8px;min-height:0">
+    <div style="display:flex;flex-direction:column;gap:11px;min-height:0">
+      <div class="gb"><span class="gbt">TX mode</span>
+        <div class="seg" style="width:100%;margin-bottom:2px">
+          <label class="seg-opt" style="flex:1;justify-content:center;padding:3px 6px;font-size:11px"><input type="radio" name="b-txmd" checked><span>Auto</span></label>
+          <label class="seg-opt" style="flex:1;justify-content:center;padding:3px 6px;font-size:11px"><input type="radio" name="b-txmd"><span>Manual</span></label>
+        </div>
+        <div class="r2"><span class="lbl">Auto picks</span><span class="v2">match last RX</span></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:2px;padding-top:2px">
+          <sc-for list="{{ modes }}" as="m" hint-placeholder-count="16">
+            <span class="mini" style="display:flex;justify-content:center">{{ m }}</span>
+          </sc-for>
+        </div>
+        <select class="input" style="min-height:26px;height:26px;padding:0 6px;font-size:12px;margin-top:3px">
+          <sc-for list="{{ allModes }}" as="a" hint-placeholder-count="30">
+            <option>{{ a }}</option>
+          </sc-for>
+        </select>
+        <div class="r2" style="padding-top:3px"><span class="lbl">Selected</span><span class="v2" style="color:var(--color-accent-700)">PD120</span></div>
+        <div class="r2"><span class="lbl">Duration</span><span class="v2">126.0 s</span></div>
+        <div class="r2"><span class="lbl">Geometry</span><span class="v2">640×496</span></div>
+        <div class="r2"><span class="lbl">VOX tone</span><span class="v2">1900 Hz · 0.5 s</span></div>
+        <div class="r2"><span class="lbl">VIS header</span><span class="v2">send</span></div>
+      </div>
+      <div class="gb"><span class="gbt">Identification</span>
+        <div class="r2"><span class="lbl">FSK ID</span><span class="v2">DL2QSK</span></div>
+        <div class="r2"><span class="lbl">CW ID</span><span class="v2">18 WPM · 800 Hz</span></div>
+        <div class="r2"><span class="lbl">Tail</span><span class="v2">CW after frame</span></div>
+      </div>
+      <div class="gb" style="flex:1;min-height:0"><span class="gbt">Output</span>
+        <div class="r2"><span class="lbl">Device</span><span class="v2">hw:2,0</span></div>
+        <div class="r2" style="flex-direction:column;align-items:stretch;gap:3px"><div style="display:flex;justify-content:space-between"><span class="lbl">Drive</span><span class="v2">−6.0 dBFS</span></div><div class="trk" style="height:6px"><i style="width:74%"></i><b style="left:74%"></b></div></div>
+        <div class="r2"><span class="lbl">ALC</span><span class="v2" style="color:var(--color-accent-700)">clear</span></div>
+        <div class="r2"><span class="lbl">Power / SWR</span><span class="v2">40 W · 1.3</span></div>
+        <div class="r2"><span class="lbl">Tune drive</span><div class="trk" style="width:70px;height:6px"><i style="width:40%"></i><b style="left:40%"></b></div><span class="v2">25 W</span></div>
+        <div class="r2"><span class="lbl">Tone map</span><span class="v2">1500–2300 Hz</span></div>
+        <div class="r2"><span class="lbl">TX clock</span><span class="v2">48 000.12 Hz</span></div>
+        <div class="r2"><span class="lbl">Monitor audio</span><span class="v2">off</span></div>
+        <div class="r2"><span class="lbl">Occupied BW</span><span class="v2">2.31 kHz</span></div>
+        <div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:3px;padding-top:5px">
+          <span class="mini" style="border:0;padding:0;color:var(--color-accent-700);letter-spacing:.14em">POWER / ALC METER</span>
+          <div class="ph-fill" style="flex:1;min-height:18px;border:1px solid var(--color-divider)"></div>
+        </div>
+      </div>
+      <div class="gb"><span class="gbt">Outgoing metadata</span>
+        <span class="mini" style="border:0;padding:0;color:var(--color-accent-700);letter-spacing:.14em">IN THE SIGNAL</span>
+        <div class="r2"><span class="lbl">VIS code</span><span class="v2">95 · PD120</span></div>
+        <div class="r2"><span class="lbl">FSK ID</span><span class="v2">DL2QSK</span></div>
+        <div class="r2"><span class="lbl">CW ID</span><span class="v2">DL2QSK · 18 WPM</span></div>
+        <span class="mini" style="border:0;padding:0;color:var(--color-accent-700);letter-spacing:.14em;padding-top:3px">BURNED INTO THE PICTURE</span>
+        <div class="r2"><span class="lbl">Callsign</span><span class="v2">DL2QSK</span></div>
+        <div class="r2"><span class="lbl">To station</span><span class="v2">EA7KDT</span></div>
+        <div class="r2"><span class="lbl">Grid / beam</span><span class="v2">JO31 · 212°</span></div>
+        <div class="r2"><span class="lbl">Report</span><span class="v2">RSV 595</span></div>
+        <div class="r2"><span class="lbl">Freq / mode</span><span class="v2">14.230 · PD120</span></div>
+        <div class="r2"><span class="lbl">Date / UTC</span><span class="v2">05 AUG · 14:24Z</span></div>
+      </div>
+    </div>
+
+    <div class="gb blueprint" style="padding:11px 8px 7px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <span class="gbt">Editor — outgoing frame · 640×496 · PD120</span>
+      <div style="display:flex;align-items:center;gap:3px;padding-bottom:5px">
+        <span class="mini" style="background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)">MOVE</span>
+        <span class="mini">CROP</span><span class="mini">SCALE</span><span class="mini">ROTATE</span><span class="mini">TEXT</span>
+        <span class="mini">BOX</span><span class="mini">LINE</span><span class="mini">MASK</span><span class="mini">PICK</span>
+        <span style="width:1px;height:16px;background:var(--color-divider);margin:0 3px"></span>
+        <span class="mini">UNDO</span><span class="mini">REDO</span><span class="mini">FIT</span><span class="mini">100%</span>
+        <span style="margin-left:auto;display:flex;gap:3px"><span class="mini">SNAP GRID</span><span class="mini">SAFE AREA</span><span class="mini">640×496</span></span>
+      </div>
+      <div style="flex:1;display:flex;gap:8px;min-height:0">
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px">
+          <div style="flex:1;position:relative;border:1px solid var(--color-divider);background:var(--color-neutral-200);display:grid;place-items:center;min-height:0">
+            <div class="ph-fill" style="position:absolute;inset:0"></div>
+            <span class="mono" style="position:relative;font-size:12px;color:color-mix(in srgb,var(--color-text) 55%,transparent);text-align:center">image placeholder<br>drop file, paste, or capture from camera</span>
+            <div style="position:absolute;inset:14px;border:1px dashed color-mix(in srgb,var(--color-accent) 55%,transparent)"></div>
+            <div style="position:absolute;left:10px;top:10px;padding:3px 8px;border:1px solid var(--color-accent);background:color-mix(in srgb,var(--color-bg) 80%,transparent)"><span class="mono" style="font-size:14px;letter-spacing:.06em">DL2QSK</span></div>
+            <div style="position:absolute;right:10px;bottom:10px;padding:2px 7px;border:1px solid var(--color-accent);background:color-mix(in srgb,var(--color-bg) 80%,transparent)"><span class="mono" style="font-size:11px">EA7KDT · RSV 595 · 14.230 USB</span></div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px 12px">
+            <div class="r2"><span class="lbl">Brightness</span><div class="trk" style="width:70px"><i style="width:50%"></i><b style="left:50%"></b></div><span class="v2">0</span></div>
+            <div class="r2"><span class="lbl">Contrast</span><div class="trk" style="width:70px"><i style="width:58%"></i><b style="left:58%"></b></div><span class="v2">+8</span></div>
+            <div class="r2"><span class="lbl">Saturation</span><div class="trk" style="width:70px"><i style="width:54%"></i><b style="left:54%"></b></div><span class="v2">+4</span></div>
+            <div class="r2"><span class="lbl">Gamma</span><div class="trk" style="width:70px"><i style="width:50%"></i><b style="left:50%"></b></div><span class="v2">1.00</span></div>
+            <div class="r2"><span class="lbl">Sharpen</span><div class="trk" style="width:70px"><i style="width:30%"></i><b style="left:30%"></b></div><span class="v2">0.3</span></div>
+            <div class="r2"><span class="lbl">Denoise</span><div class="trk" style="width:70px"><i style="width:20%"></i><b style="left:20%"></b></div><span class="v2">0.2</span></div>
+          </div>
+        </div>
+        <div style="width:186px;display:flex;flex-direction:column;gap:6px;min-height:0">
+          <div class="gb" style="padding:10px 6px 5px;gap:2px"><span class="gbt">Insert field</span>
+            <div style="display:flex;flex-wrap:wrap;gap:3px">
+              <sc-for list="{{ fields }}" as="f" hint-placeholder-count="12">
+                <span class="mini" title="{{ f.val }}">{{ f.tok }}</span>
+              </sc-for>
+            </div>
+            <div class="r2" style="padding-top:3px"><span class="lbl">Source</span><span class="v2">last RX + station</span></div>
+            <div style="display:flex;gap:3px;padding-top:2px">
+              <button class="btn btn-secondary" style="height:21px;font-size:10.5px;padding:0 6px;flex:1">Fill all</button>
+              <button class="btn btn-secondary" style="height:21px;font-size:10.5px;padding:0 6px;flex:1">Clear</button>
+            </div>
+          </div>
+          <div class="gb" style="padding:10px 6px 5px;gap:2px"><span class="gbt">Text style</span>
+            <div class="r2"><span class="lbl">Font / size</span><span class="v2">Cond · 28 px</span></div>
+            <div class="r2"><span class="lbl">Fill / stroke</span><span class="v2">paper · ink 2 px</span></div>
+            <div class="r2"><span class="lbl">Plate</span><span class="v2">80% panel</span></div>
+          </div>
+          <div class="gb" style="flex:1;min-height:0;padding:10px 6px 5px;gap:3px"><span class="gbt">Saved templates</span>
+            <div style="flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:min-content;gap:5px">
+              <sc-for list="{{ templates }}" as="t" hint-placeholder-count="12">
+                <figure style="display:flex;flex-direction:column;border:1px solid var(--color-divider)">
+                  <div class="ph-fill" style="width:100%;aspect-ratio:4 / 3;border-bottom:1px solid var(--color-divider);position:relative"><span class="mini" style="position:absolute;left:2px;top:2px;background:var(--color-bg);font-size:8.5px;padding:0 3px">{{ t.mode }}</span></div>
+                  <figcaption style="margin:0;padding:2px 4px;display:flex;flex-direction:column">
+                    <span class="v2" style="font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.name }}</span>
+                    <span class="mono" style="font-size:8.5px;color:color-mix(in srgb,var(--color-text) 50%,transparent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.fields }}</span>
+                  </figcaption>
+                </figure>
+              </sc-for>
+            </div>
+            <div style="display:flex;gap:3px;padding-top:2px">
+              <button class="btn btn-primary" style="height:21px;font-size:10.5px;padding:0 6px;flex:1">Fill &amp; send</button>
+              <button class="btn btn-secondary" style="height:21px;font-size:10.5px;padding:0 6px;flex:1">Save current</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;padding-top:4px">
+        <button class="btn btn-primary" style="height:26px;font-size:12px;padding:0 10px">Transmit</button>
+        <button class="btn btn-secondary" style="height:26px;font-size:12px;padding:0 9px">Tune 5 s</button>
+        <button class="btn btn-secondary" style="height:26px;font-size:12px;padding:0 9px">Preview audio</button>
+        <button class="btn btn-secondary" style="height:26px;font-size:12px;padding:0 9px">Halt</button>
+        <div class="trk" style="height:6px;margin-left:6px"><i style="width:0%"></i></div>
+        <span class="v2">idle</span>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:11px;min-height:0">
+      <div class="gb"><span class="gbt">PTT</span>
+        <div class="r2"><span class="lbl">Method</span><span class="v2">CAT (rigctld)</span></div>
+        <div class="r2"><span class="lbl">TX delay</span><span class="v2">300 ms</span></div>
+        <div class="r2"><span class="lbl">Timeout</span><span class="v2">180 s</span></div>
+        <div class="r2"><span class="lbl">Inhibit</span><span class="v2">SWR &gt; 2.5</span></div>
+      </div>
+      <div class="gb"><span class="gbt">Queue</span>
+        <div class="r2"><span>1. sked_ea7kdt.png</span><span class="v2">PD120</span></div>
+        <div class="r2"><span>2. shack_02.jpg</span><span class="v2">SC1</span></div>
+        <div class="r2"><span class="lbl">Between frames</span><span class="v2">wait 20 s</span></div>
+      </div>
+      <div class="gb"><span class="gbt">Mode timing reference</span>
+        <table class="table" style="font-size:11px">
+          <thead><tr><th style="padding:2px 4px">Mode</th><th style="padding:2px 4px">Lines</th><th style="padding:2px 4px">Line ms</th><th style="padding:2px 4px">Frame</th></tr></thead>
+          <tbody>
+            <tr><td class="v2" style="padding:2px 4px">Scottie 1</td><td class="v2" style="padding:2px 4px">256</td><td class="v2" style="padding:2px 4px">428.22</td><td class="v2" style="padding:2px 4px">109.6 s</td></tr>
+            <tr><td class="v2" style="padding:2px 4px">Martin 1</td><td class="v2" style="padding:2px 4px">256</td><td class="v2" style="padding:2px 4px">446.45</td><td class="v2" style="padding:2px 4px">114.3 s</td></tr>
+            <tr><td class="v2" style="padding:2px 4px">PD120</td><td class="v2" style="padding:2px 4px">496</td><td class="v2" style="padding:2px 4px">508.48</td><td class="v2" style="padding:2px 4px">126.0 s</td></tr>
+            <tr><td class="v2" style="padding:2px 4px">PD180</td><td class="v2" style="padding:2px 4px">496</td><td class="v2" style="padding:2px 4px">754.24</td><td class="v2" style="padding:2px 4px">187.0 s</td></tr>
+            <tr><td class="v2" style="padding:2px 4px">Robot 36</td><td class="v2" style="padding:2px 4px">240</td><td class="v2" style="padding:2px 4px">150.00</td><td class="v2" style="padding:2px 4px">36.0 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="gb"><span class="gbt">TX log</span>
+        <table class="table" style="font-size:11px">
+          <thead><tr><th style="padding:2px 4px">UTC</th><th style="padding:2px 4px">Mode</th><th style="padding:2px 4px">Dur</th><th style="padding:2px 4px">Drive</th><th style="padding:2px 4px">SWR</th><th style="padding:2px 4px">Result</th></tr></thead>
+          <tbody>
+            <tr><td class="v2" style="padding:2px 4px">14:06:33</td><td class="v2" style="padding:2px 4px">CW ID</td><td class="v2" style="padding:2px 4px">4.2 s</td><td class="v2" style="padding:2px 4px">−6.0</td><td class="v2" style="padding:2px 4px">1.3</td><td class="v2" style="padding:2px 4px">ok</td></tr>
+            <tr><td class="v2" style="padding:2px 4px">14:04:12</td><td class="v2" style="padding:2px 4px">PD120</td><td class="v2" style="padding:2px 4px">126.0</td><td class="v2" style="padding:2px 4px">−6.0</td><td class="v2" style="padding:2px 4px">1.3</td><td class="v2" style="padding:2px 4px">ok</td></tr>
+            <tr><td class="v2" style="padding:2px 4px">13:48:02</td><td class="v2" style="padding:2px 4px">SC1</td><td class="v2" style="padding:2px 4px">109.6</td><td class="v2" style="padding:2px 4px">−6.0</td><td class="v2" style="padding:2px 4px">1.4</td><td class="v2" style="padding:2px 4px">ok</td></tr>
+            <tr><td class="v2" style="padding:2px 4px">13:31:55</td><td class="v2" style="padding:2px 4px">PD120</td><td class="v2" style="padding:2px 4px">126.0</td><td class="v2" style="padding:2px 4px">−5.0</td><td class="v2" style="padding:2px 4px">1.6</td><td class="v2" style="padding:2px 4px">ALC hit</td></tr>
+            <tr><td class="v2" style="padding:2px 4px">13:12:40</td><td class="v2" style="padding:2px 4px">M1</td><td class="v2" style="padding:2px 4px">114.3</td><td class="v2" style="padding:2px 4px">−6.0</td><td class="v2" style="padding:2px 4px">1.3</td><td class="v2" style="padding:2px 4px">ok</td></tr>
+            <tr><td class="v2" style="padding:2px 4px">12:55:02</td><td class="v2" style="padding:2px 4px">SC1</td><td class="v2" style="padding:2px 4px">12.0</td><td class="v2" style="padding:2px 4px">−6.0</td><td class="v2" style="padding:2px 4px">2.7</td><td class="v2" style="padding:2px 4px">inhibited</td></tr>
+          </tbody>
+        </table>
+        <div class="r2" style="padding-top:4px"><span class="lbl">TX time today</span><span class="v2">18 min 42 s</span></div>
+        <div class="r2"><span class="lbl">Duty cycle</span><span class="v2">31%</span></div>
+      </div>
+      <div class="gb" style="flex:1;min-height:0"><span class="gbt">Recently sent — reuse</span>
+        <div style="flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:min-content;gap:6px">
+          <sc-for list="{{ templates }}" as="t" hint-placeholder-count="12">
+            <figure style="display:flex;flex-direction:column;border:1px solid var(--color-divider)">
+              <div class="ph-fill" style="width:100%;aspect-ratio:4 / 3;position:relative"><span class="mini" style="position:absolute;left:3px;top:3px;background:var(--color-bg);font-size:9px">{{ t.mode }}</span></div>
+              <figcaption style="margin:0;padding:2px 4px;border-top:1px solid var(--color-divider);display:flex;flex-direction:column">
+                <span class="v2" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.name }}</span>
+                <span class="mono" style="font-size:9px;color:color-mix(in srgb,var(--color-text) 50%,transparent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.fields }}</span>
+              </figcaption>
+            </figure>
+          </sc-for>
+        </div>
+        <div style="display:flex;gap:4px;padding-top:3px">
+          <button class="btn btn-primary" style="height:22px;font-size:11px;padding:0 8px;flex:1">Refill &amp; queue</button>
+          <button class="btn btn-secondary" style="height:22px;font-size:11px;padding:0 8px;flex:1">Open in editor</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isGal2 }}">
+  <div style="flex:1;display:grid;grid-template-columns:1fr 312px;gap:9px;padding:11px 9px 8px;min-height:0">
+    <div class="gb" style="padding:11px 8px 6px"><span class="gbt">Received — 1 284 frames</span>
+      <div style="display:flex;gap:5px;align-items:center">
+        <input class="input" style="min-height:24px;height:24px;padding:0 6px;font-size:11px;max-width:230px" placeholder="callsign, grid, mode, note…">
+        <span class="mini">ALL</span><span class="mini" style="background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)">TODAY</span>
+        <span class="mini">14 MHz</span><span class="mini">UNLOGGED</span><span class="mini">FLAGGED</span>
+        <span style="margin-left:auto;display:flex;gap:3px"><span class="mini">SORT NEWEST</span><span class="mini">SIZE M</span></span>
+      </div>
+      <div style="flex:1;display:grid;grid-template-columns:repeat(6,1fr);grid-auto-rows:1fr;gap:7px;overflow:hidden;padding-top:4px">
+        <sc-for list="{{ gallery }}" as="g" hint-placeholder-count="15">
+          <figure style="display:flex;flex-direction:column;border:1px solid var(--color-divider);min-height:0">
+            <div class="ph-fill" style="flex:1;position:relative"><span class="mini" style="position:absolute;left:4px;top:4px;background:var(--color-bg)">{{ g.mode }}</span></div>
+            <figcaption style="margin:0;padding:3px 5px;border-top:1px solid var(--color-divider);display:flex;flex-direction:column">
+              <span class="v2">{{ g.call }}</span>
+              <span class="mono" style="font-size:9.5px;color:color-mix(in srgb,var(--color-text) 50%,transparent)">{{ g.meta }}</span>
+            </figcaption>
+          </figure>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:11px;min-height:0">
+      <div class="gb" style="flex:1"><span class="gbt">Selected frame</span>
+        <div class="ph-fill" style="height:190px;border:1px solid var(--color-divider)"></div>
+        <div class="r2"><span class="lbl">File</span><span class="v2">rx_…_EA7KDT.png</span></div>
+        <div class="r2"><span class="lbl">Mode / SNR</span><span class="v2">Scottie 1 · 21.6 dB</span></div>
+        <div class="r2"><span class="lbl">Freq / time</span><span class="v2">14.230 USB · 14:20Z</span></div>
+        <div class="r2"><span class="lbl">Grid / dist</span><span class="v2">IM76 · 1 842 km</span></div>
+        <div class="r2"><span class="lbl">Log entry</span><span class="v2" style="color:var(--color-accent-700)">linked #4412</span></div>
+        <div style="display:flex;gap:4px;padding-top:4px">
+          <button class="btn btn-primary" style="height:24px;font-size:11px;padding:0 8px">Open in log</button>
+          <button class="btn btn-secondary" style="height:24px;font-size:11px;padding:0 8px">Export</button>
+          <button class="btn btn-secondary" style="height:24px;font-size:11px;padding:0 8px">Re-decode</button>
+        </div>
+      </div>
+      <div class="gb"><span class="gbt">Storage</span>
+        <div class="r2"><span class="lbl">Folder</span><span class="v2">~/sstv/rx</span></div>
+        <div class="r2"><span class="lbl">Naming</span><span class="v2">rx_%Y%m%d_%H%M_%call</span></div>
+        <div class="r2"><span class="lbl">Sidecar</span><span class="v2">JSON + EXIF</span></div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <div style="display:flex;align-items:center;gap:3px;padding:4px 8px;border-top:1px solid var(--color-divider)">
+    <span class="mini" style="background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)">RECEIVING</span>
+    <span class="mini">14.230.00 USB · M1</span>
+    <span class="mini">SCOTTIE 1</span>
+    <span class="mini">LINE 168 / 256</span>
+    <span class="mini">SNR 21.6 dB</span>
+    <span class="mini">SLANT +3.4 ppm</span>
+    <span class="mini">BUF 512 · 0 XRUN</span>
+    <span class="mini">DISK 14.2 GB</span>
+    <span class="mini" style="margin-left:auto">FRAMES TODAY 26</span>
+    <span class="mini">LOG 4412 ENTRIES</span>
+  </div>
+</div>
+</div>
+</div>
+<p class="dv-next">Try next: "make the waterfall wider than the spectrum in <a class="dv-oid" href="#2a">2a</a>" · "dark shack version of <a class="dv-oid" href="#2a">2a</a>" · "add a per-mode timing editor to <a class="dv-oid" href="#2a">2a</a>"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">SSTV operator console — three interaction models</span></div>
+
+<div class="dv-opts">
+
+<div class="dv-opt" id="1a">
+<div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Docked console — every control on the board, five workspaces, collapsible advanced sections. 1920×1080.</div>
+<div style="width:1920px;height:1080px;background:var(--color-bg);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-md)">
+
+  <header style="display:flex;align-items:center;gap:16px;padding:8px 16px;border-bottom:1px solid var(--color-divider)">
+    <span style="font-family:var(--font-heading);font-size:17px;letter-spacing:.04em">SSTV<span style="color:var(--color-accent)">/</span>CONSOLE</span>
+    <span class="chip">DL2QSK</span>
+    <div style="display:flex;gap:6px;margin-left:12px">
+      <span class="chip">RIG IC-7300</span>
+      <span class="chip">14.230.00 USB</span>
+      <span class="chip">48 000 Hz · −0.7 ppm</span>
+      <span class="chip" style="border-color:var(--color-accent);color:var(--color-accent-700)">RX ARMED</span>
+    </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <span class="val" style="color:color-mix(in srgb,var(--color-text) 55%,transparent)">14:22:07Z</span>
+      <button class="btn btn-secondary" style="height:28px">Presets</button>
+      <button class="btn btn-secondary" style="height:28px">Log</button>
+    </div>
+  </header>
+
+  <nav style="display:flex;align-items:stretch;gap:2px;padding:0 10px;border-bottom:1px solid var(--color-divider)">
+    <button class="tabbtn" onClick="{{ tabRx }}">Receive<sc-if value="{{ isRx }}" hint-placeholder-val="{{ true }}"><span class="und"></span></sc-if></button>
+    <button class="tabbtn" onClick="{{ tabTx }}">Transmit<sc-if value="{{ isTx }}"><span class="und"></span></sc-if></button>
+    <button class="tabbtn" onClick="{{ tabGal }}">Gallery<sc-if value="{{ isGal }}"><span class="und"></span></sc-if></button>
+    <button class="tabbtn" onClick="{{ tabCal }}">Calibration<sc-if value="{{ isCal }}"><span class="und"></span></sc-if></button>
+    <button class="tabbtn" onClick="{{ tabRig }}">Rig &amp; PTT<sc-if value="{{ isRig }}"><span class="und"></span></sc-if></button>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:10px;padding-right:6px">
+      <span class="lbl" style="font-size:11px">DETECTED</span>
+      <span class="tag tag-accent mono" style="font-size:11px">SCOTTIE 1 · VIS 60</span>
+      <span class="lbl" style="font-size:11px">CONF</span>
+      <span class="val" style="color:var(--color-accent-700)">98.4%</span>
+    </div>
+  </nav>
+
+  <sc-if value="{{ isRx }}" hint-placeholder-val="{{ true }}">
+  <div style="flex:1;display:grid;grid-template-columns:296px 1fr 336px;gap:14px;padding:14px 16px;min-height:0">
+
+    <div style="display:flex;flex-direction:column;gap:12px;min-height:0">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Mode <span class="mono" style="font-size:10px">MANUAL / AUTO</span></h6>
+        <div class="seg" style="width:100%">
+          <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="a-md" checked><span>Auto-detect</span></label>
+          <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="a-md"><span>Locked</span></label>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:3px">
+          <span class="chip" style="text-align:center;background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)">SC1</span>
+          <span class="chip" style="text-align:center">SC2</span>
+          <span class="chip" style="text-align:center">SCDX</span>
+          <span class="chip" style="text-align:center">M1</span>
+          <span class="chip" style="text-align:center">M2</span>
+          <span class="chip" style="text-align:center">R36</span>
+          <span class="chip" style="text-align:center">R72</span>
+          <span class="chip" style="text-align:center">PD50</span>
+          <span class="chip" style="text-align:center">PD90</span>
+          <span class="chip" style="text-align:center">PD120</span>
+          <span class="chip" style="text-align:center">PD180</span>
+          <span class="chip" style="text-align:center">SC2-180</span>
+        </div>
+        <div class="row"><span class="lbl">Line time</span><span class="val">138.240 ms</span></div>
+        <div class="row"><span class="lbl">Lines / geometry</span><span class="val">256 · 320×256</span></div>
+        <div class="row"><span class="lbl">Frame remaining</span><span class="val">01:12</span></div>
+      </div>
+
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Sync &amp; slant</h6>
+        <div class="row"><span class="lbl">Sync source</span><span class="val">VIS + 1200 Hz</span></div>
+        <div class="row"><span class="lbl">Slant</span><div style="display:flex;align-items:center;gap:8px"><div class="trk" style="width:96px"><i style="width:52%"></i><b style="left:52%"></b></div><span class="val">+3.4 ppm</span></div></div>
+        <div class="row"><span class="lbl">Line offset</span>
+          <span class="stepper"><button>−</button><span>−12 px</span><button>+</button></span>
+        </div>
+        <div class="row"><span class="lbl">Auto-correct</span><span class="val" style="color:var(--color-accent-700)">ON · locked</span></div>
+        <button class="btn btn-secondary btn-block" style="height:28px">Re-sync from image edge</button>
+        <details>
+          <summary style="cursor:pointer;list-style:none;font:600 10px var(--font-heading);letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700);padding-top:4px">＋ Advanced timing</summary>
+          <div style="padding-top:6px">
+            <div class="row"><span class="lbl">Sample clock</span><span class="val">47 999.66 Hz</span></div>
+            <div class="row"><span class="lbl">Sync window</span><span class="val">±4.8 ms</span></div>
+            <div class="row"><span class="lbl">VIS threshold</span><span class="val">−26 dB</span></div>
+            <div class="row"><span class="lbl">Drop-line repair</span><span class="val">interpolate</span></div>
+          </div>
+        </details>
+      </div>
+
+      <div class="pnl blueprint" style="flex:1"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Input</h6>
+        <div class="row"><span class="lbl">Device</span><span class="val">USB Codec (hw:2,0)</span></div>
+        <div class="row" style="flex-direction:column;align-items:stretch;gap:4px">
+          <div style="display:flex;justify-content:space-between"><span class="lbl">Level L</span><span class="val">−14.2 dBFS</span></div>
+          <div class="trk" style="height:7px"><i style="width:63%"></i></div>
+          <div style="display:flex;justify-content:space-between"><span class="lbl">Level R</span><span class="val">−15.0 dBFS</span></div>
+          <div class="trk" style="height:7px"><i style="width:60%"></i></div>
+        </div>
+        <div class="row"><span class="lbl">SNR estimate</span><span class="val">21.6 dB</span></div>
+        <div class="row"><span class="lbl">Notch / narrow BPF</span><span class="val">off · 1.0–2.5 kHz</span></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-rows:1fr 214px;gap:14px;min-height:0">
+      <div class="pnl blueprint" style="padding:11px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Incoming frame — line 168 of 256
+          <span style="display:flex;gap:5px">
+            <span class="chip">FIT</span><span class="chip">1:1</span><span class="chip">2:1</span>
+          </span>
+        </h6>
+        <div style="flex:1;display:flex;gap:11px;min-height:0">
+          <div class="duotone" style="flex:1;background:var(--color-accent-900);display:block;overflow:hidden">
+            <canvas ref="{{ img1 }}" width="640" height="512" style="width:100%;height:100%;object-fit:contain"></canvas>
+          </div>
+          <div style="width:120px;display:flex;flex-direction:column;gap:6px">
+            <span class="lbl" style="font-size:10px;letter-spacing:.1em">HISTORY</span>
+            <div class="ph-fill" style="height:74px;border:1px solid var(--color-divider)"></div>
+            <div class="ph-fill" style="height:74px;border:1px solid var(--color-divider)"></div>
+            <div class="ph-fill" style="height:74px;border:1px solid var(--color-divider)"></div>
+            <button class="btn btn-secondary" style="height:26px;font-size:12px">All ▸</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;padding-top:3px">
+          <button class="btn btn-primary" style="height:30px">Save frame</button>
+          <button class="btn btn-secondary" style="height:30px">Abort</button>
+          <button class="btn btn-secondary" style="height:30px">Re-decode</button>
+          <button class="btn btn-secondary" style="height:30px">Copy to TX</button>
+          <span style="margin-left:auto;display:flex;align-items:center;gap:8px">
+            <span class="lbl">Autosave</span><span class="val" style="color:var(--color-accent-700)">ON · ~/sstv/rx</span>
+          </span>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 300px;gap:14px;min-height:0">
+        <div class="pnl blueprint" style="padding:9px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+          <h6 class="ph6">Waterfall — 1000…2600 Hz
+            <span class="mono" style="font-size:10px">SPAN 1.6 kHz · 12 s</span>
+          </h6>
+          <div style="flex:1;background:var(--color-accent-900);min-height:0;position:relative">
+            <canvas ref="{{ wf1 }}" width="900" height="140" style="width:100%;height:100%"></canvas>
+            <span class="mono" style="position:absolute;left:6px;bottom:4px;font-size:9px;color:#b5d9fd">1200</span>
+            <span class="mono" style="position:absolute;left:34%;bottom:4px;font-size:9px;color:#b5d9fd">1500</span>
+            <span class="mono" style="position:absolute;right:6px;bottom:4px;font-size:9px;color:#b5d9fd">2300</span>
+          </div>
+        </div>
+        <div class="pnl blueprint" style="padding:9px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+          <h6 class="ph6">Spectrum</h6>
+          <div style="flex:1;background:var(--color-accent-900);min-height:0">
+            <canvas ref="{{ fft1 }}" width="580" height="140" style="width:100%;height:100%"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px;min-height:0">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Frame metadata <span class="mono" style="font-size:10px">AUTO-STAMPED</span></h6>
+        <div class="row"><span class="lbl">Callsign</span><span class="val">EA7KDT</span></div>
+        <div class="row"><span class="lbl">Grid / dist</span><span class="val">IM76 · 1 842 km</span></div>
+        <div class="row"><span class="lbl">Frequency</span><span class="val">14.230.00 MHz</span></div>
+        <div class="row"><span class="lbl">Mode</span><span class="val">Scottie 1</span></div>
+        <div class="row"><span class="lbl">Started</span><span class="val">14:20:54Z</span></div>
+        <div class="row"><span class="lbl">SNR / slant</span><span class="val">21.6 dB · +3.4 ppm</span></div>
+        <div class="field" style="padding-top:4px"><label>Note appended to file</label><input class="input" style="min-height:30px;font-size:12px" value="Sked · 2nd frame"></div>
+      </div>
+
+      <div class="pnl blueprint" style="flex:1;min-height:0"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Decoder log</h6>
+        <div class="mono" style="flex:1;overflow:hidden;font-size:11px;line-height:1.75;color:color-mix(in srgb,var(--color-text) 72%,transparent);display:flex;flex-direction:column;gap:0">
+          <span>14:20:51 · listening, squelch −38 dB</span>
+          <span>14:20:54 · VIS 60 → <b style="color:var(--color-accent-700)">Scottie 1</b> (98.4%)</span>
+          <span>14:20:54 · sync locked, offset −12 px</span>
+          <span>14:21:03 · slant estimate +3.4 ppm applied</span>
+          <span>14:21:31 · 2 lines dropped, interpolated</span>
+          <span>14:21:58 · callsign OCR → EA7KDT</span>
+          <span>14:22:07 · line 168/256, SNR 21.6 dB</span>
+        </div>
+        <div style="display:flex;gap:6px"><button class="btn btn-secondary" style="height:26px;font-size:12px">Copy</button><button class="btn btn-secondary" style="height:26px;font-size:12px">Verbose</button></div>
+      </div>
+
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Unattended RX</h6>
+        <div class="row"><span class="lbl">Watch</span><span class="val">14.230 · 7.171</span></div>
+        <div class="row"><span class="lbl">Alert</span><span class="val">sound + desktop</span></div>
+        <div class="row"><span class="lbl">Session</span><span class="val">4 frames / 38 min</span></div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isTx }}">
+  <div style="flex:1;display:grid;grid-template-columns:296px 1fr 336px;gap:14px;padding:14px 16px;min-height:0">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">TX mode</h6>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:3px">
+          <span class="chip" style="text-align:center">SC1</span>
+          <span class="chip" style="text-align:center;background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)">PD120</span>
+          <span class="chip" style="text-align:center">M1</span>
+        </div>
+        <div class="row"><span class="lbl">Duration</span><span class="val">126.0 s</span></div>
+        <div class="row"><span class="lbl">Geometry</span><span class="val">640×496</span></div>
+        <div class="row"><span class="lbl">VOX tone</span><span class="val">1900 Hz · 0.5 s</span></div>
+        <div class="row"><span class="lbl">VIS header</span><span class="val">send</span></div>
+        <details><summary style="cursor:pointer;list-style:none;font:600 10px var(--font-heading);letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700);padding-top:4px">＋ Advanced encoder</summary>
+        <div style="padding-top:6px">
+          <div class="row"><span class="lbl">Sample rate</span><span class="val">48 000 Hz</span></div>
+          <div class="row"><span class="lbl">Pre-emphasis</span><span class="val">off</span></div>
+          <div class="row"><span class="lbl">Gamma</span><span class="val">1.00</span></div>
+          <div class="row"><span class="lbl">Dither</span><span class="val">TPDF −1 LSB</span></div>
+        </div></details>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Identification</h6>
+        <div class="row"><span class="lbl">FSK ID</span><span class="val">DL2QSK</span></div>
+        <div class="row"><span class="lbl">CW ID</span><span class="val">18 WPM · 800 Hz</span></div>
+        <div class="row"><span class="lbl">Tail</span><span class="val">CW after frame</span></div>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Output</h6>
+        <div class="row"><span class="lbl">Device</span><span class="val">USB Codec (hw:2,0)</span></div>
+        <div class="row" style="flex-direction:column;align-items:stretch;gap:4px">
+          <div style="display:flex;justify-content:space-between"><span class="lbl">Drive</span><span class="val">−6.0 dBFS</span></div>
+          <div class="trk" style="height:7px"><i style="width:74%"></i><b style="left:74%"></b></div>
+        </div>
+        <div class="row"><span class="lbl">ALC</span><span class="val" style="color:var(--color-accent-700)">clear</span></div>
+      </div>
+    </div>
+
+    <div class="pnl blueprint" style="padding:11px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h6 class="ph6">Compose — outgoing frame <span class="mono" style="font-size:10px">640×496 · PD120</span></h6>
+      <div style="flex:1;display:flex;gap:11px;min-height:0">
+        <div style="flex:1;position:relative;border:1px solid var(--color-divider);background:var(--color-neutral-200);display:grid;place-items:center">
+          <div class="ph-fill" style="position:absolute;inset:0"></div>
+          <span class="mono" style="position:relative;font-size:12px;color:color-mix(in srgb,var(--color-text) 55%,transparent);text-align:center">image placeholder<br>drop file, paste, or capture from camera</span>
+          <div style="position:absolute;left:12px;top:12px;padding:4px 9px;border:1px solid var(--color-accent);background:color-mix(in srgb,var(--color-bg) 78%,transparent)">
+            <span class="mono" style="font-size:15px;letter-spacing:.06em">DL2QSK</span>
+          </div>
+          <div style="position:absolute;right:12px;bottom:12px;padding:3px 8px;border:1px solid var(--color-accent);background:color-mix(in srgb,var(--color-bg) 78%,transparent)">
+            <span class="mono" style="font-size:11px">JO31 · 14.230 · 05 AUG</span>
+          </div>
+          <div style="position:absolute;left:0;right:0;top:0;height:22px;border-bottom:1px dashed color-mix(in srgb,var(--color-accent) 60%,transparent)"></div>
+        </div>
+        <div style="width:150px;display:flex;flex-direction:column;gap:6px">
+          <span class="lbl" style="font-size:10px;letter-spacing:.1em">TEMPLATE LAYERS</span>
+          <div class="row" style="border:1px solid var(--color-accent);padding:4px 6px"><span>Callsign box</span><span class="val">◉</span></div>
+          <div class="row" style="border:1px solid var(--color-divider);padding:4px 6px"><span>Grid + freq</span><span class="val">◉</span></div>
+          <div class="row" style="border:1px solid var(--color-divider);padding:4px 6px"><span>Safe-area rule</span><span class="val">◉</span></div>
+          <div class="row" style="border:1px solid var(--color-divider);padding:4px 6px;opacity:.5"><span>Station photo</span><span class="val">○</span></div>
+          <button class="btn btn-secondary" style="height:26px;font-size:12px">Load template…</button>
+          <span class="lbl" style="font-size:10px;letter-spacing:.1em;padding-top:6px">PRESETS</span>
+          <div style="display:flex;flex-wrap:wrap;gap:4px"><span class="chip">Sked</span><span class="chip">Contest</span><span class="chip">ISS</span><span class="chip">Plain</span></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding-top:4px">
+        <button class="btn btn-primary" style="height:32px">Transmit</button>
+        <button class="btn btn-secondary" style="height:32px">Tune 5 s</button>
+        <button class="btn btn-secondary" style="height:32px">Preview audio</button>
+        <div class="trk" style="height:7px;margin-left:8px"><i style="width:0%"></i></div>
+        <span class="val">idle</span>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">PTT</h6>
+        <div class="row"><span class="lbl">Method</span><span class="val">CAT (rigctld)</span></div>
+        <div class="row"><span class="lbl">TX delay</span><span class="span val">300 ms</span></div>
+        <div class="row"><span class="lbl">Timeout</span><span class="val">180 s</span></div>
+        <div class="row"><span class="lbl">Split</span><span class="val">off</span></div>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Queue</h6>
+        <div class="row"><span>1. sked_ea7kdt.png</span><span class="val">PD120</span></div>
+        <div class="row"><span>2. shack_02.jpg</span><span class="val">SC1</span></div>
+        <div class="row"><span class="lbl">Between frames</span><span class="val">wait 20 s</span></div>
+      </div>
+      <div class="pnl blueprint" style="flex:1"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">TX log</h6>
+        <div class="mono" style="font-size:11px;line-height:1.75;color:color-mix(in srgb,var(--color-text) 72%,transparent);display:flex;flex-direction:column">
+          <span>14:04:12 · PD120 sent, 126.0 s</span>
+          <span>14:06:33 · CW ID sent</span>
+          <span>13:48:02 · SC1 sent, 109.6 s</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isGal }}">
+  <div style="flex:1;display:grid;grid-template-columns:1fr 336px;gap:14px;padding:14px 16px;min-height:0">
+    <div class="pnl blueprint" style="padding:11px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h6 class="ph6">Received — 1 284 frames
+        <span style="display:flex;gap:5px"><span class="chip">ALL</span><span class="chip">TODAY</span><span class="chip">14 MHz</span><span class="chip">UNLOGGED</span></span>
+      </h6>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input class="input" style="min-height:30px;font-size:12px;max-width:260px" placeholder="callsign, grid, mode, note…">
+        <span class="lbl" style="font-size:11px">SORT</span><span class="chip">newest</span>
+        <span class="lbl" style="font-size:11px;margin-left:6px">SIZE</span><span class="chip">M</span>
+      </div>
+      <div style="flex:1;display:grid;grid-template-columns:repeat(5,1fr);grid-auto-rows:196px;gap:11px;overflow:hidden;padding-top:4px">
+        <sc-for list="{{ gallery }}" as="g" hint-placeholder-count="15">
+          <figure style="display:flex;flex-direction:column;border:1px solid var(--color-divider)">
+            <div class="ph-fill" style="flex:1;position:relative"><span class="chip" style="position:absolute;left:5px;top:5px;background:var(--color-bg)">{{ g.mode }}</span></div>
+            <figcaption style="margin:0;padding:5px 7px;border-top:1px solid var(--color-divider);display:flex;flex-direction:column;gap:1px">
+              <span class="val" style="font-size:12px">{{ g.call }}</span>
+              <span class="mono" style="font-size:10px;color:color-mix(in srgb,var(--color-text) 50%,transparent)">{{ g.meta }}</span>
+            </figcaption>
+          </figure>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="pnl blueprint" style="flex:1"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Selected frame</h6>
+        <div class="ph-fill" style="height:210px;border:1px solid var(--color-divider)"></div>
+        <div class="row"><span class="lbl">File</span><span class="val">rx_20260805_1420_EA7KDT.png</span></div>
+        <div class="row"><span class="lbl">Mode / SNR</span><span class="val">Scottie 1 · 21.6 dB</span></div>
+        <div class="row"><span class="lbl">Freq / time</span><span class="val">14.230 · 14:20:54Z</span></div>
+        <div class="row"><span class="lbl">Grid / dist</span><span class="val">IM76 · 1 842 km</span></div>
+        <div class="row"><span class="lbl">Log entry</span><span class="val" style="color:var(--color-accent-700)">linked #4412</span></div>
+        <div style="display:flex;gap:6px;padding-top:4px">
+          <button class="btn btn-primary" style="height:28px">Open in log</button>
+          <button class="btn btn-secondary" style="height:28px">Export</button>
+          <button class="btn btn-secondary" style="height:28px">Re-decode</button>
+        </div>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Storage</h6>
+        <div class="row"><span class="lbl">Folder</span><span class="val">~/sstv/rx</span></div>
+        <div class="row"><span class="lbl">Naming</span><span class="val">rx_%Y%m%d_%H%M_%call</span></div>
+        <div class="row"><span class="lbl">Sidecar</span><span class="val">JSON + EXIF</span></div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isCal }}">
+  <div style="flex:1;display:grid;grid-template-columns:1fr 1fr 336px;gap:14px;padding:14px 16px;min-height:0">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Audio devices</h6>
+        <div class="field"><label>Input</label><select class="input" style="min-height:32px;font-size:13px"><option>USB Codec — hw:2,0 (48 kHz)</option></select></div>
+        <div class="field"><label>Output</label><select class="input" style="min-height:32px;font-size:13px"><option>USB Codec — hw:2,0 (48 kHz)</option></select></div>
+        <div class="row"><span class="lbl">API</span><span class="val">ALSA · period 512</span></div>
+        <div class="row"><span class="lbl">Channels</span><span class="val">L only</span></div>
+        <div class="row"><span class="lbl">Latency</span><span class="val">21.3 ms</span></div>
+      </div>
+      <div class="pnl blueprint" style="flex:1"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Clock calibration</h6>
+        <div class="row"><span class="lbl">Measured RX rate</span><span class="val">47 999.66 Hz</span></div>
+        <div class="row"><span class="lbl">Measured TX rate</span><span class="val">48 000.12 Hz</span></div>
+        <div class="row"><span class="lbl">Correction</span><span class="stepper"><button>−</button><span>−0.7 ppm</span><button>+</button></span></div>
+        <div class="row"><span class="lbl">Reference</span><span class="val">WWV 10 MHz · 900 s</span></div>
+        <button class="btn btn-primary btn-block" style="height:30px">Run 15-minute calibration</button>
+        <button class="btn btn-secondary btn-block" style="height:30px">Loopback self-test</button>
+      </div>
+    </div>
+    <div class="pnl blueprint" style="padding:11px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h6 class="ph6">Calibration scope</h6>
+      <div style="flex:1;background:var(--color-accent-900);min-height:0">
+        <canvas ref="{{ fft2 }}" width="580" height="300" style="width:100%;height:100%"></canvas>
+      </div>
+      <div class="row"><span class="lbl">Test tone</span><span class="val">1900 Hz · −6 dBFS</span></div>
+      <div class="row"><span class="lbl">Measured</span><span class="val">1899.97 Hz</span></div>
+      <div class="row"><span class="lbl">THD</span><span class="val">0.41%</span></div>
+      <div style="display:flex;gap:6px"><button class="btn btn-secondary" style="height:28px">1200</button><button class="btn btn-secondary" style="height:28px">1500</button><button class="btn btn-secondary" style="height:28px">1900</button><button class="btn btn-secondary" style="height:28px">2300</button><button class="btn btn-secondary" style="height:28px">Sweep</button></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Slant reference</h6>
+        <div class="ph-fill" style="height:150px;border:1px solid var(--color-divider)"></div>
+        <div class="row"><span class="lbl">Residual slant</span><span class="val">0.2 px / frame</span></div>
+        <div class="row"><span class="lbl">Verdict</span><span class="val" style="color:var(--color-accent-700)">within tolerance</span></div>
+      </div>
+      <div class="pnl blueprint" style="flex:1"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Log</h6>
+        <div class="mono" style="font-size:11px;line-height:1.75;color:color-mix(in srgb,var(--color-text) 72%,transparent);display:flex;flex-direction:column">
+          <span>05 AUG 13:02 · cal run, −0.7 ppm</span>
+          <span>28 JUL 09:41 · cal run, −0.6 ppm</span>
+          <span>28 JUL 09:38 · device changed</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ isRig }}">
+  <div style="flex:1;display:grid;grid-template-columns:1fr 1fr 336px;gap:14px;padding:14px 16px;min-height:0">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">CAT interface</h6>
+        <div class="field"><label>Backend</label><select class="input" style="min-height:32px;font-size:13px"><option>Hamlib rigctld (network)</option></select></div>
+        <div style="display:grid;grid-template-columns:1fr 90px;gap:8px">
+          <div class="field"><label>Host</label><input class="input" style="min-height:30px;font-size:12px" value="127.0.0.1"></div>
+          <div class="field"><label>Port</label><input class="input" style="min-height:30px;font-size:12px" value="4532"></div>
+        </div>
+        <div class="row"><span class="lbl">Rig model</span><span class="val">3073 · IC-7300</span></div>
+        <div class="row"><span class="lbl">Serial / baud</span><span class="val">ttyUSB0 · 115 200</span></div>
+        <div class="row"><span class="lbl">Poll interval</span><span class="stepper"><button>−</button><span>500 ms</span><button>+</button></span></div>
+        <div class="row"><span class="lbl">Status</span><span class="val" style="color:var(--color-accent-700)">connected · 0 errors</span></div>
+      </div>
+      <div class="pnl blueprint" style="flex:1"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">PTT &amp; keying</h6>
+        <div class="seg" style="width:100%">
+          <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="a-ptt" checked><span>CAT</span></label>
+          <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="a-ptt"><span>RTS</span></label>
+          <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="a-ptt"><span>DTR</span></label>
+          <label class="seg-opt" style="flex:1;justify-content:center"><input type="radio" name="a-ptt"><span>VOX</span></label>
+        </div>
+        <div class="row"><span class="lbl">Pre-TX delay</span><span class="val">300 ms</span></div>
+        <div class="row"><span class="lbl">Post-TX hang</span><span class="val">120 ms</span></div>
+        <div class="row"><span class="lbl">TX inhibit</span><span class="val">if SWR &gt; 2.5</span></div>
+        <button class="btn btn-secondary btn-block" style="height:30px">Test PTT (1 s)</button>
+      </div>
+    </div>
+    <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h6 class="ph6">Frequency memories</h6>
+      <table class="table">
+        <thead><tr><th>Band</th><th>Frequency</th><th>Mode</th><th>Use</th></tr></thead>
+        <tbody>
+          <tr><td>20 m</td><td class="val">14.230.00</td><td>USB</td><td class="lbl">calling</td></tr>
+          <tr><td>20 m</td><td class="val">14.233.00</td><td>USB</td><td class="lbl">alt</td></tr>
+          <tr><td>40 m</td><td class="val">7.171.00</td><td>LSB</td><td class="lbl">EU evening</td></tr>
+          <tr><td>15 m</td><td class="val">21.340.00</td><td>USB</td><td class="lbl">DX</td></tr>
+          <tr><td>10 m</td><td class="val">28.680.00</td><td>USB</td><td class="lbl">openings</td></tr>
+          <tr><td>2 m</td><td class="val">145.500.00</td><td>FM</td><td class="lbl">local</td></tr>
+          <tr><td>ISS</td><td class="val">145.800.00</td><td>FM</td><td class="lbl">PD120 pass</td></tr>
+        </tbody>
+      </table>
+      <div style="display:flex;gap:6px;margin-top:auto"><button class="btn btn-primary" style="height:28px">Go to</button><button class="btn btn-secondary" style="height:28px">Add current</button><button class="btn btn-secondary" style="height:28px">Import</button></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Live rig state</h6>
+        <div class="row"><span class="lbl">VFO A</span><span class="val" style="font-size:15px">14.230.00</span></div>
+        <div class="row"><span class="lbl">Mode / width</span><span class="val">USB · 2.7 kHz</span></div>
+        <div class="row"><span class="lbl">S-meter</span><div style="display:flex;align-items:center;gap:8px"><div class="trk" style="width:110px"><i style="width:46%"></i></div><span class="val">S6</span></div></div>
+        <div class="row"><span class="lbl">SWR / PWR</span><span class="val">1.3 · 40 W</span></div>
+        <div class="row"><span class="lbl">Preamp / ATT</span><span class="val">P1 · off</span></div>
+      </div>
+      <div class="pnl blueprint" style="flex:1"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">CAT traffic</h6>
+        <div class="mono" style="font-size:11px;line-height:1.75;color:color-mix(in srgb,var(--color-text) 72%,transparent);display:flex;flex-direction:column">
+          <span>&gt; f</span><span>&lt; 14230000</span><span>&gt; m</span><span>&lt; USB 2700</span><span>&gt; t</span><span>&lt; 0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <footer style="display:flex;align-items:center;gap:14px;padding:5px 16px;border-top:1px solid var(--color-divider);font-size:11px">
+    <span class="mono">RX 14.230.00 USB</span>
+    <span class="mono">SCOTTIE 1</span>
+    <span class="mono">SNR 21.6 dB</span>
+    <span class="mono">SLANT +3.4 ppm</span>
+    <span class="mono">BUF 512 · 0 XRUN</span>
+    <span class="mono" style="margin-left:auto;color:var(--color-accent-700)">DECODING — LINE 168/256</span>
+  </footer>
+</div>
+</div>
+
+<div class="dv-opt" id="1b">
+<div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Image-first — one thin control rail, a docked command bar, and controls that open as inline popovers over the frame. Knob affordances. 1920×1080.</div>
+<div style="width:1920px;height:1080px;background:var(--color-neutral-100);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-md)">
+  <header style="display:flex;align-items:center;gap:14px;padding:9px 18px;border-bottom:1px solid var(--color-divider)">
+    <span style="font-family:var(--font-heading);font-size:17px;letter-spacing:.04em">SSTV<span style="color:var(--color-accent)">/</span>CONSOLE</span>
+    <span class="mono" style="font-size:13px">14.230.00 USB</span>
+    <span class="tag tag-accent mono" style="font-size:11px">SCOTTIE 1 · AUTO · 98.4%</span>
+    <span class="mono" style="font-size:11px;color:color-mix(in srgb,var(--color-text) 55%,transparent)">SNR 21.6 dB · SLANT +3.4 ppm · 48 000 Hz −0.7 ppm · 0 XRUN</span>
+    <div style="margin-left:auto;display:flex;gap:6px">
+      <span class="chip" style="border-color:var(--color-accent);color:var(--color-accent-700)">RECEIVING</span>
+      <span class="chip">14:22:07Z</span>
+    </div>
+  </header>
+
+  <div style="flex:1;display:flex;min-height:0">
+    <div style="width:64px;border-right:1px solid var(--color-divider);display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0">
+      <sc-for list="{{ rail }}" as="r" hint-placeholder-count="7">
+        <div style="width:46px;height:46px;border:1px solid var(--color-divider);display:grid;place-items:center;font:600 10px var(--font-heading);letter-spacing:.04em">{{ r }}</div>
+      </sc-for>
+    </div>
+
+    <div style="flex:1;position:relative;background:var(--color-accent-900);min-height:0;display:grid;place-items:center">
+      <div class="duotone" style="width:100%;height:100%">
+        <canvas ref="{{ img2 }}" width="640" height="512" style="width:100%;height:100%;object-fit:contain"></canvas>
+      </div>
+
+      <div style="position:absolute;left:26px;top:26px;display:flex;flex-direction:column;gap:5px">
+        <span class="chip" style="background:color-mix(in srgb,#1d2d3d 62%,transparent);color:#eef6ff;border-color:rgba(238,246,255,.4)">EA7KDT · IM76 · 1 842 km</span>
+        <span class="chip" style="background:color-mix(in srgb,#1d2d3d 62%,transparent);color:#eef6ff;border-color:rgba(238,246,255,.4)">LINE 168 / 256 · 01:12 LEFT</span>
+      </div>
+
+      <div class="blueprint" style="position:absolute;right:26px;top:26px;width:318px;background:var(--color-bg);box-shadow:var(--shadow-lg);padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Sync &amp; slant <span class="mono" style="font-size:10px">POPOVER</span></h6>
+        <div style="display:flex;gap:16px;align-items:flex-start">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+            <div class="knob"><i style="transform:rotate(34deg)"></i><span class="mono" style="font-size:10px">3.4</span></div>
+            <span class="lbl" style="font-size:10px">SLANT ppm</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:5px">
+            <div class="knob"><i style="transform:rotate(-58deg)"></i><span class="mono" style="font-size:10px">−12</span></div>
+            <span class="lbl" style="font-size:10px">OFFSET px</span>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+            <button class="btn btn-primary" style="height:28px;width:100%">Auto-fit edges</button>
+            <button class="btn btn-secondary" style="height:28px;width:100%">Reset</button>
+            <span class="lbl" style="font-size:10px">Fine: ⇧+drag on image</span>
+          </div>
+        </div>
+        <div class="row"><span class="lbl">Lock</span><span class="val" style="color:var(--color-accent-700)">held 41 s</span></div>
+        <details><summary style="cursor:pointer;list-style:none;font:600 10px var(--font-heading);letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700)">＋ Advanced</summary>
+          <div style="padding-top:6px">
+            <div class="row"><span class="lbl">Sync window</span><span class="val">±4.8 ms</span></div>
+            <div class="row"><span class="lbl">VIS threshold</span><span class="val">−26 dB</span></div>
+            <div class="row"><span class="lbl">Drop-line repair</span><span class="val">interpolate</span></div>
+          </div>
+        </details>
+      </div>
+
+      <div style="position:absolute;left:26px;bottom:26px;right:26px;display:flex;align-items:flex-end;gap:14px">
+        <div class="blueprint" style="width:520px;height:132px;background:color-mix(in srgb,#1d2d3d 78%,transparent);padding:6px">
+          <i class="corner tl" style="color:rgba(238,246,255,.6)"></i><i class="corner tr" style="color:rgba(238,246,255,.6)"></i><i class="corner bl" style="color:rgba(238,246,255,.6)"></i><i class="corner br" style="color:rgba(238,246,255,.6)"></i>
+          <canvas ref="{{ wf2 }}" width="900" height="240" style="width:100%;height:100%"></canvas>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <span class="chip" style="background:color-mix(in srgb,#1d2d3d 62%,transparent);color:#eef6ff;border-color:rgba(238,246,255,.4)">WATERFALL 1000–2600 Hz</span>
+          <span class="chip" style="background:color-mix(in srgb,#1d2d3d 62%,transparent);color:#eef6ff;border-color:rgba(238,246,255,.4)">CLICK TO RETUNE</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;padding:10px 18px;border-top:1px solid var(--color-divider);background:var(--color-bg)">
+    <button class="btn btn-primary" style="height:34px">Save frame</button>
+    <button class="btn btn-secondary" style="height:34px">Abort</button>
+    <button class="btn btn-secondary" style="height:34px">Copy to TX</button>
+    <span style="width:1px;height:26px;background:var(--color-divider);margin:0 6px"></span>
+    <span style="display:flex;align-items:center;gap:7px"><span class="lbl" style="font-size:11px">MODE</span><span class="chip" style="border-color:var(--color-accent)">SCOTTIE 1 ▾</span></span>
+    <span style="display:flex;align-items:center;gap:7px"><span class="lbl" style="font-size:11px">SYNC</span><span class="chip" style="background:var(--color-accent-100)">+3.4 ppm ▾</span></span>
+    <span style="display:flex;align-items:center;gap:7px"><span class="lbl" style="font-size:11px">INPUT</span><span class="chip">−14.2 dBFS ▾</span></span>
+    <span style="display:flex;align-items:center;gap:7px"><span class="lbl" style="font-size:11px">RIG</span><span class="chip">IC-7300 ▾</span></span>
+    <span style="display:flex;align-items:center;gap:7px"><span class="lbl" style="font-size:11px">AUTOSAVE</span><span class="chip" style="color:var(--color-accent-700)">ON ▾</span></span>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:10px">
+      <span class="lbl" style="font-size:11px">FRAME</span>
+      <div class="trk" style="width:220px;height:6px"><i style="width:66%"></i></div>
+      <span class="val">168 / 256</span>
+    </span>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="1c">
+<div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Control affordances and density steps — the parts both layouts are built from, side by side.</div>
+<div style="width:1100px;background:var(--color-bg);padding:26px 28px;display:flex;flex-direction:column;gap:24px;box-shadow:var(--shadow-md)">
+  <div>
+    <h4 style="margin:0 0 3px">Affordance for one value: slant correction, ±10 ppm</h4>
+    <p class="text-muted" style="font-size:12px;margin:0 0 14px">Same parameter, four ways. Numeric entry wins for keyboard operators; the knob reads faster at a glance; the slider is the compromise.</p>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Knob</h6>
+        <div style="display:flex;align-items:center;gap:12px;padding:6px 0">
+          <div class="knob" style="width:60px;height:60px"><i style="height:19px;transform-origin:50% 25px;transform:rotate(34deg)"></i><span class="mono" style="font-size:12px">+3.4</span></div>
+          <span class="lbl" style="font-size:11px">drag or scroll<br>⇧ = ×0.1</span>
+        </div>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Slider</h6>
+        <div style="padding:14px 0 6px"><div class="trk"><i style="width:67%"></i><b style="left:67%"></b></div></div>
+        <div style="display:flex;justify-content:space-between"><span class="mono" style="font-size:10px">−10</span><span class="val">+3.4</span><span class="mono" style="font-size:10px">+10</span></div>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Numeric</h6>
+        <div style="padding:10px 0"><span class="stepper" style="width:100%"><button>−</button><span style="flex:1">+3.400</span><button>+</button></span></div>
+        <span class="lbl" style="font-size:11px">type, ↑↓, or paste</span>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Preset + trim</h6>
+        <div style="display:flex;gap:4px;padding:8px 0"><span class="chip">0</span><span class="chip" style="background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)">+3.4</span><span class="chip">last</span></div>
+        <div class="trk" style="height:3px"><i style="width:67%"></i></div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h4 style="margin:0 0 3px">Density steps for the same panel</h4>
+    <p class="text-muted" style="font-size:12px;margin:0 0 14px">Compact is the default in <a class="dv-oid" href="#1a">1a</a>; comfortable suits a laptop screen; expanded is what an advanced section opens into.</p>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start">
+      <div class="pnl blueprint" style="gap:3px;padding:7px 9px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Compact · 12 px</h6>
+        <div class="row" style="font-size:11px;padding:1px 0"><span class="lbl">Mode</span><span class="val" style="font-size:11px">Scottie 1</span></div>
+        <div class="row" style="font-size:11px;padding:1px 0"><span class="lbl">VIS</span><span class="val" style="font-size:11px">60</span></div>
+        <div class="row" style="font-size:11px;padding:1px 0"><span class="lbl">Line</span><span class="val" style="font-size:11px">138.240 ms</span></div>
+        <div class="row" style="font-size:11px;padding:1px 0"><span class="lbl">Slant</span><span class="val" style="font-size:11px">+3.4 ppm</span></div>
+        <div class="row" style="font-size:11px;padding:1px 0"><span class="lbl">SNR</span><span class="val" style="font-size:11px">21.6 dB</span></div>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Comfortable · 14 px</h6>
+        <div class="row" style="font-size:13px;padding:4px 0"><span class="lbl">Mode</span><span class="val" style="font-size:13px">Scottie 1</span></div>
+        <div class="row" style="font-size:13px;padding:4px 0"><span class="lbl">VIS code</span><span class="val" style="font-size:13px">60</span></div>
+        <div class="row" style="font-size:13px;padding:4px 0"><span class="lbl">Line time</span><span class="val" style="font-size:13px">138.240 ms</span></div>
+        <div class="row" style="font-size:13px;padding:4px 0"><span class="lbl">Slant</span><span class="val" style="font-size:13px">+3.4 ppm</span></div>
+        <div class="row" style="font-size:13px;padding:4px 0"><span class="lbl">SNR</span><span class="val" style="font-size:13px">21.6 dB</span></div>
+      </div>
+      <div class="pnl blueprint" style="gap:10px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Expanded · with controls</h6>
+        <div class="field"><label>Mode</label><select class="input" style="min-height:32px;font-size:13px"><option>Scottie 1 — VIS 60</option></select></div>
+        <div class="field"><label>Slant correction (ppm)</label><span class="stepper" style="width:100%"><button>−</button><span style="flex:1">+3.400</span><button>+</button></span></div>
+        <div class="field"><label>Line offset (px)</label><span class="stepper" style="width:100%"><button>−</button><span style="flex:1">−12</span><button>+</button></span></div>
+        <label class="radio"><input type="radio" name="c-auto" checked><span class="dot"></span>Auto-correct while receiving</label>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h4 style="margin:0 0 3px">Where a setting lives</h4>
+    <p class="text-muted" style="font-size:12px;margin:0 0 14px">The rule behind the two layouts: nothing that changes mid-QSO is ever behind a modal.</p>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Docked panel</h6>
+        <p class="card-body" style="font-size:12px">Always visible, always live. Mode, sync, slant, input level, autosave. Never scrolls away.</p>
+        <span class="tag tag-accent">mid-QSO</span>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Inline popover</h6>
+        <p class="card-body" style="font-size:12px">Opens over the frame from the command bar, dismisses on Esc, keeps decoding visible behind it.</p>
+        <span class="tag tag-accent-2">occasional</span>
+      </div>
+      <div class="pnl blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 class="ph6">Modal / workspace</h6>
+        <p class="card-body" style="font-size:12px">Calibration runs, device changes, template editing, rig backend setup. Blocking is acceptable here.</p>
+        <span class="tag tag-neutral">setup only</span>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+</div>
+
+<p class="dv-next">Try next: "keep <a class="dv-oid" href="#1a">1a</a> but move the waterfall full-width under the image" · "dark shack version of <a class="dv-oid" href="#1b">1b</a>" · "build out the Transmit workspace in <a class="dv-oid" href="#1b">1b</a>'s model"</p>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:2020,&quot;height&quot;:1400}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tab: 'rx', tab2: 'rx' };
+    this.img3 = React.createRef();
+    this.wf3 = React.createRef();
+    this.fft3 = React.createRef();
+    this.img1 = React.createRef();
+    this.img2 = React.createRef();
+    this.wf1 = React.createRef();
+    this.wf2 = React.createRef();
+    this.fft1 = React.createRef();
+    this.fft2 = React.createRef();
+    this.t = 0;
+    this.tick = this.tick.bind(this);
+  }
+
+  componentDidMount() { this.raf = requestAnimationFrame(this.tick); }
+  componentWillUnmount() { cancelAnimationFrame(this.raf); }
+
+  tick() {
+    this.t += 1;
+    const lines = 256;
+    const prog = Math.floor((this.t * 0.9) % (lines + 60));
+    [this.img1, this.img2, this.img3].forEach(r => this.drawFrame(r.current, Math.min(prog, lines)));
+    [this.wf1, this.wf2, this.wf3].forEach(r => this.drawWaterfall(r.current));
+    [this.fft1, this.fft2, this.fft3].forEach(r => this.drawSpectrum(r.current));
+    this.raf = requestAnimationFrame(this.tick);
+  }
+
+  // deterministic pseudo-noise
+  n(x) { const s = Math.sin(x * 12.9898) * 43758.5453; return s - Math.floor(s); }
+
+  drawFrame(cv, rows) {
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const w = cv.width, h = cv.height, total = 256, scale = h / total;
+    ctx.fillStyle = '#12202c';
+    ctx.fillRect(0, 0, w, h);
+    for (let y = 0; y < rows; y++) {
+      const jitter = (this.n(y * 3.7) - 0.5) * 5;
+      const glitch = this.n(y * 8.1) > 0.985;
+      const yy = y * scale;
+      if (glitch) {
+        ctx.fillStyle = '#8fa7bd';
+        ctx.fillRect(0, yy, w, scale + 1);
+        continue;
+      }
+      let g;
+      if (y < 118) { // sky
+        const k = y / 118;
+        g = ctx.createLinearGradient(0, 0, w, 0);
+        g.addColorStop(0, 'rgb(' + Math.round(96 + k * 90) + ',' + Math.round(140 + k * 70) + ',' + Math.round(186 + k * 40) + ')');
+        g.addColorStop(1, 'rgb(' + Math.round(122 + k * 80) + ',' + Math.round(160 + k * 60) + ',' + Math.round(198 + k * 35) + ')');
+      } else if (y < 150) { // ridge
+        g = 'rgb(' + Math.round(58 + (y - 118)) + ',' + Math.round(72 + (y - 118)) + ',' + Math.round(84 + (y - 118) * 1.2) + ')';
+      } else { // water
+        const k = (y - 150) / 106;
+        g = 'rgb(' + Math.round(38 + k * 26) + ',' + Math.round(66 + k * 34) + ',' + Math.round(96 + k * 44) + ')';
+      }
+      ctx.fillStyle = g;
+      ctx.fillRect(jitter, yy, w, scale + 1);
+      if (y >= 150 && this.n(y * 5.3) > 0.72) {
+        ctx.fillStyle = 'rgba(210,232,255,0.20)';
+        ctx.fillRect(jitter + w * this.n(y * 2.1) * 0.6, yy, w * 0.28, Math.max(1, scale * 0.6));
+      }
+      if (y >= 118 && y < 150) { // ridge silhouette top edge
+        ctx.fillStyle = 'rgba(255,255,255,0.05)';
+        ctx.fillRect(0, yy, w, 1);
+      }
+    }
+    // sun
+    if (rows > 70) {
+      ctx.fillStyle = 'rgba(255,247,224,0.85)';
+      ctx.beginPath();
+      ctx.arc(w * 0.72, 62 * scale, 20, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // callsign burned into the received image
+    if (rows > 210) {
+      ctx.font = '600 20px ui-monospace, Menlo, monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillText('EA7KDT', 18, h - 22);
+    }
+    // scan cursor + undecoded region
+    if (rows < total) {
+      const yy = rows * scale;
+      ctx.fillStyle = 'rgba(20,32,44,0.94)';
+      ctx.fillRect(0, yy, w, h - yy);
+      for (let i = 0; i < 260; i++) {
+        const px = this.n(i * 1.7 + this.t * 0.13) * w;
+        const py = yy + this.n(i * 3.3 + this.t * 0.09) * (h - yy);
+        ctx.fillStyle = 'rgba(149,188,227,0.16)';
+        ctx.fillRect(px, py, 2, 1);
+      }
+      ctx.fillStyle = '#b5d9fd';
+      ctx.fillRect(0, yy, w, 2);
+    }
+  }
+
+  wfColor(v) {
+    // accent-900 -> accent-500 -> accent-200
+    const stops = [[29, 45, 61], [65, 97, 128], [116, 157, 196], [214, 235, 255]];
+    const k = Math.max(0, Math.min(0.999, v)) * 3;
+    const i = Math.floor(k), f = k - i;
+    const a = stops[i], b = stops[i + 1];
+    return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * f) + ',' + Math.round(a[1] + (b[1] - a[1]) * f) + ',' + Math.round(a[2] + (b[2] - a[2]) * f) + ')';
+  }
+
+  drawWaterfall(cv) {
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const w = cv.width, h = cv.height, bins = 150, bw = w / bins;
+    ctx.drawImage(cv, 0, 2);
+    for (let i = 0; i < bins; i++) {
+      const f = i / bins;
+      let v = 0.06 + this.n(i * 1.9 + this.t * 0.7) * 0.10;
+      // sstv video band 1500-2300 Hz occupies most of the span
+      if (f > 0.30 && f < 0.83) v += 0.30 + 0.34 * Math.abs(Math.sin(this.t * 0.06 + f * 7.5));
+      // 1200 Hz sync pulse
+      if (f > 0.10 && f < 0.14) v += (this.t % 6 < 3) ? 0.72 : 0.18;
+      ctx.fillStyle = this.wfColor(v);
+      ctx.fillRect(i * bw, 0, bw + 1, 2);
+    }
+  }
+
+  drawSpectrum(cv) {
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const w = cv.width, h = cv.height;
+    ctx.fillStyle = '#1d2d3d';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(181,217,253,0.16)';
+    ctx.lineWidth = 1;
+    for (let g = 1; g < 5; g++) {
+      ctx.beginPath(); ctx.moveTo(0, h * g / 5); ctx.lineTo(w, h * g / 5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(w * g / 5, 0); ctx.lineTo(w * g / 5, h); ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let x = 0; x <= w; x += 3) {
+      const f = x / w;
+      let v = 0.08 + this.n(x * 0.31 + this.t * 0.6) * 0.07;
+      if (f > 0.30 && f < 0.83) v += 0.34 + 0.26 * Math.sin(this.t * 0.07 + f * 9);
+      if (f > 0.10 && f < 0.14) v += (this.t % 6 < 3) ? 0.62 : 0.1;
+      ctx.lineTo(x, h - v * h * 0.92);
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(116,157,196,0.55)';
+    ctx.fill();
+    ctx.strokeStyle = '#d6ebff';
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(238,246,255,0.45)';
+    [0.12, 0.30, 0.83].forEach(f => {
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(w * f, 0); ctx.lineTo(w * f, h); ctx.stroke();
+      ctx.setLineDash([]);
+    });
+  }
+
+  renderVals() {
+    const t = this.state.tab, u = this.state.tab2;
+    const set = v => () => this.setState({ tab: v });
+    const set2 = v => () => this.setState({ tab2: v });
+    return {
+      isRx: t === 'rx', isTx: t === 'tx', isGal: t === 'gal', isCal: t === 'cal', isRig: t === 'rig',
+      tabRx: set('rx'), tabTx: set('tx'), tabGal: set('gal'), tabCal: set('cal'), tabRig: set('rig'),
+      isRx2: u === 'rx', isTx2: u === 'tx', isGal2: u === 'gal', isCal2: u === 'cal', isRig2: u === 'rig',
+      tab2Rx: set2('rx'), tab2Tx: set2('tx'), tab2Gal: set2('gal'), tab2Cal: set2('cal'), tab2Rig: set2('rig'),
+      img3: this.img3, wf3: this.wf3, fft3: this.fft3,
+      modes: ['SC1', 'SC2', 'SCDX', 'M1', 'M2', 'M3', 'M4', 'R36', 'R72', 'PD50', 'PD90', 'PD120', 'PD160', 'PD180', 'PD290', 'SC2-180'],
+      allModes: ['Scottie 1 — VIS 60 · 109.6 s', 'Scottie 2 — VIS 56 · 71.1 s', 'Scottie DX — VIS 76 · 269.6 s',
+        'Martin 1 — VIS 44 · 114.3 s', 'Martin 2 — VIS 40 · 58.0 s', 'Martin 3 — VIS 36 · 57.3 s', 'Martin 4 — VIS 32 · 29.0 s',
+        'Robot 24 — VIS 4 · 24.0 s', 'Robot 36 — VIS 8 · 36.0 s', 'Robot 72 — VIS 12 · 72.0 s',
+        'PD50 — VIS 93 · 50.0 s', 'PD90 — VIS 99 · 90.0 s', 'PD120 — VIS 95 · 126.0 s', 'PD160 — VIS 98 · 161.0 s',
+        'PD180 — VIS 96 · 187.0 s', 'PD240 — VIS 97 · 248.0 s', 'PD290 — VIS 94 · 289.0 s',
+        'Wraase SC2-30 — VIS 51 · 30.0 s', 'Wraase SC2-60 — VIS 59 · 60.0 s', 'Wraase SC2-120 — VIS 63 · 120.0 s', 'Wraase SC2-180 — VIS 55 · 182.0 s',
+        'P3 — VIS 113 · 203.0 s', 'P5 — VIS 114 · 305.0 s', 'P7 — VIS 115 · 406.0 s',
+        'MP73 — VIS 37 · 73.0 s', 'MP115 — VIS 41 · 115.0 s', 'MP140 — VIS 46 · 140.0 s', 'MP175 — VIS 42 · 175.0 s',
+        'AVT 90 — VIS 68 · 90.0 s', 'FAX480 — VIS 85 · 291.0 s'],
+      templates: [
+        { name: 'Sked · portrait', mode: 'PD120', fields: 'HIS CALL · RST · UTC' },
+        { name: 'Contest strip', mode: 'SC1', fields: 'HIS CALL · SERIAL' },
+        { name: 'ISS pass', mode: 'PD120', fields: 'GRID · BEAM · UTC' },
+        { name: 'Shack photo', mode: 'M1', fields: 'MY CALL · MY NAME' },
+        { name: 'QSL card', mode: 'PD180', fields: 'HIS CALL · FREQ · DATE' },
+        { name: 'Plain frame', mode: 'SC2', fields: 'MY CALL' },
+        { name: 'Sked · landscape', mode: 'PD120', fields: 'HIS CALL · RST' },
+        { name: 'Antenna shot', mode: 'PD90', fields: 'MY CALL · GRID' },
+        { name: 'Field day', mode: 'M1', fields: 'HIS CALL · UTC' },
+        { name: 'Test pattern', mode: 'R36', fields: 'MODE · FREQ' },
+        { name: 'Greeting card', mode: 'PD180', fields: 'HIS CALL · MY NAME' },
+        { name: 'DX report', mode: 'SCDX', fields: 'HIS CALL · DIST' }
+      ],
+      fields: [
+        { tok: 'HIS CALL', val: 'EA7KDT' }, { tok: 'HIS GRID', val: 'IM76' }, { tok: 'HIS RSV', val: '595' },
+        { tok: 'MY CALL', val: 'DL2QSK' }, { tok: 'MY GRID', val: 'JO31' }, { tok: 'MY NAME', val: 'Jan' },
+        { tok: 'FREQ', val: '14.230 USB' }, { tok: 'MODE', val: 'PD120' }, { tok: 'UTC', val: '14:24Z' },
+        { tok: 'DATE', val: '05 AUG 2026' }, { tok: 'DIST', val: '1 842 km' }, { tok: 'BEAM', val: '212°' }
+      ],
+      recent: [
+        { call: 'I2NDT', mode: 'PD120', t: '14:02Z' },
+        { call: 'SP5QWB', mode: 'M1', t: '13:44Z' },
+        { call: 'G4XYZ', mode: 'SC2', t: '13:21Z' },
+        { call: 'OH2LK', mode: 'PD90', t: '12:58Z' },
+        { call: '—', mode: 'R36', t: '12:40Z' },
+        { call: 'F5BQP', mode: 'SC1', t: '12:11Z' }
+      ],
+      scale: ['1000', '1200', '1400', '1600', '1800', '2000', '2200', '2400', '2600'],
+      favs: [
+        { name: 'M1 · 20 m calling', slot: 'M1', label: '20 m calling', freq: '14.230.00', sb: 'USB', scan: 'yes' },
+        { name: 'M2 · 20 m alt', slot: 'M2', label: '20 m alternate', freq: '14.233.00', sb: 'USB', scan: 'yes' },
+        { name: 'M3 · 40 m EU', slot: 'M3', label: '40 m EU evening', freq: '7.171.00', sb: 'LSB', scan: 'yes' },
+        { name: 'M4 · 15 m DX', slot: 'M4', label: '15 m DX', freq: '21.340.00', sb: 'USB', scan: 'no' },
+        { name: 'M5 · 10 m', slot: 'M5', label: '10 m openings', freq: '28.680.00', sb: 'USB', scan: 'no' },
+        { name: 'M6 · 2 m local', slot: 'M6', label: '2 m local net', freq: '145.500.00', sb: 'FM', scan: 'no' },
+        { name: 'M7 · ISS pass', slot: 'M7', label: 'ISS PD120 pass', freq: '145.800.00', sb: 'FM', scan: 'sked' }
+      ],
+      decodes: [
+        { t: '14:20:54', f: '14.230 USB', m: 'Scottie 1', c: 'EA7KDT', g: 'IM76', s: '21.6', sl: '+3.4', l: '168/256', st: 'decoding' },
+        { t: '14:02:11', f: '14.230 USB', m: 'PD120', c: 'I2NDT', g: 'JN45', s: '18.1', sl: '+3.2', l: '496/496', st: 'saved' },
+        { t: '13:44:03', f: '14.233 USB', m: 'Martin 1', c: 'SP5QWB', g: 'KO02', s: '24.0', sl: '+3.5', l: '256/256', st: 'saved · logged' },
+        { t: '13:21:40', f: '14.230 USB', m: 'Scottie 2', c: 'G4XYZ', g: 'IO91', s: '12.7', sl: '+3.4', l: '256/256', st: 'saved' },
+        { t: '12:58:22', f: '21.340 USB', m: 'PD90', c: 'OH2LK', g: 'KP20', s: '19.4', sl: '+3.1', l: '256/256', st: 'saved' }
+      ],
+      rail: ['RX', 'TX', 'GAL', 'CAL', 'RIG', 'LOG', 'CFG'],
+      gallery: [
+        { call: 'EA7KDT', mode: 'SC1', meta: '14:20Z · 14.230 · 21.6 dB' },
+        { call: 'I2NDT', mode: 'PD120', meta: '14:02Z · 14.230 · 18.1 dB' },
+        { call: 'SP5QWB', mode: 'M1', meta: '13:44Z · 14.233 · 24.0 dB' },
+        { call: 'G4XYZ', mode: 'SC2', meta: '13:21Z · 14.230 · 12.7 dB' },
+        { call: 'OH2LK', mode: 'PD90', meta: '12:58Z · 21.340 · 19.4 dB' },
+        { call: 'UNKNOWN', mode: 'R36', meta: '12:40Z · 14.230 · 8.2 dB' },
+        { call: 'F5BQP', mode: 'SC1', meta: '12:11Z · 14.230 · 22.8 dB' },
+        { call: 'LZ1AQ', mode: 'PD120', meta: '11:52Z · 14.230 · 16.3 dB' },
+        { call: 'ON4CDU', mode: 'M2', meta: '11:30Z · 7.171 · 20.1 dB' },
+        { call: 'PA3FGH', mode: 'SC1', meta: '11:04Z · 14.230 · 25.6 dB' },
+        { call: 'YO3GHT', mode: 'PD180', meta: '10:47Z · 14.230 · 14.9 dB' },
+        { call: 'ISS', mode: 'PD120', meta: '10:12Z · 145.800 · 27.3 dB' },
+        { call: 'SM0KQL', mode: 'SC2', meta: '09:55Z · 14.230 · 17.7 dB' },
+        { call: 'DL8NBQ', mode: 'M1', meta: '09:31Z · 7.171 · 23.4 dB' },
+        { call: 'HA5PT', mode: 'R72', meta: '09:08Z · 14.230 · 11.2 dB' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

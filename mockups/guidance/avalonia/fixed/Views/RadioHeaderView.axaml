@@ -1,0 +1,180 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+             xmlns:loc="using:ScanlineStudio.UI.Localization"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1600" d:DesignHeight="130"
+             x:Class="ScanlineStudio.UI.Views.RadioHeaderView"
+             x:DataType="vm:RadioStatusViewModel">
+
+    <!-- VFO / Favourites / Transceiver header cards (spec/09-ui.md, mock2's own 3-column
+         header row): MainWindow chrome, not a dockable pane (Phase-3 plan decision #9's
+         scope trim). Connecting happens once at ScanlineStudio.Host startup from persisted
+         settings, not from this strip; always visible regardless of which tab is active.
+
+         Extracted from MainWindow.axaml so these three cards can be edited without scrolling
+         past a thousand lines of tab content. DataContext is the RadioStatus view-model,
+         supplied by the host rather than bound here, so the control works from anywhere that
+         has one:  <views:RadioHeaderView DataContext="{Binding RadioStatus}" />
+         x:DataType below assumes the class is RadioStatusViewModel - correct it if the real
+         name differs, otherwise compiled bindings will fail to resolve. -->
+    <Border Classes="ScanlineStudioPanelHeader">
+        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+          <Grid ColumnDefinitions="Auto,*,260" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
+
+              <!-- VFO card: mock2's own horizontal 3-column layout (frequency | pills | divider
+                   + UTC/CAT/rig-meters), NOT a vertical stack: stacking all of this made the
+                   whole header row far taller than the mock. Frequency/mode readout+edit and
+                   CAT-link status are real (unchanged); BW·SPLIT·STEP·RIT pills/UTC clock/
+                   rig-meters pill are literal: no bandwidth, split, step, RIT, or rig-meter
+                   concept exists on IRadioSessionService today, and there is no live UTC clock
+                   binding anywhere in the app (spec/14-roadmap.md backlog). mock2's own
+                   USB/LSB/FM sideband segment is deliberately NOT reproduced here as a second,
+                   literal control: the real mode ComboBox right next to the frequency field is
+                   already bound to the actual RadioMode enum (Usb/Lsb/Cw/Fm/Rtty/... - the same
+                   CAT-mode concept, just with more values than mock2's 3-button segment), and a
+                   fake segment sitting beside a real one that does the same job would just be
+                   confusing duplicate UI, not added fidelity. -->
+              <Border Grid.Column="0" Classes="card">
+                  <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
+                      <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                          <TextBlock Classes="cardHeader" Text="{loc:Translate RadioStatus.VfoHeader}" />
+                          <TextBlock Classes="caption" Text="{loc:Translate RadioStatus.VfoCaption}" />
+                          <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" VerticalAlignment="Center">
+                              <TextBlock Classes="value" FontSize="20" Text="{Binding FrequencyDisplay}" VerticalAlignment="Center" />
+                              <TextBox Text="{Binding FrequencyInputMhz}"
+                                       Watermark="{loc:Translate RadioStatus.FrequencyPlaceholder}"
+                                       Width="90" VerticalAlignment="Center" />
+                              <Button Content="{loc:Translate RadioStatus.SetFrequency}" Command="{Binding SetFrequencyCommand}" VerticalAlignment="Center" />
+                              <ComboBox ItemsSource="{Binding AvailableModes}" SelectedItem="{Binding SelectedRadioMode}" Width="80" VerticalAlignment="Center" />
+                          </StackPanel>
+                      </StackPanel>
+                      <StackPanel Spacing="4" VerticalAlignment="Center">
+                          <StackPanel Orientation="Horizontal" Spacing="4">
+                              <Border Classes="pill"><TextBlock Text="{loc:Translate RadioStatus.BwValue}" /></Border>
+                              <Border Classes="pill"><TextBlock Text="{loc:Translate RadioStatus.SplitValue}" /></Border>
+                          </StackPanel>
+                          <StackPanel Orientation="Horizontal" Spacing="4">
+                              <Border Classes="pill"><TextBlock Text="{loc:Translate RadioStatus.StepValue}" /></Border>
+                              <Border Classes="pill"><TextBlock Text="{loc:Translate RadioStatus.RitValue}" /></Border>
+                          </StackPanel>
+                      </StackPanel>
+                      <Border BorderBrush="{DynamicResource ScanlineStudioCardBorderColor}" BorderThickness="1,0,0,0" Padding="14,0,0,0">
+                          <StackPanel Spacing="4" HorizontalAlignment="Right">
+                              <TextBlock Classes="readout" Text="{loc:Translate RadioStatus.UtcValue}" />
+                              <Border Classes="pill" HorizontalAlignment="Right">
+                                  <StackPanel Orientation="Horizontal" Spacing="4">
+                                      <Ellipse Classes="led" Classes.active="{Binding CatLinked}" VerticalAlignment="Center" />
+                                      <TextBlock Text="{loc:Translate RadioStatus.CatLinked}" IsVisible="{Binding CatLinked}" />
+                                      <TextBlock Text="{loc:Translate RadioStatus.CatNotLinked}" IsVisible="{Binding !CatLinked}" />
+                                  </StackPanel>
+                              </Border>
+                              <Border Classes="pill" HorizontalAlignment="Right"><TextBlock Text="{loc:Translate RadioStatus.RigMetersValue}" /></Border>
+                          </StackPanel>
+                      </Border>
+                  </StackPanel>
+              </Border>
+
+              <!-- Favourites card: frequency memory presets; click applies both frequency+mode
+                   in one action (WSJT-X band-shortcut convention). Membership user-configured
+                   via the "Edit favourites..." popup, backed by FrequencyPresetsSettings.
+                   Hint caption + Store current/Edit list/Import/Scan M1-M3 are literal, added
+                   alongside (not replacing) the real "Edit presets..." flyout button below. -->
+              <Border Grid.Column="1" Classes="card">
+                  <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                      <Grid ColumnDefinitions="Auto,*">
+                          <TextBlock Classes="cardHeader" Text="{loc:Translate RadioStatus.FavouritesHeader}" />
+                          <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate RadioStatus.FavouritesHint}" />
+                      </Grid>
+                      <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" VerticalAlignment="Center">
+                          <ItemsControl ItemsSource="{Binding Presets}">
+                              <ItemsControl.ItemsPanel>
+                                  <ItemsPanelTemplate>
+                                      <WrapPanel Orientation="Horizontal" />
+                                  </ItemsPanelTemplate>
+                              </ItemsControl.ItemsPanel>
+                              <ItemsControl.ItemTemplate>
+                                  <DataTemplate x:DataType="vm:FrequencyPresetButtonViewModel">
+                                      <Button Content="{Binding Label}"
+                                              Command="{Binding SelectCommand}"
+                                              CommandParameter="{Binding Preset}"
+                                              Margin="0,0,4,0" />
+                                  </DataTemplate>
+                              </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                          <Button Content="{loc:Translate RadioStatus.EditPresets}" VerticalAlignment="Center">
+                              <Button.Flyout>
+                                  <Flyout>
+                                      <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}" MinWidth="320">
+                                          <ItemsControl ItemsSource="{Binding EditorRows}">
+                                              <ItemsControl.ItemTemplate>
+                                                  <DataTemplate x:DataType="vm:FrequencyPresetEditorRowViewModel">
+                                                      <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                                          <TextBox Text="{Binding Label}" Watermark="{loc:Translate RadioStatus.PresetLabelPlaceholder}" Width="110" />
+                                                          <TextBox Text="{Binding FrequencyMhzText}" Width="90" />
+                                                          <ComboBox ItemsSource="{Binding AvailableModes}" SelectedItem="{Binding SelectedMode}" Width="80" />
+                                                          <Button Content="{loc:Translate RadioStatus.RemovePreset}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                      </StackPanel>
+                                                  </DataTemplate>
+                                              </ItemsControl.ItemTemplate>
+                                          </ItemsControl>
+                                          <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                              <Button Content="{loc:Translate RadioStatus.AddPreset}" Command="{Binding AddPresetRowCommand}" />
+                                              <Button Content="{loc:Translate RadioStatus.SavePresets}" Command="{Binding SavePresetsCommand}" />
+                                          </StackPanel>
+                                      </StackPanel>
+                                  </Flyout>
+                              </Button.Flyout>
+                          </Button>
+                          <Button Classes="primary" Content="{loc:Translate RadioStatus.StoreCurrent}" VerticalAlignment="Center" />
+                          <Button Classes="small" Content="{loc:Translate RadioStatus.EditFavouritesList}" VerticalAlignment="Center" />
+                          <Button Classes="small" Content="{loc:Translate RadioStatus.ImportFavourites}" VerticalAlignment="Center" />
+                          <Button Classes="small" Content="{loc:Translate RadioStatus.ScanFavourites}" VerticalAlignment="Center" />
+                      </StackPanel>
+                  </StackPanel>
+              </Border>
+
+              <!-- Transceiver card: Receiving/Halt (real ISstvSessionService.IsReceiving state),
+                   TX output volume (a post-encode playback gain, not an encoder/DSP parameter;
+                   matches WSJT-X's own documented Pwr slider semantics), Tune (keys PTT and plays
+                   a steady test tone so the other station's AFC/tuning can lock on, legacy
+                   Option.cpp's TuneFreq, default 1750Hz). RX level is a literal slider matching
+                   mock2's own layout: no gain parameter exists anywhere for it today
+                   (spec/14-roadmap.md backlog), same convention as every other no-backing-data
+                   control added this pass, shown rather than omitted. -->
+              <Border Grid.Column="2" Classes="card">
+                  <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                      <TextBlock Classes="cardHeader" Text="{loc:Translate RadioStatus.TransceiverHeader}" />
+                      <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                          <ToggleButton Classes="receiving" IsChecked="{Binding IsReceiving}" Content="{loc:Translate RadioStatus.Receiving}" />
+                          <Button Classes="halt" Content="{loc:Translate RadioStatus.Halt}" Command="{Binding HaltReceivingCommand}" />
+                      </StackPanel>
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                          <TextBlock Classes="label" Text="{loc:Translate RadioStatus.RxLevelLabel}" VerticalAlignment="Center" />
+                          <Slider Grid.Column="1" Minimum="-60" Maximum="0" Value="-14.2" VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="2" Classes="value" Text="{loc:Translate RadioStatus.RxLevelValue}" VerticalAlignment="Center" />
+                      </Grid>
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                          <TextBlock Classes="label" Text="{loc:Translate RadioStatus.TxVolumeLabel}" VerticalAlignment="Center" />
+                          <Slider Grid.Column="1" Value="{Binding TxVolumePercent}" Minimum="0" Maximum="100" VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="2" Classes="value" Text="{Binding TxVolumePercent}" VerticalAlignment="Center" />
+                      </Grid>
+                      <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                          <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate RadioStatus.Tune.Help}" VerticalAlignment="Center" />
+                          <TextBox Text="{Binding TuneFrequencyHz}" Width="55" VerticalAlignment="Center" />
+                          <TextBlock Classes="label" Text="{loc:Translate RadioStatus.Tune.HertzUnit}" VerticalAlignment="Center" />
+                          <TextBox Text="{Binding TuneDurationSeconds}" Width="45" VerticalAlignment="Center" />
+                          <TextBlock Classes="label" Text="{loc:Translate RadioStatus.Tune.SecondsUnit}" VerticalAlignment="Center" />
+                          <Button Content="{loc:Translate RadioStatus.Tune}" Command="{Binding TuneCommand}" VerticalAlignment="Center" />
+                      </StackPanel>
+                  </StackPanel>
+              </Border>
+          </Grid>
+          <TextBlock Text="{Binding ErrorMessage}"
+                     Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
+                     TextWrapping="Wrap"
+                     IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+    </Border>
+</UserControl>

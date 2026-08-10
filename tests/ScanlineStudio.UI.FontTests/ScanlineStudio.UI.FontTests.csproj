@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- .UseSkia() is required alongside Avalonia.Headless here (unlike
+         ScanlineStudio.UI.Tests's TestAppBuilder): the default headless font manager
+         (HeadlessFontManagerStub) does not load real embedded fonts at all, confirmed
+         empirically - every FontManager.TryGetGlyphTypeface call failed outright under the stub,
+         even for a font's own Regular weight. This project exists solely to run
+         IndustryFontResolutionTests against a real Skia-backed font manager, isolated from
+         ScanlineStudio.UI.Tests's much larger, faster stub-based suite (Avalonia's headless
+         platform is process-global singleton state, so the two font-manager configurations
+         cannot coexist in one test assembly/process). -->
+    <PackageReference Include="Avalonia" Version="11.3.12" />
+    <PackageReference Include="Avalonia.Skia" Version="11.3.12" />
+    <PackageReference Include="Avalonia.Headless" Version="11.3.12" />
+    <PackageReference Include="Avalonia.Headless.XUnit" Version="11.3.12" />
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ScanlineStudio.UI\ScanlineStudio.UI.csproj" />
+  </ItemGroup>
+
+</Project>

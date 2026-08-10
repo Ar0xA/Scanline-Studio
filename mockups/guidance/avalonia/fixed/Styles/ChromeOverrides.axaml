@@ -1,0 +1,222 @@
+<!--
+  ChromeOverrides.axaml — the things a Style selector can't reach.
+
+  Include LAST in App.axaml, after Tokens.axaml and Cards.axaml:
+
+      <StyleInclude Source="avares://ScanlineStudio.UI/Styles/ChromeOverrides.axaml" />
+
+  Everything here exists because of one Avalonia rule: a value written literally
+  on an element inside a ControlTemplate binds at BindingPriority.Template, which
+  outranks Style. So `Slider /template/ Thumb` and
+  `ButtonSpinner /template/ RepeatButton` can never win — the template has to be
+  replaced instead. Those dead selectors can be deleted from Cards.axaml.
+-->
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <Styles.Resources>
+    <ResourceDictionary>
+
+      <!-- Fluent's TextBox takes its minimum height from a RESOURCE, not its
+           template, so no Height setter on TextBox/ComboBox/NumericUpDown can
+           shrink it below this. This one key is why those fields render ~32px
+           tall and clip their text at Height="17". -->
+      <x:Double x:Key="TextControlThemeMinHeight">19</x:Double>
+      <Thickness x:Key="TextControlThemePadding">4,0,4,0</Thickness>
+
+      <!-- ══ rectangular Win32/Qt thumb ══════════════════════════════════ -->
+      <ControlTheme x:Key="ScanlineStudioSquareThumb" TargetType="Thumb">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlFaceColor}" />
+        <Setter Property="BorderBrush" Value="#FF6E6E6E" />
+        <Setter Property="Template">
+          <ControlTemplate>
+            <Border Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="1" CornerRadius="0" />
+          </ControlTemplate>
+        </Setter>
+        <Style Selector="^:pointerover">
+          <Setter Property="Background" Value="{DynamicResource ScanlineStudioControlHoverColor}" />
+        </Style>
+      </ControlTheme>
+
+      <!-- ══ Slider: sunken 4px track, 9×15 rectangular thumb ════════════
+           Horizontal only — this app has no vertical sliders. -->
+      <ControlTheme x:Key="{x:Type Slider}" TargetType="Slider">
+        <Setter Property="MinHeight" Value="17" />
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioFieldBackgroundColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
+        <Setter Property="Foreground" Value="{DynamicResource ScanlineStudioAccentFillColor}" />
+        <Setter Property="Template">
+          <ControlTemplate>
+            <Border Background="Transparent" Padding="5,0">
+              <Grid VerticalAlignment="Center">
+                <!-- track well -->
+                <Border Height="4" VerticalAlignment="Center" CornerRadius="0"
+                        Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="1" />
+                <Track Name="PART_Track" Orientation="Horizontal"
+                       Minimum="{TemplateBinding Minimum}"
+                       Maximum="{TemplateBinding Maximum}"
+                       Value="{TemplateBinding Value, Mode=TwoWay}"
+                       IsDirectionReversed="{TemplateBinding IsDirectionReversed}">
+                  <Track.DecreaseButton>
+                    <RepeatButton Name="PART_DecreaseButton" Height="4" VerticalAlignment="Center"
+                                  Focusable="False" BorderThickness="0" CornerRadius="0"
+                                  Background="{TemplateBinding Foreground}" />
+                  </Track.DecreaseButton>
+                  <Track.IncreaseButton>
+                    <RepeatButton Name="PART_IncreaseButton" Height="4" VerticalAlignment="Center"
+                                  Focusable="False" BorderThickness="0" CornerRadius="0"
+                                  Background="Transparent" />
+                  </Track.IncreaseButton>
+                  <Thumb Width="9" Height="15" Margin="0"
+                         Theme="{StaticResource ScanlineStudioSquareThumb}" />
+                </Track>
+              </Grid>
+            </Border>
+          </ControlTemplate>
+        </Setter>
+      </ControlTheme>
+
+      <!-- ══ ButtonSpinner: 11px stacked arrows, not 2 × 34px ════════════ -->
+      <ControlTheme x:Key="{x:Type ButtonSpinner}" TargetType="ButtonSpinner">
+        <Setter Property="Background" Value="{DynamicResource ScanlineStudioFieldBackgroundColor}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ScanlineStudioControlBorderColor}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+          <ControlTemplate>
+            <Border Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}">
+              <DockPanel>
+                <UniformGrid DockPanel.Dock="Right" Rows="2" Width="11"
+                             IsVisible="{TemplateBinding ShowButtonSpinner}">
+                  <RepeatButton Name="PART_IncreaseButton" Padding="0" MinWidth="0" MinHeight="0"
+                                CornerRadius="0" BorderThickness="1,0,0,1"
+                                Background="{DynamicResource ScanlineStudioControlFaceColor}"
+                                BorderBrush="{DynamicResource ScanlineStudioControlBorderColor}">
+                    <Path Data="M 0 3 L 2.5 0 L 5 3 Z" Fill="#FF303030" Stroke="{x:Null}"
+                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  </RepeatButton>
+                  <RepeatButton Name="PART_DecreaseButton" Padding="0" MinWidth="0" MinHeight="0"
+                                CornerRadius="0" BorderThickness="1,0,0,0"
+                                Background="{DynamicResource ScanlineStudioControlFaceColor}"
+                                BorderBrush="{DynamicResource ScanlineStudioControlBorderColor}">
+                    <Path Data="M 0 0 L 2.5 3 L 5 0 Z" Fill="#FF303030" Stroke="{x:Null}"
+                          HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  </RepeatButton>
+                </UniformGrid>
+                <ContentPresenter Name="PART_ContentPresenter"
+                                  Content="{TemplateBinding Content}"
+                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                  Padding="{TemplateBinding Padding}"
+                                  VerticalContentAlignment="Center" />
+              </DockPanel>
+            </Border>
+          </ControlTemplate>
+        </Setter>
+      </ControlTheme>
+
+    </ResourceDictionary>
+  </Styles.Resources>
+
+  <!-- ══ the default action ═════════════════════════════════════════════
+       FluentTheme already ships a `Button.accent` style that paints the
+       CONTENT PRESENTER with the system accent brush. Setting Background on
+       the Button (as Cards.axaml does) loses to it, which is why "Store
+       current" and "Save frame" still render as filled blue pills.
+
+       Rename the class at every call site: Classes="accent" → Classes="primary",
+       and delete the Button.accent rules from Cards.axaml. -->
+  <Style Selector="Button.primary /template/ ContentPresenter">
+    <Setter Property="Background" Value="#FFD6E7F7" />
+    <Setter Property="BorderBrush" Value="#FF5A9AD4" />
+    <Setter Property="TextBlock.Foreground" Value="#FF0B3E68" />
+    <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="#FFC4DDF5" />
+    <Setter Property="BorderBrush" Value="#FF3D82C4" />
+  </Style>
+  <Style Selector="Button.primary:pressed /template/ ContentPresenter">
+    <Setter Property="Background" Value="#FFAFD1EF" />
+  </Style>
+
+  <!-- Same shape of fix for Halt: paint the presenter, not the button. -->
+  <Style Selector="Button.halt /template/ ContentPresenter">
+    <Setter Property="Background" Value="#FFF5D6D6" />
+    <Setter Property="BorderBrush" Value="#FFB33A3A" />
+    <Setter Property="TextBlock.Foreground" Value="#FF6B0F0F" />
+    <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
+  </Style>
+
+  <!-- ══ entry fields ═══════════════════════════════════════════════════
+       19px rows, monospace, right-aligned numerics, vertically centred so
+       the glyphs stop being clipped at the descender. -->
+  <Style Selector="TextBox, ComboBox, NumericUpDown">
+    <Setter Property="MinHeight" Value="19" />
+    <Setter Property="Height" Value="19" />
+    <Setter Property="Padding" Value="4,0" />
+    <Setter Property="FontSize" Value="11.5" />
+  </Style>
+  <!-- VerticalContentAlignment isn't on the base type a comma-list selector resolves
+       against, so it has to be set per control type. -->
+  <Style Selector="TextBox">
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="ComboBox">
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="TextBox /template/ TextPresenter">
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="NumericUpDown">
+    <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
+    <Setter Property="HorizontalContentAlignment" Value="Right" />
+  </Style>
+  <Style Selector="NumericUpDown /template/ TextBox#PART_TextBox">
+    <Setter Property="TextAlignment" Value="Right" />
+  </Style>
+  <Style Selector="NumericUpDown.tight">
+    <Setter Property="Width" Value="72" />
+    <Setter Property="HorizontalAlignment" Value="Right" />
+  </Style>
+
+  <!-- Fluent's ComboBox keeps a 32px chevron column; trim it so a 19px combo
+       doesn't hide its own text. -->
+  <Style Selector="ComboBox /template/ Border#Background">
+    <Setter Property="CornerRadius" Value="0" />
+  </Style>
+  <Style Selector="ComboBox /template/ PathIcon#DropDownGlyph">
+    <Setter Property="Width" Value="8" />
+    <Setter Property="Height" Value="8" />
+    <Setter Property="Margin" Value="0,0,4,0" />
+  </Style>
+
+  <!-- ══ progress ═══════════════════════════════════════════════════════ -->
+  <Style Selector="ProgressBar">
+    <Setter Property="Height" Value="10" />
+    <Setter Property="MinHeight" Value="10" />
+    <Setter Property="CornerRadius" Value="0" />
+  </Style>
+  <Style Selector="ProgressBar /template/ Border#PART_Indicator">
+    <Setter Property="CornerRadius" Value="0" />
+  </Style>
+
+  <!-- ══ tabs: kill Fluent's pill + pipe, keep the notebook edge ════════ -->
+  <Style Selector="TabItem /template/ Border#PART_LayoutRoot">
+    <Setter Property="CornerRadius" Value="0" />
+    <Setter Property="Margin" Value="0" />
+    <Setter Property="Padding" Value="0" />
+  </Style>
+  <Style Selector="TabControl /template/ ItemsPresenter#PART_ItemsPresenter">
+    <Setter Property="Margin" Value="6,0,0,0" />
+  </Style>
+
+</Styles>

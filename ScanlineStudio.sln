@@ -59,6 +59,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScanlineStudio.Settings.Tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScanlineStudio.Core.Imaging.Tests", "tests\ScanlineStudio.Core.Imaging.Tests\ScanlineStudio.Core.Imaging.Tests.csproj", "{973EEC16-2456-4446-991E-E481B8694B70}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScanlineStudio.UI.FontTests", "tests\ScanlineStudio.UI.FontTests\ScanlineStudio.UI.FontTests.csproj", "{808C3441-E12E-4BA0-95CD-FD23BC76DA78}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -172,6 +174,10 @@ Global
 		{973EEC16-2456-4446-991E-E481B8694B70}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{973EEC16-2456-4446-991E-E481B8694B70}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{973EEC16-2456-4446-991E-E481B8694B70}.Release|Any CPU.Build.0 = Release|Any CPU
+		{808C3441-E12E-4BA0-95CD-FD23BC76DA78}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{808C3441-E12E-4BA0-95CD-FD23BC76DA78}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{808C3441-E12E-4BA0-95CD-FD23BC76DA78}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{808C3441-E12E-4BA0-95CD-FD23BC76DA78}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{8001BBB7-08DB-4399-BACC-8DD3C67C4A05} = {FDF4195F-8B8B-4B85-8E08-097F4FCDB120}
@@ -200,5 +206,6 @@ Global
 		{C58B6BC5-DA62-4311-A5DC-87EEE08CABBA} = {FAD9FE3D-FCD1-4881-8A24-D2A0C9BD6527}
 		{3090C6C4-5124-4380-BBFE-D5335EA125C3} = {FAD9FE3D-FCD1-4881-8A24-D2A0C9BD6527}
 		{973EEC16-2456-4446-991E-E481B8694B70} = {FAD9FE3D-FCD1-4881-8A24-D2A0C9BD6527}
+		{808C3441-E12E-4BA0-95CD-FD23BC76DA78} = {FAD9FE3D-FCD1-4881-8A24-D2A0C9BD6527}
 	EndGlobalSection
 EndGlobal
