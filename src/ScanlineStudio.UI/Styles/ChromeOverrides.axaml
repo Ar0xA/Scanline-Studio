@@ -184,7 +184,10 @@
   <!-- ══ entry fields ═══════════════════════════════════════════════════
        19px rows, monospace, right-aligned numerics, vertically centred so
        the glyphs stop being clipped at the descender. -->
-  <Style Selector="TextBox, ComboBox, NumericUpDown">
+  <!-- :not(.Industry) exclusion (UI-redesign Phase 1, item 0b): the new ".input" atom and the
+       stepper (which reuses NumericUpDown) both need this old field-metric selector to not apply
+       to them — see mockups/guidance/PHASE1-ATOM-DESIGN.md item 0b's collision table. -->
+  <Style Selector="TextBox:not(.Industry), ComboBox:not(.Industry), NumericUpDown:not(.Industry)">
     <Setter Property="MinHeight" Value="19" />
     <Setter Property="Height" Value="19" />
     <Setter Property="Padding" Value="4,0" />
@@ -199,17 +202,20 @@
   <Style Selector="ComboBox">
     <Setter Property="VerticalContentAlignment" Value="Center" />
   </Style>
-  <Style Selector="NumericUpDown">
+  <Style Selector="NumericUpDown:not(.Industry)">
     <Setter Property="VerticalContentAlignment" Value="Center" />
   </Style>
   <Style Selector="TextBox /template/ TextPresenter">
     <Setter Property="VerticalAlignment" Value="Center" />
   </Style>
-  <Style Selector="NumericUpDown">
+  <!-- :not(.Industry) exclusion, same reason as above — the stepper reuses NumericUpDown itself
+       (mockups/guidance/PHASE1-ATOM-DESIGN.md item 5), so these old mono-font/alignment selectors
+       must not apply to it. -->
+  <Style Selector="NumericUpDown:not(.Industry)">
     <Setter Property="FontFamily" Value="{DynamicResource ScanlineStudioMonospaceFontFamily}" />
     <Setter Property="HorizontalContentAlignment" Value="Right" />
   </Style>
-  <Style Selector="NumericUpDown /template/ TextBox#PART_TextBox">
+  <Style Selector="NumericUpDown:not(.Industry) /template/ TextBox#PART_TextBox">
     <Setter Property="TextAlignment" Value="Right" />
   </Style>
   <Style Selector="NumericUpDown.tight">
