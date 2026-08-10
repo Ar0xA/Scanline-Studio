@@ -297,7 +297,7 @@
     <!-- Fallback in case HorizontalContentAlignment doesn't flow through to the inner
          TextBox in every case: PART_TextBox itself isn't a literal template value (unlike
          the spinner buttons), so a Style CAN reach it directly here. -->
-    <Style Selector="NumericUpDown /template/ TextBox#PART_TextBox">
+    <Style Selector="NumericUpDown:not(.Industry) /template/ TextBox#PART_TextBox">
         <Setter Property="TextAlignment" Value="Right" />
     </Style>
     <Style Selector="NumericUpDown.tight">
