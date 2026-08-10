@@ -5,7 +5,60 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-10, latest, ACTIVE)
+## Resume here (2026-08-10, latest, ACTIVE) — pixel-perfect UI redesign
+
+**Subject pivot**: user wants a full pixel-perfect visual redesign of the app's UI, replacing the
+current "Aesthetic Directive" look (flat WSJT-X/fldigi gray Win32/Qt chrome, `spec/09-ui.md`) with
+a new "Industry" wireframe design system found in `mockups/guidance/` (steel-blue accent, Barlow/
+Barlow Condensed, square corners, hairline borders, blueprint corner marks). Source of truth:
+`mockups/guidance/LAYOUT-SPEC.md` (exact pixel/color/spacing spec) + `SSTV Console.dc.html`'s
+`id="2a"` div (the actual target markup). Full plan at
+`~/.claude/plans/transient-jumping-bentley.md` — 8 phases (0 fonts/tokens, 1 atoms, 2 chrome, 3
+Receive tab, 4 Transmit tab, 5 Gallery tab, 6 Logbook+Options extrapolated, 7 cleanup), each with 2
+rounds auditor plan-review + 2 rounds code-review, real-window verification, commit+push, and a
+`PROJECT_BRIEF.md` update per phase — user confirmed autonomous-batch pacing (same flow as the RX-
+telemetry work below), confirmed redesigning Logbook/Options too (not covered by the mockup, share
+the same global style layer, extrapolate from the atom system), confirmed fetching fonts from
+Google Fonts directly (OFL license).
+
+**Phase 0 SHIPPED (commit `d427b1e`)**: fonts + base tokens, additive only (old Tokens/Cards/
+ChromeOverrides untouched, nothing on screen changes except one deliberate side effect — dropping
+Inter for embedded Barlow as the default font shifts every not-yet-ported view's text metrics
+immediately). Barlow/Barlow Condensed fetched as static TTFs from `github.com/google/fonts` (the
+Google Fonts CSS API serves WOFF2, which Avalonia/Skia can't load). Real bug found and fixed
+empirically: Avalonia's `avares://Folder#FamilyName` resolution searches every font in a shared
+folder for the closest weight match rather than filtering by family first — cross-resolved a
+Barlow Condensed request to plain Barlow Bold until fonts were split into per-family subfolders.
+New `mockups/guidance/PADDING-NORMALIZATION.md`: every padding value in the target mockup,
+re-derived straight from its CSS (not LAYOUT-SPEC's own prose, which 2 rounds of auditor
+plan-review found mixes CSS-order and Avalonia-order transcriptions inconsistently). Building it
+surfaced a SECOND ordering trap beyond that one: CSS's 2-value padding shorthand and Avalonia's
+2-value `Thickness` shorthand use opposite axis order at the same arity — confirmed against
+Avalonia's own shipped docs, not assumed.
+
+**Two rounds of auditor plan-review + one code-review round, real bugs caught at every stage.**
+Plan-review round 1: 4 blockers — an in-place token swap would have crashed the TX pane
+(`StaticResource` on a key that'd be deleted); LAYOUT-SPEC mixes padding-order conventions on the
+exact chip its own checklist uses to calibrate everything else; a naive token rename would have
+made the existing `NoThicknessSpacingMismatchTests` guard silently stop matching; the font-fetch
+plan targeted the wrong file format. Round 2 confirmed all 4 fixed, found 3 smaller wording gaps,
+said "ready to build." Code-review (post-implementation): the padding-normalization file itself
+had the exact gap it exists to prevent (no rows for buttons/`.input`/`.seg-opt`, all horizontal-only
+shorthand — fixed with a new §1b), a font-family URI existed in 3 places with no test covering the
+one that actually matters at runtime (fixed — `App.DefaultFontFamilyUri` is now the single source,
+referenced directly by the test), and DejaVu Sans Mono's Bitstream Vera license text wasn't
+actually vendored alongside the font files despite `LICENSES.md` claiming it (fixed — added
+`LICENSE-BitstreamVera.txt` at both vendoring sites, moved `OFL.txt` into each Barlow subfolder
+individually). Full solution build clean, full test suite green (1698+ existing tests unaffected,
+new `ScanlineStudio.UI.FontTests` 7/7). **Committed (`d427b1e`), not yet pushed.**
+
+**Next up**: Phase 1 (atoms) — the reusable primitives (group box, chips, steppers, buttons,
+tables, etc.) every later phase builds on. Needs its own auditor plan-review round before code per
+the same process. `mockups/guidance/` reference bundle (LAYOUT-SPEC.md, the mockup HTML, the
+`_ds/` design-system CSS) is now checked into git (was untracked) since it's the active source of
+truth for this whole effort.
+
+## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
 **Current status**: Must-implement backlog items 1-2 shipped/closed. Full GUI wiring survey done
 (`spec/16-gui-wiring-survey.md`), **and just refreshed to current (2026-08-10, see below)**. RX
