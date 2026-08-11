@@ -28,7 +28,7 @@ plan: `~/.claude/plans/transient-jumping-bentley.md` — 8 phases (0 fonts/token
 - "Rework it into the new design, do this for each new card that already has an old design" — i.e.
   keep executing the plan's remaining phases (4→7), not just polish what's already ported.
 
-### Status: Phases 0-3 SHIPPED. Phase 4 (Transmit tab) IN PROGRESS.
+### Status: Phases 0-4 SHIPPED. Phase 5 (Gallery tab) NOT STARTED.
 
 **Phase 0 (fonts/tokens), Phase 1 (atoms), Phase 2 (chrome: menu/header row/tab strip/status bar):
 SHIPPED, verified, committed** — see git log before this session if detail is ever needed; nothing
@@ -46,12 +46,57 @@ section where many Phase-1 atoms got a real consumer for the first time).
   as a landmine (a `StaticResource` on an old-design key that would crash the pane at XAML load if
   the old style files were ever deleted while still referenced) — needs a real dedicated
   `IndustryTxToggleTheme` design pass, not a drive-by re-skin.
-- **NEXT UP: right column** (`MainWindow.axaml`'s Transmit tab, `Grid.Column="2"`: Queue/Mode-timing-
-  reference/TX-log/Recently-sent) — not started yet. Still uses old `Cards.axaml` styling entirely.
-- **THEN: the Editor group box** (centre column) — explicitly flagged in the original plan as "the
-  most complex single card" (toolbar with ~15 mini-chip tool buttons, image canvas placeholder,
-  6 adjustment sliders in a 3-column grid, plus a whole 186px-wide side panel of 3 nested sub-cards:
-  Insert field/Text style/Saved templates). Budget real time for this one, don't rush it.
+- Right column (`MainWindow.axaml`'s Transmit tab, `Grid.Column="2"`: Queue/Mode-timing-reference/
+  TX-log/Recently-sent) — **SHIPPED**, commit `57acc42`, build+test (173/173 UI, 7/7 Localization)
+  +real-window screenshot self-check. Same `Grid RowDefinitions="Auto,Auto,Auto,*"`/no-outer-
+  ScrollViewer structure as the Receive tab's right column. Real bug caught during the screenshot
+  check (not by build/test): Mode timing reference renders ~40 real `SstvModeDefinition` rows (mock2
+  only shows 5 as a static sample), and since that card sits in an EARLY "Auto" grid row (not the
+  column's own last/`"*"` row), the unbounded real list consumed the whole column's height and
+  pushed TX log/Recently sent off-screen with **no way to reach them** — fixed with a bounded
+  `ScrollViewer MaxHeight="150"` around just that card's `ItemsControl`. Queue/TX-log/Recently-sent
+  are placeholder cards (no queueing/TX-logging/send-history feature exists anywhere in this app),
+  so their row set literally mirrors mock2's own text, same precedent as Queue's pre-existing
+  "Between frames" row; added 2 new locale keys (`Panes.TxLog.TxTimeToday`/`DutyCycle`) for 2 rows
+  mock2 has that the old design never did. Also noticed, NOT fixed (pre-existing, unrelated,
+  off-scope): the app window at this dev box's current size/position leaves a band of desktop
+  wallpaper visible below the status bar in screenshots — same in both the pre- and post-fix
+  screenshot, not something this pass's markup change caused.
+- Centre column (`TxImageEditorPaneView.axaml`, the Editor group box) — **SHIPPED**. Was flagged in
+  the original plan as "the most complex single card" (toolbar, image canvas, 6 adjustment sliders,
+  186px side panel of 3 nested sub-cards) — mostly a big-surface-area re-skin, not a new design
+  problem, since the old markup already tracked mock2's own layout closely. One genuinely new atom:
+  `IndustryMiniRadioTheme` (Atoms.axaml) — the Move/Crop/Scale/.../Pick tool strip is a REAL
+  RadioButton `GroupName` exclusive-select group in the old design (not inert chips), and
+  `ToggleButton` has no Avalonia `GroupName` equivalent, so `IndustryMiniToggleTheme` couldn't
+  substitute. Toolbar uses one `WrapPanel` (not the old design's non-wrapping single row) so a
+  narrower runtime column degrades to extra lines instead of clipping. Header merges the old split
+  Title+right-aligned-Caption TextBlocks into one string (new `Panes.TxImageEditor.CardHeader` key)
+  to match the title-notch's single-ContentPresenter constraint, same precedent as every other
+  ported card. New `Panes.TxImageEditor.TextStyleHeader` key: the old design's "Text style" card had
+  no title at all (a pre-existing gap vs. mock2's own titled card), added while re-skinning.
+  Safe-area guide is a dashed `Rectangle` (`StrokeDashArray`), not a solid-line concession — Border
+  has no dash support in Avalonia but Rectangle does, confirmed by real-window render.
+
+  **Real pre-existing bug caught via real-window verification (not build/test — this predates the
+  port, present verbatim in the old markup):** `RenderTransform="translate(-5,-5)"` on the crop-
+  resize-handle Border is invalid Avalonia transform syntax (needs unit suffix, e.g.
+  `translate(-5px, -5px)`) — throws a `FormatException` at View construction. Since this exception
+  fires inside an `async Task` `[RelayCommand]` (`SelectStockImageAsync`/`SelectImageAsync` →
+  `OpenEditorForSourceAsync`), it was silently swallowed with no visible error and no UI change,
+  which is almost certainly why the Transmit-tab editor has been unopenable via Stock/Browse this
+  whole time (`_isEditorOpen` never got reset either, though a fresh app launch clears that). Fixed
+  the transform syntax; confirmed by opening a real stock image end-to-end in the running Host app
+  post-fix — editor now opens and renders correctly. Discovered via a throwaway real-window harness
+  (`AppBuilder.Configure<HarnessApp>()` subclassing `App`, bypassing `MainViewModel`/DI, real
+  `TransmitImagePreparer`+`MacroTextResolver`+a synthetic checkerboard `ArrayImageSource`) built
+  specifically because clicking the real app's Stock thumbnail via synthetic X11 input produced no
+  visible effect and no error — this harness isolated View-construction from the click/picker flow
+  entirely and pinpointed the exact exception. Not saved anywhere (scratchpad-only, deleted after
+  use) — rebuild from this description if the same isolation technique is needed again.
+
+  Verified: full solution build clean, `UI.Tests` 173/173, real-window screenshot in both the
+  throwaway harness AND the actual running Host app (post-fix, via a real Stock image click-through).
 - After Phase 4: **Phase 5 (Gallery tab)**, **Phase 6 (Logbook tab + Options window** — no direct
   mockup, extrapolate from the atom set, own lighter design-review pass since it's new composition
   not a pixel port), **Phase 7 (cleanup**: delete dead old-design resources once nothing references
@@ -176,13 +221,11 @@ properly, not a drive-by add during Phase 4/5.
 
 ### Verification status
 
-Full solution build clean, `UI.Tests` 173/173, every commit this session. **All commits pushed?
-NOT CHECKED — verify `git status`/`git log origin/master..HEAD` and push if the user wants that
-before/after resuming**, this session never explicitly pushed (only committed).
+Full solution build clean, `UI.Tests` 173/173, every commit this session. **Commits ahead of
+`origin/master`, not pushed** — verify with the user before pushing.
 
-**Next action on resume**: right column of Transmit tab (Queue/Mode-timing-reference/TX-log/
-Recently-sent), `MainWindow.axaml`'s `Grid.Column="2"` inside the Transmit `TabItem` — same
-process, own commit, build+test+screenshot self-check before committing.
+**Phase 4 (Transmit tab) is now fully SHIPPED** (left/centre/right columns all ported). **Next
+action on resume**: Phase 5 (Gallery tab) — not started yet, still on old `Cards.axaml` styling.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
