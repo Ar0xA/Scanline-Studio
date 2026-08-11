@@ -951,8 +951,12 @@
                             </StackPanel>
                         </HeaderedContentControl.Header>
                         <DockPanel LastChildFill="True">
-                            <WrapPanel DockPanel.Dock="Top" Margin="0,4,0,4">
-                                <TextBox Classes="Industry IndustryInput" Width="200" Margin="0,0,4,4" Watermark="{loc:Translate Panes.RxHistory.SearchWatermark}" />
+                            <!-- Top margin dropped (design-fidelity-agent-caught fix): mock2's own
+                                 12px gap above the search row is entirely the card's own 11px
+                                 padding + 1px border, this WrapPanel needs no additional top
+                                 offset of its own. -->
+                            <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                                <TextBox Classes="Industry IndustryInput" Width="230" Margin="0,0,4,4" Watermark="{loc:Translate Panes.RxHistory.SearchWatermark}" />
                                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="GalleryFilter" Margin="0,0,4,4" IsChecked="{Binding !ShowTodayOnly}" Content="{loc:Translate Panes.RxHistory.FilterAll}" />
                                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="GalleryFilter" Margin="0,0,4,4" IsChecked="{Binding ShowTodayOnly}" Content="{loc:Translate Panes.RxHistory.FilterToday}" />
                                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.Filter14Mhz}" />
@@ -966,13 +970,23 @@
                             <TextBlock DockPanel.Dock="Top" Classes="IndustryRowLabel"
                                        Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
                                        IsVisible="{Binding !Entries.Count}" />
-                            <ScrollViewer>
+                            <!-- Margin top=3 (design-fidelity-agent-caught fix): mock2's own 7px
+                                 gap between the filter row and the thumbnail grid, on top of the
+                                 filter row's own 4px bottom margin above. -->
+                            <ScrollViewer Margin="0,3,0,0">
                                 <!-- UniformGrid Columns=6 (mock2's own grid-template-columns:repeat(6,1fr)),
                                      not WrapPanel/fixed-Width thumbs — same fix class as the Receive
                                      tab's Previous-frames card. ListBox retained (not a bare
-                                     ItemsControl) for the real SelectedEntry TwoWay binding. -->
+                                     ItemsControl) for the real SelectedEntry TwoWay binding.
+                                     ItemContainerTheme (design-fidelity-agent-caught addition): this
+                                     is the only Industry thumbnail grid built on a real ListBox
+                                     (needed for SelectedEntry) rather than a plain ItemsControl, so
+                                     without a matching container theme, default FluentTheme
+                                     ListBoxItem chrome (padding, pointerover/selected fills) would
+                                     leak around each figure — see the atom's own doc comment. -->
                                 <ListBox ItemsSource="{Binding Entries}"
                                          SelectedItem="{Binding SelectedEntry}"
+                                         ItemContainerTheme="{StaticResource IndustryThumbnailListBoxItemTheme}"
                                          Background="Transparent"
                                          BorderThickness="0" Padding="0">
                                     <ListBox.ItemsPanel>
@@ -985,18 +999,24 @@
                                             <!-- Mode badge overlaid top-left on the image (real Entry.ModeId);
                                                  IsHitTestVisible="False" so it never steals the click that
                                                  selects the ListBoxItem underneath. Callsign/meta line is
-                                                 literal: ReceiveHistoryEntry has no such fields today. -->
-                                            <Border Classes="IndustryThumbnail" Margin="0,0,6,6">
+                                                 literal: ReceiveHistoryEntry has no such fields today.
+                                                 "gallery" modifier on caption/call/meta (design-fidelity-
+                                                 agent-caught fix): mock2's own Gallery figure uses a
+                                                 different padding/font-size than the Receive/Transmit
+                                                 thumbnail sites this composition was copied from — each
+                                                 mockup site genuinely has its own numbers, not one
+                                                 inconsistent atom. -->
+                                            <Border Classes="IndustryThumbnail" Margin="0,0,7,7">
                                                 <DockPanel LastChildFill="True">
-                                                    <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
+                                                    <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption gallery">
                                                         <StackPanel>
-                                                            <TextBlock Classes="IndustryThumbnailCall" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.RxHistory.ThumbCallsignValue}" />
-                                                            <TextBlock Classes="IndustryThumbnailMeta" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.RxHistory.ThumbMetaValue}" />
+                                                            <TextBlock Classes="IndustryThumbnailCall gallery" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.RxHistory.ThumbCallsignValue}" />
+                                                            <TextBlock Classes="IndustryThumbnailMeta gallery" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.RxHistory.ThumbMetaValue}" />
                                                         </StackPanel>
                                                     </Border>
                                                     <Panel>
                                                         <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
-                                                        <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
+                                                        <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
                                                             <TextBlock Text="{Binding Entry.ModeId}" />
                                                         </Border>
                                                     </Panel>
@@ -1067,11 +1087,18 @@
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.LogEntryValue}" />
                                     </Grid></Border>
                                 </StackPanel>
-                                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="4" Margin="0,2,0,0">
-                                    <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxHistory.OpenInLog}" />
-                                    <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxHistory.ExportFrame}" />
-                                    <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxHistory.Redecode}" />
-                                </Grid>
+                                <!-- Left-aligned, content-width buttons (design-fidelity-agent-caught
+                                     fix): mock2's own row is NOT stretched — a "*,*,*" Grid was
+                                     filling the whole 296px row width, ballooning each button ~20%
+                                     wider than its own text needs and leaving no trailing gap, unlike
+                                     mock2's own ~78px of empty space after "Re-decode". IndustryBtn24
+                                     (not 25): mock2's own height:24px/font-size:11px for this
+                                     specific row. -->
+                                <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,2,0,0">
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.Redecode}" />
+                                </StackPanel>
                             </StackPanel>
                         </HeaderedContentControl>
                         <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">

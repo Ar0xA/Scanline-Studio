@@ -523,6 +523,34 @@
                 </Setter>
             </ControlTheme>
 
+            <!-- Design-fidelity-agent-caught addition: the Gallery thumbnail grid is the only
+                 Industry thumbnail composition built on a real ListBox (needed for the real
+                 TwoWay SelectedEntry binding — Receive's Previous-frames and Transmit's
+                 Recently-sent are a plain ItemsControl/UniformGrid instead, since neither needs
+                 selection). With no ItemContainerTheme, the default FluentTheme ListBoxItem
+                 imposes its own non-zero Padding/MinHeight and pointerover/selected fills around
+                 each IndustryThumbnail figure, which mock2's own bare <figure> grid has none of.
+                 Minimal template: no padding/min-size, transparent background, no corner radius —
+                 selection is still a real TwoWay-bound value regardless of this template; the
+                 accent-border :selected rule below (targeting the DataTemplate's own
+                 Border.IndustryThumbnail by descendant selector, not part of this template) is the
+                 only visual feedback, matching this design system's existing accent-border
+                 selected-state convention elsewhere (chips' own :checked state). -->
+            <ControlTheme x:Key="IndustryThumbnailListBoxItemTheme" TargetType="ListBoxItem">
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="MinHeight" Value="0" />
+                <Setter Property="CornerRadius" Value="0" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <ContentPresenter Name="PART_ContentPresenter"
+                                          Background="Transparent"
+                                          Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          Padding="{TemplateBinding Padding}" />
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
             <!-- ═══════════════════════ 17. Focus ring — DEFERRED to Phase 2 ═══════════════════════
                  CODE-REVIEW FIX: an earlier pass defined ControlTemplate resources here and called
                  the item done, but never wired them (no Setter Property="FocusAdorner" anywhere) —
@@ -1011,6 +1039,13 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
+    <!-- Real selection feedback for the Gallery's ListBox-based thumbnail grid (see
+         IndustryThumbnailListBoxItemTheme's own comment) — a plain descendant selector reaches
+         into the DataTemplate-generated content across the template boundary. -->
+    <Style Selector="ListBoxItem:selected Border.IndustryThumbnail">
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="BorderThickness" Value="2" />
+    </Style>
     <Style Selector="Border.IndustryThumbnailCaption">
         <Setter Property="BorderThickness" Value="0,1,0,0" />
         <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
@@ -1025,10 +1060,21 @@
         <Setter Property="FontWeight" Value="Medium" />
         <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
     </Style>
+    <!-- Gallery variant (design-fidelity-agent-caught addition): mock2's own Gallery figure uses
+         bare .v2 (11px) for the call line, not the Receive/Transmit thumbnails' own 10px .mini
+         override — each mockup site genuinely has its own font-size, this isn't one atom with an
+         inconsistency. Mirrors the already-existing (previously unused) IndustryThumbnailCaption.gallery
+         padding variant. -->
+    <Style Selector="TextBlock.IndustryThumbnailCall.gallery">
+        <Setter Property="FontSize" Value="11" />
+    </Style>
     <Style Selector="TextBlock.IndustryThumbnailMeta">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="9" />
         <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted50}" />
+    </Style>
+    <Style Selector="TextBlock.IndustryThumbnailMeta.gallery">
+        <Setter Property="FontSize" Value="9.5" />
     </Style>
 
     <!-- 12. Hatch panel — the brush itself (IndustryHatchStripeBrush) lives in AtomsTokens.axaml,
