@@ -1,0 +1,98 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        xmlns:logbook="using:ScanlineStudio.Abstractions.Logbook"
+        x:Class="ScanlineStudio.UI.Views.QsoLinkWindowView"
+        x:DataType="vm:QsoLinkWindowViewModel"
+        Title="{loc:Translate QsoLink.Title}"
+        Width="460" Height="560"
+        MinWidth="380" MinHeight="440"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Modeled on OptionsWindowView.axaml (Industry atoms, Grid RowDefinitions="*,Auto" content/
+         footer split, RequestClose event wired in the code-behind). No mockup exists for this
+         dialog, same "extrapolate from the established atom set" situation that file's own top
+         comment describes for itself. -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="*,Auto">
+
+            <ScrollViewer Grid.Row="0">
+                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+
+                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                        <HeaderedContentControl.Header>
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate QsoLink.SearchHeader}" />
+                        </HeaderedContentControl.Header>
+                        <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate QsoLink.SearchWatermark}"
+                                         Text="{Binding CallsignFilter}" />
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="4,0,0,0"
+                                        Content="{loc:Translate QsoLink.SearchButton}" Command="{Binding SearchCommand}" />
+                            </Grid>
+
+                            <ListBox ItemsSource="{Binding SearchResults}"
+                                     SelectedItem="{Binding SelectedQso}"
+                                     ItemContainerTheme="{StaticResource IndustryListBoxItemTheme}"
+                                     Background="Transparent" BorderThickness="0" Padding="0"
+                                     MaxHeight="220">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate x:DataType="logbook:QsoRecord">
+                                        <!-- Same 3-field summary (date/callsign/SSTV-mode) as the
+                                             Logbook tab's own grid columns (MainWindow.axaml's
+                                             logbook:QsoRecord DataTemplate), collapsed into one row:
+                                             this is a picker, not a browse grid. -->
+                                        <Grid ColumnDefinitions="130,*,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                                            <TextBlock Classes="IndustryTableCell" Text="{Binding StartUtc, StringFormat={}{0:yyyy-MM-dd HH:mm}}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryTableCell" TextTrimming="CharacterEllipsis" Text="{Binding Callsign}" />
+                                            <TextBlock Grid.Column="2" Classes="IndustryTableCell" Text="{Binding SstvModeId}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                                    Content="{loc:Translate QsoLink.LinkButton}" Command="{Binding LinkSelectedCommand}"
+                                    HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </HeaderedContentControl>
+
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate QsoLink.OrDivider}" HorizontalAlignment="Center" />
+
+                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                        <HeaderedContentControl.Header>
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate QsoLink.CreateHeader}" />
+                        </HeaderedContentControl.Header>
+                        <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                            <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate QsoLink.NewCallsignWatermark}"
+                                     Text="{Binding NewCallsign}" />
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="4">
+                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate QsoLink.NewRstSentWatermark}"
+                                         Text="{Binding NewRstSent}" />
+                                <TextBox Grid.Column="1" Classes="Industry IndustryInput" Watermark="{loc:Translate QsoLink.NewRstReceivedWatermark}"
+                                         Text="{Binding NewRstReceived}" />
+                            </Grid>
+                            <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate QsoLink.NewNotesWatermark}"
+                                     Text="{Binding NewNotes}" />
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                                    Content="{loc:Translate QsoLink.CreateAndLinkButton}" Command="{Binding CreateAndLinkCommand}"
+                                    HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </HeaderedContentControl>
+
+                    <TextBlock Text="{Binding ErrorMessage}"
+                               Foreground="{StaticResource IndustryDanger}"
+                               TextWrapping="Wrap"
+                               IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="{StaticResource IndustryPaddingGroup}">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                        Content="{loc:Translate QsoLink.CancelButton}" Command="{Binding CancelCommand}" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

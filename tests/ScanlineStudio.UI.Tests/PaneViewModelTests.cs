@@ -923,7 +923,7 @@ public sealed class PaneViewModelTests
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
 
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -946,7 +946,7 @@ public sealed class PaneViewModelTests
         // all (unlike RxImagePaneViewModel, which takes ISstvSessionService specifically for that
         // live binding) -- a live-buffer interaction is structurally impossible here, not just
         // unobserved, so there is nothing to fake/assert against for that half of the guarantee.
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -961,7 +961,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_DefaultsToTodayOnly_MatchingTheMock2DraftsOwnDefaultSelection()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.ShowTodayOnly);
@@ -979,7 +979,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_TogglingToAll_ReQueriesWithNoDateFilter()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         vm.ShowTodayOnly = false;
@@ -997,7 +997,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_Constructed_LoadsImagesDirectory_ForTheGalleryTabsStorageCard()
     {
         var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "/tmp/scanlinestudio-history" };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("/tmp/scanlinestudio-history", vm.ImagesDirectory);
@@ -1027,7 +1027,7 @@ public sealed class PaneViewModelTests
                 new ReceiveHistoryEntry("2", DateTimeOffset.Now, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
             ],
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(2, vm.FramesTodayCount);
@@ -1055,7 +1055,7 @@ public sealed class PaneViewModelTests
         // finding): before this, Entries only refreshed at construction/manual-refresh/filter-change,
         // never as new frames actually landed during a session.
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         Assert.Empty(vm.Entries);
 
@@ -1091,7 +1091,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [selectedEntry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         var originalSelectedInstance = vm.Entries.Single(e => e.Entry.Id == "selected");
         vm.SelectedEntry = originalSelectedInstance;
@@ -1130,7 +1130,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [selectedEntry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         var listBox = new ListBox { ItemsSource = vm.Entries };
@@ -1168,7 +1168,7 @@ public sealed class PaneViewModelTests
         var older = new ReceiveHistoryEntry("older", DateTimeOffset.Now.AddMinutes(-5), "robot36", "/tmp/older.png", null, ReceiveDecodeState.Completed);
         var newer = new ReceiveHistoryEntry("newer", DateTimeOffset.Now, "robot36", "/tmp/newer.png", null, ReceiveDecodeState.Completed);
         var historyStore = new FakeReceiveHistoryStore { EntriesToReturn = [older, newer] };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         vm.SelectLatestCommand.Execute(null);
@@ -1181,7 +1181,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_SelectLatestCommand_DisabledWhenNoEntries()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(vm.SelectLatestCommand.CanExecute(null));
@@ -1202,7 +1202,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "sked 2nd frame", IsFlagged: true)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -1227,7 +1227,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1251,7 +1251,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1277,7 +1277,7 @@ public sealed class PaneViewModelTests
             ],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -1309,7 +1309,7 @@ public sealed class PaneViewModelTests
             ],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -1347,7 +1347,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [entry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1391,7 +1391,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [entry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         var listBox = new ListBox { ItemsSource = vm.Entries };
@@ -1434,7 +1434,7 @@ public sealed class PaneViewModelTests
             ],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         var listBox = new ListBox { ItemsSource = vm.Entries };
@@ -1468,7 +1468,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [entry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1503,7 +1503,7 @@ public sealed class PaneViewModelTests
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
         historyStore.SetFlaggedCallDelays.Enqueue(TimeSpan.FromMilliseconds(200));
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1517,6 +1517,81 @@ public sealed class PaneViewModelTests
 
         Assert.False(historyStore.EntriesToReturn[0].IsFlagged);
         Assert.Equal([("1", true), ("1", false)], historyStore.SetFlaggedCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_OpenInLogCommand_DisabledWithNoSelection_EnabledOnceSelected_DisabledAgainAfterDeselect()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.OpenInLogCommand.CanExecute(null));
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.OpenInLogCommand.CanExecute(null));
+
+        // A live refresh that drops the selection back to null (e.g. the entry no longer matches the
+        // current filter) must re-disable the command -- this is the auditor-caught placement fix:
+        // OpenInLogCommand.NotifyCanExecuteChanged() must run BEFORE OnSelectedEntryChanged's own
+        // _isRepopulating early-return, not after.
+        vm.SelectedEntry = null;
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.OpenInLogCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_OpenInLog_QsoLinkWindowViewModelLinkedEvent_UpdatesEntryInPlace()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        QsoLinkWindowViewModel? qsoLinkVm = null;
+        vm.QsoLinkRequested += requested => qsoLinkVm = requested;
+        vm.OpenInLogCommand.Execute(null);
+
+        Assert.NotNull(qsoLinkVm);
+
+        // Simulates a successful link completing on QsoLinkWindowViewModel's own side. Code-review
+        // correction: an earlier version of this comment claimed raising it synchronously here was
+        // "the worst case" for OpenInLog's Dispatcher.UIThread.Post wrapper on the theory that Linked
+        // could fire off the UI thread -- QsoLinkWindowViewModel no longer uses ConfigureAwait(false)
+        // anywhere (that was itself a code-review fix, see its own doc comment), so Linked always
+        // fires on the UI thread in practice; this test only proves the SAME-thread, synchronous case
+        // works, which RunJobs() below still needs to flush the posted continuation. The Post call
+        // itself stays as harmless defense, not something this test can prove necessary.
+        RaiseLinkedViaReflection(qsoLinkVm!, "qso-42");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("qso-42", vm.SelectedEntry!.Entry.LinkedQsoId);
+        Assert.Equal("qso-42", vm.Entries[0].Entry.LinkedQsoId);
+    }
+
+    /// <summary>QsoLinkWindowViewModel.Linked has no public raise method (by design -- only its own
+    /// LinkSelectedAsync/CreateAndLinkAsync fire it) -- reflection is the only way to simulate "the
+    /// dialog just linked something" without actually driving a full search/create round-trip through
+    /// FakeLogbookSessionService for a test that's specifically about RxHistoryPaneViewModel's OWN
+    /// dispatcher-marshalling of that event, not QsoLinkWindowViewModel's internal write-ordering
+    /// (that's QsoLinkWindowViewModelTests' job).</summary>
+    private static void RaiseLinkedViaReflection(QsoLinkWindowViewModel vm, string qsoId)
+    {
+        var field = typeof(QsoLinkWindowViewModel).GetField("Linked", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var handler = (Action<string>?)field!.GetValue(vm);
+        handler?.Invoke(qsoId);
     }
 
     private static QsoRecord SampleQsoRecord(string id = "1") =>
