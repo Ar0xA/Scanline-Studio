@@ -177,7 +177,7 @@
                 <StackPanel Classes="Industry IndustryRows">
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.OutputDeviceLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.OutputDeviceValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding OutputDeviceNameDisplay}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow" IsVisible="{Binding ShowPowerMeter}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.Power}" />

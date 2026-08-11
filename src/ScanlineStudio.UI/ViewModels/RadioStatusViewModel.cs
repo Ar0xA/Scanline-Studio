@@ -94,6 +94,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private string _utcClockDisplay = string.Empty;
 
+    /// <summary>Raw Hz mirror of <see cref="FrequencyDisplay"/> -- that property is a formatted
+    /// string, not round-trippable, so <see cref="StoreCurrentPresetAsync"/> needs its own copy of
+    /// the last <see cref="RadioState.FrequencyHz"/> to build a <see cref="FrequencyPreset"/> from.</summary>
+    private long _currentFrequencyHz;
+
     public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, ILogger<RadioStatusViewModel> logger)
     {
         _radioSession = radioSession;
@@ -139,6 +144,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // place in this codebase allowed to touch Avalonia's Dispatcher (spec/01-architecture.md).
         Dispatcher.UIThread.Post(() =>
         {
+            _currentFrequencyHz = state.FrequencyHz;
+            StoreCurrentPresetCommand.NotifyCanExecuteChanged();
             FrequencyDisplay = $"{state.FrequencyHz / 1_000_000.0:0.000000} MHz";
             ModeDisplay = state.Mode.ToString();
 
@@ -242,6 +249,29 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Backs the Favourites card's "Store current" button -- adds the currently-tuned
+    /// frequency/mode as a new preset and persists immediately. Deliberately does NOT reuse
+    /// <see cref="SavePresetsCommand"/> alone (that command only re-persists whatever's already in
+    /// <see cref="EditorRows"/>, which mirrors the existing <see cref="Presets"/> 1:1 since no editor
+    /// UI is shown anywhere in this view -- "Edit favourites list" is deliberately unmapped, see
+    /// this file's own comment) -- it needs to append the current radio state as a genuinely new row
+    /// first. Label is left empty, same precedent as <see cref="AddPresetRow"/>'s manual-add default:
+    /// no rename UI exists to fill it in either way. Gated by <see cref="CanStoreCurrentPreset"/>
+    /// (auditor-caught, 2026-08-11): <see cref="_currentFrequencyHz"/> is <c>0</c> until the first
+    /// <see cref="OnStateChanged"/> call, which never fires with no radio connected/before the first
+    /// poll -- without the guard this would silently persist an unremovable "0.000000 USB" preset
+    /// (no in-app UI ever exposes <see cref="EditorRows"/>/<see cref="RemovePresetRowCommand"/> to
+    /// delete it, "Edit favourites list" is deliberately unmapped, see above).</summary>
+    [RelayCommand(CanExecute = nameof(CanStoreCurrentPreset))]
+    private async Task StoreCurrentPresetAsync()
+    {
+        Log.StoreCurrentPresetInvoked(_logger, _currentFrequencyHz, SelectedRadioMode);
+        EditorRows.Add(new FrequencyPresetEditorRowViewModel(new FrequencyPreset(string.Empty, _currentFrequencyHz, SelectedRadioMode), RemovePresetRowCommand));
+        await SavePresetsAsync().ConfigureAwait(false);
+    }
+
+    private bool CanStoreCurrentPreset() => _currentFrequencyHz > 0;
+
     [RelayCommand]
     private void AddPresetRow()
     {
@@ -264,19 +294,24 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         {
             if (double.TryParse(row.FrequencyMhzText, NumberStyles.Float, CultureInfo.InvariantCulture, out var mhz))
             {
-                presets.Add(new FrequencyPreset(row.Label, (long)(mhz * 1_000_000), row.SelectedMode));
+                // Math.Round, not a bare cast (auditor-caught, 2026-08-11): the "0.000000"-formatted
+                // mhz * 1_000_000 product can land 1 ULP below the target integer for some real radio
+                // frequencies, and a bare (long) cast truncates that down to N-1 Hz instead of N.
+                presets.Add(new FrequencyPreset(row.Label, (long)Math.Round(mhz * 1_000_000), row.SelectedMode));
             }
         }
 
         Log.SavePresetsInvoked(_logger, presets.Count);
         try
         {
+            ErrorMessage = null;
             await _radioSession.SaveFrequencyPresetsAsync(presets).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() => RebuildPresetCollections(presets));
         }
         catch (Exception ex)
         {
             Log.SavePresetsFailed(_logger, ex);
+            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.SavePresetsFailed"));
         }
     }
 
@@ -471,6 +506,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "ApplyPreset failed: {Label}")]
         public static partial void ApplyPresetFailed(ILogger logger, string label, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "StoreCurrentPreset invoked: {FrequencyHz}Hz ({Mode})")]
+        public static partial void StoreCurrentPresetInvoked(ILogger logger, long frequencyHz, RadioMode mode);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "AddPresetRow invoked")]
         public static partial void AddPresetRowInvoked(ILogger logger);

@@ -72,6 +72,22 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isConfirmingResetAll;
 
+    /// <summary>Backs the Decode tab's real toggles -- see <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.AutoSyncEnabled"/>/
+    /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.AutoSlantEnabled"/>'s own doc comments
+    /// for what each genuinely gates in <c>AnalogFmSstvDecoder</c>. Deliberately NOT the tab's other
+    /// two checkboxes (Auto-stop/Auto-restart) -- <c>Options.Decode.AutoStop</c>'s loc text ("Auto-stop
+    /// when sync looks stable") doesn't match what <c>AutoStopEnabled</c> actually gates (stops on
+    /// erratic/weak signal, not stable sync) and <c>AutoRestart</c>'s wording is a similar mismatch
+    /// against <c>SyncRestartEnabled</c>'s real semantics -- left STUB pending a wording fix, not
+    /// wired here to avoid shipping a control that lies about what it does. Takes effect on next
+    /// app restart, same as every other Options-dialog setting baked into a DI singleton at startup
+    /// (Radio backend, Audio device, etc. -- no live-reconfiguration path exists for any of them).</summary>
+    [ObservableProperty]
+    private bool _autoSyncEnabled = true;
+
+    [ObservableProperty]
+    private bool _autoSlantEnabled = true;
+
     public OptionsWindowViewModel(
         OptionsSettingsService optionsSettingsService,
         ILocalizationService localization,
@@ -186,6 +202,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         Callsign = snapshot.Callsign;
         OperatorName = snapshot.OperatorName;
         OperatorGrid = snapshot.OperatorGrid;
+        AutoSyncEnabled = snapshot.AutoSyncEnabled;
+        AutoSlantEnabled = snapshot.AutoSlantEnabled;
     }
 
     [RelayCommand]
@@ -210,7 +228,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             HamlibPttType: HamlibPttType,
             Callsign: Callsign,
             OperatorName: OperatorName,
-            OperatorGrid: OperatorGrid);
+            OperatorGrid: OperatorGrid,
+            AutoSyncEnabled: AutoSyncEnabled,
+            AutoSlantEnabled: AutoSlantEnabled);
 
         try
         {
@@ -285,6 +305,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void ResetDecodeToDefault()
+    {
+        Log.ResetSectionInvoked(_logger, "Decode");
+        var defaults = OptionsSettingsService.Defaults;
+        AutoSyncEnabled = defaults.AutoSyncEnabled;
+        AutoSlantEnabled = defaults.AutoSlantEnabled;
+    }
+
+    [RelayCommand]
     private void RequestResetAll() => IsConfirmingResetAll = true;
 
     [RelayCommand]
@@ -295,6 +324,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         ResetAudioToDefault();
         ResetRadioToDefault();
         ResetTxToDefault();
+        ResetDecodeToDefault();
         IsConfirmingResetAll = false;
     }
 

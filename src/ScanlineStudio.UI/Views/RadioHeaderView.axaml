@@ -123,9 +123,10 @@
 
             <!-- Favourites card: frequency memory presets; click applies both frequency+mode in
                  one action. Presets/SelectCommand/FrequencyWithMode/Label/CommandParameter are
-                 real. "Store current" has no Command bound (pre-existing STUB per the GUI wiring
-                 survey) and Edit list/Import/Scan have no Command either (same STUB precedent) —
-                 both preserved unwired, matching current scope exactly, just re-skinned.
+                 real. "Store current" is now wired to StoreCurrentPresetCommand (appends the
+                 currently-tuned freq/mode as a new preset and persists). Edit list/Import/Scan
+                 still have no Command (same STUB precedent, deliberately unmapped per direct user
+                 request, see RadioStatusViewModel's own comment) — preserved unwired.
                  Overflow: preserves the current app's own WrapPanel behavior for the unbounded,
                  user-configured Presets collection rather than clipping to the mockup's fixed
                  7-preset example (design doc §2's own explicit decision). -->
@@ -145,6 +146,7 @@
                              fixed 7-preset example (see the file's own comment above). -->
                         <Button DockPanel.Dock="Right" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnPrimary"
                                 Content="{loc:Translate RadioStatus.StoreCurrent}"
+                                Command="{Binding StoreCurrentPresetCommand}"
                                 VerticalAlignment="Top"
                                 HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
                         <!-- Real-window-measured fix (debug bounds dump, not screenshot guessing):

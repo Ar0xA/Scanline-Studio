@@ -940,7 +940,10 @@
                          .mini shape, not a .seg control); mock2's band/Unlogged/Flagged/free-text
                          filters and sort-by-callsign/SNR are omitted; ReceiveHistoryEntry has no
                          frequency/callsign/grid field to filter or sort by, and LinkedQsoId is never
-                         set non-null by any code path today (spec/14-roadmap.md backlog). Sort/Size
+                         set non-null by any code path today (spec/14-roadmap.md backlog). IsFlagged
+                         is now a real field too (added after this comment was first written) but
+                         has no consuming filter logic or per-entry set-flag UI yet either, see
+                         spec/16-gui-wiring-survey.md's "Discovered 2026-08-11" note. Sort/Size
                          are literal IndustryMini chips (not the old design's unbound ComboBox —
                          mock2's own row shows these as static chips, not a real dropdown, and the
                          ComboBox never had a binding either). This list (and the Receive tab's own
@@ -1090,9 +1093,16 @@
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.GridDistLabel}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.GridDistValue}" />
                                     </Grid></Border>
+                                    <!-- Wired 2026-08-11: ReceiveHistoryEntry.LinkedQsoId is a real field
+                                         (IReceiveHistoryStore.SetLinkedQsoIdAsync exists to set it, just
+                                         never called by any View yet; "Open in Log" below stays STUB,
+                                         that's the write side, this is only the already-real read side). -->
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.LogEntryLabel}" />
-                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.LogEntryValue}" />
+                                        <Panel Grid.Column="1">
+                                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.LogEntryValue}" IsVisible="{Binding SelectedEntry.Entry.LinkedQsoId, Converter={x:Static ObjectConverters.IsNull}}" />
+                                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.LogEntryLoggedValue}" IsVisible="{Binding SelectedEntry.Entry.LinkedQsoId, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        </Panel>
                                     </Grid></Border>
                                 </StackPanel>
                                 <!-- Left-aligned, content-width buttons (design-fidelity-agent-caught

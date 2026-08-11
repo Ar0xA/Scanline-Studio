@@ -20,4 +20,6 @@ public sealed record OptionsSnapshot(
     string? HamlibPttType,
     string? Callsign,
     string? OperatorName,
-    string? OperatorGrid);
+    string? OperatorGrid,
+    bool AutoSyncEnabled,
+    bool AutoSlantEnabled);
