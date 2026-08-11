@@ -1105,6 +1105,18 @@
                                         </Panel>
                                     </Grid></Border>
                                 </StackPanel>
+                                <!-- New UI, no mock2 slot for it (same "new UI, real gap" precedent as
+                                     SelectLatestCommand elsewhere in this pane), backs the real,
+                                     previously-unwired IReceiveHistoryStore.SetNoteAsync/SetFlaggedAsync
+                                     (see spec/16-gui-wiring-survey.md's "Discovered 2026-08-11" note).
+                                     Both disabled with nothing selected. -->
+                                <TextBlock Classes="IndustryRowLabel" Margin="0,2,0,0" Text="{loc:Translate Panes.RxHistory.NoteLabel}" />
+                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxHistory.NoteWatermark}"
+                                         Text="{Binding SelectedEntryNote}"
+                                         IsEnabled="{Binding SelectedEntry, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Panes.RxHistory.FlagLabel}"
+                                          IsChecked="{Binding SelectedEntryIsFlagged}"
+                                          IsEnabled="{Binding SelectedEntry, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <!-- Left-aligned, content-width buttons (design-fidelity-agent-caught
                                      fix): mock2's own row is NOT stretched — a "*,*,*" Grid was
                                      filling the whole 296px row width, ballooning each button ~20%
@@ -1117,6 +1129,10 @@
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.Redecode}" />
                                 </StackPanel>
+                                <TextBlock Text="{Binding ErrorMessage}"
+                                           Foreground="{StaticResource IndustryDanger}"
+                                           TextWrapping="Wrap"
+                                           IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                             </StackPanel>
                         </HeaderedContentControl>
                         <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
