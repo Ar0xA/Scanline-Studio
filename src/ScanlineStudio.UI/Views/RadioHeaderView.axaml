@@ -295,14 +295,14 @@
              consumes layout space when actually IsVisible. -->
         <StackPanel VerticalAlignment="Bottom" Margin="9,0,9,2" Spacing="1">
             <TextBlock Text="{Binding ErrorMessage}"
-                       Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
+                       Foreground="{StaticResource IndustryDanger}"
                        FontSize="10" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                        IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
             <!-- Ultracode audit finding #34's automatic-restart mechanism: deliberately a separate
                  binding from ErrorMessage above, not sharing it (see MaintenanceMessage's own doc
                  comment on the ViewModel for why reusing ErrorMessage would be unsafe here). -->
             <TextBlock Text="{Binding MaintenanceMessage}"
-                       Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
+                       Foreground="{StaticResource IndustryDanger}"
                        FontSize="10" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                        IsVisible="{Binding MaintenanceMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
         </StackPanel>
