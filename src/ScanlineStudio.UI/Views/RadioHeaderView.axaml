@@ -2,7 +2,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:ScanlineStudio.UI.ViewModels"
              xmlns:loc="using:ScanlineStudio.UI.Localization"
-             xmlns:conv="using:ScanlineStudio.UI.Converters"
              x:Class="ScanlineStudio.UI.Views.RadioHeaderView"
              x:DataType="vm:RadioStatusViewModel">
 
@@ -133,7 +132,7 @@
             <HeaderedContentControl Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}"
                              Padding="{StaticResource IndustryGbPaddingFav}" ClipToBounds="False">
                 <HeaderedContentControl.Header>
-                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.FavouritesHeader, Converter={x:Static conv:UppercaseInvariantConverter.Instance}}" />
+                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.FavouritesHeader}" />
                 </HeaderedContentControl.Header>
                 <StackPanel Spacing="5">
                     <DockPanel LastChildFill="True">
@@ -233,7 +232,7 @@
             <HeaderedContentControl Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}"
                              Padding="{StaticResource IndustryGbPaddingFav}" ClipToBounds="False">
                 <HeaderedContentControl.Header>
-                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.TransceiverHeader, Converter={x:Static conv:UppercaseInvariantConverter.Instance}}" />
+                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate RadioStatus.TransceiverHeader}" />
                 </HeaderedContentControl.Header>
                 <!-- Spacing=3, not 5 (fix): the mockup's Transceiver .gb has no gap override in its
                      own inline style, so it uses .gb's CSS default gap:3px — unlike Favourites,
