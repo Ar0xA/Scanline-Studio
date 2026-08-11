@@ -676,7 +676,10 @@
                 </Grid>
             </TabItem>
             <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Transmit}">
-                <Grid ColumnDefinitions="258,*,330" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
+                <!-- 236,*,312 columns, gap 9, padding 9,11,9,8 (LAYOUT-SPEC §5 Band 4a /
+                     PADDING-NORMALIZATION.md), same fix as the Receive tab (Phase 3) — this tab's
+                     own outer Grid never got the token update, design-fidelity-agent-caught. -->
+                <Grid ColumnDefinitions="236,*,312" ColumnSpacing="{StaticResource IndustrySpacingGutter}" Margin="9,11,9,8">
 
                     <!-- Left: TxControlsPaneView's own restyled Mode/Identification/Output/Stock
                          cards. The Drive slider now lives inside its Output card, ancestor-bound
@@ -775,19 +778,24 @@
                             <DockPanel LastChildFill="True">
                                 <Grid DockPanel.Dock="Top" ColumnDefinitions="*,46,60,56" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                                     <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxControls.ModeTimingMode}" /></Border>
-                                    <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxControls.ModeTimingLines}" /></Border>
-                                    <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxControls.ModeTimingLineMs}" /></Border>
-                                    <Border Grid.Column="3" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxControls.ModeTimingFrame}" /></Border>
+                                    <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxControls.ModeTimingLines}" /></Border>
+                                    <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxControls.ModeTimingLineMs}" /></Border>
+                                    <Border Grid.Column="3" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxControls.ModeTimingFrame}" /></Border>
                                 </Grid>
-                                <ScrollViewer MaxHeight="150">
+                                <!-- MaxHeight lowered from 150 (design-fidelity-agent-caught fix:
+                                     150 landed mid-row on the 9th row, clipping it in half with no
+                                     scrollbar affordance visible at that exact height). 145 clears a
+                                     clean 8-row boundary; re-verify against a real screenshot if row
+                                     height ever changes (font/padding tweak). -->
+                                <ScrollViewer MaxHeight="145">
                                     <ItemsControl ItemsSource="{Binding TxControls.ModeTimingRows}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="vm:ModeTimingRowViewModel">
                                                 <Grid ColumnDefinitions="*,46,60,56" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                                                     <Border Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding ModeName}" /></Border>
-                                                    <Border Grid.Column="1" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" HorizontalAlignment="Right" Text="{Binding Lines}" /></Border>
-                                                    <Border Grid.Column="2" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" HorizontalAlignment="Right" Text="{Binding LineMs, StringFormat={}{0:0.0}}" /></Border>
-                                                    <Border Grid.Column="3" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" HorizontalAlignment="Right" Text="{Binding FrameSeconds, StringFormat={}{0:0.0}}" /></Border>
+                                                    <Border Grid.Column="1" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding Lines}" /></Border>
+                                                    <Border Grid.Column="2" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding LineMs, StringFormat={}{0:0.0}}" /></Border>
+                                                    <Border Grid.Column="3" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding FrameSeconds, StringFormat={}{0:0.0} s}" /></Border>
                                                 </Grid>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
@@ -844,11 +852,17 @@
                             </HeaderedContentControl.Header>
                             <DockPanel LastChildFill="True">
                                 <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,*" ColumnSpacing="4" Margin="0,4,0,0">
-                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxRecentlySent.RefillAndQueue}" />
-                                    <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxRecentlySent.OpenInEditor}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxRecentlySent.RefillAndQueue}" />
+                                    <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxRecentlySent.OpenInEditor}" />
                                 </Grid>
+                                <!-- VerticalAlignment="Top" (design-fidelity-agent-caught fix): this
+                                     ScrollViewer sits in the column's own "*" (fill-remaining-space)
+                                     row, whose default Stretch content alignment was stretching the
+                                     UniformGrid's single row of thumbnails to fill the whole
+                                     available height instead of sizing to content (mock2's own
+                                     grid-auto-rows:min-content). -->
                                 <ScrollViewer>
-                                    <UniformGrid Columns="3">
+                                    <UniformGrid Columns="3" VerticalAlignment="Top">
                                         <Border Classes="IndustryThumbnail" Margin="0,0,6,6">
                                             <DockPanel LastChildFill="True">
                                                 <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
@@ -858,7 +872,7 @@
                                                     </StackPanel>
                                                 </Border>
                                                 <Panel>
-                                                    <Border Classes="IndustryHatchPanel" MinHeight="60" />
+                                                    <Border Classes="IndustryHatchPanel" Height="70" />
                                                     <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
                                                         <TextBlock Text="{loc:Translate Panes.TxRecentlySent.Item1Mode}" />
                                                     </Border>
@@ -874,7 +888,7 @@
                                                     </StackPanel>
                                                 </Border>
                                                 <Panel>
-                                                    <Border Classes="IndustryHatchPanel" MinHeight="60" />
+                                                    <Border Classes="IndustryHatchPanel" Height="70" />
                                                     <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
                                                         <TextBlock Text="{loc:Translate Panes.TxRecentlySent.Item2Mode}" />
                                                     </Border>
@@ -890,7 +904,7 @@
                                                     </StackPanel>
                                                 </Border>
                                                 <Panel>
-                                                    <Border Classes="IndustryHatchPanel" MinHeight="60" />
+                                                    <Border Classes="IndustryHatchPanel" Height="70" />
                                                     <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
                                                         <TextBlock Text="{loc:Translate Panes.TxRecentlySent.Item3Mode}" />
                                                     </Border>

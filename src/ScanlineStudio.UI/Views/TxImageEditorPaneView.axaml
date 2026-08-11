@@ -18,7 +18,14 @@
          template only has room for a single Left-aligned ContentPresenter, matching every other
          ported card's own single-title-string precedent (RxImage.CardHeader etc.) and mock2's own
          single `<span class="gbt">` for this exact card. -->
-    <HeaderedContentControl Classes="Industry blueprint" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWideDeep}" ClipToBounds="False">
+    <!-- Margin top=6 (design-fidelity-agent re-check): the Transmit tab's outer Grid margin
+         alone (fix above, 258,*,330 -> 236,*,312 / 9,11,9,8) wasn't quite enough clearance for
+         THIS card specifically — unlike the Receive tab's Incoming-frame blueprint card (which
+         sits below a sibling row and gets extra clearance from RowSpacing), this is the ONLY
+         element in the centre column, so it only ever had the outer Grid's raw top margin. Same
+         "headroom on the card itself, not just the ancestor" fix as TxControlsPaneView's own
+         root Margin. -->
+    <HeaderedContentControl Classes="Industry blueprint" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWideDeep}" ClipToBounds="False" Margin="0,6,0,0">
         <HeaderedContentControl.Header>
             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.CardHeader}" />
         </HeaderedContentControl.Header>
@@ -71,18 +78,23 @@
                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="12,0,4,4"
                               IsChecked="{Binding PreserveAspect}"
                               Content="{loc:Translate Panes.TxImageEditor.PreserveAspect}" />
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Margin="0,0,4,4"
+                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.AddText}"
                         Command="{Binding AddOverlayElementCommand}" />
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Margin="0,0,4,4"
+                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.Apply}"
                         Command="{Binding ApplyCommand}" />
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Margin="0,0,4,4"
+                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.Cancel}"
                         Command="{Binding CancelCommand}" />
             </WrapPanel>
 
-            <Grid Grid.Row="1" ColumnDefinitions="2*,Auto" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
+            <!-- Fixed 186 (not Auto) side column, matching mock2's own width:186px
+                 (design-fidelity-agent-caught fix): Auto measures to the WrapPanel's own desired
+                 width when unconstrained, and 12 insert-field chips fit on one un-wrapped line at
+                 that width, ballooning the whole column to ~600 DIP instead of wrapping within
+                 186. -->
+            <Grid Grid.Row="1" ColumnDefinitions="*,186" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
 
                 <!-- Interactive canvas: crop rectangle (drag body to move, drag the corner handle to
                      resize; legacy's own real precedent has resize on the bottom-right corner only,
@@ -266,7 +278,7 @@
                      (non-blueprint) group box, same "gb inside gb blueprint" nesting as the Receive
                      tab's Incoming-frame/Previous-frames pair. -->
                 <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
-                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" MinWidth="200">
+                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}">
 
                     <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
@@ -291,7 +303,7 @@
                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                             <TextBox Classes="Industry IndustryInput" Text="{Binding X}" Width="55" />
                                             <TextBox Classes="Industry IndustryInput" Text="{Binding Y}" Width="55" />
-                                            <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary"
+                                            <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.Remove}"
                                                     Command="{Binding RemoveCommand}"
                                                     CommandParameter="{Binding}" />
@@ -340,8 +352,8 @@
                                 <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.SourceValue}" />
                             </Grid></Border>
                             <Grid ColumnDefinitions="*,*" ColumnSpacing="4" Margin="0,2,0,0">
-                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.FillAll}" />
-                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.ClearFields}" />
+                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.FillAll}" />
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.ClearFields}" />
                             </Grid>
                         </StackPanel>
                     </HeaderedContentControl>
@@ -360,6 +372,10 @@
                             <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FillStrokeLabel}" />
                                 <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.FillStrokeValue}" />
+                            </Grid></Border>
+                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.PlateLabel}" />
+                                <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.PlateValue}" />
                             </Grid></Border>
                         </StackPanel>
                     </HeaderedContentControl>
@@ -425,8 +441,8 @@
                                 </Border>
                             </UniformGrid>
                             <Grid ColumnDefinitions="*,*" ColumnSpacing="4">
-                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.FillAndSend}" />
-                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" />
+                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.FillAndSend}" />
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" />
                             </Grid>
                         </StackPanel>
                     </HeaderedContentControl>
