@@ -28,7 +28,7 @@ plan: `~/.claude/plans/transient-jumping-bentley.md` — 8 phases (0 fonts/token
 - "Rework it into the new design, do this for each new card that already has an old design" — i.e.
   keep executing the plan's remaining phases (4→7), not just polish what's already ported.
 
-### Status: Phases 0-4 SHIPPED. Phase 5 (Gallery tab) NOT STARTED.
+### Status: Phases 0-4 SHIPPED. Phase 5 (Gallery tab) ported, design-fidelity check pending.
 
 **Phase 0 (fonts/tokens), Phase 1 (atoms), Phase 2 (chrome: menu/header row/tab strip/status bar):
 SHIPPED, verified, committed** — see git log before this session if detail is ever needed; nothing
@@ -145,6 +145,30 @@ section where many Phase-1 atoms got a real consumer for the first time).
   mockup, extrapolate from the atom set, own lighter design-review pass since it's new composition
   not a pixel port), **Phase 7 (cleanup**: delete dead old-design resources once nothing references
   them, update `spec/09-ui.md`).
+
+**Phase 5 (Gallery tab): ported, single commit** (single-section tab, unlike Transmit's 3 columns —
+plan doc: "*,312 grid. Received card (filter row + 6-col thumbnail grid), Selected-frame + Storage
+cards"). `*,312` outer Grid (matching the plan doc exactly, same token pattern as Receive/Transmit).
+Received card's ALL/TODAY filter uses `IndustryMiniRadioTheme` chips (mock2's own `.mini` shape, not
+`.seg` — real `ShowTodayOnly` toggle preserved); 14MHz/Unlogged/Flagged/Sort/Size are literal
+`IndustryMini` chips, Sort/Size replacing the old design's unbound ComboBox (mock2 itself shows
+these as static chips, and the ComboBox had no binding to lose). Thumbnail grid: `UniformGrid
+Columns="6"` (mock2's own `repeat(6,1fr)`) inside the real `ListBox`/`SelectedEntry` binding, same
+`IndustryThumbnail`/`IndustryThumbnailCaption` composition as the Receive tab's Previous-frames and
+Transmit's Recently-sent cards (3rd use of this exact pattern). Selected-frame card's
+`GridDistValue`/`LogEntryValue` deliberately kept as honest em-dash/"Not logged" placeholders, NOT
+reverted to mock2's own fake "IM76 · 1,842 km"/"linked #4412" literal data — this row has a REAL
+selected entry with some real fields (File/Mode/ReceivedAt) mixed with genuinely-absent ones
+(grid/distance/log-link), so fabricating data next to real data would mislead, unlike the fully-
+placeholder Queue/TX-log cards in Phase 4 where NOTHING is real. Storage card's 4th "Disk free" row
+(mock2 only has 3: Folder/Naming/Sidecar) kept — an existing, already-documented real decision from
+a prior session, not a fidelity gap to fix. Applied every Phase-4-learned fix preventively this time
+(uppercase titles, `Padding="7,0"` on every `IndustryBtn25`, `WrapPanel` not fixed-column Grid for
+the filter row) — self-check screenshot came back clean on the first pass, no clipped buttons or
+notches found. Verified: full solution build clean, `UI.Tests` 173/173, real-window screenshot
+(0-frames empty state only — thumbnail grid itself not exercised with real data, same composition as
+2 already-verified precedents so treated as low-risk). **Design-fidelity spot-check not yet run** —
+next action on resume if this session ends before it happens.
 
 ### Real bugs found + fixed this session (not just cosmetic — worth knowing about for future atom work)
 
