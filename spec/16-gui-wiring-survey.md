@@ -527,3 +527,16 @@ unrelated fields (`_previewGeneration`/`_selectedEntry`); the real implementatio
 `_localization.GetString("Panes.RxHistory.EntryCountSingular")` /
 `"Panes.RxHistory.EntryCountFormat"`, both present in `assets/locale/en.json:177-178`. No
 localization violation exists here; the note is removed rather than left to mislead a future reader.
+
+## Small cosmetic/product-decision gaps carried over from the Industry redesign pass (2026-08-11)
+
+Migrated from `PROJECT_BRIEF.md` before a prune — none had an existing per-control row above, low
+priority, revisit only if it becomes relevant:
+- Receive tab's mockup "Macros" card (F1-F6) has no backing feature at all — needs a product
+  decision, not wiring. No row exists for it above; not yet found during any pass of this survey.
+- Transmit tab Output card's Drive row (`:227` above) shows a bare percent where the mockup shows
+  dBFS — needs a product decision on the unit, not a relabel.
+- Gallery's "File path" row (`:291` above) shows full-path end-trim instead of the mockup's
+  filename-only middle-trim — needs a converter/VM property, not a product decision.
+- TX image editor centre-column stepper nits (button-cell sizing, disabled-state background leak)
+  — cosmetic only, recoverable via `git log` if ever prioritized.
