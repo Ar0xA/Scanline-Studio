@@ -25,6 +25,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private readonly OptionsSettingsService _optionsSettingsService;
     private readonly ILocalizationService _localization;
     private readonly IAudioDeviceEnumerator _audioDeviceEnumerator;
+    private readonly ILogbookSessionService _logbookSession;
     private readonly ILogger<OptionsWindowViewModel> _logger;
 
     [ObservableProperty]
@@ -88,15 +89,38 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _autoSlantEnabled = true;
 
+    [ObservableProperty]
+    private bool _qrzLookupEnabled;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(TestQrzLookupCommand))]
+    private string? _qrzLookupUsername;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(TestQrzLookupCommand))]
+    private string? _qrzLookupPassword;
+
+    /// <summary>Testing/✓ succeeded/✗ &lt;reason&gt; -- always tests the CURRENT in-memory
+    /// <see cref="QrzLookupUsername"/>/<see cref="QrzLookupPassword"/>, not yet-saved values, via
+    /// <see cref="ILogbookSessionService.TestQrzLookupCredentialsAsync"/>.</summary>
+    [ObservableProperty]
+    private string? _testQrzLookupStatus;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(TestQrzLookupCommand))]
+    private bool _isTestingQrzLookup;
+
     public OptionsWindowViewModel(
         OptionsSettingsService optionsSettingsService,
         ILocalizationService localization,
         IAudioDeviceEnumerator audioDeviceEnumerator,
+        ILogbookSessionService logbookSession,
         ILogger<OptionsWindowViewModel> logger)
     {
         _optionsSettingsService = optionsSettingsService;
         _localization = localization;
         _audioDeviceEnumerator = audioDeviceEnumerator;
+        _logbookSession = logbookSession;
         _logger = logger;
 
         _ = LoadSafeAsync();
@@ -204,14 +228,20 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         OperatorGrid = snapshot.OperatorGrid;
         AutoSyncEnabled = snapshot.AutoSyncEnabled;
         AutoSlantEnabled = snapshot.AutoSlantEnabled;
+        QrzLookupEnabled = snapshot.QrzLookupEnabled;
+        QrzLookupUsername = snapshot.QrzLookupUsername;
+        QrzLookupPassword = snapshot.QrzLookupPassword;
     }
 
     [RelayCommand]
     private async Task SaveAsync()
     {
         // The single most useful Debug line in the app for "why didn't my settings take effect"
-        // bugs -- deliberately omits nothing secret-shaped exists in this snapshot today (host/port/
-        // device ids/sample rate/culture/backend id are all safe to log as-is).
+        // bugs -- logs only the fields that are actually safe to log as-is (host/port/device ids/
+        // sample rate/culture/backend id). Code-review correction: an earlier version of this
+        // comment claimed "nothing secret-shaped exists in this snapshot today" -- FALSE as of
+        // QrzLookupPassword's addition below; that field is deliberately never passed to this log
+        // call.
         Log.SaveInvoked(_logger, RadioBackendId, SampleRate, SelectedCulture?.Name);
 
         var snapshot = new OptionsSnapshot(
@@ -230,7 +260,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             OperatorName: OperatorName,
             OperatorGrid: OperatorGrid,
             AutoSyncEnabled: AutoSyncEnabled,
-            AutoSlantEnabled: AutoSlantEnabled);
+            AutoSlantEnabled: AutoSlantEnabled,
+            QrzLookupEnabled: QrzLookupEnabled,
+            QrzLookupUsername: QrzLookupUsername,
+            QrzLookupPassword: QrzLookupPassword);
 
         try
         {
@@ -314,6 +347,43 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void ResetQrzToDefault()
+    {
+        Log.ResetSectionInvoked(_logger, "Qrz");
+        var defaults = OptionsSettingsService.Defaults;
+        QrzLookupEnabled = defaults.QrzLookupEnabled;
+        QrzLookupUsername = defaults.QrzLookupUsername;
+        QrzLookupPassword = defaults.QrzLookupPassword;
+        TestQrzLookupStatus = null;
+    }
+
+    private bool CanTestQrzLookup() => !IsTestingQrzLookup && !string.IsNullOrWhiteSpace(QrzLookupUsername) && !string.IsNullOrWhiteSpace(QrzLookupPassword);
+
+    [RelayCommand(CanExecute = nameof(CanTestQrzLookup))]
+    private async Task TestQrzLookupAsync(CancellationToken ct)
+    {
+        IsTestingQrzLookup = true;
+        TestQrzLookupStatus = _localization.GetString("Options.Qrz.TestResult.Testing");
+        try
+        {
+            var result = await _logbookSession.TestQrzLookupCredentialsAsync(QrzLookupUsername!, QrzLookupPassword!, ct);
+            TestQrzLookupStatus = result.Success
+                ? _localization.GetString("Options.Qrz.TestResult.Success")
+                : _localization.GetString("Options.Qrz.TestResult.Failure", result.ErrorReason ?? string.Empty);
+            Log.TestQrzLookupCompleted(_logger, result.Success);
+        }
+        catch (Exception ex)
+        {
+            Log.TestQrzLookupFailed(_logger, ex);
+            TestQrzLookupStatus = _localization.GetString("Options.Qrz.TestResult.Failure", ex.Message);
+        }
+        finally
+        {
+            IsTestingQrzLookup = false;
+        }
+    }
+
+    [RelayCommand]
     private void RequestResetAll() => IsConfirmingResetAll = true;
 
     [RelayCommand]
@@ -325,6 +395,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         ResetRadioToDefault();
         ResetTxToDefault();
         ResetDecodeToDefault();
+        ResetQrzToDefault();
         IsConfirmingResetAll = false;
     }
 
@@ -362,5 +433,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Reset ALL to defaults confirmed")]
         public static partial void ConfirmResetAllInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "QRZ credentials test completed: success={Success}")]
+        public static partial void TestQrzLookupCompleted(ILogger logger, bool success);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credentials test threw")]
+        public static partial void TestQrzLookupFailed(ILogger logger, Exception ex);
     }
 }

@@ -4532,8 +4532,32 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
     **Dedicated signal-strength meter, legacy debug "digital scope" tool** — no mock2 slot exists for
     either, and this doc's own original text already judged the debug scope "probably the lowest-value
     item in this list."
-- [ ] **OCR/QRZ lookup** — no OCR anywhere; QRZ needs new API-key config (legacy hardcoded a
-  personal account password, not being resurrected). Large, genuinely new feature, not a port.
+- [ ] **QRZ.com callsign lookup** — real legacy feature, verified directly against
+  `yoniq-old/YONIQ-main` (2026-08-11), not assumed from the roadmap's own prior "genuinely new
+  feature" framing (that was wrong — corrected here). Legacy's `qrzcom.cpp`/`qrzcom.h`: a
+  `TThread` that GETs `http://xmldata.qrz.com/xml/current/?s=<sessionkey>;callsign=<callsign>` and
+  naive-substring-parses `<fname>`/`<name>`/`<addr2>`/`<country>` into `HisName`/`HisQTH` (does
+  **not** parse `<grid>` despite the XML providing it — a real legacy gap, not a missed field in
+  this doc). The session key comes from a separate login GET
+  (`http://xmldata.qrz.com/xml/current/?username=...;password=...`, `Main.cpp:15263-15265`/
+  `Option.cpp:1361-1363`) using **hardcoded personal credentials baked into the legacy source** —
+  confirmed present, not being resurrected in any form; a real implementation needs its own
+  user-supplied API-key/credential setting. Trigger points: `HisCallExit` (manual callsign-field
+  edit, `Main.cpp:15874-15879`) and an FSK-decoded-callsign change (`Main.cpp:3633`, ties into the
+  still-deferred CW-ID/FSK item below). Gated by a real `qrz` on/off setting (legacy `.ini` key
+  `"qrz"`). UI already has a slot for this: Gallery tab's Frame-metadata card has a real "Lookup
+  QRZ" button and "Grid / dist · QRZ" readout row (`MainWindow.axaml`, both currently STUB/FAKE-LIVE
+  per `spec/16-gui-wiring-survey.md`) — no new UI surface needed, just real wiring. Design decision
+  still open: where do Name/QTH land in this port's architecture (no "current session His Call"
+  concept exists yet the way legacy's `HisName`/`HisQTH` `TEdit`s do) — needs a plan pass, not a
+  straight port of the naive parsing.
+- [ ] **OCR (callsign-from-image recognition)** — moved to "Explicitly deferred beyond v1" below,
+  2026-08-11: verified against `yoniq-old/YONIQ-main` directly (not assumed) that legacy has **zero**
+  OCR anywhere — the only "OCR" hits in the whole tree are `#ifndef OCRH`/`#define OCRH` include
+  guards in a few unrelated `About.h` files, coincidental naming. This was previously bundled with
+  the QRZ item above under one "OCR/QRZ lookup" line; split out because QRZ lookup is a real,
+  scoped legacy port and OCR is a wholly invented feature with no legacy precedent to port — user
+  confirmed OCR stays low-priority/someday, QRZ lookup is active.
 - [ ] **CW-ID / FSK station-ID subsystem** — real, working legacy feature (TX CW-ID tone + RX
   FSK-callsign-ID packet decode, `sstv.cpp:2465-2551`'s STX `0x2a`, distinct from the already-ported
   mode-announce STX `0x2d` packets), zero replacement built. Already user-deferred once this session
@@ -4582,6 +4606,7 @@ verb for it.
 - The full QSL/template designer and `.mtm` import ([[15-template-designer]]) — specified but deferred; [[07-image-pipeline]]'s minimal `ImageOverlay` covers text-only TX overlay in the meantime.
 - SSTV repeater/beacon mode ([[06-sstv-dsp]], legacy `RepSet.cpp`).
 - Contest logging (JASTA application, `MMCG.DEF` JARL area database) — out of scope entirely, not just deferred; see [docs/removed-features.md](../docs/removed-features.md).
+- OCR (callsign-from-image recognition on the Gallery Frame-metadata card's "Callsign · OCR"/"OCR confidence" fields) — user decision 2026-08-11: "eh, maybe one day." No legacy precedent (verified against `yoniq-old/YONIQ-main`, zero OCR anywhere — see the Must-implement backlog's own entry above for the false-positive that once suggested otherwise), so this is wholly new work with no port to lean on; QRZ.com lookup was split out of the same former backlog line and stays active (see above) since that part *is* a real legacy feature.
 
 ## Verify later with human — items neither the agent nor the auditor could resolve alone
 

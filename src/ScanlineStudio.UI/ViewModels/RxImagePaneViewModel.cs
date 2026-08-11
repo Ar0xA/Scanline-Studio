@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.UI.Imaging;
@@ -42,6 +43,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     private readonly IReceivedImageBuffer _receivedImage;
     private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
+    private readonly ILogbookSessionService _logbookSession;
     private readonly ILogger<RxImagePaneViewModel> _logger;
     private readonly DispatcherTimer _telemetryTimer;
     private readonly object _gate = new();
@@ -169,11 +171,54 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(FileSizeDisplay))]
     private long? _fileSizeBytes;
 
-    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogger<RxImagePaneViewModel> logger)
+    /// <summary>Frame-metadata card's "Override callsign" field (spec/09-ui.md, legacy's real
+    /// <c>HisCall</c> equivalent) -- also the input to <see cref="LookupQrzCommand"/>. Plain UI
+    /// state, not backed by <see cref="IReceivedImageBuffer"/> or any session model: no OCR/FSK-
+    /// decoded-callsign source exists yet to seed it from (see this pane's own "Callsign" row,
+    /// which stays a separate, still-literal placeholder).</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
+    private string? _overrideCallsign;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NameDisplay))]
+    private string? _lookupName;
+
+    /// <summary>Code-review nit fix: falls back to this pane's own "—" placeholder convention
+    /// (matching <see cref="StartedDisplay"/>/<see cref="FileSizeDisplay"/>) instead of rendering
+    /// blank pre-lookup, unlike every neighboring row in this card.</summary>
+    public string NameDisplay => LookupName ?? "—";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(QthDisplay))]
+    private string? _lookupQth;
+
+    public string QthDisplay => LookupQth ?? "—";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GridDisplay))]
+    private string? _lookupGrid;
+
+    /// <summary>"Grid / dist · QRZ" row's real half -- distance needs the operator's own grid
+    /// square plus a haversine calculation, out of scope for this pass (not requested); the
+    /// distance side keeps the pane's existing "--" placeholder text (that specific "--" -- not
+    /// this property's own "—" fallback -- matches the row's pre-existing literal
+    /// GridDistanceValue's own wording, kept as-is for the half that's still unwired).</summary>
+    public string GridDisplay => $"{LookupGrid ?? "—"} / --";
+
+    [ObservableProperty]
+    private string? _qrzLookupErrorMessage;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
+    private bool _isLookingUpQrz;
+
+    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogbookSessionService logbookSession, ILogger<RxImagePaneViewModel> logger)
     {
         _receivedImage = sstvSession.ReceivedImage;
         _sstvSession = sstvSession;
         _localization = localization;
+        _logbookSession = logbookSession;
         _logger = logger;
         AutoSlantEnabled = sstvSession.AutoSlantEnabled;
 
@@ -518,6 +563,52 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         }
     }
 
+    private bool CanLookupQrz() => !IsLookingUpQrz && !string.IsNullOrWhiteSpace(OverrideCallsign);
+
+    /// <summary>Does NOT also check <c>QrzLookupSettings.Enabled</c> -- that would need a new
+    /// settings-read path in a <c>ScanlineStudio.UI</c> class (this pane only ever talks to
+    /// <see cref="ILogbookSessionService"/>, never <c>ISettingsStore</c> directly, per this
+    /// project's layering rule). The disabled/unconfigured case is covered by
+    /// <see cref="ILogbookSessionService.LookupCallsignAsync"/>'s own "not configured" result,
+    /// surfaced via <see cref="QrzLookupErrorMessage"/> below, not by graying out this button.</summary>
+    [RelayCommand(CanExecute = nameof(CanLookupQrz))]
+    private async Task LookupQrzAsync(CancellationToken ct)
+    {
+        IsLookingUpQrz = true;
+        try
+        {
+            var result = await _logbookSession.LookupCallsignAsync(OverrideCallsign!.Trim(), ct);
+            if (result.Success)
+            {
+                LookupName = result.Name;
+                LookupQth = result.Qth;
+                LookupGrid = result.Grid;
+                QrzLookupErrorMessage = null;
+            }
+            else
+            {
+                // Prior lookup values (if any) are left as-is -- a failed re-lookup shouldn't wipe
+                // a previously-successful result off the screen. Wrapped through a loc format
+                // string (same "{0}" pass-through convention as LogbookPaneViewModel's own
+                // Panes.Logbook.Status.QrzFailed) rather than bound raw -- result.ErrorReason may
+                // be QRZ's own untranslated API error text OR a fallback string from
+                // LogbookSessionService, neither of which this app controls/can translate, same
+                // established precedent as QrzLogbookUploader's own hardcoded fallback reason.
+                QrzLookupErrorMessage = _localization.GetString("Panes.RxFrameMeta.Error.LookupFailed", result.ErrorReason ?? string.Empty);
+                Log.QrzLookupFailed(_logger, result.ErrorReason);
+            }
+        }
+        catch (Exception ex)
+        {
+            QrzLookupErrorMessage = _localization.GetString("Panes.RxFrameMeta.Error.LookupFailed", ex.Message);
+            Log.QrzLookupThrew(_logger, ex);
+        }
+        finally
+        {
+            IsLookingUpQrz = false;
+        }
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured RX capture device name failed")]
@@ -525,5 +616,11 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the just-saved RX image's file size failed")]
         public static partial void ReadSavedFileSizeFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "QRZ lookup failed: {Reason}")]
+        public static partial void QrzLookupFailed(ILogger logger, string? reason);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ lookup threw")]
+        public static partial void QrzLookupThrew(ILogger logger, Exception ex);
     }
 }

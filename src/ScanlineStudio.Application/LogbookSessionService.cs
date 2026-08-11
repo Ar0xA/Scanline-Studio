@@ -6,13 +6,15 @@ using ScanlineStudio.Settings;
 namespace ScanlineStudio.Application;
 
 /// <summary>See <see cref="ILogbookSessionService"/>. Composes <c>ScanlineStudio.Core.Logbook</c>'s
-/// four building blocks (repository, ADIF exporter/importer, GridTracker streamer, QRZ uploader) —
-/// none of which know about each other or about settings sections outside their own. This is the
-/// one place that does: reads <see cref="OperatorSettings"/> for the ADIF <c>STATION_CALLSIGN</c>
-/// and <see cref="QrzUploadSettings"/> for the enabled/API-key gate (unlike GridTracker streaming,
-/// which <c>GridTrackerStreamer</c> gates internally against its own settings section —
-/// <see cref="IQrzLogbookUploader"/> takes the API key as an explicit per-call parameter instead,
-/// so there is no symmetric internal gate to rely on there).</summary>
+/// building blocks (repository, ADIF exporter/importer, GridTracker streamer, QRZ upload, QRZ
+/// lookup) — none of which know about each other or about settings sections outside their own.
+/// This is the one place that does: reads <see cref="OperatorSettings"/> for the ADIF
+/// <c>STATION_CALLSIGN</c>, <see cref="QrzUploadSettings"/> for the upload enabled/API-key gate,
+/// and <see cref="QrzLookupSettings"/> for the lookup enabled/username/password gate (unlike
+/// GridTracker streaming, which <c>GridTrackerStreamer</c> gates internally against its own
+/// settings section — <see cref="IQrzLogbookUploader"/>/<see cref="IQrzCallsignLookup"/> both take
+/// credentials as an explicit per-call parameter instead, so there is no symmetric internal gate to
+/// rely on there).</summary>
 public sealed partial class LogbookSessionService : ILogbookSessionService
 {
     private readonly ILogbookRepository _repository;
@@ -20,6 +22,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
     private readonly IAdifImporter _adifImporter;
     private readonly IGridTrackerStreamer _gridTrackerStreamer;
     private readonly IQrzLogbookUploader _qrzUploader;
+    private readonly IQrzCallsignLookup _qrzLookup;
     private readonly ISettingsStore _settingsStore;
     private readonly ILogger<LogbookSessionService> _logger;
 
@@ -29,6 +32,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         IAdifImporter adifImporter,
         IGridTrackerStreamer gridTrackerStreamer,
         IQrzLogbookUploader qrzUploader,
+        IQrzCallsignLookup qrzLookup,
         ISettingsStore settingsStore,
         ILogger<LogbookSessionService> logger)
     {
@@ -37,6 +41,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         _adifImporter = adifImporter;
         _gridTrackerStreamer = gridTrackerStreamer;
         _qrzUploader = qrzUploader;
+        _qrzLookup = qrzLookup;
         _settingsStore = settingsStore;
         _logger = logger;
     }
@@ -114,6 +119,22 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         Log.AdifImported(_logger, filePath, imported.Count);
         return imported;
     }
+
+    public async Task<QrzCallsignLookupResult> LookupCallsignAsync(string callsign, CancellationToken ct = default)
+    {
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var qrzLookupSettings = appSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
+
+        if (qrzLookupSettings.Enabled != true || string.IsNullOrEmpty(qrzLookupSettings.Username) || string.IsNullOrEmpty(qrzLookupSettings.Password))
+        {
+            return new QrzCallsignLookupResult(false, null, null, null, "QRZ lookup is not configured in Options.");
+        }
+
+        return await _qrzLookup.LookupAsync(callsign, qrzLookupSettings.Username, qrzLookupSettings.Password, ct).ConfigureAwait(false);
+    }
+
+    public Task<QrzLoginResult> TestQrzLookupCredentialsAsync(string username, string password, CancellationToken ct = default) =>
+        _qrzLookup.TestCredentialsAsync(username, password, ct);
 
     private static partial class Log
     {
