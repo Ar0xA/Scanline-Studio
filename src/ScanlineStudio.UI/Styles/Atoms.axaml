@@ -680,6 +680,22 @@
         <Setter Property="Opacity" Value="0.45" />
     </Style>
 
+    <!-- 6b. .trk-style ProgressBar (real bound percent, e.g. frame-decode progress) — a minimal
+         re-skin of Fluent's own ProgressBar (Background = track color, PART_Indicator = fill
+         color), not a full ControlTemplate replacement, since Fluent's own indicator-sizing logic
+         already does the exact percent computation this needs (item 6's Grid.IndustryMeter atom
+         is for STATIC/display-only fill%, a genuinely different case). -->
+    <Style Selector="ProgressBar.Industry">
+        <Setter Property="Height" Value="6" />
+        <Setter Property="MinHeight" Value="6" />
+        <Setter Property="Background" Value="{StaticResource IndustryNeutral300}" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+    <Style Selector="ProgressBar.Industry /template/ Border#PART_Indicator">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
+
     <!-- Display-only meter (RX/TX level, L/R meters, POWER/ALC): a plain 3-element Grid, NOT a
          Slider — LAYOUT-SPEC's own real example (RX lvl fill 63% thumb 78%) has fill% and thumb%
          as independently different values, which a Slider's single Value can't represent.

@@ -235,12 +235,15 @@
   </Style>
 
   <!-- ══ progress ═══════════════════════════════════════════════════════ -->
-  <Style Selector="ProgressBar">
+  <!-- :not(.Industry) exclusion (Phase 3, item 0b collision-avoidance convention, same reasoning
+       as every other old bare-type selector in this file): so this doesn't fight the new design's
+       own ProgressBar.Industry sizing (Atoms.axaml). -->
+  <Style Selector="ProgressBar:not(.Industry)">
     <Setter Property="Height" Value="10" />
     <Setter Property="MinHeight" Value="10" />
     <Setter Property="CornerRadius" Value="0" />
   </Style>
-  <Style Selector="ProgressBar /template/ Border#PART_Indicator">
+  <Style Selector="ProgressBar:not(.Industry) /template/ Border#PART_Indicator">
     <Setter Property="CornerRadius" Value="0" />
   </Style>
 
