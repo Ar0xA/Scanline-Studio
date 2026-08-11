@@ -413,9 +413,15 @@
                                 </Grid>
                             </Grid>
                         </HeaderedContentControl>
-                        <Border Grid.Row="1" Classes="card">
+                        <!-- Ported to Industry atoms (was old Cards.axaml "card"/"cardHeader"/
+                             "primary"/"value"/"caption"/"thumb"/"pill"/"readoutSmall" styling).
+                             One of the design's 2 real "gb blueprint" (title notch + corner marks
+                             together) sites, per Atoms.axaml's own item-1 correction. -->
+                        <HeaderedContentControl Grid.Row="1" Classes="Industry blueprint" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWideDeep}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxImage.CardHeader}" />
+                            </HeaderedContentControl.Header>
                             <DockPanel LastChildFill="True">
-                                <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.RxImage.CardHeader}" />
                                 <!-- Bottom action bar: literal/no-op. RxImagePaneViewModel has
                                      no Save/Abort/Re-decode/Copy-to-TX/Log-QSO commands today
                                      (spec/14-roadmap.md backlog); progress bar/count are likewise
@@ -425,16 +431,16 @@
                                      mock2's own bar-fills-the-row shape while keeping the frame
                                      count visible per direct user request. The redundant top-right
                                      header caption (same value, different spot) was dropped. -->
-                                <DockPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
-                                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <Button Classes="primary" Content="{loc:Translate Panes.RxImage.SaveFrame}" />
-                                        <Button Content="{loc:Translate Panes.RxImage.Abort}" />
-                                        <Button Content="{loc:Translate Panes.RxImage.RedecodeAction}" />
-                                        <Button Content="{loc:Translate Panes.RxImage.CopyToTx}" />
-                                        <Button Content="{loc:Translate Panes.RxImage.LogQso}" />
+                                <DockPanel DockPanel.Dock="Bottom" Margin="0,4,0,0">
+                                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Content="{loc:Translate Panes.RxImage.SaveFrame}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.Abort}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.RedecodeAction}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.CopyToTx}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.LogQso}" />
                                     </StackPanel>
-                                    <TextBlock DockPanel.Dock="Right" Classes="value" VerticalAlignment="Center" Margin="12,0,0,0" Text="{loc:Translate Panes.RxImage.FrameLineCount}" />
-                                    <ProgressBar Height="6" VerticalAlignment="Center" Margin="12,0,0,0" Minimum="0" Maximum="100" Value="70" />
+                                    <TextBlock DockPanel.Dock="Right" Classes="IndustryRowValue" VerticalAlignment="Center" Margin="12,0,0,0" Text="{loc:Translate Panes.RxImage.FrameLineCount}" />
+                                    <ProgressBar Classes="Industry" VerticalAlignment="Center" Margin="12,0,0,0" Minimum="0" Maximum="100" Value="70" />
                                 </DockPanel>
                                 <!-- Previous-frames strip relocated here from its own right-column
                                      card, matching mock2's own placement (inside the Incoming-frame
@@ -453,48 +459,65 @@
                                      and reports that scaled width back to the Auto column -
                                      no C# measure override needed. Previous-frames now gets
                                      whatever's left, matching mock2's own intent. -->
-                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="0,4,0,0">
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{StaticResource IndustrySpacingGutter}" Margin="0,4,0,0">
                                     <Viewbox Stretch="Uniform" HorizontalAlignment="Left">
                                         <Border Width="320" Height="256">
                                             <ContentControl Content="{Binding RxImage}" />
                                         </Border>
                                     </Viewbox>
-                                    <DockPanel Grid.Column="1" LastChildFill="True">
-                                        <TextBlock DockPanel.Dock="Top" Classes="caption" Text="{loc:Translate Panes.RxHistory.PreviousFramesHeader}" Margin="0,0,0,4" />
-                                        <TextBlock DockPanel.Dock="Top" Classes="caption"
-                                                   Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
-                                                   IsVisible="{Binding !RxHistory.Entries.Count}" />
-                                        <ScrollViewer>
-                                            <ItemsControl ItemsSource="{Binding RxHistory.Entries}">
-                                                <ItemsControl.ItemsPanel>
-                                                    <ItemsPanelTemplate>
-                                                        <WrapPanel Orientation="Horizontal" />
-                                                    </ItemsPanelTemplate>
-                                                </ItemsControl.ItemsPanel>
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate x:DataType="vm:RxHistoryEntryViewModel">
-                                                        <!-- 120x96 = 5:4, the real SSTV frame aspect ratio (was
-                                                             120x72 = 5:3, letterboxing every real thumbnail). -->
-                                                        <Border Classes="thumb" Width="120" Margin="0,0,6,6">
-                                                            <StackPanel>
-                                                                <Panel>
-                                                                    <Image Source="{Binding Thumbnail}" Height="96" Stretch="Uniform" />
-                                                                    <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
-                                                                        <TextBlock Text="{Binding Entry.ModeId}" />
+                                    <!-- Nested group box (mockup's own "gb" inside "gb blueprint"),
+                                         not a bare caption + list, design-fidelity-agent-caught fix:
+                                         this nesting was missing entirely before. -->
+                                    <HeaderedContentControl Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
+                                        <HeaderedContentControl.Header>
+                                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxHistory.PreviousFramesHeader}" />
+                                        </HeaderedContentControl.Header>
+                                        <DockPanel LastChildFill="True">
+                                            <TextBlock DockPanel.Dock="Top" Classes="IndustryRowValue"
+                                                       Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
+                                                       IsVisible="{Binding !RxHistory.Entries.Count}" />
+                                            <ScrollViewer>
+                                                <!-- UniformGrid Columns=2, not WrapPanel/fixed-Width
+                                                     thumbs (design-fidelity-agent-caught fix): the
+                                                     mockup's own grid-template-columns:repeat(2,1fr)
+                                                     is a proportional 2-column grid, not a fixed
+                                                     120px-per-item wrap; the old literal Width="120"
+                                                     was ~2.9x smaller than the mockup's real fluid
+                                                     cell size. -->
+                                                <ItemsControl ItemsSource="{Binding RxHistory.Entries}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <UniformGrid Columns="2" />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="vm:RxHistoryEntryViewModel">
+                                                            <Border Classes="IndustryThumbnail" Margin="0,0,6,6">
+                                                                <DockPanel LastChildFill="True">
+                                                                    <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
+                                                                        <Grid ColumnDefinitions="*,Auto">
+                                                                            <TextBlock Classes="IndustryThumbnailCall" Text="{loc:Translate Panes.RxHistory.ThumbCallsignValue}" />
+                                                                            <TextBlock Grid.Column="1" Classes="IndustryThumbnailMeta" Text="{Binding Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
+                                                                        </Grid>
                                                                     </Border>
-                                                                </Panel>
-                                                                <TextBlock Classes="value" Text="{loc:Translate Panes.RxHistory.ThumbCallsignValue}" HorizontalAlignment="Center" />
-                                                                <TextBlock Classes="readoutSmall" Text="{Binding Entry.ReceivedAt, StringFormat=HH:mm:ss}" HorizontalAlignment="Center" />
-                                                            </StackPanel>
-                                                        </Border>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-                                        </ScrollViewer>
-                                    </DockPanel>
+                                                                    <Panel>
+                                                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+                                                                        <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}"
+                                                                                HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
+                                                                            <TextBlock Text="{Binding Entry.ModeId}" />
+                                                                        </Border>
+                                                                    </Panel>
+                                                                </DockPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </ScrollViewer>
+                                        </DockPanel>
+                                    </HeaderedContentControl>
                                 </Grid>
                             </DockPanel>
-                        </Border>
+                        </HeaderedContentControl>
 
                         <!-- Decode activity: visual scaffolding only, header-only DataGrid (no
                              ItemsSource); no structured decode-history event log exists yet,
