@@ -14,6 +14,7 @@ public sealed class LogbookSessionServiceTests
         FakeLogbookRepository? repository = null,
         FakeGridTrackerStreamer? gridTrackerStreamer = null,
         FakeQrzLogbookUploader? qrzUploader = null,
+        FakeQrzCallsignLookup? qrzLookup = null,
         FakeSettingsStore? settingsStore = null)
     {
         return new LogbookSessionService(
@@ -22,6 +23,7 @@ public sealed class LogbookSessionServiceTests
             new AdifImporter(),
             gridTrackerStreamer ?? new FakeGridTrackerStreamer(),
             qrzUploader ?? new FakeQrzLogbookUploader(),
+            qrzLookup ?? new FakeQrzCallsignLookup(),
             settingsStore ?? new FakeSettingsStore(),
             NullLogger<LogbookSessionService>.Instance);
     }
@@ -39,7 +41,7 @@ public sealed class LogbookSessionServiceTests
                 new QrzUploadSettings { Enabled = true, ApiKey = "key" },
                 QrzUploadSettingsJsonContext.Default.QrzUploadSettings),
         };
-        var service = CreateService(repository, gridTracker, qrz, settingsStore);
+        var service = CreateService(repository, gridTracker, qrz, settingsStore: settingsStore);
 
         var result = await service.LogQsoAsync(SampleRecord());
 
@@ -187,7 +189,7 @@ public sealed class LogbookSessionServiceTests
                 new QrzUploadSettings { Enabled = true, ApiKey = "my-key" },
                 QrzUploadSettingsJsonContext.Default.QrzUploadSettings),
         };
-        var service = CreateService(repository, gridTracker, qrz, settingsStore);
+        var service = CreateService(repository, gridTracker, qrz, settingsStore: settingsStore);
 
         await service.UpdateQsoAsync(SampleRecord("1") with { Notes = "edited" });
 
@@ -269,5 +271,79 @@ public sealed class LogbookSessionServiceTests
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public async Task LookupCallsignAsync_NotConfigured_ReturnsFailure_NeverCallsTheLookupClient()
+    {
+        var qrzLookup = new FakeQrzCallsignLookup();
+        var service = CreateService(qrzLookup: qrzLookup); // default FakeSettingsStore has no QrzLookup section
+
+        var result = await service.LookupCallsignAsync("W1AW");
+
+        Assert.False(result.Success);
+        Assert.Equal("QRZ lookup is not configured in Options.", result.ErrorReason);
+        Assert.Equal(0, qrzLookup.LookupCallCount);
+    }
+
+    [Fact]
+    public async Task LookupCallsignAsync_EnabledButNoUsername_ReturnsFailure_NeverCallsTheLookupClient()
+    {
+        var qrzLookup = new FakeQrzCallsignLookup();
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                QrzLookupSettings.SectionKey,
+                new QrzLookupSettings { Enabled = true, Username = null, Password = "pass" },
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings),
+        };
+        var service = CreateService(qrzLookup: qrzLookup, settingsStore: settingsStore);
+
+        var result = await service.LookupCallsignAsync("W1AW");
+
+        Assert.False(result.Success);
+        Assert.Equal(0, qrzLookup.LookupCallCount);
+    }
+
+    [Fact]
+    public async Task LookupCallsignAsync_EnabledWithCredentials_DelegatesToTheLookupClient()
+    {
+        var qrzLookup = new FakeQrzCallsignLookup
+        {
+            LookupReturnValue = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
+        };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                QrzLookupSettings.SectionKey,
+                new QrzLookupSettings { Enabled = true, Username = "user", Password = "pass" },
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings),
+        };
+        var service = CreateService(qrzLookup: qrzLookup, settingsStore: settingsStore);
+
+        var result = await service.LookupCallsignAsync("W1AW");
+
+        Assert.True(result.Success);
+        Assert.Equal("Hiram Maxim", result.Name);
+        Assert.Equal(1, qrzLookup.LookupCallCount);
+        Assert.Equal("W1AW", qrzLookup.LastCallsign);
+        Assert.Equal("user", qrzLookup.LastUsername);
+        Assert.Equal("pass", qrzLookup.LastPassword);
+    }
+
+    [Fact]
+    public async Task TestQrzLookupCredentialsAsync_UngatedByEnabledSetting_AlwaysDelegatesToTheLookupClient()
+    {
+        // Deliberately ungated -- this IS the settings-configuration flow itself, testing values
+        // the user hasn't saved (or enabled) yet.
+        var qrzLookup = new FakeQrzCallsignLookup { TestReturnValue = new QrzLoginResult(true, null) };
+        var service = CreateService(qrzLookup: qrzLookup); // default FakeSettingsStore: QrzLookup not even present
+
+        var result = await service.TestQrzLookupCredentialsAsync("user", "pass");
+
+        Assert.True(result.Success);
+        Assert.Equal(1, qrzLookup.TestCallCount);
+        Assert.Equal("user", qrzLookup.LastUsername);
+        Assert.Equal("pass", qrzLookup.LastPassword);
     }
 }

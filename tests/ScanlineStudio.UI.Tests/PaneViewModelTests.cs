@@ -141,7 +141,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_UpdatedEvent_RefreshesImageOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Null(vm.Image);
         ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseUpdated();
@@ -154,7 +154,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_ModeDetectedEvent_UpdatesModeCardTextsOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("—", vm.DetectedModeText);
         Assert.Equal("—", vm.LineTimeText);
@@ -177,7 +177,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var localization = new FakeLocalizationService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("—", vm.StartedDisplay);
 
@@ -201,7 +201,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("MainWindow.StatusBar.LineProgressValueNoLock", vm.LineProgressText);
 
@@ -233,7 +233,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_PollTelemetry_NoLockYet_ShowsPlaceholders()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
 
@@ -257,7 +257,7 @@ public sealed class PaneViewModelTests
         // gate is correctly wired, but the VM's own display logic must not silently relabel it
         // "locked" if it somehow were).
         var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = false, SlantPpm = 3.4 };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.PollTelemetry();
 
         Assert.Equal("Panes.RxSync.AutoCorrectValue.Off", vm.AutoCorrectDisplay);
@@ -272,7 +272,7 @@ public sealed class PaneViewModelTests
         // proved AVT wins over "Locked" specifically, only over "on, not locked yet" by omission). Must
         // win regardless.
         var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = true, SlantPpm = 3.4 };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.PollTelemetry();
         Assert.Equal("Panes.RxSync.AutoCorrectValue.Locked", vm.AutoCorrectDisplay); // sanity: locked before AVT
 
@@ -293,7 +293,7 @@ public sealed class PaneViewModelTests
         // into/out of AVT wouldn't refresh AutoCorrectDisplay's "—" case until some OTHER property
         // change happened to fire first.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var raisedProperties = new List<string?>();
         vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
@@ -312,7 +312,7 @@ public sealed class PaneViewModelTests
     {
         // Same reasoning as the sibling test above, for the OTHER state AVT must win over: "Off".
         var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = false };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var avtMode = new SstvModeDefinition(
             Id: "avt", DisplayName: "AVT", VisCode: 68, ImageWidth: 320, ImageHeight: 240,
@@ -334,7 +334,7 @@ public sealed class PaneViewModelTests
             IsLevelOverdriven = true,
             BufferedSampleCount = 1583,
         };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
 
@@ -350,7 +350,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { BufferedSampleCount = 1583, CaptureOverrunCount = 7 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.BufferedSampleCountStatusBarDisplay;
@@ -364,7 +364,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { BufferedSampleCount = 1583, CaptureOverrunCount = 7 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.BufferedSampleCountDisplay;
@@ -382,7 +382,7 @@ public sealed class PaneViewModelTests
         // precisely rather than fighting floating-point rounding on an arbitrary input.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SignalPeakLevel = 0.5 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.AgcGainDisplay;
@@ -399,7 +399,7 @@ public sealed class PaneViewModelTests
         // curMax approaches zero.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SignalPeakLevel = 0.0 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.AgcGainDisplay;
@@ -411,7 +411,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_Constructed_LoadsTheConfiguredCaptureDeviceName()
     {
         var sstvSession = new FakeSstvSessionService { ConfiguredCaptureDeviceName = "hw:2,0 L" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("hw:2,0 L", vm.CaptureDeviceName);
@@ -422,7 +422,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_NoCaptureDeviceConfigured_CaptureDeviceNameDisplayShowsPlaceholder()
     {
         var sstvSession = new FakeSstvSessionService { ConfiguredCaptureDeviceName = null };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Null(vm.CaptureDeviceName);
@@ -434,7 +434,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("—", vm.FileSizeDisplay);
 
@@ -465,7 +465,7 @@ public sealed class PaneViewModelTests
         // see OnSaved's own doc comment for why the comparison is against the BUFFER's generation,
         // not a second counter tracked independently on this class.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
         var buffer = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
         buffer.Generation = 5; // a newer image has since started
 
@@ -491,7 +491,7 @@ public sealed class PaneViewModelTests
         // A fresh/restarted decode has no saved file of its own yet -- a stale size from the
         // PREVIOUS frame must not linger next to the new frame's "Started" time.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var path = Path.Combine(Path.GetTempPath(), $"scanlinestudio-test-{Guid.NewGuid():N}.png");
         File.WriteAllBytes(path, new byte[100]);
@@ -521,7 +521,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_UpdatedEvent_ComputesClipFractions_FromTheDecodedRowsOnly()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         // 2x2 image: row 0 = 1 pure-black + 1 pure-white pixel; row 1 = 2 mid-gray. Progress=1.0
         // (fully decoded) -- both rows count, so 25% clipped each way.
@@ -551,7 +551,7 @@ public sealed class PaneViewModelTests
         // With Progress=0.5 (only row 0 "decoded"), the clip stats must reflect ONLY row 0 -- 0% black,
         // 100% white -- not the whole-canvas 50%/50% (or worse, 100% black if row 1 dominated).
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var image = new ArrayImageSource(1, 2,
         [
@@ -572,7 +572,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_NoProgressYet_ClipLoHiDisplayShowsPlaceholder_NotAMisleadingReading()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Null(vm.Progress);
         Assert.Equal("—", vm.ClipLoHiDisplay);
@@ -582,7 +582,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_RequestReSyncCommand_DelegatesToTheSessionService()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.RequestReSyncCommand.Execute(null);
 
@@ -606,7 +606,7 @@ public sealed class PaneViewModelTests
         // locked-frequency value (1213.125) an earlier version of this fix stopped one step short at.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SyncFrequencyCorrectionHz = -13.125 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.PollTelemetry();
 
         _ = vm.SyncToneDisplay;
@@ -625,7 +625,7 @@ public sealed class PaneViewModelTests
         // no mode tag, so this pane must derive both from DetectedMode.NarrowModeCode.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SyncFrequencyCorrectionHz = 0.0 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
         var narrowMode = new SstvModeDefinition(
             Id: "mn73", DisplayName: "MN73", VisCode: 55, ImageWidth: 320, ImageHeight: 256,
             ColorEncoding: ColorEncoding.YCbCrSequential, LineSegments: [], NarrowModeCode: 0x11);
@@ -652,6 +652,82 @@ public sealed class PaneViewModelTests
         // 3.125Hz wide-band calibration offset, matching SyncToneDisplay's own regression test above.
         Assert.Equal("1210.00 · +10.00", string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.00} · {1:+0.00;-0.00}", 1210.0, 10.0));
         Assert.Equal("slant +3.4 ppm", string.Format(System.Globalization.CultureInfo.InvariantCulture, "slant {0:+0.0;-0.0} ppm", 3.4));
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_LookupQrzCommand_DisabledWithNoOverrideCallsign_EnabledOnceTyped()
+    {
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.False(vm.LookupQrzCommand.CanExecute(null));
+
+        vm.OverrideCallsign = "W1AW";
+        Assert.True(vm.LookupQrzCommand.CanExecute(null));
+
+        vm.OverrideCallsign = "   ";
+        Assert.False(vm.LookupQrzCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_LookupQrzAsync_Success_PopulatesNameQthGrid_ClearsError()
+    {
+        var logbookSession = new FakeLogbookSessionService
+        {
+            LookupResultToReturn = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
+        };
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, NullLogger<RxImagePaneViewModel>.Instance);
+        vm.OverrideCallsign = "  W1AW  ";
+
+        await vm.LookupQrzCommand.ExecuteAsync(null);
+
+        Assert.Equal("Hiram Maxim", vm.LookupName);
+        Assert.Equal("Hiram Maxim", vm.NameDisplay);
+        Assert.Equal("Newington (United States)", vm.LookupQth);
+        Assert.Equal("Newington (United States)", vm.QthDisplay);
+        Assert.Equal("FN31pr", vm.LookupGrid);
+        Assert.Equal("FN31pr / --", vm.GridDisplay);
+        Assert.Null(vm.QrzLookupErrorMessage);
+        // Trimmed before being passed on, same convention as QsoLinkWindowViewModel's own callsign handling.
+        Assert.Equal("W1AW", logbookSession.LastLookupCallsign);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_LookupQrzAsync_Failure_SetsErrorMessage_LeavesPriorResultsIntact()
+    {
+        var logbookSession = new FakeLogbookSessionService
+        {
+            LookupResultToReturn = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
+        };
+        var localization = new FakeLocalizationService();
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), localization, logbookSession, NullLogger<RxImagePaneViewModel>.Instance);
+        vm.OverrideCallsign = "W1AW";
+        await vm.LookupQrzCommand.ExecuteAsync(null);
+        Assert.Equal("Hiram Maxim", vm.LookupName);
+
+        logbookSession.LookupResultToReturn = new QrzCallsignLookupResult(false, null, null, null, "Not found: xx1xxx");
+        vm.OverrideCallsign = "XX1XXX";
+        await vm.LookupQrzCommand.ExecuteAsync(null);
+
+        // FakeLocalizationService.GetString returns the raw key, not a formatted string --
+        // asserting the exact key (not just NotNull) proves the wrapper key was used, and
+        // LastArgs proves the raw ErrorReason was passed through as its argument.
+        Assert.Equal("Panes.RxFrameMeta.Error.LookupFailed", vm.QrzLookupErrorMessage);
+        Assert.Equal("Not found: xx1xxx", localization.LastArgs[0]);
+        // A failed re-lookup must not wipe a previously-successful result off the screen.
+        Assert.Equal("Hiram Maxim", vm.LookupName);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_NoLookupYet_AllDisplaysShowPlaceholders()
+    {
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        // "—" matches this pane's own established placeholder convention (StartedDisplay/
+        // FileSizeDisplay); the trailing "-- / --" distance half is unrelated, still-unwired
+        // literal text, not this property's own fallback.
+        Assert.Equal("—", vm.NameDisplay);
+        Assert.Equal("—", vm.QthDisplay);
+        Assert.Equal("— / --", vm.GridDisplay);
     }
 
     [AvaloniaFact]

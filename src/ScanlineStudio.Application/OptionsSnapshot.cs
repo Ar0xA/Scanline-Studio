@@ -22,4 +22,7 @@ public sealed record OptionsSnapshot(
     string? OperatorName,
     string? OperatorGrid,
     bool AutoSyncEnabled,
-    bool AutoSlantEnabled);
+    bool AutoSlantEnabled,
+    bool QrzLookupEnabled,
+    string? QrzLookupUsername,
+    string? QrzLookupPassword);
