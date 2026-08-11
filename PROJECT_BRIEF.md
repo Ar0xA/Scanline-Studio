@@ -28,7 +28,7 @@ plan: `~/.claude/plans/transient-jumping-bentley.md` — 8 phases (0 fonts/token
 - "Rework it into the new design, do this for each new card that already has an old design" — i.e.
   keep executing the plan's remaining phases (4→7), not just polish what's already ported.
 
-### Status: Phases 0-4 SHIPPED. Phase 5 (Gallery tab) ported, design-fidelity check pending.
+### Status: Phases 0-5 SHIPPED. Phase 6 (Logbook tab + Options window) NOT STARTED.
 
 **Phase 0 (fonts/tokens), Phase 1 (atoms), Phase 2 (chrome: menu/header row/tab strip/status bar):
 SHIPPED, verified, committed** — see git log before this session if detail is ever needed; nothing
@@ -165,10 +165,46 @@ placeholder Queue/TX-log cards in Phase 4 where NOTHING is real. Storage card's 
 a prior session, not a fidelity gap to fix. Applied every Phase-4-learned fix preventively this time
 (uppercase titles, `Padding="7,0"` on every `IndustryBtn25`, `WrapPanel` not fixed-column Grid for
 the filter row) — self-check screenshot came back clean on the first pass, no clipped buttons or
-notches found. Verified: full solution build clean, `UI.Tests` 173/173, real-window screenshot
-(0-frames empty state only — thumbnail grid itself not exercised with real data, same composition as
-2 already-verified precedents so treated as low-risk). **Design-fidelity spot-check not yet run** —
-next action on resume if this session ends before it happens.
+notches found.
+
+**Design-fidelity spot-check: run (headless-Firefox pixel measurements against the mockup's own
+CSS+realistic 18-figure data), found 5 visible + 9 minor + 3 nit — fixed.** Visible: (1) filter chip
+casing — mock2's `.mini` has no CSS `text-transform`, the literal HTML copy is uppercase
+(`ALL`/`TODAY`/`UNLOGGED`/`FLAGGED`), 4 locale keys fixed. (2) Selected-frame's 3-button row was a
+stretched `*,*,*` Grid; mock2's own row is left-aligned content-width with empty trailing space —
+switched to a `StackPanel`. (3)-(4) thumbnail caption font-size (11/9.5, not the Receive/Transmit
+sites' own correct-for-THEM 10/9) and padding (`IndustryThumbnailCaptionPaddingGallery`/
+`Border.IndustryThumbnailCaption.gallery` already existed in `Atoms.axaml` from a prior phase,
+completely unused until now) — added matching `.gallery` `Call`/`Meta` font-size overrides, applied
+the `gallery` class at the one real call site. (5) the Gallery's thumbnail grid is the ONLY Industry
+thumbnail composition built on a real `ListBox` (needed for `SelectedEntry` TwoWay binding; Receive/
+Transmit's precedents are a plain `ItemsControl`/`UniformGrid` instead) — with no
+`ItemContainerTheme`, default FluentTheme `ListBoxItem` chrome would leak through once populated;
+added a minimal `IndustryThumbnailListBoxItemTheme` (zero padding/min-size, transparent) plus a real
+accent-border `:selected` state rule, since this is genuine functionality (not decorative) needing
+real feedback. Verified this specific fix by seeding one real `ReceiveHistory` SQLite row + PNG
+directly (own throwaway test data, cleaned up after) — the empty-state screenshot alone couldn't
+exercise a ListBox with actual items in it; confirmed both the container-chrome fix and the
+accent-selection border render correctly.
+
+Minor fixes: filter-row top offset (dropped a redundant 4px margin — card's own padding already
+provides mock2's spacing), filter-row-to-grid gap (3px added), button height/font
+(`IndustryBtn25`→`IndustryBtn24`, mock2's own 24px/11px for this specific row), search box width
+(200→230), search watermark copy (matched mock2's own "callsign, grid, mode, note…" including the
+real ellipsis character and the dropped "Search " prefix), thumbnail grid gap (6→7px), mode-badge
+inset (3→4px), and Storage's "Naming" value — was showing a plausible-looking but WRONG literal
+pattern (`yyyyMMdd-HHmmss-MODE`); the real code
+(`ReceiveHistoryRecorder.cs:296`) produces `yyyyMMdd-HHmmss_MODE.png` (underscore, `.png` suffix) —
+fixed to match, since this row is presented as a real pattern, not scaffolding. `EntryCountFormat`
+got a thousands-separator (`{0:N0}`) for parity with mock2's `1 284`. Not fixed (2 nits, logged):
+File row shows the full absolute path with end-trimming ellipsis (mock2 shows filename-only with
+middle-ellipsis) — would need a new converter/VM property just for this cosmetic truncation, not
+proportionate to a nit; Log-entry's accent-700 color in mock2 was for a "linked" success state,
+which doesn't apply to this port's honest "Not logged" value — left plain, correct as-is.
+
+Verified after fixes: full solution build clean, `UI.Tests` 173/173, real-window screenshots with
+both the empty state AND one seeded real thumbnail (selection border, caption sizing, badge inset,
+button row all re-confirmed visually). Test DB row/image cleaned up after.
 
 ### Real bugs found + fixed this session (not just cosmetic — worth knowing about for future atom work)
 
