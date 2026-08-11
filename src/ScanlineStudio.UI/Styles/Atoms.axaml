@@ -920,6 +920,27 @@
         <Setter Property="Opacity" Value="0.45" />
     </Style>
 
+    <!-- Danger/destructive variant (Phase 7): ported 1:1 from the old design's Button.halt
+         (Cards.axaml) - a tinted/outlined red, not a solid fill (visually distinct from
+         IndustryTxToggle's own solid-fill red below; the old design used two different red
+         treatments for these two controls and this keeps that distinction rather than
+         conflating them). Literal hex, not new tokens - this exact tint pair has no other
+         consumer, matching this file's own convention of inlining one-off hover-mix colors
+         (e.g. IndustryBtnSecondary's own #121D1F20 above) rather than minting a token for a
+         single call site. Only real consumer: TX Editor's "Stop Transmit" button. -->
+    <Style Selector="Button.IndustryBtnDanger /template/ ContentPresenter">
+        <Setter Property="Background" Value="#FFF5D6D6" />
+        <Setter Property="BorderBrush" Value="#FFB33A3A" />
+        <Setter Property="TextBlock.Foreground" Value="#FF6B0F0F" />
+    </Style>
+    <Style Selector="Button.IndustryBtnDanger:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="#FFF0C2C2" />
+        <Setter Property="BorderBrush" Value="#FF8F2626" />
+    </Style>
+    <Style Selector="Button.IndustryBtnDanger:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
     <!-- Phase 2 addendum: ToggleButton is a separate type from Button in Avalonia (not a subtype —
          confirmed by this codebase's own pre-existing Cards.axaml, which already styles
          "Selector=Button" and "Selector=ToggleButton" as two independent, non-overlapping rules),
@@ -946,6 +967,17 @@
     </Style>
     <Style Selector="ToggleButton.IndustryBtnPrimary:disabled">
         <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
+    <!-- TX transmit toggle (Phase 7): ported 1:1 from the old design's ScanlineStudioTxToggleButtonTheme
+         (Tokens.axaml) - plain/secondary look at rest, solid red fill only while actually
+         transmitting (IsChecked). Call sites pair this with the plain
+         "Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" classes for the rest-state look,
+         same base as any other secondary toggle; this adds only the :checked override. -->
+    <Style Selector="ToggleButton.IndustryTxToggle:checked /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryDanger}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDanger}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDangerForeground}" />
     </Style>
 
     <!-- 8. .input — a SEPARATE IndustryInput class, distinct from the bare Industry exclusion
@@ -1024,9 +1056,8 @@
          real plain <table> than a scrolling/virtualized/sortable grid — fighting DataGrid's own
          chrome system a second time for a 5-row static table is more work than a header Grid +
          ItemsControl body). Package removal (Avalonia.Controls.DataGrid reference, Fluent.xaml
-         StyleInclude) belongs to whichever phase actually ports Decode-activity (Phase 3)/TX log
-         (Phase 4), NOT this phase — the package is still needed by the old-design DataGrid
-         instances until then. -->
+         StyleInclude) happened in Phase 7, once Decode-activity/TX-log were confirmed the last two
+         consumers and both were already ported to this atom in Phases 3/4. -->
     <Style Selector="TextBlock.IndustryTableHeader">
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
         <Setter Property="FontSize" Value="11" />
@@ -1315,6 +1346,37 @@
         <Setter Property="FontSize" Value="10" />
         <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted55}" />
         <Setter Property="Cursor" Value="Help" />
+    </Style>
+
+    <!-- Status-bar LED indicator (Phase 7): ported 1:1 from the old design's Ellipse.led/.active/
+         .alert (Cards.axaml) - gray/off by default, a call site toggles Classes.active (green) or
+         Classes.alert (red) from real view-model state. Kept as its own literal red rather than
+         reusing IndustryDanger above - the old design used two different reds for the LED vs. the
+         TX-toggle/error-text color, and this preserves that distinction instead of silently
+         unifying them. Only real consumer: MainWindow's status-bar TX-inhibit indicator. -->
+    <Style Selector="Ellipse.IndustryLed">
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Height" Value="8" />
+        <Setter Property="Stroke" Value="#FF6E6E6E" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Fill" Value="#FFB9B9B9" />
+    </Style>
+    <Style Selector="Ellipse.IndustryLed.active">
+        <Setter Property="Fill" Value="#FF2FA02F" />
+        <Setter Property="Stroke" Value="#FF1F6E1F" />
+    </Style>
+    <Style Selector="Ellipse.IndustryLed.alert">
+        <Setter Property="Fill" Value="#FFD03030" />
+        <Setter Property="Stroke" Value="#FF8F2626" />
+    </Style>
+
+    <!-- Small muted readout label (Phase 7): ported 1:1 from the old design's TextBlock.readoutSmall
+         (Cards.axaml), Industry mono font swapped in. Only real consumer: the status-bar TX-inhibit
+         label next to IndustryLed above. -->
+    <Style Selector="TextBlock.IndustryReadoutSmall">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+        <Setter Property="FontSize" Value="10.5" />
+        <Setter Property="Foreground" Value="#FF8A8A8A" />
     </Style>
 
 </Styles>

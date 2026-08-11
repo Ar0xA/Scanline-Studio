@@ -5,10 +5,11 @@
              x:Class="ScanlineStudio.UI.Views.RxImagePaneView"
              x:DataType="vm:RxImagePaneViewModel">
 
-    <Border Classes="plot">
+    <Border Classes="Industry IndustryPlot">
         <Panel>
             <TextBlock Text="{loc:Translate Panes.RxImage.NoImageYet}"
-                       Foreground="#FFB9B9B9"
+                       Foreground="{StaticResource IndustryBg}"
+                       Opacity="0.55"
                        IsVisible="{Binding Image, Converter={x:Static ObjectConverters.IsNull}}"
                        HorizontalAlignment="Center"
                        VerticalAlignment="Center" />
