@@ -567,179 +567,106 @@
                         </HeaderedContentControl>
                     </Grid>
 
-                    <!-- Right column: mostly visual scaffolding still. Frame metadata's "Started" and
-                         "Size on disk" rows are real (spec/17-rx-telemetry-feasibility.md), wired to
-                         RxImagePaneViewModel (file size only populates once the frame's own save
-                         completes; see FileSizeBytes' own doc comment; a still-in-progress or
-                         abandoned/partial frame reads "—"). Its other fields (Callsign/OCR, QRZ
-                         lookup, Frequency/Mode/VIS, SNR/slant, dropped-lines, note/override-callsign)
-                         and Unattended RX's scan/watch state have no backing data or feature at all
-                         yet (spec/14-roadmap.md backlog: "Frame metadata card"/"Unattended RX").
-                         Session frames is a distinct placeholder list matching mock2's own
-                         Callsign/Mode/Meta text format; not a second copy of the real thumbnail
-                         strip, which lives in the Incoming-frame card above. -->
-                    <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
-                        <Border Grid.Row="0" Classes="card" DataContext="{Binding RxImage}">
-                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxFrameMeta.CardHeader}" />
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.CallsignValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.GridDistance}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.GridDistanceValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.Frequency}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.FrequencyValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.ModeVis}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.ModeVisValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.Started}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding StartedDisplay}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.SnrSlant}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.SnrSlantValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.OcrConfidence}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.OcrConfidenceValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.DroppedLines}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxFrameMeta.DroppedLinesValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxFrameMeta.FileSize}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding FileSizeDisplay}" />
-                                </Grid>
-                                <TextBlock Classes="caption" Text="{loc:Translate Panes.RxFrameMeta.NoteLabel}" />
-                                <TextBox Text="{loc:Translate Panes.RxFrameMeta.NoteValue}" />
-                                <TextBlock Classes="caption" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignLabel}" />
-                                <TextBox Watermark="{loc:Translate Panes.RxFrameMeta.CallsignValue}" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignValue}" />
-                                <UniformGrid Columns="2">
-                                    <Button Classes="small" Margin="0,0,3,0" Content="{loc:Translate Panes.RxFrameMeta.LookupQrz}" />
-                                    <Button Classes="small" Margin="3,0,0,0" Content="{loc:Translate Panes.RxFrameMeta.Flag}" />
-                                </UniformGrid>
-                            </StackPanel>
-                        </Border>
+                    <!-- Right column, ported to Industry atoms (was old Cards.axaml "card"/
+                         "cardHeader"/"kv"/"label"/"value"/"caption"/"small"/"readoutSmall"
+                         styling). Frame metadata's "Started" and "Size on disk" rows are real
+                         (spec/17-rx-telemetry-feasibility.md), wired to RxImagePaneViewModel (file
+                         size only populates once the frame's own save completes; see
+                         FileSizeBytes' own doc comment; a still-in-progress or abandoned/partial
+                         frame reads "—"). Its other fields (Callsign/OCR, QRZ lookup, Frequency/
+                         Mode/VIS, SNR/slant, dropped-lines, note/override-callsign) and Unattended
+                         RX's scan/watch state have no backing data or feature at all yet
+                         (spec/14-roadmap.md backlog: "Frame metadata card"/"Unattended RX"). Row
+                         SET (both cards) deliberately kept as this app's EXISTING real+literal
+                         field inventory, not the mockup's own row set (which shows extra "File"/
+                         "Sidecar"/"Disk" rows this app doesn't compute) — same preserve-real-
+                         behavior precedent as the left column's Input-chain card. Session frames
+                         is a distinct placeholder list matching mock2's own Callsign/Mode/Meta
+                         text format; not a second copy of the real thumbnail strip, which lives in
+                         the Incoming-frame card above.
 
-                        <Border Grid.Row="1" Classes="card">
-                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxUnattended.CardHeader}" />
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxUnattended.Watch}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxUnattended.WatchValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxUnattended.ScanDwell}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxUnattended.ScanDwellValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxUnattended.Alert}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxUnattended.AlertValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxUnattended.Session}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxUnattended.SessionValue}" />
+                         DEFERRED, off-scope for this pass: the mockup's own 4th card, "Macros"
+                         (F1-F6 mini-chip buttons), doesn't exist anywhere in this app today (no
+                         backing command/feature) — building it is new scope, not a re-skin of an
+                         existing old-design card, so it's not added here; would need a real
+                         product decision on what F1-F6 actually invoke first. -->
+                    <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                        <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxFrameMeta.CardHeader}" />
+                            </HeaderedContentControl.Header>
+                            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                <StackPanel Classes="Industry IndustryRows">
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.CallsignValue}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.GridDistance}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.GridDistanceValue}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Frequency}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.FrequencyValue}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.ModeVis}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.ModeVisValue}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Started}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding StartedDisplay}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.SnrSlant}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.SnrSlantValue}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.OcrConfidence}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.OcrConfidenceValue}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.DroppedLines}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.DroppedLinesValue}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.FileSize}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding FileSizeDisplay}" /></Grid></Border>
+                                </StackPanel>
+                                <!-- Plain 11px label, not a kicker (design-fidelity-caught fix
+                                     over the first draft): mockup's <label style="font-size:11px">
+                                     has no text-transform/letter-spacing/accent-color, unlike
+                                     every other IndustryKicker use in this app. -->
+                                <TextBlock Classes="IndustryRowLabel" Margin="0,2,0,0" Text="{loc:Translate Panes.RxFrameMeta.NoteLabel}" />
+                                <TextBox Classes="Industry IndustryInput" Text="{loc:Translate Panes.RxFrameMeta.NoteValue}" />
+                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignLabel}" />
+                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxFrameMeta.CallsignValue}" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignValue}" />
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="4" Margin="0,2,0,0">
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.LookupQrz}" />
+                                    <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.Flag}" />
                                 </Grid>
                             </StackPanel>
-                        </Border>
+                        </HeaderedContentControl>
+
+                        <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxUnattended.CardHeader}" />
+                            </HeaderedContentControl.Header>
+                            <StackPanel Classes="Industry IndustryRows">
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxUnattended.Watch}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxUnattended.WatchValue}" /></Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxUnattended.ScanDwell}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxUnattended.ScanDwellValue}" /></Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxUnattended.Alert}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxUnattended.AlertValue}" /></Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxUnattended.Session}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxUnattended.SessionValue}" /></Grid></Border>
+                            </StackPanel>
+                        </HeaderedContentControl>
 
                         <!-- Session frames: literal scrollable list (SessionFrames isn't a real
                              bindable property anywhere in the app: grepped repo-wide, only
                              exists in mockups/); a scrollable 15-row list fills the column height
                              the way a real ItemsSource-bound list would, instead of 3 static rows
-                             leaving a large empty gap (spec/14-roadmap.md backlog). -->
-                        <Border Grid.Row="2" Classes="card">
-                            <DockPanel LastChildFill="True">
-                                <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.RxSessionFrames.CardHeader}" />
-                                <ScrollViewer Margin="0,4,0,0">
-                                    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row1Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row1Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row1Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row2Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row2Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row2Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row3Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row3Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row3Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row4Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row4Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row4Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row5Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row5Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row5Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row6Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row6Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row6Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row7Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row7Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row7Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row8Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row8Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row8Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row9Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row9Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row9Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row10Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row10Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row10Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row11Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row11Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row11Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row12Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row12Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row12Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row13Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row13Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row13Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row14Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row14Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row14Meta}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="value" Text="{loc:Translate Panes.RxSessionFrames.Row15Callsign}" />
-                                            <TextBlock Grid.Column="1" Classes="label" Text="{loc:Translate Panes.RxSessionFrames.Row15Mode}" />
-                                            <TextBlock Grid.Column="2" Classes="readoutSmall" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row15Meta}" />
-                                        </Grid>
-                                    </StackPanel>
-                                </ScrollViewer>
-                            </DockPanel>
-                        </Border>
+                             leaving a large empty gap (spec/14-roadmap.md backlog). Row markup kept
+                             as 15 literal repeats (not refactored to an ItemsControl), that's a
+                             bigger structural change than this pass's re-skin scope, and the
+                             existing file's own comment already explains why a real ItemsSource
+                             isn't available here. -->
+                        <HeaderedContentControl Grid.Row="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxSessionFrames.CardHeader}" />
+                            </HeaderedContentControl.Header>
+                            <ScrollViewer>
+                                <StackPanel Classes="Industry IndustryRows">
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row1Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row1Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row1Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row2Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row2Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row2Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row3Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row3Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row3Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row4Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row4Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row4Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row5Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row5Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row5Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row6Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row6Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row6Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row7Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row7Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row7Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row8Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row8Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row8Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row9Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row9Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row9Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row10Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row10Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row10Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row11Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row11Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row11Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row12Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row12Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row12Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row13Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row13Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row13Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row14Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row14Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row14Meta}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row15Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row15Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row15Meta}" /></Grid></Border>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </HeaderedContentControl>
                     </Grid>
                 </Grid>
             </TabItem>
