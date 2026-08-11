@@ -689,6 +689,10 @@
         <Setter Property="Height" Value="6" />
         <Setter Property="MinHeight" Value="6" />
         <Setter Property="Background" Value="{StaticResource IndustryNeutral300}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <!-- design-fidelity-caught fix (round 2): without this, Fluent's own default
+             BorderBrush/BorderThickness on ProgressBar left a stray 1px #A0A0A0 line around the
+             track, not an Industry design-system color, and shrank the visible fill height. -->
         <Setter Property="CornerRadius" Value="0" />
     </Style>
     <Style Selector="ProgressBar.Industry /template/ Border#PART_Indicator">
