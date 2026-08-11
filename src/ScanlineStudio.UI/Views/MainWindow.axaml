@@ -310,12 +310,11 @@
                          the earlier 180->154 reversion assumed the ONLY reason 180 was ever needed was a
                          since-fixed NumericUpDown clipping bug, but the settings column's real
                          content (Bins/px + Start + Span + Gain + Zero + Peak hold + the Both/Spec/WF
-                         segment, 7 stacked items, none yet re-skinned to the compact Industry atoms,
-                         this whole card is still pre-redesign old-style, a separate larger port not
-                         done in this pass) genuinely doesn't fit in 154: Peak hold rendered
+                         segment, 7 stacked items) genuinely doesn't fit in 154 even now that the
+                         whole card is re-skinned to the compact Industry atoms: Peak hold rendered
                          flush against the card's own bottom border with near-zero clearance, and the
                          segment row below it was clipped out of existence entirely, invisible. -->
-                    <Grid Grid.Column="1" RowDefinitions="182,*,150" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
+                    <Grid Grid.Column="1" RowDefinitions="182,*,150" RowSpacing="{StaticResource IndustrySpacingGroup}">
                         <!-- Spectrum & waterfall (batch 8b): SpectrumTraceControl (new, real FFT
                              line trace + markers + peak-hold) fills what was the literal "Spectrum"
                              placeholder; WaterfallPaneView (ContentControl bound to Waterfall) is
@@ -532,7 +531,13 @@
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxDecodeLog.CardHeader}" />
                             </HeaderedContentControl.Header>
                             <Grid ColumnDefinitions="*,250" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
-                                <DockPanel>
+                                <!-- LastChildFill="False" (design-fidelity-caught fix, round 2):
+                                     this DockPanel has only ONE child, so LastChildFill's own
+                                     default of True made it (also being the last child) fill the
+                                     WHOLE card body regardless of its Dock="Top": the header row's
+                                     bottom rule ended up flush against the card's bottom edge
+                                     instead of directly under the header text. -->
+                                <DockPanel LastChildFill="False">
                                     <!-- Border-per-cell (design-fidelity-caught fix over the first
                                          draft): mockup's <th style="padding:2px 5px"> pads EACH
                                          header cell individually, not just the row's own outer
