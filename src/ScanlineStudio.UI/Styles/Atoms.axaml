@@ -593,6 +593,13 @@
     <Style Selector="Border.IndustryRow">
         <Setter Property="MinHeight" Value="16.5" />
     </Style>
+    <!-- design-fidelity-caught fix: CSS's .gb{gap:3px} applies to .r2 rows too, not just
+         non-row children, which this atom never set — rows were sitting flush against each
+         other with only their 1px top-rule for separation, ~2px shorter row pitch than the
+         mockup at every row, in every card that uses this atom. -->
+    <Style Selector="StackPanel.IndustryRows">
+        <Setter Property="Spacing" Value="3" />
+    </Style>
     <Style Selector="StackPanel.IndustryRows > Border.IndustryRow:not(:nth-child(1)):not(.unruled)">
         <Setter Property="BorderThickness" Value="0,1,0,0" />
         <Setter Property="BorderBrush" Value="{StaticResource IndustryRowRule6}" />
