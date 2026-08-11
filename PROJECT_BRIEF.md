@@ -97,6 +97,50 @@ section where many Phase-1 atoms got a real consumer for the first time).
 
   Verified: full solution build clean, `UI.Tests` 173/173, real-window screenshot in both the
   throwaway harness AND the actual running Host app (post-fix, via a real Stock image click-through).
+
+  **Phase 4 design-fidelity spot-check: run, findings fixed.** Per the standing rule (now saved as
+  a memory: run this check automatically at the end of a whole phase, before starting the next one
+  — don't wait to be asked), a `design-fidelity` agent pass covered all 3 Transmit-tab columns
+  against mock2. Found 7 visible + 5 minor + 3 nit mismatches, real-window-verified (live screenshots,
+  not static XAML reading). All fixed this pass except the 2 nits explicitly logged below.
+  **Visible, all fixed:** (1) the Transmit tab's own outer Grid never got the 258,*,330→236,*,312 /
+  `IndustrySpacingGutter` / `9,11,9,8`-margin token update the Receive tab already has — copied
+  verbatim from Receive. (2) Editor card's title notch was clipped (no headroom margin) — needed
+  BOTH the outer-Grid margin fix above AND a dedicated `Margin="0,6,0,0"` on the card's own
+  `HeaderedContentControl` (unlike Receive's Incoming-frame blueprint card, this one has no sibling
+  row above it for free RowSpacing clearance) — confirmed via a direct pixel-crop comparison against
+  the already-crisp "MODE TIMING REFERENCE" title before/after. (3) Editor's side panel rendered
+  ~608 DIP wide instead of mock2's 186 — a `Grid ColumnDefinitions="2*,Auto"` Auto column measures
+  to the WrapPanel's own unconstrained desired width; fixed to a literal `"*,186"`. (4) 8
+  `IndustryBtn22` call sites were missing `Padding="7,0"`, clipping labels — same bug class the
+  Receive tab already fixed once (RxFrameMeta). (5) Phase 4's new card titles weren't uppercased,
+  inconsistent with the Receive tab's own convention — 8 locale keys uppercased. (6) Recently-sent
+  thumbnails stretched to fill the column height (ScrollViewer's default Stretch content alignment)
+  — fixed with `VerticalAlignment="Top"` on the UniformGrid + a fixed (not Min) `Height="70"` hatch
+  panel. (7) Output card's SWR-cutoff row overflowed its column — a non-wrapping horizontal
+  StackPanel replaced with a WrapPanel.
+  **Minor, all fixed:** Mode-timing table's `ScrollViewer MaxHeight` (150→145) landed mid-row,
+  clipping the 9th row in half — re-verified the new value lands on a clean row boundary via
+  pixel-crop. Table alignment/units brought in line with the Receive tab's own already-verified
+  Decode-activity table (left-aligned, not right — mock2's own CSS is left-aligned and Phase 3
+  already matches that; the Mode-timing table was the one inconsistent outlier), Frame column
+  gained its "s" unit suffix. Added 4 rows the port had dropped vs. mock2 (TX mode card's
+  Selected/VIS header — Selected is a REAL binding, `SelectedMode.DisplayName`, not literal; Output
+  card's Tune drive; Editor's Text-style Plate row) plus reordered the TX mode card's ComboBox to
+  after the quick-mode grid, matching mock2. Stock-picker thumbnail button re-skinned off default
+  Fluent chrome (flat hairline border, no rounding) — the only remaining non-Industry control in
+  the left column.
+  **Nits: 2 fixed (numbered Queue rows, "Save"→"Save current"), 1 logged not fixed** — Output
+  card's Drive value renders as a bare `100` where mock2 shows `−6.0 dBFS`; not a formatting nit,
+  the app's real quantity is a 0–100 percent (`RadioStatus.TxVolumePercent`) while mock2's is a
+  dBFS level — different units entirely, mislabeling one as the other would be wrong, and no real
+  dBFS conversion exists to compute the correct value. Needs a real product decision, not a
+  drive-by fix; logged for later, not chased further this pass.
+
+  Re-verified after fixes: full solution build clean, `UI.Tests` 173/173,
+  `Core.Localization.Tests` 7/7, every fix individually confirmed via real-window pixel-crop
+  screenshots (not just "looks fine at a glance" — several fixes needed a second iteration after
+  the first attempt still showed the issue at zoom, e.g. the title-notch clipping).
 - After Phase 4: **Phase 5 (Gallery tab)**, **Phase 6 (Logbook tab + Options window** — no direct
   mockup, extrapolate from the atom set, own lighter design-review pass since it's new composition
   not a pixel port), **Phase 7 (cleanup**: delete dead old-design resources once nothing references
