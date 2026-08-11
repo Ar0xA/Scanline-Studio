@@ -42,25 +42,55 @@ case in the Hz cast; a stale doc comment and stale survey narrative paragraph bo
 extended `PaneViewModelTests` assertion. Full solution rebuilds clean, 180/180 UI tests pass. **Not
 yet committed or pushed — ask before doing either.**
 
-**5th quick win found + wired same session**: Gallery tab's "Log entry" status row (was FAKE-LIVE
-literal, now reads the real `ReceiveHistoryEntry.LinkedQsoId` field via an `ObjectConverters.IsNull`/
-`IsNotNull` two-`TextBlock` swap, same pattern as `RadioHeaderView`'s CAT-linked pill) — found while
-investigating whether `spec/16-gui-wiring-survey.md`'s remaining STUB/PARTIAL rows had more
-one-property-away wins. **Bigger discovery in the same investigation**:
-`IReceiveHistoryStore.SetNoteAsync`/`SetFlaggedAsync`/`SetLinkedQsoIdAsync` are fully implemented,
-real, SQLite-backed, and their own doc comments explicitly name the Gallery UI gaps they were built
-for — but have **zero call sites anywhere in `ScanlineStudio.UI`** (verified by grep). Logged as a
-"Discovered 2026-08-11" note in the survey right after the Gallery tab table, with a per-method
-breakdown of what small UI decision each write path still needs (QSO picker/auto-create for
-`SetLinkedQsoIdAsync`, filter-or-client-side-filter choice for `SetFlaggedAsync`, and
-`SetNoteAsync` — checked directly, genuinely blocked on `RxImagePaneViewModel` not tracking a saved
-frame's entry id, not just a stale note). None of these three implemented this session — each needs
-a small design choice first, unlike the pure zero-effort wins. **Good candidate for the next
-"quick-ish wins" pass**, distinct from the bigger blocked backlog items (Options-full/OCR-QRZ/
-CW-ID).
+**5th quick win + a new Gallery feature, same session**: Gallery tab's "Log entry" status row (was
+FAKE-LIVE literal, now reads the real `ReceiveHistoryEntry.LinkedQsoId` field via an
+`ObjectConverters.IsNull`/`IsNotNull` two-`TextBlock` swap, same pattern as `RadioHeaderView`'s
+CAT-linked pill) — found while investigating whether `spec/16-gui-wiring-survey.md`'s remaining
+STUB/PARTIAL rows had more one-property-away wins. That investigation surfaced a bigger find:
+`IReceiveHistoryStore.SetNoteAsync`/`SetFlaggedAsync`/`SetLinkedQsoIdAsync` were fully implemented,
+real, SQLite-backed, doc-commented as built specifically for the Gallery UI, but had **zero call
+sites anywhere in `ScanlineStudio.UI`**. Two of the three are now wired: new **Note** `TextBox`
+(debounced 600ms persist) and **Flagged** `CheckBox` (immediate persist) added to the Gallery
+Selected-frame panel — genuinely new UI (no mock2 slot, same precedent as `SelectLatestCommand`),
+not a rebind, since neither control existed before. Both runtime-verified end-to-end against the
+real SQLite `history.db` (inserted a real test row + real PNG, typed a note, watched the DB column
+update after the debounce window, toggled the flag, watched `IsFlagged` flip 0→1). `SetLinkedQsoIdAsync`
+("Open in Log") still deliberately unwired — needs a QSO picker/auto-create UI decision, a bigger
+scope than the other two.
 
-**Current wiring totals** (`spec/16-gui-wiring-survey.md`, ~279 controls tracked): **~127 REAL,
-~103 STUB, ~47 FAKE-LIVE, ~2 PARTIAL** (updated from this session's 5 items — was ~122/105/48/4).
+**Took 3 auditor rounds to close, not the usual 1-2** — worth remembering the shape of what was
+wrong, not just that it's fixed now. Round 1 found 2 real blockers: (a) a live `Recorded` refresh
+(fires on every completed/abandoned frame during active RX) reloaded the Note/Flag fields
+unconditionally on same-Id re-select, silently clobbering whatever the user was mid-typing —
+annotating a frame while RX keeps running is the feature's entire point, so this was reachable on
+essentially every real use, not an edge case; (b) a successful persist never got written back into
+the in-memory `Entries` list (`ReceiveHistoryEntry` is an immutable record), so switching away and
+back showed the stale pre-edit value. Round 1's fix for (a) gated the reload on `_previewedEntryId`
+— round 2 caught that this field is ALSO nulled on a failed preview load (unrelated concern, same
+field reused for two things), reopening the identical clobber for any entry with an unreadable
+image file; round 2 also flagged an unverified hazard (does `Entries[index] = updated`'s `Replace`
+null the ListBox's real `SelectedItem` binding, same class of thing `_isRepopulating` already
+exists to guard for `Clear()`) and a Task-chain poisoning risk in the flag-persist ordering fix.
+Round 3 closed all of it: a genuinely separate `_loadedEditsEntryId` field (independent of
+`_previewedEntryId`), reused the `_isRepopulating` guard for the `Replace` too (plus a
+`previousSelection` fallback for the non-selected-index case), and moved the flag-persist chain's
+`Dispatcher.Post`/`await previous` fully inside its own try so the chain can't wedge itself. One
+real-`ListBox`-binding test added specifically to empirically settle the unverified-Avalonia-
+behavior questions rather than reason about them on paper (matches this project's own "verify
+Avalonia binding with a real control" convention). Auditor's own round-3 verdict: genuinely closed,
+don't run a round 4 — one narrow logged-not-fixed risk remains (a refresh mid-edit may steal
+keyboard focus from the Note `TextBox` via its `IsEnabled` binding disabling-then-re-enabling it;
+UX-only, no data loss, unverified whether Avalonia actually does this).
+
+10 tests total for this feature now (`PaneViewModelTests.cs`), 2 new call-tracking lists + a
+configurable-delay queue added to `FakeReceiveHistoryStore`. Full solution builds clean, 190/190 UI
+tests pass. Smoke-tested once more end-to-end against the real `history.db` after all three rounds
+of fixes (typed a note, confirmed the DB column updated). **Committed this piece — see git log; not
+yet pushed.**
+
+**Current wiring totals** (`spec/16-gui-wiring-survey.md`, ~281 controls tracked, +2 for the new
+Note/Flagged controls): **~130 REAL, ~103 STUB, ~47 FAKE-LIVE, ~2 PARTIAL** (was ~122/105/48/4 at
+session start).
 Densest remaining gaps: Receive tab's Sync&Slant/Input-chain/Signal-quality cards (SNR/squelch/
 notch/noise-floor — no live audio-chain measurement exists in `Core.Audio`/`Core.Sstv` for most of
 these, real new DSP work not just wiring); Options window's Decode's remaining 7 controls plus
