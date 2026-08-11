@@ -5,464 +5,184 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
 history for this file if older context is ever needed).
 
-## Resume here (2026-08-10, latest, ACTIVE) — pixel-perfect UI redesign
+## Resume here (2026-08-11, latest, ACTIVE) — pixel-perfect UI redesign, Phase 4 in progress
 
-**Subject pivot**: user wants a full pixel-perfect visual redesign of the app's UI, replacing the
-current "Aesthetic Directive" look (flat WSJT-X/fldigi gray Win32/Qt chrome, `spec/09-ui.md`) with
-a new "Industry" wireframe design system found in `mockups/guidance/` (steel-blue accent, Barlow/
-Barlow Condensed, square corners, hairline borders, blueprint corner marks). Source of truth:
-`mockups/guidance/LAYOUT-SPEC.md` (exact pixel/color/spacing spec) + `SSTV Console.dc.html`'s
-`id="2a"` div (the actual target markup). Full plan at
-`~/.claude/plans/transient-jumping-bentley.md` — 8 phases (0 fonts/tokens, 1 atoms, 2 chrome, 3
-Receive tab, 4 Transmit tab, 5 Gallery tab, 6 Logbook+Options extrapolated, 7 cleanup), each with 2
-rounds auditor plan-review + 2 rounds code-review, real-window verification, commit+push, and a
-`PROJECT_BRIEF.md` update per phase — user confirmed autonomous-batch pacing (same flow as the RX-
-telemetry work below), confirmed redesigning Logbook/Options too (not covered by the mockup, share
-the same global style layer, extrapolate from the atom system), confirmed fetching fonts from
-Google Fonts directly (OFL license).
+**Pruned 2026-08-11** (this section had grown to ~460 lines across one very long session; full
+detail for anything marked SHIPPED below lives in its own commit message — `git log --oneline` and
+`git show <hash>` to recover it, not this file).
 
-**Phase 0 SHIPPED (commit `d427b1e`)**: fonts + base tokens, additive only (old Tokens/Cards/
-ChromeOverrides untouched, nothing on screen changes except one deliberate side effect — dropping
-Inter for embedded Barlow as the default font shifts every not-yet-ported view's text metrics
-immediately). Barlow/Barlow Condensed fetched as static TTFs from `github.com/google/fonts` (the
-Google Fonts CSS API serves WOFF2, which Avalonia/Skia can't load). Real bug found and fixed
-empirically: Avalonia's `avares://Folder#FamilyName` resolution searches every font in a shared
-folder for the closest weight match rather than filtering by family first — cross-resolved a
-Barlow Condensed request to plain Barlow Bold until fonts were split into per-family subfolders.
-New `mockups/guidance/PADDING-NORMALIZATION.md`: every padding value in the target mockup,
-re-derived straight from its CSS (not LAYOUT-SPEC's own prose, which 2 rounds of auditor
-plan-review found mixes CSS-order and Avalonia-order transcriptions inconsistently). Building it
-surfaced a SECOND ordering trap beyond that one: CSS's 2-value padding shorthand and Avalonia's
-2-value `Thickness` shorthand use opposite axis order at the same arity — confirmed against
-Avalonia's own shipped docs, not assumed.
+**What this is**: full pixel-perfect port of the app's UI from the old "Aesthetic Directive" look
+(`spec/09-ui.md`) to a new "Industry" wireframe design system (`mockups/guidance/`: steel-blue
+accent, Barlow/Barlow Condensed, square corners, hairline borders, blueprint corner marks). Full
+plan: `~/.claude/plans/transient-jumping-bentley.md` — 8 phases (0 fonts/tokens, 1 atoms, 2 chrome,
+3 Receive tab, 4 Transmit tab, 5 Gallery tab, 6 Logbook+Options extrapolated, 7 cleanup).
 
-**Two rounds of auditor plan-review + one code-review round, real bugs caught at every stage.**
-Plan-review round 1: 4 blockers — an in-place token swap would have crashed the TX pane
-(`StaticResource` on a key that'd be deleted); LAYOUT-SPEC mixes padding-order conventions on the
-exact chip its own checklist uses to calibrate everything else; a naive token rename would have
-made the existing `NoThicknessSpacingMismatchTests` guard silently stop matching; the font-fetch
-plan targeted the wrong file format. Round 2 confirmed all 4 fixed, found 3 smaller wording gaps,
-said "ready to build." Code-review (post-implementation): the padding-normalization file itself
-had the exact gap it exists to prevent (no rows for buttons/`.input`/`.seg-opt`, all horizontal-only
-shorthand — fixed with a new §1b), a font-family URI existed in 3 places with no test covering the
-one that actually matters at runtime (fixed — `App.DefaultFontFamilyUri` is now the single source,
-referenced directly by the test), and DejaVu Sans Mono's Bitstream Vera license text wasn't
-actually vendored alongside the font files despite `LICENSES.md` claiming it (fixed — added
-`LICENSE-BitstreamVera.txt` at both vendoring sites, moved `OFL.txt` into each Barlow subfolder
-individually). Full solution build clean, full test suite green (1698+ existing tests unaffected,
-new `ScanlineStudio.UI.FontTests` 7/7). **Committed (`d427b1e`), not yet pushed.**
+**User's process directions, still governing all work in this subject:**
+- Priority order: **containment (fits, nothing clipped) > closeness to mockup > pixel-perfect**
+  (concessions accepted where Avalonia's layout model genuinely can't match CSS).
+- Try every finding, cap at **3 try/review/adjust cycles**, then log what's left rather than
+  grinding on it.
+- Move fast: lighter self-checks (build+test+screenshot per card) instead of a full `design-fidelity`
+  agent round every time; reserve that agent for spot-checks when something looks off or after a
+  whole multi-card section, not per-card.
+- "Rework it into the new design, do this for each new card that already has an old design" — i.e.
+  keep executing the plan's remaining phases (4→7), not just polish what's already ported.
 
-`mockups/guidance/` reference bundle (LAYOUT-SPEC.md, the mockup HTML, the `_ds/` design-system
-CSS) is now checked into git (was untracked) since it's the active source of truth for this whole
-effort.
+### Status: Phases 0-3 SHIPPED. Phase 4 (Transmit tab) IN PROGRESS.
 
-**Phase 1 SHIPPED (design doc `dc00f9e`, implementation `f8c2135`)**: `Styles/Atoms.axaml` — every
-reusable primitive (group box + blueprint corner marks, `.mini` chips ×3 forms, rows, kicker,
-stepper, track/slider, buttons ×6 heights, input, segmented control, table, thumbnail figure,
-hatch pattern, disclosure header) the later phases compose from. Purely additive; also makes the
-mandatory companion edit narrowing 10 old bare-type style selectors (`Cards.axaml`/`Tokens.axaml`/
-`ChromeOverrides.axaml`) so they don't leak onto new-design controls — confirmed necessary via a
-live probe (a plain old `Style` selector beats a named `ControlTheme`'s own setters in Avalonia,
-not the other way around).
+**Phase 0 (fonts/tokens), Phase 1 (atoms), Phase 2 (chrome: menu/header row/tab strip/status bar):
+SHIPPED, verified, committed** — see git log before this session if detail is ever needed; nothing
+outstanding.
 
-**Design went through 3 plan-review rounds** before any code: round 1 found the leakage-prevention
-approach only covered one direction (new atoms could still be silently overridden by old styles,
-not just the reverse), the original stepper design assumed `NumericUpDown` exposed spin-button
-parts it doesn't have, blueprint-corner color/site-count were wrong, and a hover color would have
-made an active `.mini` chip's text unreadable. Round 2 fixed all of that but the fix pass itself
-introduced 2 new errors (corner-mark site count wrong in the *other* direction — the VFO block
-actually does have corner marks — and the `.mini` hover fix picked the wrong analogy) plus a class-
-name collision between two unrelated atoms. Round 3: clean.
+**Phase 3 (Receive tab): FULLY SHIPPED**, all 4 sections (header row, left/centre/right columns),
+each independently build+test+screenshot verified, several real bugs found and fixed along the way
+(see "Real bugs found this session" below — most were discovered here, since this was the first
+section where many Phase-1 atoms got a real consumer for the first time).
 
-**Implementation went through 2 code-review rounds.** Round 1 found the stepper's spin buttons
-were wired to template parts that belong to a completely different control (`ButtonSpinner`, not
-`NumericUpDown`) — confirmed against Avalonia 11.3.12's own shipped reference metadata, meaning
-clicking them would have done nothing at all, a fully non-functional control that would have
-shipped silently since nothing throws at XAML-load time for this class of bug. Also found: the
-hatch-fill pattern covered 25% of its tile instead of 50% (isolated dots, not continuous stripes),
-3 of 4 blueprint corner marks rendered inside their container instead of outside once actually
-measured against how Avalonia sizes `Path` shapes, the stepper's min-width was set on the wrong
-element, and one old style selector was missing from the leakage-prevention edit. Round 2: the
-stepper fix itself introduced a follow-up bug (a hover style that stopped being reachable once the
-control's internal structure changed) — fixed, plus added a test assertion and corrected a stale
-number in the design doc that would have mis-sized a later stepper site. New regression test
-(`IndustryStepperTests.cs`) verified non-vacuous — fails against the broken template, passes
-against the fix. Full solution build clean, `ScanlineStudio.UI.Tests` 173/173 (was 171). **Both
-committed, not yet pushed.** One more small round-2 follow-up (`a44027b`): a wrong doc comment
-about the corner marks' crossing-point position, explicit `MinWidth`/`MinHeight="0"` on the
-stepper's spinner buttons (insurance against Fluent's own default minimum overflowing the fixed
-18px column), and the one remaining un-narrowed old selector.
+**Phase 4 (Transmit tab): IN PROGRESS.**
+- Left column (`TxControlsPaneView.axaml`: TX mode/Identification/Output/Stock/Outgoing metadata)
+  — **SHIPPED**, commit `ba0c200`. Transmit/Stop toggle button deliberately left untouched:
+  `ScanlineStudioTxToggleButtonTheme` was flagged in the original plan's own round-1 auditor review
+  as a landmine (a `StaticResource` on an old-design key that would crash the pane at XAML load if
+  the old style files were ever deleted while still referenced) — needs a real dedicated
+  `IndustryTxToggleTheme` design pass, not a drive-by re-skin.
+- **NEXT UP: right column** (`MainWindow.axaml`'s Transmit tab, `Grid.Column="2"`: Queue/Mode-timing-
+  reference/TX-log/Recently-sent) — not started yet. Still uses old `Cards.axaml` styling entirely.
+- **THEN: the Editor group box** (centre column) — explicitly flagged in the original plan as "the
+  most complex single card" (toolbar with ~15 mini-chip tool buttons, image canvas placeholder,
+  6 adjustment sliders in a 3-column grid, plus a whole 186px-wide side panel of 3 nested sub-cards:
+  Insert field/Text style/Saved templates). Budget real time for this one, don't rush it.
+- After Phase 4: **Phase 5 (Gallery tab)**, **Phase 6 (Logbook tab + Options window** — no direct
+  mockup, extrapolate from the atom set, own lighter design-review pass since it's new composition
+  not a pixel port), **Phase 7 (cleanup**: delete dead old-design resources once nothing references
+  them, update `spec/09-ui.md`).
 
-**Phase 2 SHIPPED (design doc `a369eb2`, implementation `aacfc07`)**: menu bar, radio header (VFO/
-Favourites/Transceiver), tab strip, status bar. **First phase that touches real views — the first
-visible change on screen.** Tab bodies themselves untouched (that's Phases 3-6); every real
-ViewModel binding preserved (frequency, CAT-link, preset recall + parameter, Receiving/Halt, TX
-volume with its load-bearing min/max, all 7 real menu commands, every status-bar readout) plus
-every prior deliberate mockup-deviation (dropped `cfg:` text, no VFO column divider, Receiving
-stays accent-blue not green, TX-inhibit LED kept, 3 separate status chips not merged).
+### Real bugs found + fixed this session (not just cosmetic — worth knowing about for future atom work)
 
-Plan-review (1 round, appropriate for a mostly-mechanical port): found 2 real blockers — a gap in
-Phase 1's own old-style collision list that the tab strip would have inherited (never caught since
-Phase 1 never built a `TabControl` atom to expose it), and two live, currently-shipped status
-messages (radio error/maintenance text) that had nowhere to go in a now-fixed-height band. Both
-fixed on paper before code.
+1. **`IndustryStepperTheme`'s decrement glyph never rendered** (first real consumer of the atom,
+   built in Phase 1 but never actually rendered until Phase 3's Spectrum & waterfall card). Root
+   cause: the `"−"` Path geometry (`M 0 0 L 8 0`) is a horizontal line with a **zero-height bounding
+   box**, degenerate for the default `Stretch="Uniform"` scale computation. `Stretch="None"` alone
+   did NOT fix it (tried first, confirmed empirically) — needed an explicit non-degenerate
+   `Width="8" Height="8"` box with the line recentered to local y=4. Applied to both glyphs for
+   symmetry. **Every stepper in the app had an invisible/unusable "−" button before this fix.**
+2. **`PART_DecreaseButton`/`PART_IncreaseButton` RepeatButtons inside `IndustrySliderTheme`'s Track
+   template weren't inheriting `Stretch` `HorizontalAlignment`**, so Avalonia's `Track` control's own
+   correctly-computed proportional Arrange width was discarded in favor of their empty-content
+   `DesiredSize` (0) — the TX-level slider's fill never tracked its own bound value at all. Root-
+   caused via a runtime `Bounds` dump + decompiling `Avalonia.Controls.Primitives.Track` (confirmed
+   the percent MATH itself was correct; the bug was purely in the RepeatButtons' own alignment).
+   Fixed with explicit `HorizontalAlignment="Stretch"` on both.
+3. **The base Fluent `Thumb` ControlTheme doesn't paint a bare `Background` property setter** — the
+   TX slider's thumb rendered fully invisible. Fixed with an explicit inline `Thumb.Template`
+   (`<Border Background="{TemplateBinding Background}"/>`).
+4. **`StackPanel.IndustryRows` never set a `Spacing`** — CSS's `.gb{gap:3px}` applies to `.r2` rows
+   too, not just non-row card children; every row in every card using this atom sat ~2 logical px
+   tighter than the mockup. Fixed with `Spacing="3"`.
+5. **Same-class bug, 4 separate places this session**: a literal pixel `Width`/`Margin` on an
+   `IndustryMeterFill`/`IndustryMeterMarker` Border only "matches" the mockup's stated percentage by
+   coincidence at one specific container width. Fixed each time with nested star-column Grids
+   (`ColumnDefinitions="63*,37*"` etc.) instead of a literal pixel value. Check for this pattern
+   (`Width="<number>"` on a meter-fill Border inside a non-fixed-width column) before assuming any
+   remaining old-style meter is fine.
+5b. Right column's L/R meters (Input-chain card, left column) had this same bug; fixed identically.
+6. **`Border.IndustryMini > TextBlock` was a direct-child selector**, but the CAT-linked chip nests
+   its 2 TextBlocks inside a `Panel` — unreachable by `>`. Changed to a descendant selector
+   (`Border.IndustryMini TextBlock`, `.active`, `.accentOutline` variants too).
+7. **A `DockPanel` with only ONE child ignores that child's `Dock=` value** (since `LastChildFill`
+   defaults to `True` and that one child is also the *last* child) — Decode activity's table header
+   row stretched to fill the whole card body instead of sitting under the column labels. Fix:
+   `LastChildFill="False"`. **Worth checking for this exact shape (single-child DockPanel relying on
+   `Dock=`) anywhere else old code gets touched.**
+8. **A `Margin` fix for ScrollViewer-clips-the-first-card's-title-notch has to live on the scrolled
+   CONTENT (the root `StackPanel` inside the `ContentControl`/`UserControl`), not on the
+   `ScrollViewer` element itself** — tried the ScrollViewer-level Margin first for the Transmit tab's
+   left column, it visibly did NOT fix the clipping; moving the same `Margin="0,6,0,0"` onto
+   `TxControlsPaneView.axaml`'s own root `StackPanel` (matching the Receive tab's left column's
+   already-working pattern exactly) did. **Any new ScrollViewer-wrapped tab-column content needs
+   this same margin placement, not a ScrollViewer-level one.**
 
-**Implementation made one deliberate, flagged departure from the design doc**: menu and tab-strip
-controls got re-skinned via plain style properties instead of full template replacement (the
-technique used everywhere else in this redesign), specifically because guessing Avalonia's
-internal Popup/tab-switching wiring wrong would silently break real functionality (dead submenus,
-blank tab bodies) with no error to catch it — a worse failure mode than a couple of cosmetic gaps
-(unstyled menu hover, default icon-gutter spacing). Code-review **approved the deviation** as
-sound engineering, backed by real in-repo precedent, but found the fix was incomplete: two band
-heights weren't actually locked to their fixed values (an easy-to-miss Avalonia behavior where a
-`MinHeight` resource can silently override a plain `Height` setter), which could have let the menu
-bar or tab strip render taller than intended depending on the exact Avalonia version's defaults.
-Fixed directly (explicit height pinning on both), then verified for real: launched the app,
-confirmed the corner accents render correctly composed into a real layout for the first time (not
-just in isolation), confirmed the menu and tab-switching still work, and fixed one more real gap
-found along the way — a header section that used to grow to fit its contents can't anymore now
-that its size is fixed, so a scrollable fallback was added rather than letting extra content
-silently vanish below the visible area. Full solution build clean, `ScanlineStudio.UI.Tests`
-173/173 unaffected. **Committed (`aacfc07`), not yet pushed.**
+### Established atoms available (Atoms.axaml) — check here before inventing new markup
 
-**Phase 3 left column IN PROGRESS**: `RadioHeaderView.axaml` Favourites/Transceiver cards were
-STILL clipping post-Phase-2 despite repeated screenshot-based fixes (user caught it 3+ times) — root
-cause finally found via **real evidence, not screenshot guessing**: added a temporary debug-bounds
-dump (`RadioHeaderView.axaml.cs`, now removed) that printed real Avalonia `Bounds` for every
-`HeaderedContentControl` + children, and separately built a faithful **headless-Firefox render of
-the actual source mockup HTML** (`_ds/industry-.../styles.css` + local `@font-face` substitutes
-pointing at this repo's own embedded Barlow/Barlow-Condensed/DejaVu-Mono TTFs, no network fetch —
-so metrics match what Avalonia itself renders, not whatever Google-Fonts-online or system fallback
-Firefox would otherwise pick) with an injected `getBoundingClientRect()` overlay script. Both
-independently agreed: the VFO/Favourites/Transceiver group boxes' real stretched content height is
-**87px**, not the ~67px implied by **LAYOUT-SPEC.md's own stated "81" band height** — that spec
-value itself was wrong (or measured differently than assumed), and every prior fix attempt had been
-chasing a downstream symptom (ScrollViewer overhead, button margins) of an upstream budget that was
-simply ~20px too small. Fixed at the true root: `MainWindow.axaml`'s `Grid.RowDefinitions` band 2
-and `RadioHeaderView.axaml`'s own outer `Grid Height` both corrected from 81 → **102** (87 content +
-7+7 padding + 1 rounding/hairline). Re-verified after the fix with the same two methods (real-window
-bounds dump: Favourites content 59.3px used of 71.8px available, Transceiver 67.6px of 71.8px — both
-now with real margin, not a bare fit) plus a real screenshot, zoomed — confirmed clean, nothing
-clipping. Temporary debug diagnostic code removed from `RadioHeaderView.axaml.cs`. Full solution
-build clean, `ScanlineStudio.UI.Tests` 173/173 green. **Not yet committed** — the Favourites card's
-`ScrollViewer`-removal edit (a real but secondary simplification, made just before the row-height
-root cause was found) is still in place alongside the height fix; both should land in the same
-commit once the rest of Phase 3's left column is re-verified visually against the mockup.
+`IndustryGroupBoxTheme` (+ `Classes="blueprint"` for corner marks), `IndustryBlueprintBorderTheme`
+(plain bordered, no title notch), `IndustryMiniButtonTheme`/`IndustryMiniToggleTheme` (chip
+Button/ToggleButton forms — **use `IndustryMiniToggleTheme` for any checkbox-like toggle with no
+mockup equivalent**, established pattern for Peak-hold/SWR-cutoff), `IndustryStepperTheme` (+
+`IndustrySpinnerTheme` internally), `IndustrySliderTheme` (+ `.h6`/`.h8` height variants, default
+= 4px), `IndustrySegTheme`, `IndustryDisclosureToggleTheme`, `IndustryPlot` (new this session — dark
+plot-canvas frame), `ProgressBar.Industry` (new this session — re-skins Fluent's own percent-sizing
+logic, doesn't replace it), `IndustryTableHeader`/`HeaderRule`/`Cell`/`RowRule` (plain-Grid table,
+not `DataGrid`), `IndustryThumbnail`/`ThumbnailCaption`/`ThumbnailCall`/`ThumbnailMeta`,
+`IndustryHatchPanel`, `IndustryMeter`/`MeterTrack`/`MeterFill`/`MeterMarker` (use nested star-column
+Grids for the fill/marker, never a literal pixel Width — see bug #5 above), `IndustryRows`/`IndustryRow`/
+`RowLabel`/`RowValue`, `IndustryKicker` (accent-mono-uppercase — **NOT** for plain form-field labels
+like "Note"/"Override callsign", those are `IndustryRowLabel`, confirmed against the mockup's own
+CSS which has zero text-transform/letter-spacing/color on those specific labels), `IndustryInput`
+(TextBox/ComboBox/NumericUpDown). **No `IndustryCheckBox` atom exists** — the mockup itself never
+defines one (every mockup toggle is either `.seg` or `.mini`), so don't build one ad hoc; if Phase 6
+(Options, ~100 controls, many real checkboxes) needs one, that's the right place to design it
+properly, not a drive-by add during Phase 4/5.
 
-**Process note for the rest of Phase 3 (and 4-6)**: this headless-Firefox-with-local-fonts +
-injected-`getBoundingClientRect()` technique is now the preferred way to get exact target
-dimensions per card, per the user's own explicit direction — cross-check LAYOUT-SPEC.md's stated
-numbers against it rather than trusting the prose, since this is now the second time a LAYOUT-SPEC
-figure itself has been wrong (first was the CSS/Avalonia padding-order mixing found in Phase 0). The
-scratch harness lives at `/tmp/.../scratchpad/isolated.html` (session-local, not persisted) — extract
-the relevant markup slice from `SSTV Console.dc.html`, point at local `fonts/*.ttf` via a
-`local-fonts.css` override (disable the CSS's own `@import googleapis` line), inject the measurement
-`<script>`, render with `firefox --headless --screenshot out.png --window-size=W,H -profile <tmp
-profile dir> file://.../isolated.html`.
+### Deferred / logged, not fixed — for later triage, not forgotten
 
-Mode/Sync&slant/Input-chain/Signal-quality cards (the actual Phase 3 left-column content, distinct
-from the Phase-2 header row just fixed above) were already ported in an earlier session slice —
-segmented Auto/Locked control, disclosure toggle, L/R meters, kicker text, hatch placeholders — see
-prior commit history for that piece; still needs a final zoomed-screenshot pass now that the header
-row above it is the correct height (band-2 growing from 81→102 shifts everything below it down
-slightly, worth one more visual check before calling Phase 3's left column done).
+- **Mockup's "Macros" card** (F1-F6 mini-chip buttons, Receive tab right column) doesn't exist
+  anywhere in this app today — no backing command/feature. Building it is new scope, not a re-skin;
+  needs a real product decision on what F1-F6 actually invoke first.
+- **`ScanlineStudioTxToggleButtonTheme`** (Transmit/Stop button) needs its own dedicated
+  `IndustryTxToggleTheme` — large, high-visibility control, deliberately not touched yet (see bug
+  list item on why).
+- **User raised, mid-session**: the Receive tab's left column scrolls even though the static HTML
+  mockup (viewed at its own reference resolution) doesn't need to. User's own conclusion when asked:
+  "at least with scrollbar the content is reachable" — i.e. **keep the ScrollViewer**, not a bug to
+  fix, just a known deviation from the static mockup's own untested-at-smaller-sizes assumption.
+- Centre-column review's remaining nits not chased (all logged in commit `1378087`/`5728901`/
+  `dcd7433`/`25c05e7`'s own history, recoverable via `git log`): stepper button-cell width/height
+  asymmetry (mockup wants 18×22 both sides, currently asymmetric), stepper internal separator height
+  (10px stub vs full 22px), disabled-stepper partial grey background leak (Fluent's own disabled
+  TextBox background showing through), a ~40% oversized stepper `MinWidth`, minor color-mix rounding
+  nits (62% vs 60% muted text), a few DIP-level gutter/margin drifts. None block containment or
+  fidelity in a way that's visible without a ruler.
+- App-wide (not this session's scope, logged repeatedly across multiple reviews): page background is
+  `#F0F0F0` (`Cards.axaml`'s `ScanlineStudioPanelBackgroundColor`) vs the Industry design system's own
+  `#F2F2F3` — systemic token question, affects every not-yet-ported AND already-ported view equally
+  (both sample the SAME literal background since neither owns it), needs its own explicit decision
+  before Phase 7 cleanup, not a per-card fix.
 
-**Further fidelity fixes found after the band-height fix, via direct user visual comparison against
-the mockup HTML open in their own browser** (all applied, one still outstanding — see restart
-checklist below):
+### Process notes for whoever resumes this
 
-1. **Preset-button casing** (`RadioStatusViewModel.cs`): `FrequencyPresetButtonViewModel.Label` and
-   `.FrequencyWithMode` rendered mixed-case ("Usb", "40m sstv") against mock2's uppercase convention
-   (CSS `text-transform:uppercase` on the label line; sideband abbreviations are conventionally
-   uppercase). Fixed as **display-only** uppercasing (`.ToUpperInvariant()` on the button-viewmodel's
-   own `Label`/mode string) — the underlying stored `Preset.Label` and the separate
-   `FrequencyPresetEditorRowViewModel` (used by "Edit list..." flyout) are untouched, so the user's
-   own typed casing survives round-trip through Save. 2 existing tests
-   (`RadioStatusViewModelTests.cs`) updated to expect the new uppercase display string.
-2. **Preset-button frequency precision**: same property used `0.000` (3-decimal MHz, e.g.
-   "14.230") while the rest of the codebase (`RadioStatusViewModel.FrequencyDisplay`,
-   `FrequencyPresetEditorRowViewModel`'s own text field) uses `0.000000` (6-decimal, Hz precision) —
-   user caught this by comparing button size against the mock ("bigger... because it has .00 behind
-   the frequency"). This wasn't just cosmetic: 3 decimals silently truncates real sub-kHz precision
-   on a preset. Fixed to match the established `0.000000` convention ("14.230000 USB").
-3. **Favourites card `ScrollViewer` removal**: the presets row no longer wraps in a `ScrollViewer` —
-   reverted to a plain `ItemsControl`/`WrapPanel`, relying on the atom-level `ClipToBounds="False"`
-   fix to let a genuinely-overflowing many-preset case bleed visibly rather than being silently
-   clipped by a ScrollViewer that was itself adding ~4px of unwanted overhead in the common case.
-   Per-item `Margin="0,0,4,4"` → `"0,0,4,0"` (the bottom margin was inflating the row's own height
-   against its DockPanel sibling).
-4. **Mini-chip background — investigated, NOT a bug.** User flagged "STEP 500 Hz etc. shouldn't be
-   white" — raw pixel-sampled the running app's screenshot (Python/PIL `getpixel`) and confirmed the
-   chip interior is `#F2F2F3` (`IndustryBg`), byte-identical to the surrounding card background, at
-   every sampled point. No fix made. If it still looks off on a real monitor (vs this sandbox's
-   screenshot), worth a fresh look, but there is no white-fill code path to find.
+- **The `--` (double-hyphen) XML-comment bug bit this session repeatedly** — plain English em-dash
+  usage ("done -- confirmed") breaks Avalonia's XAML comment parser (`An XML comment cannot contain
+  '--'`). Write comments without literal double-hyphens from the start (use `,`/`;`/em-dash `—`
+  instead) rather than fixing it after every failed build.
+- **Tab-switching without `xdotool`** (not installed, no passwordless sudo to install it): this
+  sandbox has `python3-xlib` available — use `Xlib.ext.xtest.fake_input` to synthesize a real X11
+  click at absolute screen coordinates (window position + tab's on-screen offset). Working snippet
+  used throughout this session:
+  ```python
+  from Xlib import X, display
+  from Xlib.ext import xtest
+  import time
+  d = display.Display()
+  x, y = 3840 + int(104*1.15), int(176*1.15)  # window origin + tab offset, scaled
+  xtest.fake_input(d, X.MotionNotify, x=x, y=y); d.sync(); time.sleep(0.2)
+  xtest.fake_input(d, X.ButtonPress, 1); d.sync(); time.sleep(0.05)
+  xtest.fake_input(d, X.ButtonRelease, 1); d.sync()
+  ```
+- App window goes on the HDMI-1 monitor at `(3840,0)`, size `1400x900`
+  (`wmctrl -r "Scanline Studio" -e 0,3840,0,1400,900`) — established convention this whole session.
+- Kill stale app instances before relaunching (`pkill -9 -f "ScanlineStudio.Host.dll"`) — multiple
+  instances accumulated silently more than once this session from failed/retried launch commands,
+  and screenshots from the wrong (stale) instance wasted real debugging time more than once.
 
-**Corner-mark hairline bug + full header-row design-fidelity pass: SHIPPED this session (new
-session restart), not yet committed.** `design-fidelity` subagent confirmed usable after the
-restart (was blocked at end of prior session — the available-agent list doesn't hot-reload mid-session).
-User confirmed treating it as auditor-tier: use it whenever needed for UI verification.
+### Verification status
 
-Applied the Opus-diagnosed corner-mark fix exactly as specified (Path-stroke replacing 2 filled
-Border boxes, all 8 instances in `Atoms.axaml`) — pixel-sampled personally first (1px hairline,
-full-strength, no blur, confirmed) before spawning verification.
+Full solution build clean, `UI.Tests` 173/173, every commit this session. **All commits pushed?
+NOT CHECKED — verify `git status`/`git log origin/master..HEAD` and push if the user wants that
+before/after resuming**, this session never explicitly pushed (only committed).
 
-**Round 1 `design-fidelity` review** (whole VFO/Favourites/Transceiver row, not just the corner
-marks) found 12 real fidelity gaps beyond the corner-mark fix itself, most fixed this session:
-- Corner-mark/`.gbt`-notch placement was 1 DIP too far out (CSS offsets are relative to the padding
-  box, inside the border, not the border box) — `Margin` corrected -6→-5 (all 8 corners) and
-  `6,-6,0,0`→`7,-5,0,0` (the `.gbt` notch).
-- Group-box titles (FAVOURITES/TRANSCEIVER) weren't uppercased — new `UppercaseInvariantConverter`
-  (`Converters/UppercaseInvariantConverter.cs`) wired via a new optional `Converter` property added
-  to `{loc:Translate}` itself (`Localization/TranslateExtension.cs`), applied at just the 2 call
-  sites. Underlying localized string stays untouched (display-only), same precedent as the
-  preset-button uppercasing fixed earlier this session.
-- Halt/Store current Buttons were missing the `IndustryBtn` class, so they silently never picked up
-  Barlow Condensed SemiBold from the `Button.Industry.IndustryBtn` selector (ToggleButton has its
-  own separate rule, unaffected) — added to all 3 call sites.
-- Favourites' bottom-row minis (Edit list/Import/Scan) weren't actually right-aligned —
-  `HorizontalAlignment="Right"` on a child of a horizontal `StackPanel` is a no-op; restructured to
-  a `DockPanel`.
-- RX-level meter used literal pixel `Width="63"`/`Margin="78,0,0,0"` on what's actually a stretchy
-  `*` column — only "matched" the mockup's 63%/78% by coincidence at one specific window size; fixed
-  with nested star-column Grids (`ColumnDefinitions="63*,37*"` / `"78*,22*"`) so the proportions hold
-  at any width.
-- **Real functional bug, not cosmetic**: the TX-level slider's fill never tracked its own `Value` at
-  all — confirmed via a runtime `Bounds` dump (`DecreaseButton.Bounds.Width` read exactly `0`
-  regardless of testing `Value=50` or `Value=100`). Root-caused via reflection + `ilspycmd`
-  decompilation of `Avalonia.Controls.Primitives.Track`'s real `ComputeSliderLengths`/`ArrangeOverride`
-  (confirmed the math itself is correct) down to `PART_DecreaseButton`/`PART_IncreaseButton` not
-  inheriting `Stretch` `HorizontalAlignment` (Track hands them a correctly-computed proportional
-  Arrange rect, but non-Stretch alignment discards it in favor of their empty-content `DesiredSize`,
-  which is 0) — fixed with an explicit `HorizontalAlignment="Stretch"` on both RepeatButtons.
-  Verified empirically both via the Bounds dump (now proportional) and visually.
-- Border-form `.mini` chip text (`BW 2.7k`, `SPLIT OFF`, etc.) sampled pure black instead of
-  `IndustryText` — the style had no `Foreground` setter at all; added one.
-- Band-2's bottom 1px hairline divider was missing entirely — added a bottom-aligned `Border`.
-- "Store current" stays docked far-right (accepted as a deliberate, now-documented deviation from
-  the mockup's inline layout — this port's Presets collection is unbounded, unlike mock2's fixed
-  7-preset example).
-
-**Round 2 `design-fidelity` review** (verifying the round-1 fixes) found 8/10 confirmed clean, plus:
-- **Real bug**: the TX-slider Thumb rendered fully invisible (zero accent-800 pixels anywhere) —
-  the base Fluent `Thumb` ControlTheme's own template doesn't paint a bare `Background` property
-  Setter. Fixed with an explicit inline `Thumb.Template` (`<Border Background="{TemplateBinding
-  Background}"/>`).
-- **Real bug**: the CAT-link chip ("No CAT link"/linked state) missed every `Border.IndustryMini >
-  TextBlock` setter (font, size, weight, the just-added `Foreground` fix) because it nests its 2
-  TextBlocks inside a `Panel`, unreachable by a direct-child `>` selector — changed to a descendant
-  selector (3 selectors: base, `.active`, `.accentOutline`).
-- **Minor layout fix**: the new band-2 divider had been added as a bare overlay without reserving
-  space for it, so the cards grew from 87→89.3 DIP — fixed by bumping the header row's own bottom
-  `Margin` from 7→8.
-- **Doc nit**: added the "Store current" deliberate-deviation rationale as an inline comment (was
-  previously undocumented at that exact call site).
-
-Both rounds' remaining findings (RX-marker ±1px vertical nit, band-1 background color mismatch
-outside this row, Favourites subtitle/frequency-placeholder wording) are deliberately NOT fixed —
-logged here as one-line off-scope notes per the project's ADHD-scope convention, not silent gaps.
-
-**Verified**: full solution build clean (0 warnings/errors), `UI.Tests` 173/173 unaffected throughout
-every fix round. **Committed (`5f33eca`)**, not yet pushed.
-
-**Phase 3 left column (Mode/Sync&slant/Input-chain/Signal-quality) SHIPPED, one `design-fidelity`
-round.** User set the working process for the rest of this pass explicitly: still attempt every
-finding, but cap effort at **3 try/review/adjust cycles per item**, then log what's left rather than
-grinding on it — priority order is **containment (fits, nothing clipped) > closeness to the mockup >
-pixel-perfect** (concessions accepted where Avalonia's layout model genuinely can't match CSS).
-
-Real fixes applied (1 cycle each, all converged clean):
-- **Uppercase-title convention cleanup**: this round's review caught that the header-row's own
-  `UppercaseInvariantConverter` (built last round) was unnecessary complexity — the project already
-  has an established, simpler convention (type the string uppercase directly in `en.json`; CSS
-  `text-transform:uppercase` has no Avalonia equivalent, confirmed by `Atoms.axaml`'s own comment,
-  and `en.json` already does this everywhere else: `PRESETS`, `SPLIT OFF`, `AUTOSAVE ON`, etc.).
-  Consolidated: reverted `RadioHeaderView.axaml`'s 2 converter call sites back to plain
-  `{loc:Translate}`, reverted `TranslateExtension.cs`'s now-unused `Converter` property, deleted
-  `Converters/UppercaseInvariantConverter.cs` entirely (YAGNI — nothing else needed it), uppercased
-  `en.json` directly for FavouritesHeader/TransceiverHeader (header row) + Mode/Sync & slant/Input
-  chain/Signal quality's 4 card titles + 2 kickers (SNR PER LINE/LUMINANCE HISTOGRAM) + the Advanced
-  Timing disclosure label.
-- Wording nit: `AutoLockedLocked` "Locked" → "Lock" (matches mockup's literal `<span>Lock</span>`).
-- Minus-sign consistency: `LevelLValue`/`LevelRValue` were the only 2 values in this whole card set
-  using an ASCII hyphen instead of the U+2212 minus sign every sibling value already uses.
-- **Real visible bug**: Re-sync/Reset buttons' labels were vertically clipped — `IndustryBtn22`'s
-  fixed 22px box left no room once Fluent's own default `Button` padding was applied; neither of
-  this atom's only 2 call sites set `Padding` themselves. Fixed with `Padding="6,0"` (matches the
-  mockup's own inline `padding:0 6px`).
-- **Real bug, shared atom**: `StackPanel.IndustryRows` never set a `Spacing` — CSS's `.gb{gap:3px}`
-  applies to `.r2` rows too, not just non-row card children, so every row in every card using this
-  atom sat ~2 logical px shorter than the mockup, relying solely on the 1px top-rule for visual
-  separation. Fixed with `Spacing="3"`; confirmed via grep this atom is currently only consumed by
-  `MainWindow.axaml` (not the header row), so blast radius is contained to this session's own work.
-- **Real bug, same class as the header-row RX-meter fix**: Input-chain's L/R level meters used
-  literal `Width="149"`/`"142"` on an `IndustryMeterFill` Border — matched the mockup's 63%/60% only
-  by coincidence at this card's specific fixed width (236 DIP column). Fixed with the same
-  nested-star-column-Grid technique as the header row, then pixel-verified directly (not re-delegated
-  to the agent, to save a round): L fill measured 62.6% (target 63%), R measured 59.6% (target 60%).
-- Missing top hairline above the L/R meter block (mockup's `.r2 + .r2` adjacent-sibling rule) — added
-  as a wrapping `Border BorderThickness="0,1,0,0"`.
-
-**Verified**: full solution build clean, `UI.Tests` 173/173 throughout. Full-window screenshot
-confirms containment — nothing clipped or overflowing at default window size.
-
-**Logged, NOT fixed — for later triage** (low value relative to effort, or real blast-radius risk to
-other views; each is a genuine, real gap, just not chased this round):
-- Mode card has an extra `ComboBox` (the real Mode-override dropdown) that doesn't exist in the
-  mockup's own Mode card at all — kept deliberately, a working feature beats matching a wireframe
-  that doesn't model it, but flagging in case that's not the intended call.
-- Mini-mode-grid cells have an extra 1px inset at the outer edges (`Margin="1"` on all sides vs. the
-  mockup's grid spanning the full card width with only inter-cell gaps).
-- 2 rows (`Line time`, Signal-quality's 2nd kicker) are missing a mockup-specific 3px `padding-top`
-  the other rows don't have.
-- Hatch placeholder panels (`SNR per line`, `Luminance histogram`) don't stretch to fill remaining
-  card height the way the mockup's `flex:1` does — leaves ~24 logical px of unused space at the
-  bottom of the Signal-quality card. Not a containment problem (nothing overflows), just unused space.
-- Segmented control (`Auto`/`Lock`) renders ~2.5 logical px short of the mockup's height — root
-  cause is Avalonia's Barlow line-box metrics vs the browser's, would need an explicit `Height` on
-  the shared `IndustrySegTheme` atom, which risks moving every other segmented control in the app
-  (VFO's USB/LSB/FM, the waterfall's Spec/Both/WF toggle, etc.) — needs a deliberate call, not a
-  drive-by fix.
-- Page background is `#F0F0F0` (`Cards.axaml`'s `ScanlineStudioPanelBackgroundColor`) vs the design
-  system's own `#F2F2F3` — systemic, app-wide token, **already logged identically from the header-row
-  round**, repeating here since it's visible in this card set too (title notches sit on a visibly
-  lighter rectangle against the page background).
-- `RemainingValue` placeholder text format differs from the mockup's own example (`0:42` vs zero-
-  padded `01:12`) — both are static placeholders, no real countdown feature exists yet.
-- `SlantPpmValueFormat` appends a redundant `" ppm"` suffix (the row label already says "Slant ppm")
-  — shared format string, didn't touch without checking its other use sites first.
-
-**Centre column: MAJOR FINDING — this is not a fidelity-polish pass, it's a whole undone port.**
-`design-fidelity` review of the Spectrum & waterfall / Incoming frame / Decode activity cards found
-they're still entirely on the **old, pre-redesign `Cards.axaml` design system**
-(`Border.Classes="card"`, `TextBlock.Classes="cardHeader"/"caption"`, unstyled `NumericUpDown`/
-`Slider`/`CheckBox`, old `Classes="seg"` segmented control) — NOT ported to the Industry atom system
-at all, unlike the header row and left column (confirmed already-`IndustryGroupBoxTheme`/
-`IndustryGbTitle`). Concrete deltas found: card border color wrong (`#B9B9B9` vs `#D0D0D1`), no
-`.gbt`-style legend-notch title (plain in-flow black label eating ~14 logical px of content height
-per card instead of straddling the border), no blueprint corner marks on Incoming frame (despite
-being `class="gb blueprint"` in the mockup), inter-card gap 4 vs the Industry convention's 11
-(`ScanlineStudioSpacingMedium` vs `IndustrySpacingGroup` — did NOT touch, `ScanlineStudioSpacingMedium`
-is shared across ~15 other call sites app-wide including Options/TX/Logbook, changing its value would
-have far more blast radius than this column), wrong body font (inherits default UI font, not Barlow),
-wrong progress-bar/plot-border/DataGrid-header colors, and a literal-fixed-size "Previous frames"
-thumbnail grid (`Border.thumb Width="120"`/`Image Height="96"`, ~2.9x smaller than the mockup's fluid
-grid cell) with no nested group-box wrapper at all. **Off-scope note from the agent, worth flagging
-now rather than re-discovering later: the right column (`Grid.Column="2"`, Frame metadata/Unattended
-RX/Session frames/Macros) is confirmed to be in the identical old-design state** — expect the same
-class of findings when that column's turn comes.
-
-**What WAS fixed this pass** (real containment bug + safe mechanical wins, not the big port):
-- **Real containment bug, user-caught directly** ("Peak hold checkbox falls outside of the card by a
-  small margin"): Row 0's fixed height (154, reverted down from 180 earlier this session on the
-  mistaken assumption that a since-fixed `NumericUpDown` bug was the only reason 180 was ever needed)
-  wasn't tall enough for the settings column's real content — 7 stacked old-style controls, none yet
-  on the compact Industry atoms. Peak hold rendered flush against the card's bottom border with
-  near-zero clearance, and the Both/Spec/WF segmented control below it was clipped out of existence
-  entirely (invisible, not just tight). Fixed pragmatically by restoring the row height to 182 — the
-  agent's own recommendation was "port to compact Industry atoms and merge Gain+Zero onto one row,
-  don't just grow the row," which is real and correct, but that's the SAME large port as everything
-  else in this section, not a 3-cycle fix; growing the row is the explicit "concession where the
-  template engine (i.e. this section's still-unported state) won't allow pixel-perfect right now" the
-  user's own stated policy allows. Verified: Peak hold now sits with normal clearance, the segment
-  row is fully visible.
-- Uppercased 6 more card/kicker titles + all 8 `Decode activity` DataGrid column headers in
-  `en.json`, same established convention as every prior fix this session (`SPECTRUM & WATERFALL`,
-  `INCOMING FRAME`, `PREVIOUS FRAMES`, `DECODE ACTIVITY`, `DECODER TRACE`, `FREQ`/`MODE`/`CALL ·
-  OCR`/`GRID · QRZ`/`SLANT`/`LINES`/`STATE` — `UTC`/`SNR` were already correct). Low-risk, purely
-  data, no layout/styling change, so didn't move the needle on the bigger port question but is a
-  strict improvement either way.
-
-**Verified**: full solution build clean, `UI.Tests` 173/173. Full-window screenshot confirms
-containment (nothing else clipped) and the uppercase changes rendering correctly.
-
-**User decided: full port, card by card, no separate plan-review gate.** Asked directly (flagged as
-a decision point, not made unilaterally) — user's answer: "rework it into the new design. Do this for
-each new card that already also has an old design." Confirmed this IS effectively Phase 3
-(centre+right column) → Phase 4 (Transmit) → Phase 5 (Gallery) → Phase 6 (Logbook+Options) → Phase 7
-(cleanup) from the original plan (`~/.claude/plans/transient-jumping-bentley.md`), which already
-covers this exact scope — not new work being invented, just resuming the plan's own remaining phases.
-Per the user's own stated priority order this same session: **containment (fits, nothing clipped) >
-closeness to mockup > pixel-perfect** (concessions accepted where Avalonia's layout model genuinely
-can't match CSS), try every finding but cap at 3 try/review/adjust cycles, log what's left.
-
-**Centre column: FULLY PORTED, all 3 cards, committed as 3 separate batches** (`1378087`
-Spectrum & waterfall, `5728901` Incoming frame + Previous frames, `dcd7433` Decode activity — each
-own build+test+screenshot-verified before commit, matching this session's established per-card
-process; no separate auditor plan-review round used, per the plan's own stated policy that phases
-2-5 get "lighter single-pass review" since they're mostly 1:1 markup ports, not new visual
-architecture).
-
-- **Spectrum & waterfall**: `IndustryGroupBoxTheme` chrome, new `IndustryPlot` atom (dark
-  accent-900 plot-canvas frame, reused by `WaterfallPaneView.axaml` too), `IndustryStepperTheme`
-  for Bins/px·Start·Span, `IndustrySliderTheme` for Gain/Zero (now sharing one row per the
-  mockup, was two full-width rows), `IndustrySegTheme` for Both/Spec/WF, an `IndustryMiniToggleTheme`
-  chip for Peak hold (real functionality, no mockup equivalent — same treatment as the header row's
-  CAT-linked chip). **Found and fixed a real latent bug in `IndustryStepperTheme` itself** (first
-  real consumer of the atom, built in Phase 1 but never actually rendered until now): the decrement
-  glyph's Path geometry (`M 0 0 L 8 0`) has a zero-height bounding box, degenerate for Stretch's
-  scale computation — silently failed to render regardless of Stretch mode, so every stepper in the
-  app had an invisible/unusable "−" button. Fixed with an explicit non-degenerate Path box (`Width=
-  "8" Height="8"`, line recentered to y=4), applied to both glyphs for symmetry. `Stretch="None"`
-  ALONE (the exact fix that worked for the earlier corner-mark bug) did NOT fix this one — a real
-  empirical lesson, not assumed from precedent.
-- **Incoming frame**: one of the design's 2 real `gb blueprint` sites (title notch + corner marks
-  together) — confirmed working via the same crisp-1px stroke fix from the header-row corner-mark
-  work. Bottom action bar → `IndustryBtn25`; new lightweight `ProgressBar.Industry` re-skin (reuses
-  Fluent's own percent-sizing logic, just recolors/resizes, not a full ControlTemplate replacement)
-  for the frame-decode progress bar. Nested "Previous frames" group box was missing entirely before
-  (bare caption + WrapPanel) — now a real nested `HeaderedContentControl` using the
-  `IndustryThumbnail`/`ThumbnailCaption`/`ThumbnailCall`/`ThumbnailMeta` atoms (also unused until
-  now), with `UniformGrid Columns="2"` replacing the WrapPanel-of-fixed-120px-items (mockup's own
-  `grid-template-columns:repeat(2,1fr)` is proportional, not fixed-size — old thumbnails were ~2.9x
-  smaller than the mockup's real cell size).
-- **Decode activity**: real `Avalonia.Controls.DataGrid` (header-only, no `ItemsSource`, no data
-  rows possible today) replaced with a plain `Grid` + the `IndustryTable` atoms
-  (`IndustryTableHeaderRule`/`IndustryTableHeader`), matching the original plan's own item-10
-  decision not to fight DataGrid's chrome for a static scaffolding table. Border-per-cell, not one
-  Border around the whole header row, so each column gets its own padding (mockup's `<th>`
-  semantics are per-cell).
-
-**Verified per card**: full solution build clean, `UI.Tests` 173/173 throughout every commit,
-real-window screenshots zoomed per card confirming containment + corner-mark/stepper-glyph pixel
-fidelity. Two more `--`-in-XML-comment build breaks hit and fixed along the way (now a recurring
-self-inflicted snag this session — worth remembering to write comments without literal double-hyphens
-in future XAML edits, not just when it happens to get caught by the build).
-
-**Not yet reviewed**: a `design-fidelity` pass across the whole centre column together (as opposed to
-each card's own individual self-check) hasn't run yet — queued next, before moving to the right
-column, to catch anything a per-card view might miss (e.g. inter-card spacing/alignment across all 3
-now-ported cards together).
-
-**Right column SHIPPED too — Phase 3 (Receive tab) now FULLY PORTED end to end.** User said the
-centre column "looks good... wouldn't spend much more time on it" and the still-running whole-column
-design-fidelity review wasn't waited on further — moved straight to the right column with the same
-lighter build+test+screenshot-per-card self-check (no dedicated agent review dispatched for this
-card, per the user's own steer to move faster from here). Commit `5a6cfcf`: Frame metadata/
-Unattended RX/Session frames all onto `IndustryGroupBoxTheme`/`IndustryRows`/`IndustryInput`/
-`IndustryBtn22`. Row sets kept as this app's existing real+literal field inventory (same
-preserve-real-behavior precedent as Input-chain), Session frames' 15 rows kept as literal repeats
-(re-themed, not refactored to an ItemsControl). One self-caught fix mid-pass: "Note"/"Override
-callsign" were first styled as `IndustryKicker` (wrong — that's accent-mono-uppercase, but the
-mockup's own `<label style="font-size:11px">` has none of that), corrected to `IndustryRowLabel`
-before commit. **Deliberately NOT added**: the mockup's 4th card, "Macros" (F1-F6 mini-chips) —
-doesn't exist anywhere in this app today, no backing command/feature; building it is new scope, not
-a re-skin of an existing old-design card, needs a real product decision on what F1-F6 invoke first.
-
-**Verified**: full solution build clean, `UI.Tests` 173/173, screenshot-zoomed per section, nothing
-clipped.
-
-**Phase 3 complete.** All 4 Receive-tab sections (header row, left/centre/right columns) are now on
-the Industry atom system. Per the original 8-phase plan (`~/.claude/plans/transient-jumping-bentley.md`),
-**next up is Phase 4 (Transmit tab)**: left column (TX mode/Identification/Output/Stock cards),
-centre Editor group box (toolbar/canvas/adjustments/insert-field/text-style/saved-templates —
-flagged in the plan as "the most complex single card"), right column (Queue/Mode-timing/TX-log/
-Recently-sent). Likely sub-batched (left+right vs. Editor) same as the plan's own note. Then Phase 5
-(Gallery tab), Phase 6 (Logbook tab + Options window, no direct mockup — extrapolate from the atom
-set), Phase 7 (cleanup: delete dead old-design resources once nothing references them, update
-`spec/09-ui.md`).
-
-**Next**: start Phase 4, Transmit tab, left+right columns first (lower risk, mechanical), Editor
-group box last (most complex single card in the whole plan).
+**Next action on resume**: right column of Transmit tab (Queue/Mode-timing-reference/TX-log/
+Recently-sent), `MainWindow.axaml`'s `Grid.Column="2"` inside the Transmit `TabItem` — same
+process, own commit, build+test+screenshot self-check before committing.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
