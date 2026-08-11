@@ -28,9 +28,22 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private const int ThumbnailMaxDimension = 96;
     private const int PreviewMaxDimension = 512;
 
+    /// <summary>Same debounce window/rationale as <c>RadioStatusViewModel.TxVolumePercentChanged</c>'s
+    /// own persist debounce -- avoids one settings write per keystroke, and avoids overlapping
+    /// un-awaited <see cref="IReceiveHistoryStore.SetNoteAsync"/> calls racing each other.</summary>
+    private static readonly TimeSpan NotePersistDebounce = TimeSpan.FromMilliseconds(600);
+
     private readonly IReceiveHistoryStore _historyStore;
     private readonly ILocalizationService _localization;
     private readonly ILogger<RxHistoryPaneViewModel> _logger;
+
+    /// <summary>Chains <see cref="PersistFlaggedAsync"/> calls so a rapid double-toggle can't
+    /// complete out of order -- see that method's own doc comment. Deliberately a plain
+    /// <see cref="Task"/> field, not a <see cref="SemaphoreSlim"/>/other <see cref="IDisposable"/>
+    /// primitive: this ViewModel isn't (and doesn't otherwise need to be) disposable, matching the
+    /// existing convention elsewhere in this class of preferring non-disposable coordination (e.g.
+    /// <c>_notePersistCts</c>'s own cancel-and-drop pattern over anything requiring cleanup).</summary>
+    private Task _pendingFlagPersist = Task.CompletedTask;
 
     // Auditor-caught race (batch 7): RefreshAsync captures its own `filter` at entry and is called
     // fire-and-forget from multiple independent triggers now (OnRecorded, OnShowTodayOnlyChanged, the
@@ -52,6 +65,16 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     // is ACTUALLY currently loaded, independent of RxHistoryEntryViewModel's own object identity.
     private string? _previewedEntryId;
 
+    /// <summary>Tracks which entry's <see cref="SelectedEntryNote"/>/<see cref="SelectedEntryIsFlagged"/>
+    /// are currently loaded -- a DELIBERATELY SEPARATE field from <see cref="_previewedEntryId"/>
+    /// (auditor round-3 blocker fix): <see cref="_previewedEntryId"/> gets nulled by
+    /// <see cref="LoadPreviewAsync"/> on a failed preview load, which is unrelated to whether the
+    /// user's in-progress note/flag edit for that same entry is still live -- reusing one field for
+    /// both let a same-Id re-select (live refresh, or <see cref="UpdateEntryInPlace"/>'s own
+    /// <see cref="SelectedEntry"/> reassignment) reload and clobber the edit whenever the two
+    /// concerns' state happened to disagree.</summary>
+    private string? _loadedEditsEntryId;
+
     // Auditor round-2 catch (batch 7): the Gallery/Previous-frames ListBox's SelectedItem binding is
     // TwoWay by default (confirmed via reflection against Avalonia.Controls.Primitives
     // .SelectingItemsControl.SelectedItemProperty's DirectPropertyMetadata), so RefreshAsync's own
@@ -68,11 +91,47 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     // as _refreshGeneration above.
     private int _previewGeneration;
 
+    /// <summary>Guards <see cref="OnSelectedEntryNoteChanged"/>/<see cref="OnSelectedEntryIsFlaggedChanged"/>
+    /// while <see cref="OnSelectedEntryChanged"/> is itself assigning <see cref="SelectedEntryNote"/>/
+    /// <see cref="SelectedEntryIsFlagged"/> from the newly-selected entry -- same "suppress the
+    /// persist-on-load echo" convention as <c>RadioStatusViewModel._suppressVolumePersist</c>, without
+    /// this a fresh selection would immediately re-save its own just-loaded value back to the store.</summary>
+    private bool _suppressSelectedEntryEdits;
+
+    private CancellationTokenSource? _notePersistCts;
+
     [ObservableProperty]
     private RxHistoryEntryViewModel? _selectedEntry;
 
     [ObservableProperty]
     private Bitmap? _previewImage;
+
+    /// <summary>Gallery Selected-frame panel's editable Note field -- backs the real, already-built
+    /// <see cref="IReceiveHistoryStore.SetNoteAsync"/> (its own doc comment explicitly names this
+    /// exact UI as its intended consumer; nothing called it before this). New UI, no mock2 slot for
+    /// it -- same "new UI, real gap" precedent as <see cref="SelectLatestCommand"/>. Deliberately
+    /// SEPARATE from <c>SelectedEntry.Entry.Note</c> (an immutable record field) rather than binding
+    /// the `TextBox` directly to it -- needs its own settable property to debounce-persist through.</summary>
+    [ObservableProperty]
+    private string? _selectedEntryNote;
+
+    /// <summary>Gallery Selected-frame panel's Flag toggle -- same reasoning as
+    /// <see cref="SelectedEntryNote"/>, backing the real <see cref="IReceiveHistoryStore.SetFlaggedAsync"/>.
+    /// Persisted immediately on toggle (a discrete click, not a continuous drag like the Note
+    /// `TextBox` -- no debounce needed, same distinction <c>TxControlsPaneViewModel.SwrCutoffEnabled</c>
+    /// draws between its own immediate-persist toggle and <c>RadioStatusViewModel.TxVolumePercent</c>'s
+    /// debounced slider).</summary>
+    [ObservableProperty]
+    private bool _selectedEntryIsFlagged;
+
+    /// <summary>Surfaces a <see cref="IReceiveHistoryStore.SetNoteAsync"/>/<see cref="IReceiveHistoryStore.SetFlaggedAsync"/>
+    /// failure to the user -- both methods' own doc comments say a missing-entry return is "a
+    /// reachable case, not just defensive programming" (the retention-trim ring buffer can delete an
+    /// untouched row between load and edit) "the caller ... is expected to surface that to the user,
+    /// not silently ignore it." Same `ErrorMessage` convention as every other pane ViewModel in this
+    /// app.</summary>
+    [ObservableProperty]
+    private string? _errorMessage;
 
     /// <summary>Gallery tab's All/Today filter (spec/09-ui.md) -- real, backed by
     /// <see cref="IReceiveHistoryStore.QueryAsync"/>'s own <c>From</c>/<c>To</c> filter fields.
@@ -304,7 +363,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         }
 
         // The previously-selected entry genuinely didn't survive this refresh (filtered out/trimmed)
-        // -- reconcile the preview state OnSelectedEntryChanged was prevented from touching above.
+        // -- reconcile the preview/edits state OnSelectedEntryChanged was prevented from touching
+        // above. Checked independently (auditor round-3 fix, see _loadedEditsEntryId's own doc
+        // comment for why these two fields can disagree, e.g. after a failed preview load already
+        // nulled _previewedEntryId while _loadedEditsEntryId was still set).
         if (SelectedEntry is null && _previewedEntryId is not null)
         {
             _previewedEntryId = null;
@@ -313,6 +375,19 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             // now-cleared entry -- otherwise a slow decode racing this reconcile could still land
             // afterward and set PreviewImage for an entry that's no longer selected or listed.
             _previewGeneration++;
+        }
+
+        if (SelectedEntry is null && _loadedEditsEntryId is not null)
+        {
+            _loadedEditsEntryId = null;
+            // Auditor round-2 risk fix: without this, the greyed-out Note/Flagged controls kept
+            // showing the vanished entry's last-loaded text/state (IsEnabled=false via the
+            // SelectedEntry-is-null binding hides the CONTROLS, but the stale VALUES were still
+            // sitting in these properties for whenever a NEW entry happens to reuse them transiently).
+            _suppressSelectedEntryEdits = true;
+            SelectedEntryNote = null;
+            SelectedEntryIsFlagged = false;
+            _suppressSelectedEntryEdits = false;
         }
 
         Log.RefreshCompleted(_logger, Entries.Count);
@@ -329,6 +404,35 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             // is about to either re-select the same entry or reconcile _previewedEntryId itself once
             // it knows whether the entry actually survived the refresh.
             return;
+        }
+
+        // Auditor round-3 BLOCKER fix: gated on its OWN field (_loadedEditsEntryId), NOT
+        // _previewedEntryId -- an earlier version reused _previewedEntryId for both "which entry's
+        // preview is loaded" and "which entry's edits are loaded", but LoadPreviewAsync nulls
+        // _previewedEntryId on a FAILED preview load (missing/corrupt PNG, a real and already-handled
+        // case, see that method's own null-image branch below). From that point on, EVERY subsequent
+        // same-Id re-select (a live refresh, or UpdateEntryInPlace's own SelectedEntry reassignment
+        // after a successful persist) would see `value.Entry.Id != _previewedEntryId` (null) and
+        // reload Note/IsFlagged anyway -- reopening the exact clobber this field split exists to
+        // prevent, for any entry whose thumbnail/preview file happens to be unreadable. These two
+        // concerns are genuinely independent; riding one field conflates them.
+        if (value?.Entry.Id != _loadedEditsEntryId)
+        {
+            _loadedEditsEntryId = value?.Entry.Id;
+            // _notePersistCts is deliberately NOT cancelled here -- PersistNoteDebouncedAsync
+            // captures its own target entryId at schedule time (not "whatever's currently selected"),
+            // so a pending save for the entry just switched AWAY from is still correct to let
+            // complete; cancelling on every selection change would silently drop an edit made just
+            // before switching. The one acknowledged narrow gap: switching back to that same entry
+            // before its ~600ms debounce has fired shows the pre-edit value here (Entries' own copy
+            // isn't updated until PersistNoteDebouncedAsync's/PersistFlaggedAsync's success path
+            // runs) -- the pending save still lands correctly regardless, only the interim display
+            // is stale.
+            _suppressSelectedEntryEdits = true;
+            SelectedEntryNote = value?.Entry.Note;
+            SelectedEntryIsFlagged = value?.Entry.IsFlagged ?? false;
+            _suppressSelectedEntryEdits = false;
+            ErrorMessage = null;
         }
 
         if (value?.Entry.Id == _previewedEntryId)
@@ -383,6 +487,186 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         }
     }
 
+    partial void OnSelectedEntryNoteChanged(string? value)
+    {
+        if (_suppressSelectedEntryEdits || SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        _notePersistCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _notePersistCts = cts;
+        _ = PersistNoteDebouncedAsync(entry.Entry.Id, value, cts.Token);
+    }
+
+    private async Task PersistNoteDebouncedAsync(string entryId, string? note, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(NotePersistDebounce, ct).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException)
+        {
+            // Normal control flow -- a newer edit (to whichever entry is selected when it fires)
+            // superseded this one. Not worth a log line, same convention as
+            // RadioStatusViewModel.PersistVolumeDebouncedAsync's own identical catch.
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => ErrorMessage = null);
+
+        bool succeeded;
+        try
+        {
+            succeeded = await _historyStore.SetNoteAsync(entryId, note, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Auditor round-2 risk fix: the SAME ct also guards this call, not just the delay above
+            // -- a keystroke arriving while SetNoteAsync itself is in flight cancels it, and that
+            // must be treated as the identical "superseded by a newer edit" normal control flow as
+            // the TaskCanceledException catch above, not routed into the generic catch below (which
+            // used to show a false "Could not save the note" error for something that isn't an
+            // error).
+            return;
+        }
+        catch (Exception ex)
+        {
+            Log.SetNoteFailed(_logger, entryId, ex);
+            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.SaveNoteFailed"));
+            return;
+        }
+
+        if (!succeeded)
+        {
+            // Reachable, not defensive -- IReceiveHistoryStore.SetNoteAsync's own doc comment: the
+            // retention-trim ring buffer can delete this row between load and edit.
+            Log.SetNoteEntryMissing(_logger, entryId);
+            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.EntryNoLongerExists"));
+            return;
+        }
+
+        // Auditor round-2 BLOCKER fix: without writing the confirmed-persisted value back into
+        // Entries, ReceiveHistoryEntry's own immutability means nothing else ever updates it --
+        // switching away and back showed the pre-edit value even though the store had the new one,
+        // and the next keystroke on the stale display could re-persist the OLD text over the good
+        // one. UpdateEntryInPlace no-ops harmlessly if the entry was removed by a refresh that raced
+        // this same persist (TryUpdateEntry-equivalent lookup miss).
+        Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entryId, e => e with { Note = note }));
+    }
+
+    partial void OnSelectedEntryIsFlaggedChanged(bool value)
+    {
+        if (_suppressSelectedEntryEdits || SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        // Auditor round-2 risk fix: chained onto whatever's currently pending, not fired
+        // independently -- SetFlaggedAsync has no debounce (a discrete click should persist
+        // immediately, unlike the Note TextBox's continuous typing), but firing each call
+        // independently left overlapping un-awaited calls from a rapid double-toggle free to
+        // complete out of order (each SqliteReceiveHistoryStore write opens its own connection, no
+        // ordering guarantee otherwise). Chaining preserves call order without reintroducing a
+        // debounce delay the UX doesn't want here.
+        _pendingFlagPersist = PersistFlaggedAsync(entry.Entry.Id, value, _pendingFlagPersist);
+    }
+
+    private async Task PersistFlaggedAsync(string entryId, bool isFlagged, Task previous)
+    {
+        // Auditor round-3 risk fix: the ENTIRE body, including `await previous` itself and every
+        // Dispatcher.Post call, is now inside this one try/catch -- an earlier version claimed
+        // "previous is always already-completed successfully, nothing to catch here" and left both
+        // the await and the first Post call unguarded, which was FALSE: if Dispatcher.UIThread.Post
+        // itself throws (e.g. the dispatcher is shutting down during app close), the returned Task
+        // faults, gets stored in _pendingFlagPersist, and every LATER toggle rethrows that same stale
+        // exception at its own `await previous` -- permanently breaking flag persistence for the rest
+        // of this VM's lifetime, silently (nothing observes the fault). Wrapping everything guarantees
+        // this method's returned Task can never fault, which by induction keeps the whole chain safe
+        // from the very first call.
+        try
+        {
+            await previous.ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() => ErrorMessage = null);
+
+            var succeeded = await _historyStore.SetFlaggedAsync(entryId, isFlagged).ConfigureAwait(false);
+            if (!succeeded)
+            {
+                Log.SetFlaggedEntryMissing(_logger, entryId);
+                Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.EntryNoLongerExists"));
+                return;
+            }
+
+            // Same reasoning as PersistNoteDebouncedAsync's own identical write-back.
+            Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entryId, e => e with { IsFlagged = isFlagged }));
+        }
+        catch (Exception ex)
+        {
+            Log.SetFlaggedFailed(_logger, entryId, ex);
+            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.SaveFlagFailed"));
+        }
+    }
+
+    /// <summary>Writes a confirmed-persisted edit back into <see cref="Entries"/> (and
+    /// <see cref="SelectedEntry"/> if it's still the same logical entry) -- <see cref="ReceiveHistoryEntry"/>
+    /// is an immutable record, so nothing else ever reflects a successful <see cref="IReceiveHistoryStore.SetNoteAsync"/>/
+    /// <see cref="IReceiveHistoryStore.SetFlaggedAsync"/> call back into the in-memory list. Must run
+    /// on the UI thread (mutates the bound <see cref="Entries"/> collection); every call site posts
+    /// through <see cref="Dispatcher"/> first. A no-op if the entry was removed by a refresh that
+    /// raced this same persist (retention trim, or the store row genuinely no longer exists) --
+    /// same "quietly drop, the store is already the source of truth" reasoning as
+    /// <c>RxHistoryEntryViewModel</c> instances themselves being rebuilt wholesale on every
+    /// refresh.
+    ///
+    /// <see cref="_isRepopulating"/> guards the <c>Entries[index] = ...</c> replace below (auditor
+    /// round-3 fix) -- the real Gallery ListBox's <c>SelectedItem</c> binding is TwoWay (see
+    /// <see cref="_previewedEntryId"/>'s neighboring field comment for the confirmed-via-reflection
+    /// citation), and an `IList` indexer replace of the currently-selected item raises a
+    /// <c>NotifyCollectionChangedAction.Replace</c> that some Avalonia selection-model versions
+    /// process as remove-then-add, pushing a transient <see langword="null"/> back through that
+    /// binding into <see cref="SelectedEntry"/> exactly like <c>Entries.Clear()</c> already does in
+    /// <see cref="RefreshAsync"/> -- reusing the same established suppression flag rather than
+    /// leaving this path unguarded.</summary>
+    private void UpdateEntryInPlace(string entryId, Func<ReceiveHistoryEntry, ReceiveHistoryEntry> update)
+    {
+        var index = Entries.ToList().FindIndex(e => e.Entry.Id == entryId);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var current = Entries[index];
+        var updated = new RxHistoryEntryViewModel(update(current.Entry), current.Thumbnail);
+        var wasSelected = SelectedEntry?.Entry.Id == entryId;
+        // Auditor round-3 risk fix: captured regardless of wasSelected -- the explicitly-supported
+        // "edit A, switch to B, A's debounce fires later" flow (its own test above) replaces a
+        // NON-selected index while B is selected. If Avalonia's selection model also nulls the
+        // selection for a Replace at a non-selected index (unverified, same open question as the
+        // selected-index case _isRepopulating already guards), B's selection would otherwise be
+        // silently lost with nothing here to restore it.
+        var previousSelection = SelectedEntry;
+
+        _isRepopulating = true;
+        try
+        {
+            Entries[index] = updated;
+        }
+        finally
+        {
+            _isRepopulating = false;
+        }
+
+        if (wasSelected)
+        {
+            SelectedEntry = updated;
+        }
+        else if (SelectedEntry is null && previousSelection is not null)
+        {
+            SelectedEntry = previousSelection;
+        }
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "GetImagesDirectoryAsync failed")]
@@ -411,6 +695,18 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading preview image failed")]
         public static partial void LoadPreviewFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetNoteAsync failed for entry {EntryId}")]
+        public static partial void SetNoteFailed(ILogger logger, string entryId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetFlaggedAsync failed for entry {EntryId}")]
+        public static partial void SetFlaggedFailed(ILogger logger, string entryId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetNoteAsync: entry {EntryId} no longer exists")]
+        public static partial void SetNoteEntryMissing(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetFlaggedAsync: entry {EntryId} no longer exists")]
+        public static partial void SetFlaggedEntryMissing(ILogger logger, string entryId);
     }
 }
 

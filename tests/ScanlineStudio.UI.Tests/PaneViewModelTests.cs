@@ -1194,6 +1194,331 @@ public sealed class PaneViewModelTests
         Assert.True(vm.SelectLatestCommand.CanExecute(null));
     }
 
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SelectingAnEntry_LoadsItsNoteAndFlaggedState()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "sked 2nd frame", IsFlagged: true)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("sked 2nd frame", vm.SelectedEntryNote);
+        Assert.True(vm.SelectedEntryIsFlagged);
+        // Loading the selection must not itself count as an edit -- no SetNoteAsync/SetFlaggedAsync
+        // call yet, only ever fired by an actual user change (asserted below in the edit tests).
+        await Task.Delay(700);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Empty(historyStore.SetNoteCalls);
+        Assert.Empty(historyStore.SetFlaggedCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_EditingSelectedEntryNote_PersistsAfterDebounceDelay()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntryNote = "call back tomorrow";
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(historyStore.EntriesToReturn[0].Note); // not persisted yet -- still debouncing
+
+        await Task.Delay(700);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("call back tomorrow", historyStore.EntriesToReturn[0].Note);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_TogglingSelectedEntryFlagged_PersistsImmediately()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntryIsFlagged = true;
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(50); // no debounce on this path, but the persist Task itself still needs to run
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(historyStore.EntriesToReturn[0].IsFlagged);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SwitchingSelection_LoadsTheNewEntrysNoteNotThePreviousOnes()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "first"),
+                new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow.AddSeconds(-1), "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed, Note: "second"),
+            ],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "1");
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("first", vm.SelectedEntryNote);
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "2");
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("second", vm.SelectedEntryNote);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SwitchingAwayMidEdit_PreviousEntrysPendingSaveStillCompletes()
+    {
+        // Auditor round-2 gap: the original version of this test never edited anything, so it could
+        // not actually prove PersistNoteDebouncedAsync's captured-entryId design claim (a pending
+        // save for the entry just switched AWAY from is still let complete). This one does: edit
+        // entry 1, switch to entry 2 before the debounce fires, then confirm entry 1's edit still
+        // lands in the store AND, on switching back, in Entries/SelectedEntryNote too (the
+        // write-back fix -- without it this would show the pre-edit value even though the store has
+        // the new one).
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "first"),
+                new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow.AddSeconds(-1), "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed, Note: "second"),
+            ],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "1");
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntryNote = "edited before switching away";
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "2");
+        Dispatcher.UIThread.RunJobs();
+
+        await Task.Delay(700);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("edited before switching away", historyStore.EntriesToReturn.Single(e => e.Id == "1").Note);
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "1");
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("edited before switching away", vm.SelectedEntryNote);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_LiveRefreshMidEdit_DoesNotClobberTheInProgressNote()
+    {
+        // Auditor round-2 BLOCKER regression test: IReceiveHistoryStore.Recorded fires on every
+        // completed/abandoned frame during an active RX session, each one triggering RefreshAsync,
+        // which rebuilds Entries from a fresh store query and re-selects the same entry with a
+        // brand-new RxHistoryEntryViewModel instance. An earlier version of OnSelectedEntryChanged
+        // reloaded SelectedEntryNote/SelectedEntryIsFlagged from that re-select unconditionally,
+        // silently overwriting whatever the user was mid-typing -- annotating a frame while RX keeps
+        // running is the feature's entire point, so this was reachable on essentially every real use.
+        var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [entry],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntryNote = "typing...";
+        Dispatcher.UIThread.RunJobs();
+
+        // A new (unrelated) frame lands mid-typing, well inside the 600ms debounce window --
+        // Note is still unset in the store at this point.
+        var otherEntry = new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed);
+        historyStore.EntriesToReturn.Add(otherEntry);
+        historyStore.RaiseRecorded(otherEntry);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("typing...", vm.SelectedEntryNote);
+
+        await Task.Delay(700);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("typing...", historyStore.EntriesToReturn.Single(e => e.Id == "1").Note);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ThroughARealListBoxTwoWayBinding_UpdateEntryInPlaceDoesNotDropSelectionOrPreview()
+    {
+        // Auditor round-3 catch: UpdateEntryInPlace's own `Entries[index] = updated` is an IList
+        // indexer replace of the currently-selected item, which raises a
+        // NotifyCollectionChangedAction.Replace -- unverified locally whether Avalonia's selection
+        // model processes that as remove-then-add and pushes a transient SelectedItem = null back
+        // through the REAL Gallery ListBox's TwoWay binding (same class of hazard
+        // RxHistoryPaneViewModel_RecordedEvent_ThroughARealListBoxTwoWayBinding_DoesNotFlickerThePreview
+        // above already exists to catch for Entries.Clear()). Auditor round-3 nit: this settles the
+        // OUTCOME (selection/preview survive) against a real ListBox, which is what actually matters
+        // -- it does not by itself prove the _isRepopulating guard was necessary (with the guard in
+        // place and wasSelected true, SelectedEntry is reassigned unconditionally regardless of
+        // whether Avalonia would have nulled it on its own), only that nothing regressed.
+        var entry = new ReceiveHistoryEntry("1", DateTimeOffset.Now, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [entry],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        var listBox = new ListBox { ItemsSource = vm.Entries };
+        listBox.Bind(ListBox.SelectedItemProperty, new Binding(nameof(RxHistoryPaneViewModel.SelectedEntry)) { Source = vm, Mode = BindingMode.TwoWay });
+        Dispatcher.UIThread.RunJobs();
+
+        listBox.SelectedItem = vm.Entries.Single(e => e.Entry.Id == "1");
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(vm.PreviewImage);
+
+        vm.SelectedEntryNote = "note via real listbox";
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(700); // past the debounce -- UpdateEntryInPlace's Entries[index]=... runs here
+        Dispatcher.UIThread.RunJobs();
+
+        // The real proof: selection and preview both survived the replace, and the write-back
+        // actually reached Entries (not just the store).
+        Assert.NotNull(vm.SelectedEntry);
+        Assert.Equal("1", vm.SelectedEntry!.Entry.Id);
+        Assert.Equal("note via real listbox", vm.SelectedEntry.Entry.Note);
+        Assert.NotNull(vm.PreviewImage);
+        Assert.Equal("note via real listbox", vm.Entries.Single(e => e.Entry.Id == "1").Entry.Note);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ThroughARealListBoxTwoWayBinding_ReplacingANonSelectedEntryDoesNotDropTheRealSelection()
+    {
+        // Auditor round-3 risk: the supported "edit A, switch to B before A's debounce fires" flow
+        // replaces a NON-selected index (A) while B stays selected -- a different code path than the
+        // test above (which only exercises replacing the SELECTED entry). The previousSelection
+        // fallback in UpdateEntryInPlace exists specifically for this case; this proves B's selection
+        // survives A's write-back through a real ListBox, regardless of whether Avalonia treats a
+        // non-selected-index Replace the same way as a selected-index one.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("a", DateTimeOffset.Now, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("b", DateTimeOffset.Now.AddSeconds(-1), "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
+            ],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        var listBox = new ListBox { ItemsSource = vm.Entries };
+        listBox.Bind(ListBox.SelectedItemProperty, new Binding(nameof(RxHistoryPaneViewModel.SelectedEntry)) { Source = vm, Mode = BindingMode.TwoWay });
+        Dispatcher.UIThread.RunJobs();
+
+        listBox.SelectedItem = vm.Entries.Single(e => e.Entry.Id == "a");
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntryNote = "edited before switching away";
+        Dispatcher.UIThread.RunJobs();
+
+        listBox.SelectedItem = vm.Entries.Single(e => e.Entry.Id == "b");
+        Dispatcher.UIThread.RunJobs();
+
+        // Entry "a"'s debounced save (and its UpdateEntryInPlace write-back, replacing a NON-selected
+        // index since "b" is now selected) fires here.
+        await Task.Delay(700);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(vm.SelectedEntry);
+        Assert.Equal("b", vm.SelectedEntry!.Entry.Id);
+        Assert.Equal("edited before switching away", vm.Entries.Single(e => e.Entry.Id == "a").Entry.Note);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SetNoteAsync_EntryNoLongerExists_SetsTheExpectedErrorMessage()
+    {
+        var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [entry],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        // Simulates the documented race: the entry aged out of retention between load and edit.
+        historyStore.EntriesToReturn.Clear();
+
+        vm.SelectedEntryNote = "too late";
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(700);
+        Dispatcher.UIThread.RunJobs();
+
+        // FakeLocalizationService.GetString returns the raw key -- asserting the exact key (not just
+        // NotNull) distinguishes this from the wrong-error-message / exception-path findings the
+        // auditor flagged as indistinguishable under a bare NotNull check.
+        Assert.Equal("Panes.RxHistory.Error.EntryNoLongerExists", vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_TogglingFlagTwiceRapidly_LastToggleWins()
+    {
+        // Auditor round-3 fix: the round-2 version of this test used the fake's default
+        // synchronous-completion SetFlaggedAsync, which trivially preserves call order regardless of
+        // whether the VM's own chaining logic is even present -- it would have passed identically
+        // against the UNFIXED (independently-fired) code. Making the FIRST call artificially slower
+        // than the second is the only way to actually prove a later call doesn't race ahead of an
+        // earlier one still in flight.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        historyStore.SetFlaggedCallDelays.Enqueue(TimeSpan.FromMilliseconds(200));
+        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntryIsFlagged = true;
+        vm.SelectedEntryIsFlagged = false;
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(400);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(historyStore.EntriesToReturn[0].IsFlagged);
+        Assert.Equal([("1", true), ("1", false)], historyStore.SetFlaggedCalls);
+    }
+
     private static QsoRecord SampleQsoRecord(string id = "1") =>
         new(id, "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null);
 
