@@ -4498,10 +4498,15 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   plus an auditor UI-design plan-review pass (this project's own established convention for UI/UX
   choices) before any code, not a straight port. User asked which pieces to prioritize; no answer
   yet as of this note.
-- [ ] **RX history browser affordances lost, no replacement** (`docs/removed-features.md`'s own
-  "History-tab navigation" entry) — step-through nav, one-click jump-to-latest, clipboard
-  copy-out/paste-in. `IReceiveHistoryStore`/`ReceiveHistoryEntry` already has the query surface
-  this would sit on top of (this session's own Gallery-metadata work extended it further).
+- [x] **RX history browser affordances** — **shipped 2026-08-09, commit `1df5eac`.** Stale checkbox
+  fixed 2026-08-11 (was never checked off despite landing). New `IReceiveHistoryStore.Recorded`
+  event so the Gallery list/Receive-tab Previous-frames strip refresh live as frames land, plus a
+  `SelectLatestCommand`/"Latest" button (legacy's real `SBPrim`, not the confusingly-named
+  `SBLatest` which actually jumps to the OLDEST frame — verified against `Main.cpp` directly).
+  Step-through prev/next was deliberately NOT added (superseded by click-to-select-any-thumbnail,
+  a strict superset) and clipboard image copy-out was deliberately DEFERRED (`Avalonia.IClipboard`
+  has no first-class bitmap API) — both logged as considered decisions in `docs/removed-features.md`,
+  not silent gaps.
 - [x] **Waterfall color/palette rendering** — **DONE (2026-08-09), batches 8a+8b.** User explicitly
   confirmed "full item" (asked directly since this entry's own text flagged re-confirming the prior
   deprioritization first). Shipped: 6-stop SDR-style heatmap gradient replacing flat grayscale
