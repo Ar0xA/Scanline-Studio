@@ -331,9 +331,66 @@ other views; each is a genuine, real gap, just not chased this round):
 - `SlantPpmValueFormat` appends a redundant `" ppm"` suffix (the row label already says "Slant ppm")
   — shared format string, didn't touch without checking its other use sites first.
 
-**Next**: centre column (Spectrum & waterfall / Incoming frame / Decode activity), then right column
-(Frame metadata / Unattended RX / Session frames / Macros) — same `design-fidelity` + fix process,
-same 3-cycle-cap + containment-first triage rule.
+**Centre column: MAJOR FINDING — this is not a fidelity-polish pass, it's a whole undone port.**
+`design-fidelity` review of the Spectrum & waterfall / Incoming frame / Decode activity cards found
+they're still entirely on the **old, pre-redesign `Cards.axaml` design system**
+(`Border.Classes="card"`, `TextBlock.Classes="cardHeader"/"caption"`, unstyled `NumericUpDown`/
+`Slider`/`CheckBox`, old `Classes="seg"` segmented control) — NOT ported to the Industry atom system
+at all, unlike the header row and left column (confirmed already-`IndustryGroupBoxTheme`/
+`IndustryGbTitle`). Concrete deltas found: card border color wrong (`#B9B9B9` vs `#D0D0D1`), no
+`.gbt`-style legend-notch title (plain in-flow black label eating ~14 logical px of content height
+per card instead of straddling the border), no blueprint corner marks on Incoming frame (despite
+being `class="gb blueprint"` in the mockup), inter-card gap 4 vs the Industry convention's 11
+(`ScanlineStudioSpacingMedium` vs `IndustrySpacingGroup` — did NOT touch, `ScanlineStudioSpacingMedium`
+is shared across ~15 other call sites app-wide including Options/TX/Logbook, changing its value would
+have far more blast radius than this column), wrong body font (inherits default UI font, not Barlow),
+wrong progress-bar/plot-border/DataGrid-header colors, and a literal-fixed-size "Previous frames"
+thumbnail grid (`Border.thumb Width="120"`/`Image Height="96"`, ~2.9x smaller than the mockup's fluid
+grid cell) with no nested group-box wrapper at all. **Off-scope note from the agent, worth flagging
+now rather than re-discovering later: the right column (`Grid.Column="2"`, Frame metadata/Unattended
+RX/Session frames/Macros) is confirmed to be in the identical old-design state** — expect the same
+class of findings when that column's turn comes.
+
+**What WAS fixed this pass** (real containment bug + safe mechanical wins, not the big port):
+- **Real containment bug, user-caught directly** ("Peak hold checkbox falls outside of the card by a
+  small margin"): Row 0's fixed height (154, reverted down from 180 earlier this session on the
+  mistaken assumption that a since-fixed `NumericUpDown` bug was the only reason 180 was ever needed)
+  wasn't tall enough for the settings column's real content — 7 stacked old-style controls, none yet
+  on the compact Industry atoms. Peak hold rendered flush against the card's bottom border with
+  near-zero clearance, and the Both/Spec/WF segmented control below it was clipped out of existence
+  entirely (invisible, not just tight). Fixed pragmatically by restoring the row height to 182 — the
+  agent's own recommendation was "port to compact Industry atoms and merge Gain+Zero onto one row,
+  don't just grow the row," which is real and correct, but that's the SAME large port as everything
+  else in this section, not a 3-cycle fix; growing the row is the explicit "concession where the
+  template engine (i.e. this section's still-unported state) won't allow pixel-perfect right now" the
+  user's own stated policy allows. Verified: Peak hold now sits with normal clearance, the segment
+  row is fully visible.
+- Uppercased 6 more card/kicker titles + all 8 `Decode activity` DataGrid column headers in
+  `en.json`, same established convention as every prior fix this session (`SPECTRUM & WATERFALL`,
+  `INCOMING FRAME`, `PREVIOUS FRAMES`, `DECODE ACTIVITY`, `DECODER TRACE`, `FREQ`/`MODE`/`CALL ·
+  OCR`/`GRID · QRZ`/`SLANT`/`LINES`/`STATE` — `UTC`/`SNR` were already correct). Low-risk, purely
+  data, no layout/styling change, so didn't move the needle on the bigger port question but is a
+  strict improvement either way.
+
+**Verified**: full solution build clean, `UI.Tests` 173/173. Full-window screenshot confirms
+containment (nothing else clipped) and the uppercase changes rendering correctly.
+
+**Decision point for the user, not made unilaterally**: the centre and right columns need a real
+Industry-atom port (card chrome, legend notches, corner marks, atom-level controls replacing raw
+NumericUpDown/Slider/CheckBox, DataGrid header restyle, the Previous-frames nested-group-box +
+proportional-grid rework) — this is comparable in size to the ALREADY-SHIPPED Phase 1 (atoms) +
+Phase 2 (chrome) work, not a continuation of this session's touch-up passes. Options: (a) scope it as
+its own proper phase with plan + auditor plan-review before building, matching this project's own
+"audit UI design before building" convention, rather than doing it ad hoc under today's fix-and-log
+process; (b) keep doing cheap/safe wins only (uppercasing, obvious containment bugs) on old-style
+cards without the full port, deferring the real redesign; (c) something else the user prioritizes
+differently. Flagged rather than silently either doing a multi-hour unplanned redesign or leaving it
+as a buried nit-list item.
+
+**Not yet committed** — `git status --short`: `assets/locale/en.json`, `Views/MainWindow.axaml`.
+
+**Next**: awaiting user direction on the centre/right-column port scope above. If deferred, right
+column would otherwise be next in the original per-card verification sequence.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
