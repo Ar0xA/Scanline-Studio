@@ -6,22 +6,40 @@
         x:Class="ScanlineStudio.UI.Views.OptionsWindowView"
         x:DataType="vm:OptionsWindowViewModel"
         Title="{loc:Translate Options.Title}"
-        Width="640" Height="520"
-        MinWidth="480" MinHeight="360"
+        Width="720" Height="580"
+        MinWidth="560" MinHeight="420"
         WindowStartupLocation="CenterOwner">
 
-    <Border Classes="card">
+    <!-- Industry design port (pre-Phase-7): pure 1:1 restyle of the old "card"/"cardInner" chrome
+         onto the established Industry atom set (Atoms.axaml) - no ViewModel/binding changes.
+         Priority for this pass is containment (nothing clipped, everything visible) over pixel
+         fidelity - no mockup exists for this window, same "extrapolate from the atom set" situation
+         as Phase 6's Logbook tab. Sections that already had their own heading text become a real
+         IndustryGroupBoxTheme with that text as the Header; sections that never had one stay a
+         plain IndustryBlueprintBorderTheme box (no invented header copy). Every RadioButton group -
+         both the 3 real ones (CAT backend) and every disabled placeholder group - uses
+         IndustryMiniRadioTheme inside a WrapPanel (not a plain horizontal StackPanel), so a narrow
+         resize wraps chips to a new line instead of clipping them; same WrapPanel-plus-per-item-
+         margin idiom this file's own color-swatch row already used before this port. Window
+         Width/MinWidth were widened from the old 640/480 - 7 tab headers (incl. "Radio / CAT" and
+         "Identification") plus the Advanced tab's 4-column stepper grid made the old floor a real
+         clipping risk; verify via a real-window screenshot at both default size and the MinWidth
+         floor, not assumed safe from arithmetic alone. -->
+
+    <Border Background="{StaticResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
 
-            <TabControl Grid.Row="0">
+            <TabControl Grid.Row="0" Classes="Industry">
 
-                <TabItem Header="{loc:Translate Options.General.Tab}">
+                <TabItem Classes="Industry" Header="{loc:Translate Options.General.Tab}">
                     <ScrollViewer>
-                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.General.Language}" />
-                                    <ComboBox ItemsSource="{Binding AvailableCultures}"
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                            <!-- Disabled placeholders: legacy MemWin/JPEGQ, no window-geometry
+                                 persistence or JPEG-quality knob exists yet. -->
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Language}" />
+                                    <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableCultures}"
                                               SelectedItem="{Binding SelectedCulture}"
                                               HorizontalAlignment="Stretch">
                                         <ComboBox.ItemTemplate>
@@ -30,59 +48,54 @@
                                             </DataTemplate>
                                         </ComboBox.ItemTemplate>
                                     </ComboBox>
-                                </StackPanel>
-                            </Border>
 
-                            <!-- Disabled placeholders: legacy MemWin/JPEGQ, no window-geometry
-                                 persistence or JPEG-quality knob exists yet. -->
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <CheckBox Content="{loc:Translate Options.General.RememberWindow}"
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}"
+                                              Content="{loc:Translate Options.General.RememberWindow}"
                                               IsEnabled="False"
                                               ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.General.JpegQuality}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.General.JpegQuality.Help}" />
-                                    </StackPanel>
-                                    <NumericUpDown Value="85" Minimum="0" Maximum="100" Width="120" HorizontalAlignment="Left"
-                                                   IsEnabled="False"
-                                                   ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Grid ColumnDefinitions="Auto,Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.General.JpegQuality}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.General.JpegQuality.Help}" />
+                                        <NumericUpDown Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="85" Minimum="0" Maximum="100" HorizontalAlignment="Left"
+                                                       IsEnabled="False"
+                                                       ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </Grid>
                                 </StackPanel>
-                            </Border>
+                            </ContentControl>
 
                             <!-- Disabled placeholder: legacy's 7 waterfall/spectrum colors (PCLow,
                                  PCHigh, PCFFTB/PCFFT/PCFFTStg/PCSync/PCFreq); the new flat
                                  design's palette isn't per-element customizable yet. -->
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.General.ColorsHeader}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.General.ColorsHeader.Help}" />
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.General.ColorsHeader}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.General.ColorsHeader.Help}" />
                                     </StackPanel>
-                                    <WrapPanel>
-                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.Low}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.High}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftBackground}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftSignal}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftHistory}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftSync}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                        <Button Classes="small" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftFrequency}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                    </WrapPanel>
-                                </StackPanel>
-                            </Border>
+                                </HeaderedContentControl.Header>
+                                <WrapPanel>
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.Low}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.High}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftBackground}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftSignal}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftHistory}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftSync}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftFrequency}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
+                                </WrapPanel>
+                            </HeaderedContentControl>
 
-                            <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetGeneralToDefaultCommand}" />
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetGeneralToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
 
-                <TabItem Header="{loc:Translate Options.Audio.Tab}">
+                <TabItem Classes="Industry" Header="{loc:Translate Options.Audio.Tab}">
                     <ScrollViewer>
-                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.CaptureDevice}" />
-                                    <ComboBox ItemsSource="{Binding CaptureDevices}"
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Audio.CaptureDevice}" />
+                                    <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding CaptureDevices}"
                                               SelectedItem="{Binding SelectedCaptureDevice}"
                                               HorizontalAlignment="Stretch">
                                         <ComboBox.ItemTemplate>
@@ -92,8 +105,8 @@
                                         </ComboBox.ItemTemplate>
                                     </ComboBox>
 
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.PlaybackDevice}" />
-                                    <ComboBox ItemsSource="{Binding PlaybackDevices}"
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Audio.PlaybackDevice}" />
+                                    <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding PlaybackDevices}"
                                               SelectedItem="{Binding SelectedPlaybackDevice}"
                                               HorizontalAlignment="Stretch">
                                         <ComboBox.ItemTemplate>
@@ -103,177 +116,198 @@
                                         </ComboBox.ItemTemplate>
                                     </ComboBox>
 
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.SampleRate}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.SampleRate.Help}" />
-                                    </StackPanel>
-                                    <TextBox Text="{Binding SampleRate}" Width="120" HorizontalAlignment="Left" />
+                                    <Grid ColumnDefinitions="Auto,Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.SampleRate}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.SampleRate.Help}" />
+                                        <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding SampleRate}" />
+                                    </Grid>
                                 </StackPanel>
-                            </Border>
+                            </ContentControl>
 
                             <!-- Disabled placeholders: legacy RxFifo/TxFifo/SoundPriority/
                                  AppPriority/Source(stereo)/CBSTX; no FIFO-size, process/sound
                                  card priority, or stereo-source hook exists in the audio engine
                                  yet. -->
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Audio.PerformanceHeader}" />
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Audio.PerformanceHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.RxFifo}" />
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="16" Minimum="4" Maximum="64" HorizontalAlignment="Left"
+                                                       IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </Grid>
 
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.RxFifo}" />
-                                    <NumericUpDown Value="16" Minimum="4" Maximum="64" Width="120" HorizontalAlignment="Left"
-                                                   IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.TxFifo}" />
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="16" Minimum="4" Maximum="64" HorizontalAlignment="Left"
+                                                       IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </Grid>
 
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.TxFifo}" />
-                                    <NumericUpDown Value="16" Minimum="4" Maximum="64" Width="120" HorizontalAlignment="Left"
-                                                   IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Audio.SoundPriority}" />
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.Normal}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.High}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.VeryHigh}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.Critical}" />
+                                    </WrapPanel>
 
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.SoundPriority}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.Normal}" IsChecked="True" />
-                                        <RadioButton GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.High}" />
-                                        <RadioButton GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.VeryHigh}" />
-                                        <RadioButton GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.Critical}" />
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Audio.AppPriority}" />
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppPriorityPlaceholder" Content="{loc:Translate Options.Audio.AppPriority.Normal}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppPriorityPlaceholder" Content="{loc:Translate Options.Audio.AppPriority.High}" />
+                                    </WrapPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.StereoSource}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.StereoSource.Help}" />
                                     </StackPanel>
-
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Audio.AppPriority}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="AppPriorityPlaceholder" Content="{loc:Translate Options.Audio.AppPriority.Normal}" IsChecked="True" />
-                                        <RadioButton GroupName="AppPriorityPlaceholder" Content="{loc:Translate Options.Audio.AppPriority.High}" />
-                                    </StackPanel>
-
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.StereoSource}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.StereoSource.Help}" />
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Mono}" IsChecked="True" />
-                                        <RadioButton GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Left}" />
-                                        <RadioButton GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Right}" />
-                                    </StackPanel>
-                                    <CheckBox Content="{loc:Translate Options.Audio.StereoTx}"
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Mono}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Left}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Right}" />
+                                    </WrapPanel>
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Audio.StereoTx}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 </StackPanel>
-                            </Border>
+                            </HeaderedContentControl>
 
-                            <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetAudioToDefaultCommand}" />
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetAudioToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
 
-                <TabItem Header="{loc:Translate Options.Radio.Tab}">
+                <TabItem Classes="Industry" Header="{loc:Translate Options.Radio.Tab}">
                     <ScrollViewer>
-                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Backend}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Backend.Help}" />
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Backend}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Backend.Help}" />
                                     </StackPanel>
-                                    <RadioButton GroupName="RadioBackend"
-                                                 Content="{loc:Translate Options.Radio.Backend.None}"
-                                                 IsChecked="{Binding IsNoneBackendSelected}" />
-                                    <RadioButton GroupName="RadioBackend"
-                                                 Content="{loc:Translate Options.Radio.Backend.Rigctld}"
-                                                 IsChecked="{Binding IsRigctldBackendSelected}" />
-                                    <RadioButton GroupName="RadioBackend"
-                                                 Content="{loc:Translate Options.Radio.Backend.Hamlib}"
-                                                 IsChecked="{Binding IsHamlibBackendSelected}" />
-                                    <!-- Disabled placeholder: matches spec/03-cat-layer.md's documented
-                                         (but "speculative/not yet designed") 5th backend. -->
-                                    <RadioButton GroupName="RadioBackendPlaceholder"
-                                                 IsEnabled="False"
-                                                 Content="{loc:Translate Options.Radio.Backend.OmniRig}"
-                                                 ToolTip.Tip="{loc:Translate Options.Radio.Backend.OmniRig.Help}" />
+                                    <WrapPanel>
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
+                                                     GroupName="RadioBackend"
+                                                     Content="{loc:Translate Options.Radio.Backend.None}"
+                                                     IsChecked="{Binding IsNoneBackendSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
+                                                     GroupName="RadioBackend"
+                                                     Content="{loc:Translate Options.Radio.Backend.Rigctld}"
+                                                     IsChecked="{Binding IsRigctldBackendSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
+                                                     GroupName="RadioBackend"
+                                                     Content="{loc:Translate Options.Radio.Backend.Hamlib}"
+                                                     IsChecked="{Binding IsHamlibBackendSelected}" />
+                                        <!-- Disabled placeholder: matches spec/03-cat-layer.md's documented
+                                             (but "speculative/not yet designed") 5th backend. -->
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
+                                                     GroupName="RadioBackendPlaceholder"
+                                                     IsEnabled="False"
+                                                     Content="{loc:Translate Options.Radio.Backend.OmniRig}"
+                                                     ToolTip.Tip="{loc:Translate Options.Radio.Backend.OmniRig.Help}" />
+                                    </WrapPanel>
 
-                                    <StackPanel IsVisible="{Binding IsRigctldSelected}" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" Text="{loc:Translate Options.Radio.Host}" />
-                                        <TextBox Text="{Binding RigctldHost}" />
-                                        <TextBlock Classes="label" Text="{loc:Translate Options.Radio.Port}" />
-                                        <TextBox Text="{Binding RigctldPort}" Width="120" HorizontalAlignment="Left" />
+                                    <StackPanel IsVisible="{Binding IsRigctldSelected}" Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Host}" />
+                                            <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding RigctldHost}" />
+                                        </Grid>
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Port}" />
+                                            <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding RigctldPort}" HorizontalAlignment="Left" />
+                                        </Grid>
                                     </StackPanel>
 
-                                    <StackPanel IsVisible="{Binding IsHamlibSelected}" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.Model}" />
-                                            <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.Model.Help}" />
-                                        </StackPanel>
-                                        <TextBox Text="{Binding HamlibModel}" Width="120" HorizontalAlignment="Left" />
+                                    <StackPanel IsVisible="{Binding IsHamlibSelected}" Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <Grid ColumnDefinitions="Auto,Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.Model}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.Model.Help}" />
+                                            <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibModel}" />
+                                        </Grid>
 
-                                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.SerialPort}" />
-                                            <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.SerialPort.Help}" />
-                                        </StackPanel>
-                                        <TextBox Text="{Binding HamlibSerialPort}" />
+                                        <Grid ColumnDefinitions="Auto,Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.SerialPort}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.SerialPort.Help}" />
+                                            <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibSerialPort}" />
+                                        </Grid>
 
-                                        <TextBlock Classes="label" Text="{loc:Translate Options.Radio.Hamlib.BaudRate}" />
-                                        <TextBox Text="{Binding HamlibBaudRate}" Width="120" HorizontalAlignment="Left" />
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.BaudRate}" />
+                                            <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding HamlibBaudRate}" />
+                                        </Grid>
 
-                                        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                            <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.PttType}" />
-                                            <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.PttType.Help}" />
-                                        </StackPanel>
-                                        <TextBox Text="{Binding HamlibPttType}" />
+                                        <Grid ColumnDefinitions="Auto,Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.PttType}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.PttType.Help}" />
+                                            <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibPttType}" />
+                                        </Grid>
                                     </StackPanel>
                                 </StackPanel>
-                            </Border>
+                            </ContentControl>
 
                             <!-- Disabled placeholders: legacy CBRTS/PTTLock; no PTT-during-RX
                                  control surface on IRadioController yet. -->
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <CheckBox Content="{loc:Translate Options.Radio.RtsOnRx}"
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Radio.RtsOnRx}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <CheckBox Content="{loc:Translate Options.Radio.PttLock}"
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Radio.PttLock}"
                                                   IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" VerticalAlignment="Center" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.PttLock.Help}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.PttLock.Help}" />
                                     </StackPanel>
                                 </StackPanel>
-                            </Border>
+                            </ContentControl>
 
-                            <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetRadioToDefaultCommand}" />
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetRadioToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
 
-                <TabItem Header="{loc:Translate Options.Tx.Tab}">
+                <TabItem Classes="Industry" Header="{loc:Translate Options.Tx.Tab}">
                     <ScrollViewer>
-                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.Callsign}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.Callsign.Help}" />
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.Callsign}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.Callsign.Help}" />
                                     </StackPanel>
-                                    <TextBox Text="{Binding Callsign}" Width="200" HorizontalAlignment="Left" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding Callsign}" HorizontalAlignment="Stretch" />
                                 </StackPanel>
-                            </Border>
+                            </ContentControl>
 
                             <!-- Name/Grid: no legacy MMSSTV equivalent (its own macro engine has no
                                  "my name"/"my QTH" token at all), added to back mock2's own "MY
                                  NAME"/"MY GRID" overlay insert-field chips and the TX-macro engine. -->
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Tx.OperatorName}" />
-                                    <TextBox Text="{Binding OperatorName}" Width="200" HorizontalAlignment="Left" />
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Tx.OperatorGrid}" />
-                                    <TextBox Text="{Binding OperatorGrid}" Width="200" HorizontalAlignment="Left" />
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.OperatorName}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorName}" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.OperatorGrid}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorGrid}" />
+                                    </Grid>
                                 </StackPanel>
-                            </Border>
+                            </ContentControl>
 
                             <!-- Disabled placeholder: legacy's YONIQ-fork-specific QRZ.com lookup
                                  toggle; legacy hardcodes a personal API password for this, which
                                  is not being resurrected in any form; only the bare enable concept
                                  is represented. -->
-                            <Border Classes="cardInner">
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <CheckBox Content="{loc:Translate Options.Tx.QrzLookup}"
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Tx.QrzLookup}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" VerticalAlignment="Center" />
-                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.QrzLookup.Help}" />
+                                    <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.QrzLookup.Help}" />
                                 </StackPanel>
-                            </Border>
+                            </ContentControl>
 
-                            <Button Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetTxToDefaultCommand}" />
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetTxToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -281,66 +315,66 @@
                 <!-- New tab: RX/demod behavior. All disabled; AnalogFmSstvDecoder hardcodes
                      sense level, auto-stop/sync/slant, and demod type internally with no public
                      knob (confirmed by reading its full public surface). -->
-                <TabItem Header="{loc:Translate Options.Decode.Tab}">
+                <TabItem Classes="Industry" Header="{loc:Translate Options.Decode.Tab}">
                     <ScrollViewer>
-                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.SenseLevel}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.SenseLevel.Help}" />
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.SenseLevel}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.SenseLevel.Help}" />
                                     </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.VeryLow}" />
-                                        <RadioButton GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.Low}" IsChecked="True" />
-                                        <RadioButton GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.High}" />
-                                        <RadioButton GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.VeryHigh}" />
-                                    </StackPanel>
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.VeryLow}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.Low}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.High}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.VeryHigh}" />
+                                    </WrapPanel>
 
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Decode.RxBpf}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.Normal}" IsChecked="True" />
-                                        <RadioButton GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.Wide}" />
-                                        <RadioButton GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.Sharp}" />
-                                        <RadioButton GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.VerySharp}" />
-                                    </StackPanel>
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Decode.RxBpf}" />
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.Normal}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.Wide}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.Sharp}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBpfPlaceholder" Content="{loc:Translate Options.Decode.RxBpf.VerySharp}" />
+                                    </WrapPanel>
 
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.DemodType}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.DemodType.Help}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.DemodType}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.DemodType.Help}" />
                                     </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.Pll}" />
-                                        <RadioButton GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.ZeroCrossing}" />
-                                        <RadioButton GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.Hilbert}" IsChecked="True" />
-                                    </StackPanel>
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.Pll}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.ZeroCrossing}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.Hilbert}" IsChecked="True" />
+                                    </WrapPanel>
 
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Decode.RxBuffer}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Off}" IsChecked="True" />
-                                        <RadioButton GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.On}" />
-                                        <RadioButton GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Extended}" />
-                                    </StackPanel>
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Decode.RxBuffer}" />
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Off}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.On}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Extended}" />
+                                    </WrapPanel>
 
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.AutoStart}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.AutoStart.Help}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.AutoStart}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.AutoStart.Help}" />
                                     </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.Off}" />
-                                        <RadioButton GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.On}" IsChecked="True" />
-                                    </StackPanel>
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.Off}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.On}" IsChecked="True" />
+                                    </WrapPanel>
 
-                                    <CheckBox Content="{loc:Translate Options.Decode.AutoStop}"
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoStop}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <CheckBox Content="{loc:Translate Options.Decode.AutoRestart}"
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoRestart}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <CheckBox Content="{loc:Translate Options.Decode.AutoSync}"
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoSync}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <CheckBox Content="{loc:Translate Options.Decode.AutoSlant}"
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoSlant}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 </StackPanel>
-                            </Border>
+                            </ContentControl>
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -349,64 +383,68 @@
                      CW/FSK/sound-file ID, VOX, or the satellite-tune trigger exist yet. Tune
                      frequency/duration themselves are real (header's Tune row) and intentionally
                      NOT duplicated here. -->
-                <TabItem Header="{loc:Translate Options.Identification.Tab}">
+                <TabItem Classes="Industry" Header="{loc:Translate Options.Identification.Tab}">
                     <ScrollViewer>
-                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Identification.IdMethodHeader}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.Off}" IsChecked="True" />
-                                        <RadioButton GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.Cw}" />
-                                        <RadioButton GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.SoundFile}" />
-                                    </StackPanel>
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Identification.IdMethodHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.Off}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.Cw}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.SoundFile}" />
+                                    </WrapPanel>
 
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Identification.CwText}" />
-                                    <TextBox IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Identification.CwText}" />
+                                    <TextBox Classes="Industry IndustryInput" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
 
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwFrequency}" />
-                                        <NumericUpDown Value="800" Minimum="300" Maximum="3000" Width="120" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwSpeed}" />
-                                        <NumericUpDown Value="18" Minimum="10" Maximum="40" Width="120" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </StackPanel>
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwFrequency}" />
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="800" Minimum="300" Maximum="3000" HorizontalAlignment="Left" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwSpeed}" />
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="18" Minimum="10" Maximum="40" HorizontalAlignment="Left" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </Grid>
 
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.SoundFile}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Identification.SoundFile.Help}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.SoundFile}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Identification.SoundFile.Help}" />
                                     </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBox Width="260" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                        <Button Content="{loc:Translate Options.Identification.SoundFile.Browse}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </StackPanel>
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{StaticResource IndustrySpacingSnug}">
+                                        <TextBox Classes="Industry IndustryInput" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Identification.SoundFile.Browse}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </Grid>
 
-                                    <CheckBox Content="{loc:Translate Options.Identification.FskEncode}"
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.FskEncode}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <CheckBox Content="{loc:Translate Options.Identification.FskDecode}"
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.FskDecode}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 </StackPanel>
-                            </Border>
+                            </HeaderedContentControl>
 
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Identification.VoxHeader}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="VoxModePlaceholder" Content="{loc:Translate Options.Identification.Vox.Off}" IsChecked="True" />
-                                        <RadioButton GroupName="VoxModePlaceholder" Content="{loc:Translate Options.Identification.Vox.On}" />
-                                    </StackPanel>
-                                    <Button Content="{loc:Translate Options.Identification.Vox.EditTone}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Identification.VoxHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="VoxModePlaceholder" Content="{loc:Translate Options.Identification.Vox.Off}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="VoxModePlaceholder" Content="{loc:Translate Options.Identification.Vox.On}" />
+                                    </WrapPanel>
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Identification.Vox.EditTone}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 </StackPanel>
-                            </Border>
+                            </HeaderedContentControl>
 
-                            <Border Classes="cardInner">
-                                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <CheckBox Content="{loc:Translate Options.Identification.TuneSatellite}"
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.TuneSatellite}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" VerticalAlignment="Center" />
-                                    <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Identification.TuneSatellite.Help}" />
+                                    <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Identification.TuneSatellite.Help}" />
                                 </StackPanel>
-                            </Border>
+                            </ContentControl>
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -415,81 +453,87 @@
                      buttons (legacy DispTxBpf/DispLoopLPF/DispOutLPF/DispCrossOutLPF/RxBpfBtn) are
                      intentionally not included; they preview filters that are themselves
                      disabled placeholders, so there is nothing real to preview yet. -->
-                <TabItem Header="{loc:Translate Options.Advanced.Tab}">
+                <TabItem Classes="Industry" Header="{loc:Translate Options.Advanced.Tab}">
                     <ScrollViewer>
-                        <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                            <TextBlock Classes="caption" TextWrapping="Wrap" Text="{loc:Translate Options.Advanced.Caption}" />
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                            <TextBlock Foreground="{StaticResource IndustryTextMuted62}" FontFamily="{StaticResource IndustryBodyFontFamily}" FontSize="11" TextWrapping="Wrap" Text="{loc:Translate Options.Advanced.Caption}" />
 
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Advanced.PllHeader}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.PllHeader.Help}" />
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Advanced.PllHeader}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.PllHeader.Help}" />
                                     </StackPanel>
-                                    <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" RowDefinitions="Auto,Auto" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="{loc:Translate Options.Advanced.Pll.VcoGain}" />
-                                        <NumericUpDown Grid.Row="0" Grid.Column="1" Value="2600" Minimum="0" Maximum="100000" />
-                                        <TextBlock Grid.Row="0" Grid.Column="2" Classes="label" Text="{loc:Translate Options.Advanced.Pll.LoopOrder}" />
-                                        <NumericUpDown Grid.Row="0" Grid.Column="3" Value="1" Minimum="1" Maximum="32" />
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="{loc:Translate Options.Advanced.Pll.LoopCutoff}" />
-                                        <NumericUpDown Grid.Row="1" Grid.Column="1" Value="200" Minimum="0" Maximum="10000" />
-                                        <TextBlock Grid.Row="1" Grid.Column="2" Classes="label" Text="{loc:Translate Options.Advanced.Pll.OutCutoff}" />
-                                        <NumericUpDown Grid.Row="1" Grid.Column="3" Value="1200" Minimum="0" Maximum="10000" />
+                                </HeaderedContentControl.Header>
+                                <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingSnug}" RowSpacing="{StaticResource IndustrySpacingSnug}" RowDefinitions="Auto,Auto" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.VcoGain}" />
+                                    <NumericUpDown Grid.Row="0" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="2600" Minimum="0" Maximum="100000" />
+                                    <TextBlock Grid.Row="0" Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.LoopOrder}" />
+                                    <NumericUpDown Grid.Row="0" Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="1" Minimum="1" Maximum="32" />
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.LoopCutoff}" />
+                                    <NumericUpDown Grid.Row="1" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="200" Minimum="0" Maximum="10000" />
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.OutCutoff}" />
+                                    <NumericUpDown Grid.Row="1" Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="1200" Minimum="0" Maximum="10000" />
+                                </Grid>
+                            </HeaderedContentControl>
+
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Advanced.CrossingHeader}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.CrossingHeader.Help}" />
+                                    </StackPanel>
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingSnug}" RowSpacing="{StaticResource IndustrySpacingSnug}" RowDefinitions="Auto,Auto" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Crossing.Order}" />
+                                        <NumericUpDown Grid.Row="0" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="1" Minimum="1" Maximum="32" />
+                                        <TextBlock Grid.Row="0" Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Crossing.Cutoff}" />
+                                        <NumericUpDown Grid.Row="0" Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="1200" Minimum="0" Maximum="10000" />
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Crossing.Smoothing}" />
+                                        <NumericUpDown Grid.Row="1" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="2000" Minimum="500" Maximum="8000" />
+                                    </Grid>
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.Differentiator}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                </StackPanel>
+                            </HeaderedContentControl>
+
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Advanced.TxFilterHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.TxBpf}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.TxLpf}"
+                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Grid ColumnDefinitions="Auto,Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.TxSampleClockOffset}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.TxSampleClockOffset.Help}" />
+                                        <NumericUpDown Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" MinWidth="100" HorizontalAlignment="Left" Value="0" Minimum="-1500" Maximum="1500" Increment="0.02" FormatString="F2" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </Grid>
                                 </StackPanel>
-                            </Border>
+                            </HeaderedContentControl>
 
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Advanced.CrossingHeader}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.CrossingHeader.Help}" />
-                                    </StackPanel>
-                                    <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" RowDefinitions="Auto,Auto" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="label" Text="{loc:Translate Options.Advanced.Crossing.Order}" />
-                                        <NumericUpDown Grid.Row="0" Grid.Column="1" Value="1" Minimum="1" Maximum="32" />
-                                        <TextBlock Grid.Row="0" Grid.Column="2" Classes="label" Text="{loc:Translate Options.Advanced.Crossing.Cutoff}" />
-                                        <NumericUpDown Grid.Row="0" Grid.Column="3" Value="1200" Minimum="0" Maximum="10000" />
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="label" Text="{loc:Translate Options.Advanced.Crossing.Smoothing}" />
-                                        <NumericUpDown Grid.Row="1" Grid.Column="1" Value="2000" Minimum="500" Maximum="8000" />
-                                    </Grid>
-                                    <CheckBox Content="{loc:Translate Options.Advanced.Differentiator}"
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Advanced.MiscHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Advanced.Loopback}" />
+                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.Off}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.Internal}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.External}" />
+                                    </WrapPanel>
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.PolynomialCalibration}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <WrapPanel>
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Options.Advanced.ClockAdjustWizard}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Options.Advanced.LevelCalibrationWizard}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    </WrapPanel>
                                 </StackPanel>
-                            </Border>
-
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Advanced.TxFilterHeader}" />
-                                    <CheckBox Content="{loc:Translate Options.Advanced.TxBpf}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <CheckBox Content="{loc:Translate Options.Advanced.TxLpf}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <TextBlock Classes="label" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.TxSampleClockOffset}" />
-                                        <TextBlock Classes="ScanlineStudioHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.TxSampleClockOffset.Help}" />
-                                        <NumericUpDown Value="0" Minimum="-1500" Maximum="1500" Increment="0.02" FormatString="F2" Width="100" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
-
-                            <Border Classes="cardInner">
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                    <TextBlock Classes="cardHeaderSmall" Text="{loc:Translate Options.Advanced.MiscHeader}" />
-                                    <TextBlock Classes="label" Text="{loc:Translate Options.Advanced.Loopback}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.Off}" IsChecked="True" />
-                                        <RadioButton GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.Internal}" />
-                                        <RadioButton GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.External}" />
-                                    </StackPanel>
-                                    <CheckBox Content="{loc:Translate Options.Advanced.PolynomialCalibration}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                        <Button Content="{loc:Translate Options.Advanced.ClockAdjustWizard}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                        <Button Content="{loc:Translate Options.Advanced.LevelCalibrationWizard}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
+                            </HeaderedContentControl>
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -499,19 +543,19 @@
             <!-- Bottom bar: destructive "Reset ALL" on the left with its own inline confirm step
                  (IsConfirmingResetAll), Cancel/Save on the right. Per-section resets above are a
                  single click each since nothing is persisted until Save. -->
-            <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto" Margin="{DynamicResource ScanlineStudioPaddingMedium}">
-                <Button Grid.Column="0"
+            <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}">
+                <Button Grid.Column="0" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
                         Content="{loc:Translate Options.ResetAll}"
                         Command="{Binding RequestResetAllCommand}"
                         IsVisible="{Binding !IsConfirmingResetAll}" />
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}" IsVisible="{Binding IsConfirmingResetAll}">
-                    <TextBlock Text="{loc:Translate Options.ResetAll.ConfirmPrompt}" TextWrapping="Wrap" MaxWidth="260" VerticalAlignment="Center" />
-                    <Button Content="{loc:Translate Options.ResetAll.ConfirmYes}" Command="{Binding ConfirmResetAllCommand}" />
-                    <Button Content="{loc:Translate Options.ResetAll.ConfirmNo}" Command="{Binding CancelResetAllCommand}" />
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingSnug}" IsVisible="{Binding IsConfirmingResetAll}">
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.ResetAll.ConfirmPrompt}" TextWrapping="Wrap" MaxWidth="260" VerticalAlignment="Center" />
+                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Options.ResetAll.ConfirmYes}" Command="{Binding ConfirmResetAllCommand}" />
+                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetAll.ConfirmNo}" Command="{Binding CancelResetAllCommand}" />
                 </StackPanel>
 
-                <Button Grid.Column="2" Content="{loc:Translate Options.Cancel}" Command="{Binding CancelCommand}" Margin="0,0,4,0" IsVisible="{Binding !IsConfirmingResetAll}" />
-                <Button Grid.Column="3" Content="{loc:Translate Options.Save}" Command="{Binding SaveCommand}" IsVisible="{Binding !IsConfirmingResetAll}" />
+                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Cancel}" Command="{Binding CancelCommand}" Margin="0,0,4,0" IsVisible="{Binding !IsConfirmingResetAll}" />
+                <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Options.Save}" Command="{Binding SaveCommand}" IsVisible="{Binding !IsConfirmingResetAll}" />
             </Grid>
 
         </Grid>
