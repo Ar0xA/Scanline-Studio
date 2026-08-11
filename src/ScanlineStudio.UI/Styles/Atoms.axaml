@@ -270,6 +270,35 @@
                 </Setter>
             </ControlTheme>
 
+            <!-- Third .mini form, Phase 4 (Editor card): a real exclusive-select tool strip
+                 (legacy has no equivalent — this is app-added scaffolding — but the OLD design
+                 already implemented it as a genuine RadioButton GroupName group, not a plain
+                 Button row, so re-skinning to Industry must preserve that exclusivity, not
+                 downgrade it to inert chips. ToggleButton has no built-in GroupName mechanism in
+                 Avalonia, so IndustryMiniToggleTheme can't substitute here — this is a real
+                 third mini-chip control type, not a drive-by addition. Template identical to
+                 IndustryMiniButtonTheme/IndustryMiniToggleTheme; :checked visual state below
+                 mirrors ToggleButton.IndustryMini:checked exactly (accent fill, IndustryBg text). -->
+            <ControlTheme x:Key="IndustryMiniRadioTheme" TargetType="RadioButton">
+                <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
+                <Setter Property="Height" Value="17" />
+                <Setter Property="MinHeight" Value="17" />
+                <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+                <Setter Property="FontSize" Value="10" />
+                <Setter Property="FontWeight" Value="Medium" />
+                <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Name="PART_Face" Background="Transparent"
+                                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
             <!-- ═══════════════════════ 5. Stepper — reuses NumericUpDown ═══════════════════════
                  CODE-REVIEW FIX (blocker 1): NumericUpDown does NOT have PART_IncreaseButton/
                  PART_DecreaseButton members — those belong to ButtonSpinner. NumericUpDown only
@@ -594,6 +623,22 @@
         <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
     </Style>
     <Style Selector="ToggleButton.IndustryMini:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+    <Style Selector="RadioButton.IndustryMini:pointerover /template/ Border#PART_Face">
+        <Setter Property="Background" Value="#121D1F20" />
+    </Style>
+    <Style Selector="RadioButton.IndustryMini:pressed /template/ Border#PART_Face">
+        <Setter Property="Background" Value="#241D1F20" />
+    </Style>
+    <Style Selector="RadioButton.IndustryMini:checked /template/ Border#PART_Face">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+    </Style>
+    <Style Selector="RadioButton.IndustryMini:checked /template/ ContentPresenter">
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+    </Style>
+    <Style Selector="RadioButton.IndustryMini:disabled">
         <Setter Property="Opacity" Value="0.45" />
     </Style>
 
