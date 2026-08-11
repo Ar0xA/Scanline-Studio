@@ -16,7 +16,8 @@
         Title="{loc:Translate MainWindow.Title}"
         Width="1920" Height="1032"
         MinWidth="1920" MinHeight="1032"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource IndustryBg}">
 
     <!-- MainViewModel now requires AppDockFactory via DI, so no Design.DataContext previewer
          instance; see App.axaml.cs for how the real DataContext is resolved at runtime. -->
@@ -304,7 +305,7 @@
                     </ScrollViewer>
 
                     <!-- Centre: Spectrum & waterfall + Incoming frame, both restyled in place
-                         (Border Classes="plot" now lives inside WaterfallPaneView.axaml/
+                         (Border Classes="IndustryPlot" now lives inside WaterfallPaneView.axaml/
                          RxImagePaneView.axaml themselves); no new PlotView abstraction. Row 0
                          reverted from 154 back to 182 (design-fidelity-caught fix, user-reported):
                          the earlier 180->154 reversion assumed the ONLY reason 180 was ever needed was a
@@ -1386,10 +1387,10 @@
              flagged deviation). DISK is new: no disk-space binding exists anywhere in this
              codebase today, literal FAKE-LIVE placeholder matching the SnrValue/MemoryTag
              precedent already established in this exact bar, not a real feature added in this
-             phase. The TX-inhibit LED keeps its existing Ellipse.led visual unchanged (not an
-             Industry atom — no LED/indicator-dot atom exists in Phase 1/2's inventory, and
-             inventing one wasn't called for by the design doc; this is real, kept per direct
-             user request, LAYOUT-SPEC's own static render just doesn't happen to show one). -->
+             phase. The TX-inhibit LED keeps its original visual unchanged (kept per direct user
+             request, LAYOUT-SPEC's own static render just doesn't happen to show one) — Phase 7
+             ported it 1:1 into Ellipse.IndustryLed/TextBlock.IndustryReadoutSmall (Atoms.axaml),
+             same colors, just relocated off the deleted old-design files. -->
         <Border Grid.Row="3" Height="25" Classes="Industry" Background="{StaticResource IndustryBg}"
                 BorderBrush="{StaticResource IndustryDivider}" BorderThickness="0,1,0,0">
             <DockPanel Margin="8,4,8,4">
@@ -1406,8 +1407,8 @@
                         <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" />
                     </Border>
                     <StackPanel Orientation="Horizontal" Spacing="4">
-                        <Ellipse Classes="led" Classes.alert="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
-                        <TextBlock Classes="readoutSmall" Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxInhibit.Help}" VerticalAlignment="Center" />
+                        <Ellipse Classes="Industry IndustryLed" Classes.alert="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
+                        <TextBlock Classes="Industry IndustryReadoutSmall" Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxInhibit.Help}" VerticalAlignment="Center" />
                     </StackPanel>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RadioStatus.FrequencyDisplay}" />

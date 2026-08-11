@@ -4,17 +4,14 @@
     <!-- Design-token layer for the "Industry" wireframe design system
          (mockups/guidance/LAYOUT-SPEC.md, mockups/guidance/SSTV Console.dc.html's id="2a" mockup):
          steel-blue accent on a light technical ground, Barlow / Barlow Condensed, square corners,
-         hairline borders, blueprint corner marks. Supersedes the "Aesthetic Directive" in
-         spec/09-ui.md (flat WSJT-X/fldigi gray Win32/Qt chrome, Tokens.axaml/Cards.axaml/
-         ChromeOverrides.axaml) once every view is ported (redesign plan's Phase 7), until then
-         this file is ADDITIVE, loaded after ChromeOverrides.axaml in App.axaml so its resources
-         are available without touching the old ones (auditor-reviewed: an in-place replacement of
-         Tokens.axaml's resource keys throws at XAML load, since TxControlsPaneView.axaml:238
-         StaticResource-consumes ScanlineStudioTxToggleButtonTheme). Every resource here is
-         prefixed `Industry` specifically so it can never collide with an existing
-         ScanlineStudio*/bare Cards.axaml class name (Cards.axaml already owns `.chip`/`.primary`/
-         `.halt`/`.seg`/`.plate`/`.thumb`/`.canvas`/`.safeArea`/`.plot` at different metrics; reusing
-         those literal names would re-skin every not-yet-ported view mid-migration). -->
+         hairline borders, blueprint corner marks. As of Phase 7 this is the ONLY design system in
+         the app — the old "Aesthetic Directive" (flat WSJT-X/fldigi gray Win32/Qt chrome,
+         Tokens.axaml/Cards.axaml/ChromeOverrides.axaml) was deleted once every view was confirmed
+         ported. During the migration this file was additive (loaded alongside the old files,
+         which is why every resource here is `Industry`-prefixed rather than reusing a bare
+         Cards.axaml class name like `.chip`/`.primary`/`.halt`/`.seg` at different metrics) — that
+         prefix stays now for clarity/searchability, not because collision avoidance is still
+         load-bearing. -->
 
     <Styles.Resources>
         <ResourceDictionary>
@@ -55,7 +52,20 @@
             <Color x:Key="IndustryAccent800Color">#2C455D</Color>
             <Color x:Key="IndustryAccent900Color">#1D2D3D</Color>
 
+            <!-- Danger/alert red (Phase 7): ported 1:1 from the old design's ScanlineStudioTxActiveColor
+                 (Tokens.axaml, Light variant - the app runs RequestedThemeVariant="Light" only, so
+                 that was the color actually in effect) rather than invented, since this is the last
+                 real consumer of that resource before the old files are deleted. Reused by the TX
+                 transmit toggle's :checked state, TX/radio-header error text, and (via its own
+                 separate literal, not this token - see Ellipse.IndustryLed below) the status-bar
+                 alert LED, which was historically a different red in the old design and stays that
+                 way rather than being silently unified. -->
+            <Color x:Key="IndustryDangerColor">#B93636</Color>
+            <Color x:Key="IndustryDangerForegroundColor">#FFFFFF</Color>
+
             <SolidColorBrush x:Key="IndustryBg" Color="{StaticResource IndustryBgColor}" />
+            <SolidColorBrush x:Key="IndustryDanger" Color="{StaticResource IndustryDangerColor}" />
+            <SolidColorBrush x:Key="IndustryDangerForeground" Color="{StaticResource IndustryDangerForegroundColor}" />
             <SolidColorBrush x:Key="IndustrySurface" Color="{StaticResource IndustrySurfaceColor}" />
             <SolidColorBrush x:Key="IndustryText" Color="{StaticResource IndustryTextColor}" />
             <SolidColorBrush x:Key="IndustryAccent" Color="{StaticResource IndustryAccentColor}" />
