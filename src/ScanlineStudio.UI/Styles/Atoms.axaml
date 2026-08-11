@@ -523,20 +523,20 @@
                 </Setter>
             </ControlTheme>
 
-            <!-- Design-fidelity-agent-caught addition: the Gallery thumbnail grid is the only
-                 Industry thumbnail composition built on a real ListBox (needed for the real
-                 TwoWay SelectedEntry binding — Receive's Previous-frames and Transmit's
-                 Recently-sent are a plain ItemsControl/UniformGrid instead, since neither needs
-                 selection). With no ItemContainerTheme, the default FluentTheme ListBoxItem
-                 imposes its own non-zero Padding/MinHeight and pointerover/selected fills around
-                 each IndustryThumbnail figure, which mock2's own bare <figure> grid has none of.
-                 Minimal template: no padding/min-size, transparent background, no corner radius —
-                 selection is still a real TwoWay-bound value regardless of this template; the
-                 accent-border :selected rule below (targeting the DataTemplate's own
-                 Border.IndustryThumbnail by descendant selector, not part of this template) is the
-                 only visual feedback, matching this design system's existing accent-border
-                 selected-state convention elsewhere (chips' own :checked state). -->
-            <ControlTheme x:Key="IndustryThumbnailListBoxItemTheme" TargetType="ListBoxItem">
+            <!-- Design-fidelity-agent-caught addition (Gallery, Phase 5), generalized for reuse
+                 (Logbook, Phase 6): any Industry list needing a real ListBox (for a TwoWay
+                 SelectedItem binding — most Industry lists are a plain ItemsControl/UniformGrid
+                 instead, since they don't need selection) gets default FluentTheme ListBoxItem
+                 chrome (non-zero Padding/MinHeight, pointerover/selected fills) around whatever the
+                 DataTemplate composes, which no Industry list design wants. Minimal template: no
+                 padding/min-size, transparent background, no corner radius — selection is still a
+                 real TwoWay-bound value regardless of this template; each call site supplies its
+                 own :selected visual feedback via a descendant selector reaching into the
+                 DataTemplate's own content (see Border.IndustryThumbnail's accent-border rule and
+                 Border.IndustryTableRowRule's accent-fill rule below), matching this design
+                 system's existing accent selected-state convention elsewhere (chips' own :checked
+                 state). -->
+            <ControlTheme x:Key="IndustryListBoxItemTheme" TargetType="ListBoxItem">
                 <Setter Property="Padding" Value="0" />
                 <Setter Property="MinHeight" Value="0" />
                 <Setter Property="CornerRadius" Value="0" />
@@ -1026,6 +1026,14 @@
     <Style Selector="Border.IndustryTableRowRule.narrow">
         <Setter Property="Padding" Value="{StaticResource IndustryTableCellPaddingNarrow}" />
     </Style>
+    <!-- Real selection feedback for a ListBox-based Industry table (first real consumer: the
+         Logbook's QSO table, Phase 6) — accent-tinted fill per cell, not a border (a table row's
+         own visual language is a fill, unlike a thumbnail figure's bordered-card language). Same
+         descendant-selector-across-the-template-boundary technique as the Gallery thumbnail's own
+         :selected rule. -->
+    <Style Selector="ListBoxItem:selected Border.IndustryTableRowRule">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent100}" />
+    </Style>
 
     <!-- 11. Thumbnail figure — composed from existing atoms (IndustryHatchPanel below for the
          placeholder body, IndustryMini Border form for the mode-badge chip) rather than a bespoke
@@ -1040,7 +1048,7 @@
         <Setter Property="CornerRadius" Value="0" />
     </Style>
     <!-- Real selection feedback for the Gallery's ListBox-based thumbnail grid (see
-         IndustryThumbnailListBoxItemTheme's own comment) — a plain descendant selector reaches
+         IndustryListBoxItemTheme's own comment) — a plain descendant selector reaches
          into the DataTemplate-generated content across the template boundary. -->
     <Style Selector="ListBoxItem:selected Border.IndustryThumbnail">
         <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />

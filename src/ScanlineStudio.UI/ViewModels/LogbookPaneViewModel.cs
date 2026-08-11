@@ -43,6 +43,12 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isEditing;
 
+    /// <summary>Card-title count readout, same "explicit update after Entries changes" pattern as
+    /// <see cref="RxHistoryPaneViewModel"/>'s own EntryCountText -- Entries is a plain
+    /// ObservableCollection, not an [ObservableProperty], so nothing derives this automatically.</summary>
+    [ObservableProperty]
+    private string _entryCountDisplay = string.Empty;
+
     /// <summary>Status bar's "log size" readout -- a SEPARATE, unfiltered query
     /// (<c>new LogbookQuery()</c>, every field null), independent of whatever <see cref="Entries"/>'
     /// own current search filter currently shows (which defaults to the last 30 days, per this
@@ -206,6 +212,8 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         {
             Entries.Add(entry);
         }
+
+        EntryCountDisplay = _localization.GetString("Panes.Logbook.EntryCountFormat", Entries.Count);
 
         Log.RefreshCompleted(_logger, Entries.Count);
         return true;
