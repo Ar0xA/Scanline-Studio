@@ -681,7 +681,12 @@
                     <!-- Left: TxControlsPaneView's own restyled Mode/Identification/Output/Stock
                          cards. The Drive slider now lives inside its Output card, ancestor-bound
                          to this same RadioStatus.TxVolumePercent value rather than a separate
-                         standalone card here. -->
+                         standalone card here. Top headroom for the first card's title notch lives
+                         INSIDE TxControlsPaneView.axaml's own root StackPanel (same fix, same
+                         reasoning, as the Receive tab's own left column). A Margin on this
+                         ScrollViewer element itself was tried first and did NOT fix the clipping
+                         (confirmed empirically, real-window screenshot), only moving it onto the
+                         scrolled CONTENT did. -->
                     <ScrollViewer Grid.Column="0">
                         <ContentControl Content="{Binding TxControls}" />
                     </ScrollViewer>
