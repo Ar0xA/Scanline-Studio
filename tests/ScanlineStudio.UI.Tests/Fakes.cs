@@ -531,14 +531,42 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
     public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => Task.FromResult(ImagesDirectory);
 
+    /// <summary>Every <see cref="SetNoteAsync"/> call, in order -- lets a test prove a selection
+    /// change alone did NOT fire a spurious persist (records compare by value, so asserting against
+    /// <see cref="EntriesToReturn"/>'s own content can't distinguish "never called" from "called
+    /// with the same value it already had").</summary>
+    public List<(string EntryId, string? Note)> SetNoteCalls { get; } = [];
+
+    public List<(string EntryId, bool IsFlagged)> SetFlaggedCalls { get; } = [];
+
+    /// <summary>Queue of per-call delays for <see cref="SetFlaggedAsync"/>, consumed FIFO (one entry
+    /// per call, falling back to no delay once exhausted) -- lets a test make an EARLIER call finish
+    /// AFTER a later one, the only way to actually exercise an ordering guard. Without this, every
+    /// call completes synchronously via <see cref="Task.FromResult{TResult}"/>, which trivially
+    /// preserves call order regardless of whether the caller's own serialization logic is even
+    /// present -- a test asserting final state alone can't distinguish "correctly serialized" from
+    /// "never raced in the first place".</summary>
+    public Queue<TimeSpan> SetFlaggedCallDelays { get; } = [];
+
     /// <summary>Actually mutates <see cref="EntriesToReturn"/> (matching <see cref="QueryAsync"/>'s
     /// own "actually applies" convention above), so a Gallery-side test can verify a note/flag/
     /// QSO-link edit round-trips through a subsequent query, not just that the call was made.</summary>
-    public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default) =>
-        Task.FromResult(TryUpdateEntry(entryId, e => e with { Note = note }));
+    public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default)
+    {
+        SetNoteCalls.Add((entryId, note));
+        return Task.FromResult(TryUpdateEntry(entryId, e => e with { Note = note }));
+    }
 
-    public Task<bool> SetFlaggedAsync(string entryId, bool isFlagged, CancellationToken ct = default) =>
-        Task.FromResult(TryUpdateEntry(entryId, e => e with { IsFlagged = isFlagged }));
+    public async Task<bool> SetFlaggedAsync(string entryId, bool isFlagged, CancellationToken ct = default)
+    {
+        SetFlaggedCalls.Add((entryId, isFlagged));
+        if (SetFlaggedCallDelays.TryDequeue(out var delay))
+        {
+            await Task.Delay(delay, ct);
+        }
+
+        return TryUpdateEntry(entryId, e => e with { IsFlagged = isFlagged });
+    }
 
     public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default) =>
         Task.FromResult(TryUpdateEntry(entryId, e => e with { LinkedQsoId = qsoId }));
