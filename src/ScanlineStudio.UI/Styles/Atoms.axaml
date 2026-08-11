@@ -299,6 +299,37 @@
                 </Setter>
             </ControlTheme>
 
+            <!-- ═══════════════════════ 2b. Real CheckBox (Options window) ═══════════════════════
+                 First real consumer of a form-style boolean toggle — every mockup toggle to date
+                 was `.seg`/`.mini` (exclusive-select or momentary chip), never a plain checkbox.
+                 Full ControlTemplate replacement, same low-risk technique as IndustryMiniToggleTheme/
+                 IndustrySegTheme above: CheckBox's own check/uncheck logic lives on the control
+                 itself (OnToggle), not on any named template part, so there is no PART_* wiring to
+                 get wrong. Tick glyph as Path geometry, not a literal Text= character — same
+                 NoHardcodedAxamlStringsTests reasoning as the stepper/disclosure atoms. -->
+            <ControlTheme x:Key="IndustryCheckBoxTheme" TargetType="CheckBox">
+                <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+                <Setter Property="FontSize" Value="11" />
+                <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                            <Border Name="PART_Box" Width="14" Height="14" VerticalAlignment="Center"
+                                    Background="{StaticResource IndustrySurface}"
+                                    BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0">
+                                <Path Name="PART_Tick" Data="M 2.5,7.5 L 6,11 L 11.5,3.5"
+                                      Stroke="{StaticResource IndustryBg}" StrokeThickness="1.5"
+                                      Stretch="None" IsVisible="False"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                               ContentTemplate="{TemplateBinding ContentTemplate}"
+                                               VerticalAlignment="Center" />
+                        </StackPanel>
+                    </ControlTemplate>
+                </Setter>
+            </ControlTheme>
+
             <!-- ═══════════════════════ 5. Stepper — reuses NumericUpDown ═══════════════════════
                  CODE-REVIEW FIX (blocker 1): NumericUpDown does NOT have PART_IncreaseButton/
                  PART_DecreaseButton members — those belong to ButtonSpinner. NumericUpDown only
@@ -1258,6 +1289,32 @@
          rather than the old design's left-only one. -->
     <Style Selector="TabControl.Industry /template/ ItemsPresenter#PART_ItemsPresenter">
         <Setter Property="Margin" Value="6,0,6,0" />
+    </Style>
+
+    <!-- 2b. Real CheckBox — interaction states. -->
+    <Style Selector="CheckBox.Industry:checked /template/ Border#PART_Box">
+        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+    </Style>
+    <Style Selector="CheckBox.Industry:checked /template/ Path#PART_Tick">
+        <Setter Property="IsVisible" Value="True" />
+    </Style>
+    <Style Selector="CheckBox.Industry:pointerover /template/ Border#PART_Box">
+        <Setter Property="BorderBrush" Value="#731D1F20" />
+        <!-- text-45% mix, item 18 — same hover convention as the .input atom. -->
+    </Style>
+    <Style Selector="CheckBox.Industry:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
+    <!-- Help glyph: small "[?]" beside an esoteric setting's label, ToolTip.Tip carries the real
+         explanation (Options window). Industry-token reskin of the old ScanlineStudioHelpGlyph
+         (Tokens.axaml) so consumers of this atom no longer need that file loaded. -->
+    <Style Selector="TextBlock.IndustryHelpGlyph">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted55}" />
+        <Setter Property="Cursor" Value="Help" />
     </Style>
 
 </Styles>

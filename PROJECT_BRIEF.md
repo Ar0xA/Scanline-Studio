@@ -5,7 +5,7 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 everything but the active entry below was already in a detailed commit message or migrated into
 `spec/14-roadmap.md`/`CLAUDE.md` — see git history for this file if older context is ever needed.
 
-## Resume here (2026-08-11, latest, ACTIVE) — pixel-perfect UI redesign, Phase 6 done, Phase 7 next
+## Resume here (2026-08-11, latest, ACTIVE) — Options window ported to Industry design, Phase 7 next
 
 **What this is**: full pixel-perfect port of the app's UI from the old "Aesthetic Directive" look
 (`spec/09-ui.md`) to a new "Industry" wireframe design system (`mockups/guidance/`: steel-blue
@@ -28,7 +28,52 @@ plan: `~/.claude/plans/transient-jumping-bentley.md` — 8 phases (0 fonts/token
   for that kind of UI (user's own direction for Logbook: "just go for what's normal in a general
   logbook"), own lighter design-review pass, more layout freedom than the pixel-matched tabs.
 
-### Status: Phases 0-6 SHIPPED. Phase 7 (cleanup) NOT STARTED — this is the LAST phase.
+### Status: Phases 0-6 SHIPPED. Options window ported to Industry (below). Phase 7 (cleanup) NOT STARTED — this is the LAST phase.
+
+**Options window ported to Industry design (2026-08-11), done, not yet committed.** User asked to
+do this before Phase 7 (Phase 7's cleanup deletes the old `Cards.axaml`/`Tokens.axaml`/
+`ChromeOverrides.axaml` files, which the Options window was the last live consumer of). No mockup
+exists for this window (same situation as Phase 6's Logbook) — extrapolated from the established
+atom set. Explicit user priority for this pass: containment (nothing clipped, everything visible)
+over pixel fidelity — no `design-fidelity` agent pass, nitpicking deferred. Plan:
+`~/.claude/plans/nifty-strolling-pretzel.md`.
+
+- Two new atoms added to `Atoms.axaml`: `IndustryCheckBoxTheme` (first real checkbox atom in this
+  design system — every mockup toggle before this was `.seg`/`.mini`, never a plain checkbox; full
+  `ControlTemplate` replacement, 14x14 box + tick-glyph `Path`, same low-risk technique as
+  `IndustryMiniToggleTheme`) and `TextBlock.IndustryHelpGlyph` (Industry-token reskin of the old
+  `ScanlineStudioHelpGlyph`). Every `RadioButton` group (both the 3 real CAT-backend ones and every
+  disabled placeholder group) reuses the existing `IndustryMiniRadioTheme` chip atom.
+- `OptionsWindowView.axaml` fully rewritten: `TabControl`/`TabItem` → `Classes="Industry"` (proven
+  reusable for a second, independent `TabControl`, per `MainWindow.axaml`'s own Phase-2 comment);
+  sections with an existing heading get a real `IndustryGroupBoxTheme` box, headerless sections get
+  `IndustryBlueprintBorderTheme` (turns out this atom is inherently corner-marked — it has no
+  separate "plain, no marks" mode, unlike the plan's assumption; kept as-is since it looks fine and
+  isn't a containment problem, logged here as a plan deviation, not a bug); every
+  label+editable-field pair reuses the exact `Grid ColumnDefinitions="Auto,*"` +
+  `TextBlock.IndustryRowLabel` pattern Phase 6's Logbook form established; every `RadioButton` chip
+  group moved into a `WrapPanel` (was a plain horizontal `StackPanel`) so a narrow resize wraps
+  instead of clipping. Window widened `640x520/480x360` → `720x580/560x420` (7 tab headers incl.
+  "Radio / CAT"/"Identification" plus the Advanced tab's 4-column stepper grid made the old floor a
+  real clipping risk) — verified empirically, not just by arithmetic (see below).
+- **Verified**: real-window screenshots (not headless) of all 7 tabs at both the default size and
+  the `MinWidth`/`MinHeight` floor (720x580 down to ~560x420) — nothing clipped anywhere, the tab
+  strip fits at the floor width, `RadioButton` chip WrapPanels wrap correctly (OmniRig's longer
+  label drops to its own line at the floor width), and the bottom Save/Cancel/Reset-ALL bar stays
+  fully reachable via the scrollable middle region even at the height floor (confirmed by capturing
+  past the visible crop, not assumed from the Grid's `RowDefinitions="*,Auto"` shape alone). Full
+  solution build clean (0 warnings/errors), `UI.Tests` 173/173 (including the structural guard
+  tests, `NoHardcodedAxamlStringsTests`/`NoThicknessSpacingMismatchTests`). **Not yet committed.**
+- **Skipped, deliberately**: `design-fidelity` agent review, exact spacing/color fidelity, any
+  behavior changes behind the still-disabled placeholders.
+- **New follow-up the user raised mid-session, not yet actioned**: now that the Options window has
+  a real "Radio / CAT" tab (with working backend selection), the top-level "Rig & PTT" menu
+  (`MainWindow.axaml`'s `MainWindow.Menu.RigPtt` — CAT Interface/PTT Method/Frequency
+  Memories/Test PTT, all `IsEnabled="False"` placeholders) reads as redundant, and "Configurations"
+  may partly overlap too (e.g. `Configurations.AudioDevices` vs. the Options Audio tab). Deferred to
+  keep this session's task scoped to the Options restyle — revisit as its own small pass (this
+  overlaps with the already-standing `feedback`-type memory "Menu trim deferred," which said
+  fidelity work comes first, trimming after; this is plausibly "after" now).
 
 **Phases 0-2** (fonts/tokens, atoms, chrome): shipped in earlier sessions, see `git log` before this
 one if detail is ever needed.
@@ -90,10 +135,10 @@ Per the plan doc: delete dead old-design resources/classes (`Cards.axaml`/`Token
 `ChromeOverrides.axaml`) once nothing references them, update `spec/09-ui.md`'s "Aesthetic Directive"
 section to describe the new Industry design language, confirm `NoHardcodedAxamlStringsTests`/
 `NoThicknessSpacingMismatchTests`/`WaterfallPaletteTests` still pass, full solution build+test green,
-final full-app real-window screenshot pass band-by-band against LAYOUT-SPEC §7. **Open question:
-is the Options window in scope** — the plan doc groups it with Phase 6 ("Logbook tab + Options
-window") but it was NOT touched this session (only the Logbook tab). Re-check with the user before
-assuming it's covered or deferred.
+final full-app real-window screenshot pass band-by-band against LAYOUT-SPEC §7. **Options window is
+now done** (see above) — it was the last live consumer of several old-design classes, so this
+should unblock the Phase 7 deletion; double-check with a repo-wide grep for `Cards.axaml`/
+`Tokens.axaml`/`ChromeOverrides.axaml` class names before deleting, don't just assume.
 
 ### Deferred / logged, not fixed — carried forward, still outstanding
 
