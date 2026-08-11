@@ -1093,10 +1093,10 @@
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.GridDistLabel}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.GridDistValue}" />
                                     </Grid></Border>
-                                    <!-- Wired 2026-08-11: ReceiveHistoryEntry.LinkedQsoId is a real field
-                                         (IReceiveHistoryStore.SetLinkedQsoIdAsync exists to set it, just
-                                         never called by any View yet; "Open in Log" below stays STUB,
-                                         that's the write side, this is only the already-real read side). -->
+                                    <!-- Wired 2026-08-11: ReceiveHistoryEntry.LinkedQsoId is a real field,
+                                         backed by IReceiveHistoryStore.SetLinkedQsoIdAsync. "Open in Log"
+                                         below is now wired too (OpenInLogCommand, via QsoLinkWindowView),
+                                         so this read-side badge now reflects a real write path. -->
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.LogEntryLabel}" />
                                         <Panel Grid.Column="1">
@@ -1125,7 +1125,7 @@
                                      (not 25): mock2's own height:24px/font-size:11px for this
                                      specific row. -->
                                 <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,2,0,0">
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" Command="{Binding OpenInLogCommand}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.Redecode}" />
                                 </StackPanel>

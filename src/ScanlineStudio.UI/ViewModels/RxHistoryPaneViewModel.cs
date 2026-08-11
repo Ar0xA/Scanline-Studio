@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Application;
 using ScanlineStudio.UI.Imaging;
 
 namespace ScanlineStudio.UI.ViewModels;
@@ -36,6 +37,8 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private readonly IReceiveHistoryStore _historyStore;
     private readonly ILocalizationService _localization;
     private readonly ILogger<RxHistoryPaneViewModel> _logger;
+    private readonly ILogbookSessionService _logbookSession;
+    private readonly ILogger<QsoLinkWindowViewModel> _qsoLinkLogger;
 
     /// <summary>Chains <see cref="PersistFlaggedAsync"/> calls so a rapid double-toggle can't
     /// complete out of order -- see that method's own doc comment. Deliberately a plain
@@ -182,11 +185,24 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(FramesTodayDisplay))]
     private int _framesTodayCount;
 
-    public RxHistoryPaneViewModel(IReceiveHistoryStore historyStore, ILocalizationService localization, ILogger<RxHistoryPaneViewModel> logger)
+    /// <summary>Fires with a freshly-constructed <see cref="QsoLinkWindowViewModel"/> whenever
+    /// <see cref="OpenInLogCommand"/> runs -- same "carries the freshly-resolved dialog VM" shape as
+    /// <c>MainViewModel.OptionsRequested</c>, consumed by <c>MainWindow.axaml.cs</c> to construct and
+    /// show the actual <c>QsoLinkWindowView</c>.</summary>
+    public event Action<QsoLinkWindowViewModel>? QsoLinkRequested;
+
+    public RxHistoryPaneViewModel(
+        IReceiveHistoryStore historyStore,
+        ILocalizationService localization,
+        ILogger<RxHistoryPaneViewModel> logger,
+        ILogbookSessionService logbookSession,
+        ILogger<QsoLinkWindowViewModel> qsoLinkLogger)
     {
         _historyStore = historyStore;
         _localization = localization;
         _logger = logger;
+        _logbookSession = logbookSession;
+        _qsoLinkLogger = qsoLinkLogger;
 
         Entries.CollectionChanged += (_, _) =>
         {
@@ -393,9 +409,38 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         Log.RefreshCompleted(_logger, Entries.Count);
     }
 
+    private bool CanOpenInLog() => SelectedEntry is not null;
+
+    /// <summary>Opens the "Open in Log" picker/create dialog (spec: link an already-logged QSO to
+    /// this frame, or log a new one on the spot) -- see <see cref="QsoLinkWindowViewModel"/>'s own
+    /// doc comment for the full write-ordering/thread-affinity design. Posts the resulting
+    /// <see cref="UpdateEntryInPlace"/> call through <see cref="Dispatcher"/> as harmless defense,
+    /// not because it's load-bearing: <see cref="QsoLinkWindowViewModel.Linked"/> fires from a
+    /// SEPARATE view-model instance, and while that VM's own async methods all resume on the UI
+    /// thread in practice (see its class doc comment), routing this cross-VM callback through the
+    /// dispatcher costs nothing and doesn't depend on that fact staying true.</summary>
+    [RelayCommand(CanExecute = nameof(CanOpenInLog))]
+    private void OpenInLog()
+    {
+        if (SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        var qsoLinkVm = new QsoLinkWindowViewModel(_logbookSession, _historyStore, _localization, _qsoLinkLogger, entry.Entry);
+        qsoLinkVm.Linked += qsoId => Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entry.Entry.Id, e => e with { LinkedQsoId = qsoId }));
+        QsoLinkRequested?.Invoke(qsoLinkVm);
+    }
+
     partial void OnSelectedEntryChanged(RxHistoryEntryViewModel? value)
     {
         Log.SelectedEntryChanged(_logger);
+
+        // Auditor-caught (plan-review): must run BEFORE the _isRepopulating early-return below --
+        // otherwise a live refresh that drops the selection to null skips this requery, leaving
+        // OpenInLogCommand enabled with nothing selected until some LATER unrelated change happens
+        // to fire it.
+        OpenInLogCommand.NotifyCanExecuteChanged();
 
         if (_isRepopulating && value is null)
         {
