@@ -920,70 +920,64 @@
                 </Grid>
             </TabItem>
             <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Gallery}">
-                <Grid ColumnDefinitions="*,330" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}" DataContext="{Binding RxHistory}">
+                <!-- Ported to Industry atoms (was old Cards.axaml "card"/"cardHeader"/"caption"/
+                     "segment"/"seg"/"small"/"thumb"/"pill"/"value"/"readoutSmall"/"plot"/"kv"/
+                     "label"/"accentValue"/"primary" styling). *,312 grid (mock2's own layout, per
+                     the plan doc), no blueprint corner marks on either card (mock2's own ".gb" here
+                     has no "blueprint" class, unlike the Receive tab's Incoming-frame card). -->
+                <Grid ColumnDefinitions="*,312" ColumnSpacing="{StaticResource IndustrySpacingGutter}" Margin="9,11,9,8" DataContext="{Binding RxHistory}">
 
                     <!-- Received-frame grid: All/Today filter is real (IReceiveHistoryStore's own
-                         From/To fields); mock2's band/Unlogged/Flagged/free-text filters and
-                         sort-by-callsign/SNR are omitted; ReceiveHistoryEntry has no frequency/
-                         callsign/grid field to filter or sort by, and LinkedQsoId is never set
-                         non-null by any code path today (spec/14-roadmap.md backlog). This list
-                         (and the Receive tab's own Previous-frames strip, same shared VM instance)
-                         now refreshes live as new frames land, not just at construction/manual-
-                         refresh/filter-change (batch 7, IReceiveHistoryStore.Recorded). New real
-                         "Latest" button below (SelectLatestCommand) is a port of legacy's own
-                         SBLatest speed button, new UI since mock2's own draft has no slot for it. -->
-                    <Border Grid.Column="0" Classes="card">
+                         From/To fields, IndustryMiniRadioTheme chips matching mock2's own ALL/TODAY
+                         .mini shape, not a .seg control); mock2's band/Unlogged/Flagged/free-text
+                         filters and sort-by-callsign/SNR are omitted; ReceiveHistoryEntry has no
+                         frequency/callsign/grid field to filter or sort by, and LinkedQsoId is never
+                         set non-null by any code path today (spec/14-roadmap.md backlog). Sort/Size
+                         are literal IndustryMini chips (not the old design's unbound ComboBox —
+                         mock2's own row shows these as static chips, not a real dropdown, and the
+                         ComboBox never had a binding either). This list (and the Receive tab's own
+                         Previous-frames strip, same shared VM instance) now refreshes live as new
+                         frames land, not just at construction/manual-refresh/filter-change (batch 7,
+                         IReceiveHistoryStore.Recorded). "Latest" button (SelectLatestCommand) is a
+                         port of legacy's own SBPrim speed button, new UI since mock2's own draft has
+                         no slot for it; "Refresh" kept for the same reason. All in one WrapPanel
+                         (containment over an exact single-row match, same reasoning as every other
+                         Phase 4 toolbar row). -->
+                    <HeaderedContentControl Grid.Column="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
+                        <HeaderedContentControl.Header>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxHistory.GalleryHeader}" />
+                                <TextBlock Classes="IndustryGbTitle" Margin="4,0,0,0" Text="{Binding EntryCountText}" />
+                            </StackPanel>
+                        </HeaderedContentControl.Header>
                         <DockPanel LastChildFill="True">
-                            <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*">
-                                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxHistory.GalleryHeader}" />
-                                <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="{Binding EntryCountText}" />
-                            </Grid>
-                            <!-- Single filter row (mock2's own layout): search box takes the
-                                 remaining width, then the real All/Today segment + real Refresh
-                                 button (kept exactly as-is, not replaced by the mock's plain
-                                 ToggleButtons) alongside the literal 14MHz/Unlogged/Flagged
-                                 toggles and sort combo. -->
-                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
-                                  ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,4">
-                                <TextBox Watermark="{loc:Translate Panes.RxHistory.SearchWatermark}" />
-                                <Border Grid.Column="1" Classes="segment">
-                                    <StackPanel Orientation="Horizontal">
-                                        <RadioButton Classes="seg" GroupName="GalleryFilter" Content="{loc:Translate Panes.RxHistory.FilterAll}" IsChecked="{Binding !ShowTodayOnly}" />
-                                        <RadioButton Classes="seg" GroupName="GalleryFilter" Content="{loc:Translate Panes.RxHistory.FilterToday}" IsChecked="{Binding ShowTodayOnly}" />
-                                    </StackPanel>
-                                </Border>
-                                <ToggleButton Grid.Column="2" Classes="small" Content="{loc:Translate Panes.RxHistory.Filter14Mhz}" />
-                                <ToggleButton Grid.Column="3" Classes="small" Content="{loc:Translate Panes.RxHistory.FilterUnlogged}" />
-                                <ToggleButton Grid.Column="4" Classes="small" Content="{loc:Translate Panes.RxHistory.FilterFlagged}" />
-                                <ComboBox Grid.Column="5" SelectedIndex="0">
-                                    <ComboBoxItem Content="{loc:Translate Panes.RxHistory.SortNewest}" />
-                                    <ComboBoxItem Content="{loc:Translate Panes.RxHistory.SortCallsign}" />
-                                    <ComboBoxItem Content="{loc:Translate Panes.RxHistory.SortSnr}" />
-                                </ComboBox>
-                                <!-- Real: port of legacy's SBPrim "jump to most recent" speed button;
-                                     NOT SBLatest despite that name's misleading English reading
-                                     (SBLatest actually jumps to the OLDEST buffered frame; see
-                                     RxHistoryPaneViewModel.SelectLatest's own doc comment for the
-                                     full Main.cpp citation trail, and docs/removed-features.md's
-                                     "History-tab navigation" entry). No slot for this in mock2's own
-                                     draft, added as new UI since the underlying gap is real and
-                                     legacy-documented (spec/14-roadmap.md backlog item), not invented.
-                                     Selects Entries' own first item (already newest-first), no new
-                                     query. -->
-                                <Button Grid.Column="6" Classes="small" Content="{loc:Translate Panes.RxHistory.Latest}" Command="{Binding SelectLatestCommand}" />
-                                <Button Grid.Column="7" Classes="small" Content="{loc:Translate Panes.RxHistory.Refresh}" Command="{Binding RefreshCommand}" />
-                            </Grid>
-                            <TextBlock DockPanel.Dock="Top" Classes="caption"
+                            <WrapPanel DockPanel.Dock="Top" Margin="0,4,0,4">
+                                <TextBox Classes="Industry IndustryInput" Width="200" Margin="0,0,4,4" Watermark="{loc:Translate Panes.RxHistory.SearchWatermark}" />
+                                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="GalleryFilter" Margin="0,0,4,4" IsChecked="{Binding !ShowTodayOnly}" Content="{loc:Translate Panes.RxHistory.FilterAll}" />
+                                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="GalleryFilter" Margin="0,0,4,4" IsChecked="{Binding ShowTodayOnly}" Content="{loc:Translate Panes.RxHistory.FilterToday}" />
+                                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.Filter14Mhz}" />
+                                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.FilterUnlogged}" />
+                                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.FilterFlagged}" />
+                                <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{loc:Translate Panes.RxHistory.SortChip}" /></Border>
+                                <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{loc:Translate Panes.RxHistory.SizeChip}" /></Border>
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.Latest}" Command="{Binding SelectLatestCommand}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,0,4" Content="{loc:Translate Panes.RxHistory.Refresh}" Command="{Binding RefreshCommand}" />
+                            </WrapPanel>
+                            <TextBlock DockPanel.Dock="Top" Classes="IndustryRowLabel"
                                        Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
                                        IsVisible="{Binding !Entries.Count}" />
                             <ScrollViewer>
+                                <!-- UniformGrid Columns=6 (mock2's own grid-template-columns:repeat(6,1fr)),
+                                     not WrapPanel/fixed-Width thumbs — same fix class as the Receive
+                                     tab's Previous-frames card. ListBox retained (not a bare
+                                     ItemsControl) for the real SelectedEntry TwoWay binding. -->
                                 <ListBox ItemsSource="{Binding Entries}"
                                          SelectedItem="{Binding SelectedEntry}"
                                          Background="Transparent"
-                                         BorderThickness="0">
+                                         BorderThickness="0" Padding="0">
                                     <ListBox.ItemsPanel>
                                         <ItemsPanelTemplate>
-                                            <WrapPanel Orientation="Horizontal" />
+                                            <UniformGrid Columns="6" />
                                         </ItemsPanelTemplate>
                                     </ListBox.ItemsPanel>
                                     <ListBox.ItemTemplate>
@@ -992,100 +986,117 @@
                                                  IsHitTestVisible="False" so it never steals the click that
                                                  selects the ListBoxItem underneath. Callsign/meta line is
                                                  literal: ReceiveHistoryEntry has no such fields today. -->
-                                            <!-- 190x152 = 5:4, the real SSTV frame aspect ratio (was
-                                                 190x110 = 1.73:1, letterboxing every real thumbnail). -->
-                                            <Border Classes="thumb" Width="190" Margin="0,0,6,6">
-                                                <StackPanel>
+                                            <Border Classes="IndustryThumbnail" Margin="0,0,6,6">
+                                                <DockPanel LastChildFill="True">
+                                                    <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
+                                                        <StackPanel>
+                                                            <TextBlock Classes="IndustryThumbnailCall" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.RxHistory.ThumbCallsignValue}" />
+                                                            <TextBlock Classes="IndustryThumbnailMeta" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.RxHistory.ThumbMetaValue}" />
+                                                        </StackPanel>
+                                                    </Border>
                                                     <Panel>
-                                                        <Image Source="{Binding Thumbnail}" Height="152" Stretch="Uniform" />
-                                                        <Border Classes="pill" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
+                                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+                                                        <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
                                                             <TextBlock Text="{Binding Entry.ModeId}" />
                                                         </Border>
                                                     </Panel>
-                                                    <StackPanel Margin="6,3">
-                                                        <TextBlock Classes="value" Text="{loc:Translate Panes.RxHistory.ThumbCallsignValue}" />
-                                                        <TextBlock Classes="readoutSmall" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.RxHistory.ThumbMetaValue}" />
-                                                    </StackPanel>
-                                                </StackPanel>
+                                                </DockPanel>
                                             </Border>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
                             </ScrollViewer>
                         </DockPanel>
-                    </Border>
+                    </HeaderedContentControl>
 
                     <!-- Right: selected-frame inspector (File/Mode/ReceivedAt only; no OCR/QRZ/
-                         Log-entry fields exist) + Storage card (real ImagesDirectory, resolved via
+                         Log-entry fields exist — GridDistValue/LogEntryValue deliberately show
+                         an honest em-dash placeholder / "Not logged", not mock2's own fake
+                         "IM76 · 1,842 km"/"linked #4412" literal data, since this row has a REAL
+                         selected entry with
+                         some real fields mixed with genuinely-absent ones; showing fabricated data
+                         next to real data would be misleading, unlike the fully-placeholder Queue/
+                         TX-log cards elsewhere) + Storage card (real ImagesDirectory, resolved via
                          IReceiveHistoryStore.GetImagesDirectoryAsync). Sidecar-format and disk-free
                          rows ARE rendered below, as literals, since neither is tracked anywhere
                          today; they are not omitted, contrary to what an earlier pass's comment
                          here used to claim. -->
-                    <Grid Grid.Column="1" RowDefinitions="*,Auto" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
-                        <Border Classes="card">
-                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxHistory.SelectedFrameHeader}" />
-                                <Border Classes="plot" Height="248">
+                    <Grid Grid.Column="1" RowDefinitions="*,Auto" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                        <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxHistory.SelectedFrameHeader}" />
+                            </HeaderedContentControl.Header>
+                            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                <Border BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" Height="190">
                                     <Image Source="{Binding PreviewImage}" Stretch="Uniform" />
                                 </Border>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.FileLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding SelectedEntry.Entry.FilePath}" />
-                                </Grid>
-                                <!-- Combined rows matching mock2's own layout: Mode is real
-                                     (Entry.ModeId), SNR is literal (no per-frame SNR is tracked
-                                     anywhere today); frequency is literal, time is real
-                                     (Entry.ReceivedAt). -->
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.ModeSnrLabel}" />
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
-                                        <TextBlock Classes="value" Text="{Binding SelectedEntry.Entry.ModeId}" />
-                                        <TextBlock Classes="value" Text="{loc:Translate Panes.RxHistory.SnrSuffixValue}" />
-                                    </StackPanel>
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.FreqTimeLabel}" />
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
-                                        <TextBlock Classes="value" Text="{loc:Translate Panes.RxHistory.FreqPrefixValue}" />
-                                        <TextBlock Classes="value" Text="{Binding SelectedEntry.Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
-                                    </StackPanel>
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.GridDistLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.GridDistValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.LogEntryLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="accentValue" Text="{loc:Translate Panes.RxHistory.LogEntryValue}" />
-                                </Grid>
-                                <UniformGrid Columns="3">
-                                    <Button Classes="primary small" Margin="0,0,3,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" />
-                                    <Button Classes="small" Margin="3,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" />
-                                    <Button Classes="small" Margin="3,0,0,0" Content="{loc:Translate Panes.RxHistory.Redecode}" />
-                                </UniformGrid>
-                            </StackPanel>
-                        </Border>
-                        <Border Grid.Row="1" Classes="card">
-                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.RxHistory.StorageHeader}" />
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.FolderLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding ImagesDirectory}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.NamingLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.NamingValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.SidecarLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.SidecarValue}" />
-                                </Grid>
-                                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="label" Text="{loc:Translate Panes.RxHistory.DiskLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.RxHistory.DiskValue}" />
+                                <StackPanel Classes="Industry IndustryRows">
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.FileLabel}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding SelectedEntry.Entry.FilePath}" />
+                                    </Grid></Border>
+                                    <!-- Combined rows matching mock2's own layout: Mode is real
+                                         (Entry.ModeId), SNR is literal (no per-frame SNR is tracked
+                                         anywhere today); frequency is literal, time is real
+                                         (Entry.ReceivedAt). HorizontalAlignment="Right" on the
+                                         StackPanel itself (not just each child TextBlock, which
+                                         IndustryRowValue already right-aligns within its OWN bounds
+                                         to no visible effect inside a StackPanel) so the whole 2-part
+                                         group sits at the row's right edge, matching every
+                                         single-value row's own convention. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.ModeSnrLabel}" />
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right">
+                                            <TextBlock Classes="IndustryRowValue" Text="{Binding SelectedEntry.Entry.ModeId}" />
+                                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.SnrSuffixValue}" />
+                                        </StackPanel>
+                                    </Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.FreqTimeLabel}" />
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right">
+                                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.FreqPrefixValue}" />
+                                            <TextBlock Classes="IndustryRowValue" Text="{Binding SelectedEntry.Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
+                                        </StackPanel>
+                                    </Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.GridDistLabel}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.GridDistValue}" />
+                                    </Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.LogEntryLabel}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.LogEntryValue}" />
+                                    </Grid></Border>
+                                </StackPanel>
+                                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="4" Margin="0,2,0,0">
+                                    <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxHistory.OpenInLog}" />
+                                    <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxHistory.ExportFrame}" />
+                                    <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxHistory.Redecode}" />
                                 </Grid>
                             </StackPanel>
-                        </Border>
+                        </HeaderedContentControl>
+                        <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxHistory.StorageHeader}" />
+                            </HeaderedContentControl.Header>
+                            <StackPanel Classes="Industry IndustryRows">
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.FolderLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding ImagesDirectory}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.NamingLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.NamingValue}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.SidecarLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.SidecarValue}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.DiskLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.DiskValue}" />
+                                </Grid></Border>
+                            </StackPanel>
+                        </HeaderedContentControl>
                     </Grid>
                 </Grid>
             </TabItem>
