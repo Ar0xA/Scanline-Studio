@@ -433,8 +433,36 @@ each card's own individual self-check) hasn't run yet — queued next, before mo
 column, to catch anything a per-card view might miss (e.g. inter-card spacing/alignment across all 3
 now-ported cards together).
 
-**Next**: right column (Frame metadata / Unattended RX / Session frames / Macros) — same process,
-card by card, commit per card.
+**Right column SHIPPED too — Phase 3 (Receive tab) now FULLY PORTED end to end.** User said the
+centre column "looks good... wouldn't spend much more time on it" and the still-running whole-column
+design-fidelity review wasn't waited on further — moved straight to the right column with the same
+lighter build+test+screenshot-per-card self-check (no dedicated agent review dispatched for this
+card, per the user's own steer to move faster from here). Commit `5a6cfcf`: Frame metadata/
+Unattended RX/Session frames all onto `IndustryGroupBoxTheme`/`IndustryRows`/`IndustryInput`/
+`IndustryBtn22`. Row sets kept as this app's existing real+literal field inventory (same
+preserve-real-behavior precedent as Input-chain), Session frames' 15 rows kept as literal repeats
+(re-themed, not refactored to an ItemsControl). One self-caught fix mid-pass: "Note"/"Override
+callsign" were first styled as `IndustryKicker` (wrong — that's accent-mono-uppercase, but the
+mockup's own `<label style="font-size:11px">` has none of that), corrected to `IndustryRowLabel`
+before commit. **Deliberately NOT added**: the mockup's 4th card, "Macros" (F1-F6 mini-chips) —
+doesn't exist anywhere in this app today, no backing command/feature; building it is new scope, not
+a re-skin of an existing old-design card, needs a real product decision on what F1-F6 invoke first.
+
+**Verified**: full solution build clean, `UI.Tests` 173/173, screenshot-zoomed per section, nothing
+clipped.
+
+**Phase 3 complete.** All 4 Receive-tab sections (header row, left/centre/right columns) are now on
+the Industry atom system. Per the original 8-phase plan (`~/.claude/plans/transient-jumping-bentley.md`),
+**next up is Phase 4 (Transmit tab)**: left column (TX mode/Identification/Output/Stock cards),
+centre Editor group box (toolbar/canvas/adjustments/insert-field/text-style/saved-templates —
+flagged in the plan as "the most complex single card"), right column (Queue/Mode-timing/TX-log/
+Recently-sent). Likely sub-batched (left+right vs. Editor) same as the plan's own note. Then Phase 5
+(Gallery tab), Phase 6 (Logbook tab + Options window, no direct mockup — extrapolate from the atom
+set), Phase 7 (cleanup: delete dead old-design resources once nothing references them, update
+`spec/09-ui.md`).
+
+**Next**: start Phase 4, Transmit tab, left+right columns first (lower risk, mechanical), Editor
+group box last (most complex single card in the whole plan).
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
