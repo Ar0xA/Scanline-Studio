@@ -94,11 +94,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// pattern. <see langword="null"/> until the best-effort initial load below completes, or if no
     /// device is configured / the configured device is no longer present. Loaded once at
     /// construction, not re-fetched on a live settings change while this pane stays open -- same
-    /// convention as the TX-side property. NOTE: unlike this property, the TX-side
-    /// <c>TxControlsPaneViewModel.OutputDeviceName</c> is itself real but NOT actually wired to any
-    /// control in `TxControlsPaneView.axaml` today (that row still binds a static loc-key literal,
-    /// `spec/16-gui-wiring-survey.md`'s own PARTIAL finding) -- an existing, separate gap, out of
-    /// scope for this RX-focused pass; not fixed here.</summary>
+    /// convention as the TX-side property. TX-side <c>TxControlsPaneViewModel.OutputDeviceName</c>
+    /// now has the exact same <c>OutputDeviceNameDisplay</c> wrapper and is genuinely wired to
+    /// `TxControlsPaneView.axaml` (fixed 2026-08-11, was a stale gap noted here before that).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CaptureDeviceNameDisplay))]
     private string? _captureDeviceName;

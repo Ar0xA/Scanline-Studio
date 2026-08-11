@@ -312,9 +312,14 @@
                     </ScrollViewer>
                 </TabItem>
 
-                <!-- New tab: RX/demod behavior. All disabled; AnalogFmSstvDecoder hardcodes
-                     sense level, auto-stop/sync/slant, and demod type internally with no public
-                     knob (confirmed by reading its full public surface). -->
+                <!-- New tab: RX/demod behavior. Auto-Sync/Auto-Slant wired 2026-08-11 (real
+                     SstvDecoderSettings fields, restart-required). Everything else stays disabled:
+                     Sense level/RX BPF/Demod type/RX buffer have no backing settings surface at all
+                     (AnalogFmSstvDecoder hardcodes them internally, confirmed by reading its full
+                     public surface); Auto-stop/Auto-restart DO have real backing fields
+                     (AutoStopEnabled/SyncRestartEnabled) but their loc text doesn't match what those
+                     fields actually gate, left stub pending a wording fix, see
+                     OptionsWindowViewModel's AutoSyncEnabled/AutoSlantEnabled doc comment. -->
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Decode.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
@@ -369,10 +374,17 @@
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoRestart}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <!-- Wired 2026-08-11: SstvDecoderSettings.AutoSyncEnabled/AutoSlantEnabled are real,
+                                         already-consumed decoder settings (RestartableSstvDecoder via
+                                         ScanlineStudio.Host.Program's ISstvDecoder registration); this dialog was the
+                                         only missing piece. Takes effect on next app restart (see OptionsWindowViewModel's
+                                         own doc comment on these two properties). -->
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoSync}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding AutoSyncEnabled}" />
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoSlant}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding AutoSlantEnabled}" />
+
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetDecodeToDefaultCommand}" />
                                 </StackPanel>
                             </ContentControl>
                         </StackPanel>

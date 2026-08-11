@@ -316,8 +316,15 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public Task<IReadOnlyList<FrequencyPreset>> GetFrequencyPresetsAsync(CancellationToken ct = default) => Task.FromResult(Presets);
 
+    public bool ThrowOnSaveFrequencyPresets { get; set; }
+
     public Task SaveFrequencyPresetsAsync(IReadOnlyList<FrequencyPreset> presets, CancellationToken ct = default)
     {
+        if (ThrowOnSaveFrequencyPresets)
+        {
+            throw new InvalidOperationException("Simulated settings-store failure.");
+        }
+
         Presets = presets;
         return Task.CompletedTask;
     }

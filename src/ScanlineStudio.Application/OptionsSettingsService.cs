@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Localization;
 using ScanlineStudio.Core.Radio;
+using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Application;
@@ -43,7 +44,12 @@ public sealed partial class OptionsSettingsService
         HamlibPttType: new RadioConnectionSettings().PttType,
         Callsign: new OperatorSettings().Callsign,
         OperatorName: new OperatorSettings().Name,
-        OperatorGrid: new OperatorSettings().Grid);
+        OperatorGrid: new OperatorSettings().Grid,
+        // Same `?? true` resolution as ScanlineStudio.Host.Program's ISstvDecoder registration --
+        // SstvDecoderSettings itself deliberately never hardcodes a non-null default (see that
+        // record's own doc comment), so both read sites apply it identically.
+        AutoSyncEnabled: new SstvDecoderSettings().AutoSyncEnabled ?? true,
+        AutoSlantEnabled: new SstvDecoderSettings().AutoSlantEnabled ?? true);
 
     public async Task<OptionsSnapshot> LoadAsync(CancellationToken ct = default)
     {
@@ -53,6 +59,7 @@ public sealed partial class OptionsSettingsService
         var audio = _loadedSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
         var radio = _loadedSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
         var operatorSettings = _loadedSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
+        var decoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
 
         return new OptionsSnapshot(
             CultureCode: localization.CultureCode,
@@ -68,13 +75,16 @@ public sealed partial class OptionsSettingsService
             HamlibPttType: radio.PttType,
             Callsign: operatorSettings.Callsign,
             OperatorName: operatorSettings.Name,
-            OperatorGrid: operatorSettings.Grid);
+            OperatorGrid: operatorSettings.Grid,
+            AutoSyncEnabled: decoder.AutoSyncEnabled ?? true,
+            AutoSlantEnabled: decoder.AutoSlantEnabled ?? true);
     }
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
     {
         var previousAudio = _loadedSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
         var previousRadio = _loadedSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
+        var previousDecoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
 
         var settings = _loadedSettings
             .WithSection(LocalizationSettings.SectionKey, new LocalizationSettings { CultureCode = snapshot.CultureCode }, LocalizationSettingsJsonContext.Default.LocalizationSettings)
@@ -98,7 +108,14 @@ public sealed partial class OptionsSettingsService
             .WithSection(
                 OperatorSettings.SectionKey,
                 new OperatorSettings { Callsign = snapshot.Callsign, Name = snapshot.OperatorName, Grid = snapshot.OperatorGrid },
-                OperatorSettingsJsonContext.Default.OperatorSettings);
+                OperatorSettingsJsonContext.Default.OperatorSettings)
+            .WithSection(
+                SstvDecoderSettings.SectionKey,
+                // AfcEnabled/SyncRestartEnabled/AutoStopEnabled are preserved as-is -- this dialog
+                // doesn't edit them yet (Options.Decode's Auto-stop/Auto-restart checkboxes stay
+                // STUB, see the GUI wiring survey's note on their label/field semantics mismatch).
+                previousDecoder with { AutoSyncEnabled = snapshot.AutoSyncEnabled, AutoSlantEnabled = snapshot.AutoSlantEnabled },
+                SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
 
         await _settingsStore.SaveAsync(settings, ct).ConfigureAwait(false);
         _loadedSettings = settings;
