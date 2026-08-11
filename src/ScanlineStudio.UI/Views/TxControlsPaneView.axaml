@@ -42,15 +42,9 @@
                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.AutoPicksLabel}" />
                     <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.AutoPicksValue}" />
                 </Grid></Border>
-                <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}"
-                          SelectedItem="{Binding SelectedMode}"
-                          HorizontalAlignment="Stretch">
-                    <ComboBox.ItemTemplate>
-                        <DataTemplate x:DataType="sstv:SstvModeDefinition">
-                            <TextBlock Text="{Binding DisplayName}" />
-                        </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                </ComboBox>
+                <!-- Order matches mock2: seg -> Auto picks -> 4x4 quick-mode grid -> select ->
+                     Selected/Duration/... rows (design-fidelity-agent-caught fix: the ComboBox
+                     previously rendered ABOVE the grid). -->
                 <UniformGrid Columns="4" Rows="4">
                     <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC1}" /></Border>
                     <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2}" /></Border>
@@ -69,7 +63,23 @@
                     <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD290}" /></Border>
                     <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2180}" /></Border>
                 </UniformGrid>
+                <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}"
+                          SelectedItem="{Binding SelectedMode}"
+                          HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="sstv:SstvModeDefinition">
+                            <TextBlock Text="{Binding DisplayName}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
                 <StackPanel Classes="Industry IndustryRows">
+                    <!-- Real (SelectedMode is the same real ComboBox-bound property above; no new
+                         binding), design-fidelity-agent-caught addition — mock2's own row set
+                         includes it, the port previously dropped it. -->
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.SelectedLabel}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SelectedMode.DisplayName}" />
+                    </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.DurationLabel}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.DurationValue}" />
@@ -81,6 +91,10 @@
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VoxToneLabel}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.VoxToneValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VisHeaderLabel}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.VisHeaderValue}" />
                     </Grid></Border>
                 </StackPanel>
                 <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.FavoritesLabel}" />
@@ -182,16 +196,21 @@
                 <!-- SWR auto-cutoff: disabled/greyed out (not just unchecked) when the rig doesn't
                      report SWR; a checked-but-non-functional toggle would be worse than no toggle.
                      No mockup CheckBox atom exists (same reasoning as the waterfall's Peak-hold
-                     chip), represented as an IndustryMiniToggle chip instead. -->
-                <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}" Margin="0,2,0,0">
-                    <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}"
+                     chip), represented as an IndustryMiniToggle chip instead. WrapPanel, not a
+                     non-wrapping horizontal StackPanel (design-fidelity-agent-caught fix): the
+                     toggle's own content text ("Stop TX if SWR too high") plus the Threshold
+                     label+TextBox together overflow the 236-DIP column width; WrapPanel lets the
+                     Threshold group drop to a second line instead of overflowing past the card's
+                     own border. -->
+                <WrapPanel Margin="0,2,0,0">
+                    <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4"
                                   Content="{loc:Translate Panes.TxControls.SwrCutoffEnabled}"
                                   IsChecked="{Binding SwrCutoffEnabled}"
                                   IsEnabled="{Binding ShowSwrMeter}"
                                   ToolTip.Tip="{loc:Translate Panes.TxControls.SwrCutoffEnabled.Help}" />
-                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.SwrCutoffThresholdLabel}" VerticalAlignment="Center" />
-                    <TextBox Classes="Industry IndustryInput" Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
-                </StackPanel>
+                    <TextBlock Classes="IndustryRowLabel" Margin="0,0,4,4" Text="{loc:Translate Panes.TxControls.SwrCutoffThresholdLabel}" VerticalAlignment="Center" />
+                    <TextBox Classes="Industry IndustryInput" Margin="0,0,0,4" Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
+                </WrapPanel>
 
                 <!-- Tone map is real (static per-mode SstvModeDefinition.LuminanceMinHz/MaxHz
                      lookup, ToneMapText below). TX clock/Monitor audio/Occupied BW below it are
@@ -201,6 +220,13 @@
                      see ~/.claude/plans/wandering-glowing-otter.md. ALC/Power/SWR values themselves
                      are NOT duplicated here; the real conditional rows above already cover that. -->
                 <StackPanel Classes="Industry IndustryRows">
+                    <!-- Literal, same scaffolding class as ToneMap's siblings below (design-
+                         fidelity-agent-caught addition — mock2 has this row, the port previously
+                         dropped it). -->
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.TuneDriveLabel}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.TuneDriveValue}" />
+                    </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMap}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ToneMapText}" />
@@ -237,10 +263,17 @@
                         </ItemsPanelTemplate>
                     </ListBox.ItemsPanel>
                     <ListBox.ItemTemplate>
+                        <!-- Flat Industry chrome (design-fidelity-agent-caught fix): this was the
+                             only control in the left column still rendering default Fluent Button
+                             chrome (rounded corners, grey fill) inside an otherwise fully-Industry
+                             card — no mockup equivalent exists for this real app feature, so match
+                             IndustryThumbnail's own plain hairline-border look instead. -->
                         <DataTemplate x:DataType="vm:StockEntryViewModel">
                             <Button Command="{Binding SelectCommand}"
                                     CommandParameter="{Binding Entry}"
-                                    ToolTip.Tip="{Binding Entry.FileName}">
+                                    ToolTip.Tip="{Binding Entry.FileName}"
+                                    Background="Transparent" BorderBrush="{StaticResource IndustryDivider}"
+                                    BorderThickness="1" CornerRadius="0" Padding="0" Margin="1">
                                 <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />
                             </Button>
                         </DataTemplate>
