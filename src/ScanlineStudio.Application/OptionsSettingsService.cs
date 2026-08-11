@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Localization;
+using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Radio;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
@@ -49,7 +50,10 @@ public sealed partial class OptionsSettingsService
         // SstvDecoderSettings itself deliberately never hardcodes a non-null default (see that
         // record's own doc comment), so both read sites apply it identically.
         AutoSyncEnabled: new SstvDecoderSettings().AutoSyncEnabled ?? true,
-        AutoSlantEnabled: new SstvDecoderSettings().AutoSlantEnabled ?? true);
+        AutoSlantEnabled: new SstvDecoderSettings().AutoSlantEnabled ?? true,
+        QrzLookupEnabled: new QrzLookupSettings().Enabled ?? false,
+        QrzLookupUsername: new QrzLookupSettings().Username,
+        QrzLookupPassword: new QrzLookupSettings().Password);
 
     public async Task<OptionsSnapshot> LoadAsync(CancellationToken ct = default)
     {
@@ -60,6 +64,7 @@ public sealed partial class OptionsSettingsService
         var radio = _loadedSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
         var operatorSettings = _loadedSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
         var decoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
+        var qrzLookup = _loadedSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
 
         return new OptionsSnapshot(
             CultureCode: localization.CultureCode,
@@ -77,7 +82,10 @@ public sealed partial class OptionsSettingsService
             OperatorName: operatorSettings.Name,
             OperatorGrid: operatorSettings.Grid,
             AutoSyncEnabled: decoder.AutoSyncEnabled ?? true,
-            AutoSlantEnabled: decoder.AutoSlantEnabled ?? true);
+            AutoSlantEnabled: decoder.AutoSlantEnabled ?? true,
+            QrzLookupEnabled: qrzLookup.Enabled ?? false,
+            QrzLookupUsername: qrzLookup.Username,
+            QrzLookupPassword: qrzLookup.Password);
     }
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
@@ -115,7 +123,11 @@ public sealed partial class OptionsSettingsService
                 // doesn't edit them yet (Options.Decode's Auto-stop/Auto-restart checkboxes stay
                 // STUB, see the GUI wiring survey's note on their label/field semantics mismatch).
                 previousDecoder with { AutoSyncEnabled = snapshot.AutoSyncEnabled, AutoSlantEnabled = snapshot.AutoSlantEnabled },
-                SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+                SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
+            .WithSection(
+                QrzLookupSettings.SectionKey,
+                new QrzLookupSettings { Enabled = snapshot.QrzLookupEnabled, Username = snapshot.QrzLookupUsername, Password = snapshot.QrzLookupPassword },
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
 
         await _settingsStore.SaveAsync(settings, ct).ConfigureAwait(false);
         _loadedSettings = settings;
