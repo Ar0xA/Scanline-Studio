@@ -221,8 +221,11 @@
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.AutoCorrect}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Foreground="{StaticResource IndustryAccent700}" Text="{Binding AutoCorrectDisplay}" /></Grid></Border>
                                     </StackPanel>
                                     <Grid ColumnDefinitions="*,*" ColumnSpacing="3">
-                                        <Button Classes="Industry IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
-                                        <Button Grid.Column="1" Classes="Industry IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <!-- Padding="6,0" (design-fidelity-caught fix): IndustryBtn22's
+                                             fixed 22px box was clipping the label's descenders/baseline
+                                             against Fluent's own default Button padding. -->
+                                        <Button Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
+                                        <Button Grid.Column="1" Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </Grid>
                                     <ToggleButton x:Name="AdvancedTimingToggle" Classes="Industry IndustryDisclosure" Theme="{StaticResource IndustryDisclosureToggleTheme}" Content="{loc:Translate Panes.RxSync.AdvancedTiming}" />
                                     <StackPanel Classes="Industry IndustryRows" IsVisible="{Binding #AdvancedTimingToggle.IsChecked}">
@@ -253,12 +256,25 @@
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Clipping}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ClippingDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.NoiseFloor}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.NoiseFloorValue}" /></Grid></Border>
                                     </StackPanel>
-                                    <StackPanel Spacing="3" Margin="0,4,0,0">
-                                        <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelL}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelLValue}" /></Grid>
-                                        <Grid Classes="IndustryMeter"><Border Classes="IndustryMeterTrack" Height="6" /><Border Classes="IndustryMeterFill" Height="6" Width="149" HorizontalAlignment="Left" /></Grid>
-                                        <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelR}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelRValue}" /></Grid>
-                                        <Grid Classes="IndustryMeter"><Border Classes="IndustryMeterTrack" Height="6" /><Border Classes="IndustryMeterFill" Height="6" Width="142" HorizontalAlignment="Left" /></Grid>
-                                    </StackPanel>
+                                    <!-- Border top-rule + fill as star-column percentages (design-fidelity-caught
+                                         fixes): matches IndustryRows' own automatic top-rule-between-blocks
+                                         convention, and the literal Width="149"/"142" only matched the
+                                         mockup's 63%/60% example by coincidence at one specific card width
+                                         (same bug class fixed in the header row's RX-level meter). -->
+                                    <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource IndustryRowRule6}" Padding="0,4,0,0">
+                                        <StackPanel Spacing="3">
+                                            <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelL}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelLValue}" /></Grid>
+                                            <Grid Classes="IndustryMeter">
+                                                <Border Classes="IndustryMeterTrack" Height="6" />
+                                                <Grid ColumnDefinitions="63*,37*"><Border Grid.Column="0" Classes="IndustryMeterFill" Height="6" HorizontalAlignment="Stretch" /></Grid>
+                                            </Grid>
+                                            <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelR}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelRValue}" /></Grid>
+                                            <Grid Classes="IndustryMeter">
+                                                <Border Classes="IndustryMeterTrack" Height="6" />
+                                                <Grid ColumnDefinitions="60*,40*"><Border Grid.Column="0" Classes="IndustryMeterFill" Height="6" HorizontalAlignment="Stretch" /></Grid>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                             </HeaderedContentControl>
 

@@ -262,18 +262,78 @@ outside this row, Favourites subtitle/frequency-placeholder wording) are deliber
 logged here as one-line off-scope notes per the project's ADHD-scope convention, not silent gaps.
 
 **Verified**: full solution build clean (0 warnings/errors), `UI.Tests` 173/173 unaffected throughout
-every fix round. **Not yet committed** — `git status --short`: `PROJECT_BRIEF.md`, `assets/locale/en.json`,
-`Localization/TranslateExtension.cs`, `Styles/Atoms.axaml`, `ViewModels/RadioStatusViewModel.cs`,
-`Views/MainWindow.axaml`, `Views/RadioHeaderView.axaml`, `tests/.../RadioStatusViewModelTests.cs`
-(modified) + `Converters/UppercaseInvariantConverter.cs` (new) — all one logical unit, the Phase-2/3
-header-row fidelity fixes. Two pre-existing untracked dirs (`mockups/fixes/`, `mockups/split/` —
-scratch copies from earlier in this session) are NOT part of this commit; left alone.
+every fix round. **Committed (`5f33eca`)**, not yet pushed.
 
-**Next**: resume Phase 3 left-column final verification (Mode/Sync&slant/Input-chain/Signal-quality —
-already ported, needs one more zoomed screenshot now that band-2's height is correct), then centre
-column (Spectrum·waterfall/Incoming-frame/Decode-activity), then right column (Frame-metadata/
-Unattended-RX/Session-frames/Macros) — use the `design-fidelity` subagent per card going forward,
-2 rounds each, matching the process just used here.
+**Phase 3 left column (Mode/Sync&slant/Input-chain/Signal-quality) SHIPPED, one `design-fidelity`
+round.** User set the working process for the rest of this pass explicitly: still attempt every
+finding, but cap effort at **3 try/review/adjust cycles per item**, then log what's left rather than
+grinding on it — priority order is **containment (fits, nothing clipped) > closeness to the mockup >
+pixel-perfect** (concessions accepted where Avalonia's layout model genuinely can't match CSS).
+
+Real fixes applied (1 cycle each, all converged clean):
+- **Uppercase-title convention cleanup**: this round's review caught that the header-row's own
+  `UppercaseInvariantConverter` (built last round) was unnecessary complexity — the project already
+  has an established, simpler convention (type the string uppercase directly in `en.json`; CSS
+  `text-transform:uppercase` has no Avalonia equivalent, confirmed by `Atoms.axaml`'s own comment,
+  and `en.json` already does this everywhere else: `PRESETS`, `SPLIT OFF`, `AUTOSAVE ON`, etc.).
+  Consolidated: reverted `RadioHeaderView.axaml`'s 2 converter call sites back to plain
+  `{loc:Translate}`, reverted `TranslateExtension.cs`'s now-unused `Converter` property, deleted
+  `Converters/UppercaseInvariantConverter.cs` entirely (YAGNI — nothing else needed it), uppercased
+  `en.json` directly for FavouritesHeader/TransceiverHeader (header row) + Mode/Sync & slant/Input
+  chain/Signal quality's 4 card titles + 2 kickers (SNR PER LINE/LUMINANCE HISTOGRAM) + the Advanced
+  Timing disclosure label.
+- Wording nit: `AutoLockedLocked` "Locked" → "Lock" (matches mockup's literal `<span>Lock</span>`).
+- Minus-sign consistency: `LevelLValue`/`LevelRValue` were the only 2 values in this whole card set
+  using an ASCII hyphen instead of the U+2212 minus sign every sibling value already uses.
+- **Real visible bug**: Re-sync/Reset buttons' labels were vertically clipped — `IndustryBtn22`'s
+  fixed 22px box left no room once Fluent's own default `Button` padding was applied; neither of
+  this atom's only 2 call sites set `Padding` themselves. Fixed with `Padding="6,0"` (matches the
+  mockup's own inline `padding:0 6px`).
+- **Real bug, shared atom**: `StackPanel.IndustryRows` never set a `Spacing` — CSS's `.gb{gap:3px}`
+  applies to `.r2` rows too, not just non-row card children, so every row in every card using this
+  atom sat ~2 logical px shorter than the mockup, relying solely on the 1px top-rule for visual
+  separation. Fixed with `Spacing="3"`; confirmed via grep this atom is currently only consumed by
+  `MainWindow.axaml` (not the header row), so blast radius is contained to this session's own work.
+- **Real bug, same class as the header-row RX-meter fix**: Input-chain's L/R level meters used
+  literal `Width="149"`/`"142"` on an `IndustryMeterFill` Border — matched the mockup's 63%/60% only
+  by coincidence at this card's specific fixed width (236 DIP column). Fixed with the same
+  nested-star-column-Grid technique as the header row, then pixel-verified directly (not re-delegated
+  to the agent, to save a round): L fill measured 62.6% (target 63%), R measured 59.6% (target 60%).
+- Missing top hairline above the L/R meter block (mockup's `.r2 + .r2` adjacent-sibling rule) — added
+  as a wrapping `Border BorderThickness="0,1,0,0"`.
+
+**Verified**: full solution build clean, `UI.Tests` 173/173 throughout. Full-window screenshot
+confirms containment — nothing clipped or overflowing at default window size.
+
+**Logged, NOT fixed — for later triage** (low value relative to effort, or real blast-radius risk to
+other views; each is a genuine, real gap, just not chased this round):
+- Mode card has an extra `ComboBox` (the real Mode-override dropdown) that doesn't exist in the
+  mockup's own Mode card at all — kept deliberately, a working feature beats matching a wireframe
+  that doesn't model it, but flagging in case that's not the intended call.
+- Mini-mode-grid cells have an extra 1px inset at the outer edges (`Margin="1"` on all sides vs. the
+  mockup's grid spanning the full card width with only inter-cell gaps).
+- 2 rows (`Line time`, Signal-quality's 2nd kicker) are missing a mockup-specific 3px `padding-top`
+  the other rows don't have.
+- Hatch placeholder panels (`SNR per line`, `Luminance histogram`) don't stretch to fill remaining
+  card height the way the mockup's `flex:1` does — leaves ~24 logical px of unused space at the
+  bottom of the Signal-quality card. Not a containment problem (nothing overflows), just unused space.
+- Segmented control (`Auto`/`Lock`) renders ~2.5 logical px short of the mockup's height — root
+  cause is Avalonia's Barlow line-box metrics vs the browser's, would need an explicit `Height` on
+  the shared `IndustrySegTheme` atom, which risks moving every other segmented control in the app
+  (VFO's USB/LSB/FM, the waterfall's Spec/Both/WF toggle, etc.) — needs a deliberate call, not a
+  drive-by fix.
+- Page background is `#F0F0F0` (`Cards.axaml`'s `ScanlineStudioPanelBackgroundColor`) vs the design
+  system's own `#F2F2F3` — systemic, app-wide token, **already logged identically from the header-row
+  round**, repeating here since it's visible in this card set too (title notches sit on a visibly
+  lighter rectangle against the page background).
+- `RemainingValue` placeholder text format differs from the mockup's own example (`0:42` vs zero-
+  padded `01:12`) — both are static placeholders, no real countdown feature exists yet.
+- `SlantPpmValueFormat` appends a redundant `" ppm"` suffix (the row label already says "Slant ppm")
+  — shared format string, didn't touch without checking its other use sites first.
+
+**Next**: centre column (Spectrum & waterfall / Incoming frame / Decode activity), then right column
+(Frame metadata / Unattended RX / Session frames / Macros) — same `design-fidelity` + fix process,
+same 3-cycle-cap + containment-first triage rule.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
