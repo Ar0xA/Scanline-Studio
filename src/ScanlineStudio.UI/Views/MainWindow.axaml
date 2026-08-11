@@ -305,13 +305,17 @@
 
                     <!-- Centre: Spectrum & waterfall + Incoming frame, both restyled in place
                          (Border Classes="plot" now lives inside WaterfallPaneView.axaml/
-                         RxImagePaneView.axaml themselves); no new PlotView abstraction. Row 0 is
-                         mock2's own 154 (was bumped to 180 earlier this pass to work around a
-                         NumericUpDown clipping bug - that bug is now fixed at its root by
-                         ChromeOverrides.axaml's TextControlThemeMinHeight/Padding resources, so
-                         the workaround is no longer needed and the card was rendering visibly
-                         taller than mock2 as a result, per direct user feedback). -->
-                    <Grid Grid.Column="1" RowDefinitions="154,*,150" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
+                         RxImagePaneView.axaml themselves); no new PlotView abstraction. Row 0
+                         reverted from 154 back to 182 (design-fidelity-caught fix, user-reported):
+                         the earlier 180->154 reversion assumed the ONLY reason 180 was ever needed was a
+                         since-fixed NumericUpDown clipping bug, but the settings column's real
+                         content (Bins/px + Start + Span + Gain + Zero + Peak hold + the Both/Spec/WF
+                         segment, 7 stacked items, none yet re-skinned to the compact Industry atoms,
+                         this whole card is still pre-redesign old-style, a separate larger port not
+                         done in this pass) genuinely doesn't fit in 154: Peak hold rendered
+                         flush against the card's own bottom border with near-zero clearance, and the
+                         segment row below it was clipped out of existence entirely, invisible. -->
+                    <Grid Grid.Column="1" RowDefinitions="182,*,150" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
                         <!-- Spectrum & waterfall (batch 8b): SpectrumTraceControl (new, real FFT
                              line trace + markers + peak-hold) fills what was the literal "Spectrum"
                              placeholder; WaterfallPaneView (ContentControl bound to Waterfall) is
