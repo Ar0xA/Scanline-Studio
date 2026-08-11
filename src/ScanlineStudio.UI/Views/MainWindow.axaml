@@ -519,55 +519,52 @@
                             </DockPanel>
                         </HeaderedContentControl>
 
-                        <!-- Decode activity: visual scaffolding only, header-only DataGrid (no
+                        <!-- Ported to Industry atoms. Visual scaffolding only, header-only (no
                              ItemsSource); no structured decode-history event log exists yet,
-                             distinct from ReceiveHistoryStore (spec/14-roadmap.md backlog). -->
-                        <Border Grid.Row="2" Classes="card">
-                            <DockPanel LastChildFill="True">
-                                <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.RxDecodeLog.CardHeader}" />
-                                <Grid ColumnDefinitions="*,266" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="0,4,0,0">
-                                    <DataGrid IsReadOnly="True" CanUserSortColumns="True" GridLinesVisibility="Horizontal" HeadersVisibility="Column" FontSize="12">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn>
-                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColUtc}" /></DataGridTextColumn.Header>
-                                            </DataGridTextColumn>
-                                            <DataGridTextColumn>
-                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColFreq}" /></DataGridTextColumn.Header>
-                                            </DataGridTextColumn>
-                                            <DataGridTextColumn>
-                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColMode}" /></DataGridTextColumn.Header>
-                                            </DataGridTextColumn>
-                                            <DataGridTextColumn>
-                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColCallsign}" /></DataGridTextColumn.Header>
-                                            </DataGridTextColumn>
-                                            <DataGridTextColumn>
-                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColGrid}" /></DataGridTextColumn.Header>
-                                            </DataGridTextColumn>
-                                            <DataGridTextColumn>
-                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColSnr}" /></DataGridTextColumn.Header>
-                                            </DataGridTextColumn>
-                                            <DataGridTextColumn>
-                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColSlant}" /></DataGridTextColumn.Header>
-                                            </DataGridTextColumn>
-                                            <DataGridTextColumn>
-                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColLines}" /></DataGridTextColumn.Header>
-                                            </DataGridTextColumn>
-                                            <DataGridTextColumn>
-                                                <DataGridTextColumn.Header><TextBlock Text="{loc:Translate Panes.RxDecodeLog.ColState}" /></DataGridTextColumn.Header>
-                                            </DataGridTextColumn>
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                    <Border Grid.Column="1" BorderBrush="{DynamicResource ScanlineStudioCardBorderColor}" BorderThickness="1,0,0,0" Padding="10,0,0,0">
-                                        <DockPanel LastChildFill="True">
-                                            <TextBlock DockPanel.Dock="Top" Classes="caption" Text="{loc:Translate Panes.RxDecodeLog.TraceHeader}" />
-                                            <ScrollViewer>
-                                                <ItemsControl />
-                                            </ScrollViewer>
-                                        </DockPanel>
-                                    </Border>
-                                </Grid>
-                            </DockPanel>
-                        </Border>
+                             distinct from ReceiveHistoryStore (spec/14-roadmap.md backlog).
+                             DataGrid replaced with a plain Grid/IndustryTable atom per the design
+                             doc's own item-10 decision (a real Avalonia.Controls.DataGrid fights
+                             the design system's chrome for no benefit on a static, currently
+                             header-only 9-column table; package removal deferred to whichever
+                             phase confirms nothing else still references the old DataGrid theme). -->
+                        <HeaderedContentControl Grid.Row="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxDecodeLog.CardHeader}" />
+                            </HeaderedContentControl.Header>
+                            <Grid ColumnDefinitions="*,250" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
+                                <DockPanel>
+                                    <!-- Border-per-cell (design-fidelity-caught fix over the first
+                                         draft): mockup's <th style="padding:2px 5px"> pads EACH
+                                         header cell individually, not just the row's own outer
+                                         edges; a single Border wrapping the whole Grid would only
+                                         apply IndustryTableHeaderRule's padding at the row's far
+                                         left/right. -->
+                                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,*,*,*,*,*,*,*,*">
+                                        <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColUtc}" /></Border>
+                                        <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColFreq}" /></Border>
+                                        <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColMode}" /></Border>
+                                        <Border Grid.Column="3" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColCallsign}" /></Border>
+                                        <Border Grid.Column="4" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColGrid}" /></Border>
+                                        <Border Grid.Column="5" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColSnr}" /></Border>
+                                        <Border Grid.Column="6" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColSlant}" /></Border>
+                                        <Border Grid.Column="7" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColLines}" /></Border>
+                                        <Border Grid.Column="8" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColState}" /></Border>
+                                    </Grid>
+                                    <!-- No data rows yet (header-only scaffolding, see above); an
+                                         ItemsControl would need a real ItemsSource to add
+                                         IndustryTableRowRule rows against, left empty until a real
+                                         decode-history event log exists. -->
+                                </DockPanel>
+                                <Border Grid.Column="1" BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1,0,0,0" Padding="9,0,0,0">
+                                    <DockPanel LastChildFill="True">
+                                        <TextBlock DockPanel.Dock="Top" Classes="Industry IndustryKicker" Text="{loc:Translate Panes.RxDecodeLog.TraceHeader}" />
+                                        <ScrollViewer>
+                                            <ItemsControl />
+                                        </ScrollViewer>
+                                    </DockPanel>
+                                </Border>
+                            </Grid>
+                        </HeaderedContentControl>
                     </Grid>
 
                     <!-- Right column: mostly visual scaffolding still. Frame metadata's "Started" and
