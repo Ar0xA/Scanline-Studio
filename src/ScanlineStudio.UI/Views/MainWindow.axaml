@@ -986,7 +986,7 @@
                                      leak around each figure — see the atom's own doc comment. -->
                                 <ListBox ItemsSource="{Binding Entries}"
                                          SelectedItem="{Binding SelectedEntry}"
-                                         ItemContainerTheme="{StaticResource IndustryThumbnailListBoxItemTheme}"
+                                         ItemContainerTheme="{StaticResource IndustryListBoxItemTheme}"
                                          Background="Transparent"
                                          BorderThickness="0" Padding="0">
                                     <ListBox.ItemsPanel>
@@ -1128,78 +1128,136 @@
                 </Grid>
             </TabItem>
             <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Logbook}">
-                <Grid ColumnDefinitions="*,380" ColumnSpacing="{DynamicResource ScanlineStudioSpacingMedium}" Margin="{DynamicResource ScanlineStudioPaddingMedium}" DataContext="{Binding Logbook}">
+                <!-- No direct mockup for this tab (plan doc: "extrapolate using Phase 1's atom set
+                     ... own lighter design-review pass since this is new composition, not a pixel
+                     port"). Laid out to match what's normal in general ham-radio logbook software
+                     (Log4OM/N1MM/DXKeeper-style): a sortable-looking multi-column QSO table on the
+                     left (UTC/Callsign/Mode/RST-S/RST-R/Grid/Name — the real IndustryTable atoms,
+                     first real ItemsSource-bound consumer of that pattern) rather than the old
+                     design's 3-field single-line list, with the add/edit form + ADIF import/export
+                     on the right, same *,380 two-column shape as every other tab. Same token
+                     pattern as the pixel-matched tabs (ColumnSpacing=IndustrySpacingGutter,
+                     Margin=9,11,9,8) for visual consistency with the rest of the app even though
+                     nothing here is measured against a mockup. -->
+                <Grid ColumnDefinitions="*,380" ColumnSpacing="{StaticResource IndustrySpacingGutter}" Margin="9,11,9,8" DataContext="{Binding Logbook}">
 
                     <!-- Left: search/browse. CallsignFilter is an exact, case-insensitive match
                          (SqliteLogbookRepository's own COLLATE NOCASE), not a substring search;
                          no watermark claims otherwise. FromDate defaults to 30 days ago on first
                          load (cheap paging insurance, spec/14-roadmap.md); ToDate is end-of-day
-                         inclusive when set. -->
-                    <Border Grid.Column="0" Classes="card">
+                         inclusive when set. DatePicker left un-re-skinned (accepted concession):
+                         it's a composite control with its own popup calendar surface, deep enough
+                         to re-theme that it isn't proportionate effort for a phase with no pixel
+                         target — every other control on this tab uses real Industry atoms. -->
+                    <HeaderedContentControl Grid.Column="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
+                        <HeaderedContentControl.Header>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.Logbook.CardHeader}" />
+                                <TextBlock Classes="IndustryGbTitle" Margin="4,0,0,0" Text="{Binding EntryCountDisplay}" />
+                            </StackPanel>
+                        </HeaderedContentControl.Header>
                         <DockPanel LastChildFill="True">
-                            <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.Logbook.SearchHeader}" />
-                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto"
-                                  ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,4">
-                                <TextBox Text="{Binding CallsignFilter}" Watermark="{loc:Translate Panes.Logbook.CallsignFilterWatermark}" />
-                                <DatePicker Grid.Column="1" SelectedDate="{Binding FromDate}" />
-                                <DatePicker Grid.Column="2" SelectedDate="{Binding ToDate}" />
-                                <Button Grid.Column="3" Classes="small" Content="{loc:Translate Panes.Logbook.Refresh}" Command="{Binding RefreshCommand}" />
-                            </Grid>
-                            <TextBlock DockPanel.Dock="Top" Classes="caption"
+                            <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                                <TextBox Classes="Industry IndustryInput" Width="180" Margin="0,0,4,4" Text="{Binding CallsignFilter}" Watermark="{loc:Translate Panes.Logbook.CallsignFilterWatermark}" />
+                                <!-- TextBox, not DatePicker (containment fix): the default
+                                     FluentTheme DatePicker template is a month/day/year spinner
+                                     triplet whose own internal MinWidth ignores an explicit Width
+                                     entirely (measured ~330px per picker, not the requested 130) —
+                                     a real risk on a narrower window. Reuses UtcTimestampTextConverter
+                                     (same converter/format the form's own Start/End fields already
+                                     use, ConverterParameter=AllowNull since both filter bounds are
+                                     optional) for a consistent, compact text-entry convention across
+                                     the whole tab instead. -->
+                                <TextBox Classes="Industry IndustryInput" Width="140" Margin="0,0,4,4" Watermark="{loc:Translate Panes.Logbook.FromWatermark}" Text="{Binding FromDate, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
+                                <TextBox Classes="Industry IndustryInput" Width="140" Margin="0,0,4,4" Watermark="{loc:Translate Panes.Logbook.ToWatermark}" Text="{Binding ToDate, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,0,4" Content="{loc:Translate Panes.Logbook.Refresh}" Command="{Binding RefreshCommand}" />
+                            </WrapPanel>
+                            <TextBlock DockPanel.Dock="Top" Classes="IndustryRowLabel"
                                        Text="{loc:Translate Panes.Logbook.NoEntriesYet}"
                                        IsVisible="{Binding !Entries.Count}" />
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="120,85,55,45,45,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,3,0,0">
+                                <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColUtc}" /></Border>
+                                <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColCallsign}" /></Border>
+                                <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColMode}" /></Border>
+                                <Border Grid.Column="3" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColRstSent}" /></Border>
+                                <Border Grid.Column="4" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColRstReceived}" /></Border>
+                                <Border Grid.Column="5" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColGrid}" /></Border>
+                                <Border Grid.Column="6" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColName}" /></Border>
+                                <Border Grid.Column="7" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColNotes}" /></Border>
+                            </Grid>
                             <ScrollViewer>
+                                <!-- ItemContainerTheme (see IndustryListBoxItemTheme's own doc
+                                     comment): a real ListBox, needed for SelectedEntry, would
+                                     otherwise wrap every row in default FluentTheme ListBoxItem
+                                     chrome. Mode column is the real SSTV sub-mode (SstvModeId),
+                                     not the RadioMode enum (Usb/Lsb/Cw/...) — for an SSTV-focused
+                                     log, the SSTV mode is the informative column; RadioMode is
+                                     still edited in the form on the right. -->
                                 <ListBox ItemsSource="{Binding Entries}"
                                          SelectedItem="{Binding SelectedEntry}"
+                                         ItemContainerTheme="{StaticResource IndustryListBoxItemTheme}"
                                          Background="Transparent"
-                                         BorderThickness="0">
+                                         BorderThickness="0" Padding="0">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate x:DataType="logbook:QsoRecord">
-                                            <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,2">
-                                                <TextBlock Classes="value" FontWeight="Bold" Text="{Binding Callsign}" />
-                                                <TextBlock Grid.Column="1" Classes="caption" Margin="8,0" Text="{Binding StartUtc, StringFormat='{}{0:yyyy-MM-dd HH:mm} UTC'}" />
-                                                <TextBlock Grid.Column="2" Classes="caption" Text="{Binding Mode}" />
+                                            <Grid ColumnDefinitions="120,85,55,45,45,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                                                <Border Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding StartUtc, StringFormat={}{0:yyyy-MM-dd HH:mm}}" /></Border>
+                                                <Border Grid.Column="1" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" TextTrimming="CharacterEllipsis" Text="{Binding Callsign}" /></Border>
+                                                <Border Grid.Column="2" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding SstvModeId}" /></Border>
+                                                <Border Grid.Column="3" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding RstSent}" /></Border>
+                                                <Border Grid.Column="4" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding RstReceived}" /></Border>
+                                                <Border Grid.Column="5" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding GridSquare}" /></Border>
+                                                <Border Grid.Column="6" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" TextTrimming="CharacterEllipsis" Text="{Binding Name}" /></Border>
+                                                <Border Grid.Column="7" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" TextTrimming="CharacterEllipsis" Text="{Binding Notes}" /></Border>
                                             </Grid>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
                             </ScrollViewer>
                         </DockPanel>
-                    </Border>
+                    </HeaderedContentControl>
 
                     <!-- Right: add/edit form + ADIF import/export. Every timestamp shown/edited
-                         here is raw UTC; no local-time conversion anywhere in this pane. -->
-                    <Grid Grid.Column="1" RowDefinitions="*,Auto" RowSpacing="{DynamicResource ScanlineStudioSpacingMedium}">
-                        <Border Classes="card">
+                         here is raw UTC; no local-time conversion anywhere in this pane. Labeled
+                         rows (Auto,* Grid: IndustryRowLabel + a real editable IndustryInput
+                         control) for fields the old design already labeled explicitly; the
+                         simpler free-text fields (Callsign/Name/QTH/Grid/Country/Notes) stay
+                         Watermark-only TextBoxes, same convention as before. -->
+                    <Grid Grid.Column="1" RowDefinitions="*,Auto" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                        <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.Logbook.FormHeader}" />
+                            </HeaderedContentControl.Header>
                             <ScrollViewer>
-                                <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                    <!-- "New" moved out of the header row (Industry's title notch
+                                         has no room for a second, right-aligned element the way
+                                         the old free-standing "cardHeader" row did) and into the
+                                         form body instead. -->
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Right" Content="{loc:Translate Panes.Logbook.New}" Command="{Binding NewCommand}" />
+
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormCallsign}" Watermark="{loc:Translate Panes.Logbook.Form.CallsignWatermark}" />
+
                                     <Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.Logbook.FormHeader}" />
-                                        <Button Grid.Column="1" Classes="small" HorizontalAlignment="Right" Content="{loc:Translate Panes.Logbook.New}" Command="{Binding NewCommand}" />
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.StartLabel}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FormStartUtc, Converter={x:Static conv:UtcTimestampTextConverter.Instance}}" />
                                     </Grid>
-
-                                    <TextBox Text="{Binding FormCallsign}" Watermark="{loc:Translate Panes.Logbook.Form.CallsignWatermark}" />
-
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.StartLabel}" />
-                                        <TextBox Grid.Column="1" Text="{Binding FormStartUtc, Converter={x:Static conv:UtcTimestampTextConverter.Instance}}" />
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.EndLabel}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FormEndUtc, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
                                     </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.EndLabel}" />
-                                        <TextBox Grid.Column="1" Text="{Binding FormEndUtc, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
-                                    </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.FrequencyLabel}" />
-                                        <TextBox Grid.Column="1" Text="{Binding FormFrequencyHz}" />
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.FrequencyLabel}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FormFrequencyHz}" />
                                     </Grid>
                                     <!-- SelectedValueBinding/SelectedValue, NOT SelectedItem: AvailableModes'
                                          element type (RadioModeOption) differs from FormMode's type
                                          (RadioMode?); SelectedItem would never match an item and would
                                          silently null out FormMode on every selection (see RadioModeOption's
                                          own doc comment). -->
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.ModeLabel}" />
-                                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableModes}" SelectedValueBinding="{Binding Value}" SelectedValue="{Binding FormMode, Mode=TwoWay}" HorizontalAlignment="Stretch">
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.ModeLabel}" />
+                                        <ComboBox Grid.Column="1" Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}" SelectedValueBinding="{Binding Value}" SelectedValue="{Binding FormMode, Mode=TwoWay}" HorizontalAlignment="Stretch">
                                             <ComboBox.ItemTemplate>
                                                 <DataTemplate x:DataType="vm:RadioModeOption">
                                                     <TextBlock>
@@ -1217,9 +1275,9 @@
                                     <!-- Same SelectedValueBinding/SelectedValue reasoning as Mode above:
                                          AvailableSstvModes' element type is SstvModeDefinition, FormSstvModeId
                                          is string?. -->
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.SstvModeLabel}" />
-                                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableSstvModes}" SelectedValueBinding="{Binding Id}" SelectedValue="{Binding FormSstvModeId, Mode=TwoWay}" HorizontalAlignment="Stretch">
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.SstvModeLabel}" />
+                                        <ComboBox Grid.Column="1" Classes="Industry IndustryInput" ItemsSource="{Binding AvailableSstvModes}" SelectedValueBinding="{Binding Id}" SelectedValue="{Binding FormSstvModeId, Mode=TwoWay}" HorizontalAlignment="Stretch">
                                             <ComboBox.ItemTemplate>
                                                 <DataTemplate x:DataType="sstv:SstvModeDefinition">
                                                     <TextBlock Text="{Binding DisplayName}" />
@@ -1227,42 +1285,42 @@
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
                                     </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.RstSentLabel}" />
-                                        <TextBox Grid.Column="1" Text="{Binding FormRstSent}" />
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.RstSentLabel}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FormRstSent}" />
                                     </Grid>
-                                    <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="label" Text="{loc:Translate Panes.Logbook.Form.RstReceivedLabel}" />
-                                        <TextBox Grid.Column="1" Text="{Binding FormRstReceived}" />
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.RstReceivedLabel}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FormRstReceived}" />
                                     </Grid>
-                                    <TextBox Text="{Binding FormName}" Watermark="{loc:Translate Panes.Logbook.Form.NameWatermark}" />
-                                    <TextBox Text="{Binding FormQth}" Watermark="{loc:Translate Panes.Logbook.Form.QthWatermark}" />
-                                    <TextBox Text="{Binding FormGridSquare}" Watermark="{loc:Translate Panes.Logbook.Form.GridSquareWatermark}" />
-                                    <TextBox Text="{Binding FormCountry}" Watermark="{loc:Translate Panes.Logbook.Form.CountryWatermark}" />
-                                    <TextBox Text="{Binding FormNotes}" Watermark="{loc:Translate Panes.Logbook.Form.NotesWatermark}" AcceptsReturn="True" Height="60" TextWrapping="Wrap" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormName}" Watermark="{loc:Translate Panes.Logbook.Form.NameWatermark}" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormQth}" Watermark="{loc:Translate Panes.Logbook.Form.QthWatermark}" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormGridSquare}" Watermark="{loc:Translate Panes.Logbook.Form.GridSquareWatermark}" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormCountry}" Watermark="{loc:Translate Panes.Logbook.Form.CountryWatermark}" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormNotes}" Watermark="{loc:Translate Panes.Logbook.Form.NotesWatermark}" AcceptsReturn="True" Height="60" TextWrapping="Wrap" />
 
-                                    <UniformGrid Columns="2">
-                                        <Button Classes="primary small" Margin="0,0,3,0" Content="{loc:Translate Panes.Logbook.Log}" Command="{Binding LogCommand}" IsVisible="{Binding !IsEditing}" />
-                                        <Button Classes="primary small" Margin="0,0,3,0" Content="{loc:Translate Panes.Logbook.Update}" Command="{Binding UpdateCommand}" IsVisible="{Binding IsEditing}" />
-                                    </UniformGrid>
+                                    <Grid ColumnDefinitions="*,*" ColumnSpacing="4">
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.Logbook.Log}" Command="{Binding LogCommand}" IsVisible="{Binding !IsEditing}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.Logbook.Update}" Command="{Binding UpdateCommand}" IsVisible="{Binding IsEditing}" />
+                                    </Grid>
 
                                     <TextBlock Text="{Binding StatusMessage}"
                                                TextWrapping="Wrap"
-                                               Classes="caption"
+                                               Classes="IndustryRowLabel"
                                                IsVisible="{Binding StatusMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 </StackPanel>
                             </ScrollViewer>
-                        </Border>
+                        </HeaderedContentControl>
 
-                        <Border Grid.Row="1" Classes="card">
-                            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.Logbook.AdifHeader}" />
-                                <UniformGrid Columns="2">
-                                    <Button Classes="small" Margin="0,0,3,0" Content="{loc:Translate Panes.Logbook.Import}" Command="{Binding ImportAdifCommand}" />
-                                    <Button Classes="small" Margin="3,0,0,0" Content="{loc:Translate Panes.Logbook.Export}" Command="{Binding ExportAdifCommand}" />
-                                </UniformGrid>
-                            </StackPanel>
-                        </Border>
+                        <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.Logbook.AdifHeader}" />
+                            </HeaderedContentControl.Header>
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="4">
+                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.Logbook.Import}" Command="{Binding ImportAdifCommand}" />
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.Logbook.Export}" Command="{Binding ExportAdifCommand}" />
+                            </Grid>
+                        </HeaderedContentControl>
                     </Grid>
                 </Grid>
             </TabItem>
