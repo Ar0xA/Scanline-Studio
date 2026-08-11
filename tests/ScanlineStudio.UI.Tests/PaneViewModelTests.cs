@@ -662,6 +662,9 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("USB Audio CODEC", vm.OutputDeviceName);
+        // OutputDeviceNameDisplay is what TxControlsPaneView.axaml actually binds -- OutputDeviceName
+        // alone (asserted above) doesn't prove the View-facing property is wired correctly.
+        Assert.Equal("USB Audio CODEC", vm.OutputDeviceNameDisplay);
     }
 
     [AvaloniaFact]
@@ -672,6 +675,9 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Null(vm.OutputDeviceName);
+        // Same fallback-dash convention as RxImagePaneViewModel.CaptureDeviceNameDisplay -- the View
+        // must never render a blank cell here.
+        Assert.Equal("—", vm.OutputDeviceNameDisplay);
     }
 
     [AvaloniaFact]

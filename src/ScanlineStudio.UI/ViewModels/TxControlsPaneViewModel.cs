@@ -174,7 +174,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// live settings change while this pane stays open; a future pass can add that if it turns out
     /// to matter in practice.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(OutputDeviceNameDisplay))]
     private string? _outputDeviceName;
+
+    public string OutputDeviceNameDisplay => OutputDeviceName ?? "—";
 
     public TxControlsPaneViewModel(
         ISstvSessionService sstvSession,

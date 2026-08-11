@@ -14,14 +14,61 @@ actually DO something, per `spec/14-roadmap.md`'s "Must-implement backlog" and
 `spec/16-gui-wiring-survey.md`'s per-control inventory (both current as of 2026-08-11 — the survey
 was just freshly re-verified against the redesigned code, citations and all).
 
-**Current wiring totals** (`spec/16-gui-wiring-survey.md`, ~279 controls tracked): **~122 REAL,
-~105 STUB, ~48 FAKE-LIVE, ~4 PARTIAL**. Densest remaining gaps: Receive tab's Sync&Slant/Input-
-chain/Signal-quality cards (SNR/squelch/notch/noise-floor — no live audio-chain measurement exists
-in `Core.Audio`/`Core.Sstv` for most of these, real new DSP work not just wiring); Options window's
-Decode/Identification/Advanced tabs (~55 controls, 100% stub); Transmit tab's Queue/TX-log/
-Recently-sent cards (100% stub, no such features exist); TX image editor's canvas-overlay safe-
-area/callsign/report-plate text (FAKE-LIVE — reads as real burned-in TX content, arguably the most
-deceptive placeholder in the app).
+**This session (2026-08-11) wired 4 quick-win controls** (all had real backend data/settings
+already existing one property away, no product decision or new DSP needed — the survey's own
+PARTIAL/"genuinely low-hanging fruit" notes flagged exactly these): TxControls "Output device" row
+(bound to real `OutputDeviceNameDisplay`), RadioHeaderView "Store current" preset button (new
+`StoreCurrentPresetCommand`, NOT a reuse of pre-existing `SavePresetsCommand` — that one only
+re-persists `EditorRows`, which has no visible editor UI; had to actually append the current
+freq/mode as a new row first), Options window Decode tab's Auto-Sync/Auto-Slant checkboxes (real
+`SstvDecoderSettings` fields, already consumed by the decoder, just never had a UI path — new
+`ResetDecodeToDefaultCommand` added to match every other tab's pattern). Deliberately did NOT wire
+Decode tab's Auto-stop/Auto-restart despite also having real backing fields — their loc text
+doesn't match what those fields actually gate (logged in the survey, not fixed). All 4 build+test+
+runtime verified in the live app (screenshots, settings.json before/after) before being marked REAL
+in the survey — not just wired-and-assumed-working. 4 new/extended tests added
+(`OptionsWindowViewModelTests.cs`). **Auditor code-review round 1 done, all findings fixed**: one
+real blocker (`StoreCurrentPresetCommand` had no `CanExecute` guard — clicking it before the first
+`RadioState` ever arrives, e.g. no radio connected, silently persisted an unremovable
+"0.000000 USB" preset since no in-app UI exposes `EditorRows`/`RemovePresetRowCommand` to delete
+it; fixed with a `_currentFrequencyHz > 0` guard + `NotifyCanExecuteChanged()` from
+`OnStateChanged`, runtime-verified the button now renders disabled with no radio connected) plus
+several risk/nit fixes: `SavePresetsAsync` now sets `ErrorMessage` on failure (new
+`RadioStatus.Error.SavePresetsFailed` loc key — was silently swallowing failures, a real gap now
+that "Store current" made this a reachable path for the first time, `SavePresetsCommand` itself was
+previously unreachable from any shipped view); a `Math.Round` fix for a narrow FP-truncation edge
+case in the Hz cast; a stale doc comment and stale survey narrative paragraph both corrected; 3 new
+`RadioStatusViewModelTests` (CanExecute gating, successful append, failure→ErrorMessage) + 1
+extended `PaneViewModelTests` assertion. Full solution rebuilds clean, 180/180 UI tests pass. **Not
+yet committed or pushed — ask before doing either.**
+
+**5th quick win found + wired same session**: Gallery tab's "Log entry" status row (was FAKE-LIVE
+literal, now reads the real `ReceiveHistoryEntry.LinkedQsoId` field via an `ObjectConverters.IsNull`/
+`IsNotNull` two-`TextBlock` swap, same pattern as `RadioHeaderView`'s CAT-linked pill) — found while
+investigating whether `spec/16-gui-wiring-survey.md`'s remaining STUB/PARTIAL rows had more
+one-property-away wins. **Bigger discovery in the same investigation**:
+`IReceiveHistoryStore.SetNoteAsync`/`SetFlaggedAsync`/`SetLinkedQsoIdAsync` are fully implemented,
+real, SQLite-backed, and their own doc comments explicitly name the Gallery UI gaps they were built
+for — but have **zero call sites anywhere in `ScanlineStudio.UI`** (verified by grep). Logged as a
+"Discovered 2026-08-11" note in the survey right after the Gallery tab table, with a per-method
+breakdown of what small UI decision each write path still needs (QSO picker/auto-create for
+`SetLinkedQsoIdAsync`, filter-or-client-side-filter choice for `SetFlaggedAsync`, and
+`SetNoteAsync` — checked directly, genuinely blocked on `RxImagePaneViewModel` not tracking a saved
+frame's entry id, not just a stale note). None of these three implemented this session — each needs
+a small design choice first, unlike the pure zero-effort wins. **Good candidate for the next
+"quick-ish wins" pass**, distinct from the bigger blocked backlog items (Options-full/OCR-QRZ/
+CW-ID).
+
+**Current wiring totals** (`spec/16-gui-wiring-survey.md`, ~279 controls tracked): **~127 REAL,
+~103 STUB, ~47 FAKE-LIVE, ~2 PARTIAL** (updated from this session's 5 items — was ~122/105/48/4).
+Densest remaining gaps: Receive tab's Sync&Slant/Input-chain/Signal-quality cards (SNR/squelch/
+notch/noise-floor — no live audio-chain measurement exists in `Core.Audio`/`Core.Sstv` for most of
+these, real new DSP work not just wiring); Options window's Decode's remaining 7 controls plus
+Identification/Advanced tabs (~53 controls, still stub); Transmit tab's Queue/TX-log/Recently-sent
+cards (100% stub, no such features exist); TX image editor's canvas-overlay safe-area/callsign/
+report-plate text (FAKE-LIVE — reads as real burned-in TX content, arguably the most deceptive
+placeholder in the app). Remaining PARTIAL: RxFrameMeta Note/Override-callsign `TextBox`es (needs a
+real backing field on the frame/session model, not just a rebind).
 
 **`spec/14-roadmap.md`'s "Must-implement backlog" is the prioritized list to work from**, not the
 survey directly — the survey tells you WHAT is stub/fake, the backlog tells you what order to

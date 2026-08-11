@@ -88,6 +88,61 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
+    public void StoreCurrentPresetCommand_DisabledUntilFirstRadioStateArrives()
+    {
+        // Regression test (auditor-caught, 2026-08-11): before any RadioState, _currentFrequencyHz
+        // is 0 -- without this guard, invoking the command would silently persist an unremovable
+        // "0.000000 USB" preset (no in-app UI exposes EditorRows/RemovePresetRowCommand to delete it).
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.StoreCurrentPresetCommand.CanExecute(null));
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.StoreCurrentPresetCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task StoreCurrentPresetCommand_AppendsCurrentFrequencyAndModeAsNewPreset()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets = [new FrequencyPreset("40m SSTV", 7_171_000, RadioMode.Lsb)],
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.StoreCurrentPresetCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, radioSession.Presets.Count);
+        var stored = radioSession.Presets[1];
+        Assert.Equal(14_230_000, stored.FrequencyHz);
+        Assert.Equal(RadioMode.Usb, stored.Mode);
+        Assert.Equal(2, vm.Presets.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task StoreCurrentPresetCommand_SaveFails_SetsErrorMessageInsteadOfSilentlyDroppingIt()
+    {
+        var radioSession = new FakeRadioSessionService { ThrowOnSaveFrequencyPresets = true };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.StoreCurrentPresetCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
     public async Task TxVolumePercentChange_PersistsAfterDebounceDelay()
     {
         var sstvSession = new FakeSstvSessionService();
