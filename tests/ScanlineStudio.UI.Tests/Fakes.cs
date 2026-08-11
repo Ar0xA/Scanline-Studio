@@ -664,4 +664,47 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
         Records.AddRange(ImportResultToReturn);
         return Task.FromResult(ImportResultToReturn);
     }
+
+    public QrzCallsignLookupResult LookupResultToReturn { get; set; } = new(true, "Test Name", "Test QTH", "AA00", null);
+
+    public Exception? ThrowOnLookup { get; set; }
+
+    public string? LastLookupCallsign { get; private set; }
+
+    public int LookupCallCount { get; private set; }
+
+    public Task<QrzCallsignLookupResult> LookupCallsignAsync(string callsign, CancellationToken ct = default)
+    {
+        LookupCallCount++;
+        LastLookupCallsign = callsign;
+        if (ThrowOnLookup is not null)
+        {
+            throw ThrowOnLookup;
+        }
+
+        return Task.FromResult(LookupResultToReturn);
+    }
+
+    public QrzLoginResult TestQrzLookupResultToReturn { get; set; } = new(true, null);
+
+    public Exception? ThrowOnTestQrzLookup { get; set; }
+
+    public string? LastTestUsername { get; private set; }
+
+    public string? LastTestPassword { get; private set; }
+
+    public int TestQrzLookupCallCount { get; private set; }
+
+    public Task<QrzLoginResult> TestQrzLookupCredentialsAsync(string username, string password, CancellationToken ct = default)
+    {
+        TestQrzLookupCallCount++;
+        LastTestUsername = username;
+        LastTestPassword = password;
+        if (ThrowOnTestQrzLookup is not null)
+        {
+            throw ThrowOnTestQrzLookup;
+        }
+
+        return Task.FromResult(TestQrzLookupResultToReturn);
+    }
 }

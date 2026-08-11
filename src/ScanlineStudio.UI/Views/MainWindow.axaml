@@ -611,7 +611,13 @@
                             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                                 <StackPanel Classes="Industry IndustryRows">
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.CallsignValue}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.GridDistance}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.GridDistanceValue}" /></Grid></Border>
+                                    <!-- Wired 2026-08-11: real QRZ.com lookup (QrzCallsignLookup.cs).
+                                         Name/QTH have no legacy-equivalent row in this card's original
+                                         inventory (mock2 draws none), added because the lookup itself
+                                         is real and needs somewhere to show its result. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.NameLabel}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding NameDisplay}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.QthLabel}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding QthDisplay}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.GridDistance}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding GridDisplay}" /></Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Frequency}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.FrequencyValue}" /></Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.ModeVis}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.ModeVisValue}" /></Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Started}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding StartedDisplay}" /></Grid></Border>
@@ -627,11 +633,15 @@
                                 <TextBlock Classes="IndustryRowLabel" Margin="0,2,0,0" Text="{loc:Translate Panes.RxFrameMeta.NoteLabel}" />
                                 <TextBox Classes="Industry IndustryInput" Text="{loc:Translate Panes.RxFrameMeta.NoteValue}" />
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignLabel}" />
-                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxFrameMeta.CallsignValue}" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignValue}" />
+                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxFrameMeta.CallsignValue}" Text="{Binding OverrideCallsign}" />
                                 <Grid ColumnDefinitions="*,*" ColumnSpacing="4" Margin="0,2,0,0">
-                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.LookupQrz}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.LookupQrz}" Command="{Binding LookupQrzCommand}" />
                                     <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.Flag}" />
                                 </Grid>
+                                <TextBlock Text="{Binding QrzLookupErrorMessage}"
+                                           Foreground="{StaticResource IndustryDanger}"
+                                           TextWrapping="Wrap"
+                                           IsVisible="{Binding QrzLookupErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                             </StackPanel>
                         </HeaderedContentControl>
 
