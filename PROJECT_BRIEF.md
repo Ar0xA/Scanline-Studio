@@ -1,15 +1,11 @@
 # Project brief (resume point)
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale. Pruned
-2026-08-08 (was 2978 lines/46 entries; everything but the active entry below was either already in
-a detailed commit message or already migrated into `spec/14-roadmap.md`/`CLAUDE.md` — see git
-history for this file if older context is ever needed).
+2026-08-08 (was 2978 lines/46 entries) and 2026-08-11 twice (was ~460 lines, then ~1060 lines) —
+everything but the active entry below was already in a detailed commit message or migrated into
+`spec/14-roadmap.md`/`CLAUDE.md` — see git history for this file if older context is ever needed.
 
-## Resume here (2026-08-11, latest, ACTIVE) — pixel-perfect UI redesign, Phase 4 in progress
-
-**Pruned 2026-08-11** (this section had grown to ~460 lines across one very long session; full
-detail for anything marked SHIPPED below lives in its own commit message — `git log --oneline` and
-`git show <hash>` to recover it, not this file).
+## Resume here (2026-08-11, latest, ACTIVE) — pixel-perfect UI redesign, Phase 6 done, Phase 7 next
 
 **What this is**: full pixel-perfect port of the app's UI from the old "Aesthetic Directive" look
 (`spec/09-ui.md`) to a new "Industry" wireframe design system (`mockups/guidance/`: steel-blue
@@ -23,313 +19,173 @@ plan: `~/.claude/plans/transient-jumping-bentley.md` — 8 phases (0 fonts/token
 - Try every finding, cap at **3 try/review/adjust cycles**, then log what's left rather than
   grinding on it.
 - Move fast: lighter self-checks (build+test+screenshot per card) instead of a full `design-fidelity`
-  agent round every time; reserve that agent for spot-checks when something looks off or after a
-  whole multi-card section, not per-card.
-- "Rework it into the new design, do this for each new card that already has an old design" — i.e.
-  keep executing the plan's remaining phases (4→7), not just polish what's already ported.
+  agent round every time; reserve that agent for spot-checks after a whole multi-card section, not
+  per-card.
+- **Always run the `design-fidelity` agent check on a just-finished phase automatically, before
+  starting the next phase** — the phase boundary itself is the trigger, don't wait to be asked (also
+  saved as a standing memory: `feedback_design_fidelity_before_phase_switch`).
+- For phases with no mockup (6+): extrapolate using established Industry atoms + normal conventions
+  for that kind of UI (user's own direction for Logbook: "just go for what's normal in a general
+  logbook"), own lighter design-review pass, more layout freedom than the pixel-matched tabs.
 
-### Status: Phases 0-5 SHIPPED. Phase 6 (Logbook tab + Options window) NOT STARTED.
+### Status: Phases 0-6 SHIPPED. Phase 7 (cleanup) NOT STARTED — this is the LAST phase.
 
-**Phase 0 (fonts/tokens), Phase 1 (atoms), Phase 2 (chrome: menu/header row/tab strip/status bar):
-SHIPPED, verified, committed** — see git log before this session if detail is ever needed; nothing
-outstanding.
+**Phases 0-2** (fonts/tokens, atoms, chrome): shipped in earlier sessions, see `git log` before this
+one if detail is ever needed.
 
-**Phase 3 (Receive tab): FULLY SHIPPED**, all 4 sections (header row, left/centre/right columns),
-each independently build+test+screenshot verified, several real bugs found and fixed along the way
-(see "Real bugs found this session" below — most were discovered here, since this was the first
-section where many Phase-1 atoms got a real consumer for the first time).
+**Phases 3-5** (Receive/Transmit/Gallery tabs): all fully shipped, each design-fidelity-verified
+(1-2 rounds of agent findings + fixes per phase, both committed). Detail is in each phase's own
+commit messages — `git log --oneline` and `git show <hash>` to recover it, not this file. Real bugs
+these phases surfaced that are worth knowing before touching related atoms again (all fixed, listed
+for awareness only): `IndustryStepperTheme`'s decrement glyph was invisible everywhere (degenerate
+zero-height Path geometry); `IndustrySliderTheme`'s fill never tracked its bound value (RepeatButton
+`HorizontalAlignment` not inheriting `Stretch`); base Fluent `Thumb` doesn't paint a bare
+`Background` setter; `StackPanel.IndustryRows` needs an explicit `Spacing="3"`; meter fills need
+nested star-column Grids, never a literal pixel `Width`; `Border.IndustryMini > TextBlock` needed a
+descendant selector, not `>` (chips that nest TextBlocks inside a `Panel`, e.g. CAT-linked, were
+unreachable); a `DockPanel` with exactly one child ignores that child's `Dock=` (needs
+`LastChildFill="False"`); a ScrollViewer-clipped card's title-notch margin fix has to live on the
+scrolled *content*, not the ScrollViewer itself; an invalid `translate(-5,-5)` RenderTransform syntax
+(needs a unit, e.g. `-5px`) was silently crashing the TX Editor's crop-handle construction inside an
+async command, likely why that flow was unusable before the fix.
 
-**Phase 4 (Transmit tab): IN PROGRESS.**
-- Left column (`TxControlsPaneView.axaml`: TX mode/Identification/Output/Stock/Outgoing metadata)
-  — **SHIPPED**, commit `ba0c200`. Transmit/Stop toggle button deliberately left untouched:
-  `ScanlineStudioTxToggleButtonTheme` was flagged in the original plan's own round-1 auditor review
-  as a landmine (a `StaticResource` on an old-design key that would crash the pane at XAML load if
-  the old style files were ever deleted while still referenced) — needs a real dedicated
-  `IndustryTxToggleTheme` design pass, not a drive-by re-skin.
-- Right column (`MainWindow.axaml`'s Transmit tab, `Grid.Column="2"`: Queue/Mode-timing-reference/
-  TX-log/Recently-sent) — **SHIPPED**, commit `57acc42`, build+test (173/173 UI, 7/7 Localization)
-  +real-window screenshot self-check. Same `Grid RowDefinitions="Auto,Auto,Auto,*"`/no-outer-
-  ScrollViewer structure as the Receive tab's right column. Real bug caught during the screenshot
-  check (not by build/test): Mode timing reference renders ~40 real `SstvModeDefinition` rows (mock2
-  only shows 5 as a static sample), and since that card sits in an EARLY "Auto" grid row (not the
-  column's own last/`"*"` row), the unbounded real list consumed the whole column's height and
-  pushed TX log/Recently sent off-screen with **no way to reach them** — fixed with a bounded
-  `ScrollViewer MaxHeight="150"` around just that card's `ItemsControl`. Queue/TX-log/Recently-sent
-  are placeholder cards (no queueing/TX-logging/send-history feature exists anywhere in this app),
-  so their row set literally mirrors mock2's own text, same precedent as Queue's pre-existing
-  "Between frames" row; added 2 new locale keys (`Panes.TxLog.TxTimeToday`/`DutyCycle`) for 2 rows
-  mock2 has that the old design never did. Also noticed, NOT fixed (pre-existing, unrelated,
-  off-scope): the app window at this dev box's current size/position leaves a band of desktop
-  wallpaper visible below the status bar in screenshots — same in both the pre- and post-fix
-  screenshot, not something this pass's markup change caused.
-- Centre column (`TxImageEditorPaneView.axaml`, the Editor group box) — **SHIPPED**. Was flagged in
-  the original plan as "the most complex single card" (toolbar, image canvas, 6 adjustment sliders,
-  186px side panel of 3 nested sub-cards) — mostly a big-surface-area re-skin, not a new design
-  problem, since the old markup already tracked mock2's own layout closely. One genuinely new atom:
-  `IndustryMiniRadioTheme` (Atoms.axaml) — the Move/Crop/Scale/.../Pick tool strip is a REAL
-  RadioButton `GroupName` exclusive-select group in the old design (not inert chips), and
-  `ToggleButton` has no Avalonia `GroupName` equivalent, so `IndustryMiniToggleTheme` couldn't
-  substitute. Toolbar uses one `WrapPanel` (not the old design's non-wrapping single row) so a
-  narrower runtime column degrades to extra lines instead of clipping. Header merges the old split
-  Title+right-aligned-Caption TextBlocks into one string (new `Panes.TxImageEditor.CardHeader` key)
-  to match the title-notch's single-ContentPresenter constraint, same precedent as every other
-  ported card. New `Panes.TxImageEditor.TextStyleHeader` key: the old design's "Text style" card had
-  no title at all (a pre-existing gap vs. mock2's own titled card), added while re-skinning.
-  Safe-area guide is a dashed `Rectangle` (`StrokeDashArray`), not a solid-line concession — Border
-  has no dash support in Avalonia but Rectangle does, confirmed by real-window render.
+**Phase 6 (Logbook tab): shipped, commit `4bd6043`.** No mockup exists for this tab (plan
+doc: "extrapolate using Phase 1's atom set... own lighter design-review pass"); built as a standard
+ham-radio logbook UI (Log4OM/N1MM/DXKeeper convention, per user's own direction) — a real
+multi-column QSO table (UTC/Callsign/Mode/RST-S/RST-R/Grid/Name/Notes — first real ItemsSource-bound
+consumer of the `IndustryTable*` atoms, previously header-only everywhere else in the app) on the
+left, add/edit form + ADIF import/export on the right. Notes column added after the user caught it
+was a real bound field missing from the grid (form had it, table didn't).
 
-  **Real pre-existing bug caught via real-window verification (not build/test — this predates the
-  port, present verbatim in the old markup):** `RenderTransform="translate(-5,-5)"` on the crop-
-  resize-handle Border is invalid Avalonia transform syntax (needs unit suffix, e.g.
-  `translate(-5px, -5px)`) — throws a `FormatException` at View construction. Since this exception
-  fires inside an `async Task` `[RelayCommand]` (`SelectStockImageAsync`/`SelectImageAsync` →
-  `OpenEditorForSourceAsync`), it was silently swallowed with no visible error and no UI change,
-  which is almost certainly why the Transmit-tab editor has been unopenable via Stock/Browse this
-  whole time (`_isEditorOpen` never got reset either, though a fresh app launch clears that). Fixed
-  the transform syntax; confirmed by opening a real stock image end-to-end in the running Host app
-  post-fix — editor now opens and renders correctly. Discovered via a throwaway real-window harness
-  (`AppBuilder.Configure<HarnessApp>()` subclassing `App`, bypassing `MainViewModel`/DI, real
-  `TransmitImagePreparer`+`MacroTextResolver`+a synthetic checkerboard `ArrayImageSource`) built
-  specifically because clicking the real app's Stock thumbnail via synthetic X11 input produced no
-  visible effect and no error — this harness isolated View-construction from the click/picker flow
-  entirely and pinpointed the exact exception. Not saved anywhere (scratchpad-only, deleted after
-  use) — rebuild from this description if the same isolation technique is needed again.
+Design decisions/fixes from this phase, worth knowing for future atom work:
+- DatePicker's default FluentTheme spinner-triplet template **ignores an explicit `Width` entirely**
+  (measured ~330px per picker vs the requested 130) — replaced the From/To filter fields with plain
+  `TextBox`es reusing the existing `UtcTimestampTextConverter` (same converter the form's own
+  Start/End fields already used) for both compactness and a consistent text-entry convention across
+  the whole tab. DatePicker is no longer used anywhere on this tab.
+- Generalized Phase 5's Gallery-specific `IndustryThumbnailListBoxItemTheme` into a reusable
+  `IndustryListBoxItemTheme` (Atoms.axaml) — any Industry list needing a real `ListBox` for TwoWay
+  selection gets default FluentTheme `ListBoxItem` chrome without one; this is the 2nd real consumer.
+  Added a matching accent-tint `:selected` row style for table-shaped lists
+  (`ListBoxItem:selected Border.IndustryTableRowRule`), distinct from the Gallery thumbnail's own
+  accent-*border* style — a table row's own visual language is a fill, not a border.
+- Mode column shows the real SSTV sub-mode (`SstvModeId`, e.g. "pd120"), not the `RadioMode` enum
+  (Usb/Lsb/Cw/...) — more informative for an SSTV-focused log; `RadioMode` is still editable in the
+  form on the right.
+- New `LogbookPaneViewModel.EntryCountDisplay` property (C# change, not just XAML) — mirrors
+  `RxHistoryPaneViewModel`'s own `EntryCountText` pattern: `Entries` is a plain
+  `ObservableCollection`, not derivable via `[ObservableProperty]`, so it needs an explicit update
+  call after `RefreshInternalAsync`'s `Entries.Clear()`/`Add()` loop.
 
-  Verified: full solution build clean, `UI.Tests` 173/173, real-window screenshot in both the
-  throwaway harness AND the actual running Host app (post-fix, via a real Stock image click-through).
+Verified: full solution build clean, `UI.Tests` 173/173, real-window screenshots with real seeded
+QSO data (table row rendering, accent-tint selection highlight, form auto-populate-from-selection all
+confirmed working) — a throwaway SQLite row inserted directly into `~/.config/ScanlineStudio/
+history.db`'s `Qso` table, deleted after. **Design-fidelity check for Phase 6: not run** — this
+phase's own "more freedom, no pixel target" framing may mean the full agent pass isn't the same kind
+of required gate it was for 4/5, but confirm with the user or use judgment before/instead of Phase 7.
 
-  **Phase 4 design-fidelity spot-check: run, findings fixed.** Per the standing rule (now saved as
-  a memory: run this check automatically at the end of a whole phase, before starting the next one
-  — don't wait to be asked), a `design-fidelity` agent pass covered all 3 Transmit-tab columns
-  against mock2. Found 7 visible + 5 minor + 3 nit mismatches, real-window-verified (live screenshots,
-  not static XAML reading). All fixed this pass except the 2 nits explicitly logged below.
-  **Visible, all fixed:** (1) the Transmit tab's own outer Grid never got the 258,*,330→236,*,312 /
-  `IndustrySpacingGutter` / `9,11,9,8`-margin token update the Receive tab already has — copied
-  verbatim from Receive. (2) Editor card's title notch was clipped (no headroom margin) — needed
-  BOTH the outer-Grid margin fix above AND a dedicated `Margin="0,6,0,0"` on the card's own
-  `HeaderedContentControl` (unlike Receive's Incoming-frame blueprint card, this one has no sibling
-  row above it for free RowSpacing clearance) — confirmed via a direct pixel-crop comparison against
-  the already-crisp "MODE TIMING REFERENCE" title before/after. (3) Editor's side panel rendered
-  ~608 DIP wide instead of mock2's 186 — a `Grid ColumnDefinitions="2*,Auto"` Auto column measures
-  to the WrapPanel's own unconstrained desired width; fixed to a literal `"*,186"`. (4) 8
-  `IndustryBtn22` call sites were missing `Padding="7,0"`, clipping labels — same bug class the
-  Receive tab already fixed once (RxFrameMeta). (5) Phase 4's new card titles weren't uppercased,
-  inconsistent with the Receive tab's own convention — 8 locale keys uppercased. (6) Recently-sent
-  thumbnails stretched to fill the column height (ScrollViewer's default Stretch content alignment)
-  — fixed with `VerticalAlignment="Top"` on the UniformGrid + a fixed (not Min) `Height="70"` hatch
-  panel. (7) Output card's SWR-cutoff row overflowed its column — a non-wrapping horizontal
-  StackPanel replaced with a WrapPanel.
-  **Minor, all fixed:** Mode-timing table's `ScrollViewer MaxHeight` (150→145) landed mid-row,
-  clipping the 9th row in half — re-verified the new value lands on a clean row boundary via
-  pixel-crop. Table alignment/units brought in line with the Receive tab's own already-verified
-  Decode-activity table (left-aligned, not right — mock2's own CSS is left-aligned and Phase 3
-  already matches that; the Mode-timing table was the one inconsistent outlier), Frame column
-  gained its "s" unit suffix. Added 4 rows the port had dropped vs. mock2 (TX mode card's
-  Selected/VIS header — Selected is a REAL binding, `SelectedMode.DisplayName`, not literal; Output
-  card's Tune drive; Editor's Text-style Plate row) plus reordered the TX mode card's ComboBox to
-  after the quick-mode grid, matching mock2. Stock-picker thumbnail button re-skinned off default
-  Fluent chrome (flat hairline border, no rounding) — the only remaining non-Industry control in
-  the left column.
-  **Nits: 2 fixed (numbered Queue rows, "Save"→"Save current"), 1 logged not fixed** — Output
-  card's Drive value renders as a bare `100` where mock2 shows `−6.0 dBFS`; not a formatting nit,
-  the app's real quantity is a 0–100 percent (`RadioStatus.TxVolumePercent`) while mock2's is a
-  dBFS level — different units entirely, mislabeling one as the other would be wrong, and no real
-  dBFS conversion exists to compute the correct value. Needs a real product decision, not a
-  drive-by fix; logged for later, not chased further this pass.
+### Phase 7 (cleanup) — NEXT, LAST PHASE
 
-  Re-verified after fixes: full solution build clean, `UI.Tests` 173/173,
-  `Core.Localization.Tests` 7/7, every fix individually confirmed via real-window pixel-crop
-  screenshots (not just "looks fine at a glance" — several fixes needed a second iteration after
-  the first attempt still showed the issue at zoom, e.g. the title-notch clipping).
-- After Phase 4: **Phase 5 (Gallery tab)**, **Phase 6 (Logbook tab + Options window** — no direct
-  mockup, extrapolate from the atom set, own lighter design-review pass since it's new composition
-  not a pixel port), **Phase 7 (cleanup**: delete dead old-design resources once nothing references
-  them, update `spec/09-ui.md`).
+Per the plan doc: delete dead old-design resources/classes (`Cards.axaml`/`Tokens.axaml`/
+`ChromeOverrides.axaml`) once nothing references them, update `spec/09-ui.md`'s "Aesthetic Directive"
+section to describe the new Industry design language, confirm `NoHardcodedAxamlStringsTests`/
+`NoThicknessSpacingMismatchTests`/`WaterfallPaletteTests` still pass, full solution build+test green,
+final full-app real-window screenshot pass band-by-band against LAYOUT-SPEC §7. **Open question:
+is the Options window in scope** — the plan doc groups it with Phase 6 ("Logbook tab + Options
+window") but it was NOT touched this session (only the Logbook tab). Re-check with the user before
+assuming it's covered or deferred.
 
-**Phase 5 (Gallery tab): ported, single commit** (single-section tab, unlike Transmit's 3 columns —
-plan doc: "*,312 grid. Received card (filter row + 6-col thumbnail grid), Selected-frame + Storage
-cards"). `*,312` outer Grid (matching the plan doc exactly, same token pattern as Receive/Transmit).
-Received card's ALL/TODAY filter uses `IndustryMiniRadioTheme` chips (mock2's own `.mini` shape, not
-`.seg` — real `ShowTodayOnly` toggle preserved); 14MHz/Unlogged/Flagged/Sort/Size are literal
-`IndustryMini` chips, Sort/Size replacing the old design's unbound ComboBox (mock2 itself shows
-these as static chips, and the ComboBox had no binding to lose). Thumbnail grid: `UniformGrid
-Columns="6"` (mock2's own `repeat(6,1fr)`) inside the real `ListBox`/`SelectedEntry` binding, same
-`IndustryThumbnail`/`IndustryThumbnailCaption` composition as the Receive tab's Previous-frames and
-Transmit's Recently-sent cards (3rd use of this exact pattern). Selected-frame card's
-`GridDistValue`/`LogEntryValue` deliberately kept as honest em-dash/"Not logged" placeholders, NOT
-reverted to mock2's own fake "IM76 · 1,842 km"/"linked #4412" literal data — this row has a REAL
-selected entry with some real fields (File/Mode/ReceivedAt) mixed with genuinely-absent ones
-(grid/distance/log-link), so fabricating data next to real data would mislead, unlike the fully-
-placeholder Queue/TX-log cards in Phase 4 where NOTHING is real. Storage card's 4th "Disk free" row
-(mock2 only has 3: Folder/Naming/Sidecar) kept — an existing, already-documented real decision from
-a prior session, not a fidelity gap to fix. Applied every Phase-4-learned fix preventively this time
-(uppercase titles, `Padding="7,0"` on every `IndustryBtn25`, `WrapPanel` not fixed-column Grid for
-the filter row) — self-check screenshot came back clean on the first pass, no clipped buttons or
-notches found.
+### Deferred / logged, not fixed — carried forward, still outstanding
 
-**Design-fidelity spot-check: run (headless-Firefox pixel measurements against the mockup's own
-CSS+realistic 18-figure data), found 5 visible + 9 minor + 3 nit — fixed.** Visible: (1) filter chip
-casing — mock2's `.mini` has no CSS `text-transform`, the literal HTML copy is uppercase
-(`ALL`/`TODAY`/`UNLOGGED`/`FLAGGED`), 4 locale keys fixed. (2) Selected-frame's 3-button row was a
-stretched `*,*,*` Grid; mock2's own row is left-aligned content-width with empty trailing space —
-switched to a `StackPanel`. (3)-(4) thumbnail caption font-size (11/9.5, not the Receive/Transmit
-sites' own correct-for-THEM 10/9) and padding (`IndustryThumbnailCaptionPaddingGallery`/
-`Border.IndustryThumbnailCaption.gallery` already existed in `Atoms.axaml` from a prior phase,
-completely unused until now) — added matching `.gallery` `Call`/`Meta` font-size overrides, applied
-the `gallery` class at the one real call site. (5) the Gallery's thumbnail grid is the ONLY Industry
-thumbnail composition built on a real `ListBox` (needed for `SelectedEntry` TwoWay binding; Receive/
-Transmit's precedents are a plain `ItemsControl`/`UniformGrid` instead) — with no
-`ItemContainerTheme`, default FluentTheme `ListBoxItem` chrome would leak through once populated;
-added a minimal `IndustryThumbnailListBoxItemTheme` (zero padding/min-size, transparent) plus a real
-accent-border `:selected` state rule, since this is genuine functionality (not decorative) needing
-real feedback. Verified this specific fix by seeding one real `ReceiveHistory` SQLite row + PNG
-directly (own throwaway test data, cleaned up after) — the empty-state screenshot alone couldn't
-exercise a ListBox with actual items in it; confirmed both the container-chrome fix and the
-accent-selection border render correctly.
-
-Minor fixes: filter-row top offset (dropped a redundant 4px margin — card's own padding already
-provides mock2's spacing), filter-row-to-grid gap (3px added), button height/font
-(`IndustryBtn25`→`IndustryBtn24`, mock2's own 24px/11px for this specific row), search box width
-(200→230), search watermark copy (matched mock2's own "callsign, grid, mode, note…" including the
-real ellipsis character and the dropped "Search " prefix), thumbnail grid gap (6→7px), mode-badge
-inset (3→4px), and Storage's "Naming" value — was showing a plausible-looking but WRONG literal
-pattern (`yyyyMMdd-HHmmss-MODE`); the real code
-(`ReceiveHistoryRecorder.cs:296`) produces `yyyyMMdd-HHmmss_MODE.png` (underscore, `.png` suffix) —
-fixed to match, since this row is presented as a real pattern, not scaffolding. `EntryCountFormat`
-got a thousands-separator (`{0:N0}`) for parity with mock2's `1 284`. Not fixed (2 nits, logged):
-File row shows the full absolute path with end-trimming ellipsis (mock2 shows filename-only with
-middle-ellipsis) — would need a new converter/VM property just for this cosmetic truncation, not
-proportionate to a nit; Log-entry's accent-700 color in mock2 was for a "linked" success state,
-which doesn't apply to this port's honest "Not logged" value — left plain, correct as-is.
-
-Verified after fixes: full solution build clean, `UI.Tests` 173/173, real-window screenshots with
-both the empty state AND one seeded real thumbnail (selection border, caption sizing, badge inset,
-button row all re-confirmed visually). Test DB row/image cleaned up after.
-
-### Real bugs found + fixed this session (not just cosmetic — worth knowing about for future atom work)
-
-1. **`IndustryStepperTheme`'s decrement glyph never rendered** (first real consumer of the atom,
-   built in Phase 1 but never actually rendered until Phase 3's Spectrum & waterfall card). Root
-   cause: the `"−"` Path geometry (`M 0 0 L 8 0`) is a horizontal line with a **zero-height bounding
-   box**, degenerate for the default `Stretch="Uniform"` scale computation. `Stretch="None"` alone
-   did NOT fix it (tried first, confirmed empirically) — needed an explicit non-degenerate
-   `Width="8" Height="8"` box with the line recentered to local y=4. Applied to both glyphs for
-   symmetry. **Every stepper in the app had an invisible/unusable "−" button before this fix.**
-2. **`PART_DecreaseButton`/`PART_IncreaseButton` RepeatButtons inside `IndustrySliderTheme`'s Track
-   template weren't inheriting `Stretch` `HorizontalAlignment`**, so Avalonia's `Track` control's own
-   correctly-computed proportional Arrange width was discarded in favor of their empty-content
-   `DesiredSize` (0) — the TX-level slider's fill never tracked its own bound value at all. Root-
-   caused via a runtime `Bounds` dump + decompiling `Avalonia.Controls.Primitives.Track` (confirmed
-   the percent MATH itself was correct; the bug was purely in the RepeatButtons' own alignment).
-   Fixed with explicit `HorizontalAlignment="Stretch"` on both.
-3. **The base Fluent `Thumb` ControlTheme doesn't paint a bare `Background` property setter** — the
-   TX slider's thumb rendered fully invisible. Fixed with an explicit inline `Thumb.Template`
-   (`<Border Background="{TemplateBinding Background}"/>`).
-4. **`StackPanel.IndustryRows` never set a `Spacing`** — CSS's `.gb{gap:3px}` applies to `.r2` rows
-   too, not just non-row card children; every row in every card using this atom sat ~2 logical px
-   tighter than the mockup. Fixed with `Spacing="3"`.
-5. **Same-class bug, 4 separate places this session**: a literal pixel `Width`/`Margin` on an
-   `IndustryMeterFill`/`IndustryMeterMarker` Border only "matches" the mockup's stated percentage by
-   coincidence at one specific container width. Fixed each time with nested star-column Grids
-   (`ColumnDefinitions="63*,37*"` etc.) instead of a literal pixel value. Check for this pattern
-   (`Width="<number>"` on a meter-fill Border inside a non-fixed-width column) before assuming any
-   remaining old-style meter is fine.
-5b. Right column's L/R meters (Input-chain card, left column) had this same bug; fixed identically.
-6. **`Border.IndustryMini > TextBlock` was a direct-child selector**, but the CAT-linked chip nests
-   its 2 TextBlocks inside a `Panel` — unreachable by `>`. Changed to a descendant selector
-   (`Border.IndustryMini TextBlock`, `.active`, `.accentOutline` variants too).
-7. **A `DockPanel` with only ONE child ignores that child's `Dock=` value** (since `LastChildFill`
-   defaults to `True` and that one child is also the *last* child) — Decode activity's table header
-   row stretched to fill the whole card body instead of sitting under the column labels. Fix:
-   `LastChildFill="False"`. **Worth checking for this exact shape (single-child DockPanel relying on
-   `Dock=`) anywhere else old code gets touched.**
-8. **A `Margin` fix for ScrollViewer-clips-the-first-card's-title-notch has to live on the scrolled
-   CONTENT (the root `StackPanel` inside the `ContentControl`/`UserControl`), not on the
-   `ScrollViewer` element itself** — tried the ScrollViewer-level Margin first for the Transmit tab's
-   left column, it visibly did NOT fix the clipping; moving the same `Margin="0,6,0,0"` onto
-   `TxControlsPaneView.axaml`'s own root `StackPanel` (matching the Receive tab's left column's
-   already-working pattern exactly) did. **Any new ScrollViewer-wrapped tab-column content needs
-   this same margin placement, not a ScrollViewer-level one.**
+- `ScanlineStudioTxToggleButtonTheme` (Transmit/Stop button) needs a dedicated `IndustryTxToggleTheme`
+  — deliberately untouched since Phase 4 (landmine risk flagged in the original plan review: a
+  `StaticResource` on an old-design key that would crash at XAML load if old style files are ever
+  deleted while still referenced — relevant again once Phase 7 starts deleting old resources).
+- Mockup's "Macros" card (Receive tab) has no backing feature — needs a product decision on F1-F6.
+- App-wide page background token mismatch (`#F0F0F0` vs Industry's own `#F2F2F3`) — needs an explicit
+  decision before Phase 7 cleanup, affects every card equally.
+- Transmit tab Output card's Drive value shows a bare percent where mock2 shows dBFS — different
+  units entirely, needs a product decision, not a relabel (Phase 4 finding, still open).
+- Gallery's "File" row shows the full path with end-trim ellipsis instead of mock2's filename-only
+  middle-trim — nit, needs a converter/VM property, not fixed (Phase 5 finding, still open).
+- Centre-column (Transmit Editor) stepper nits from Phase 3/4 review rounds (button-cell width/height
+  asymmetry, internal separator height, disabled-state background leak, oversized `MinWidth`, minor
+  color-mix rounding) — none block containment/fidelity visibly, recoverable via `git log` if ever
+  prioritized.
+- Receive tab's left column deliberately keeps a ScrollViewer even though the static mockup doesn't
+  need one at its own reference resolution — user's own call ("at least with scrollbar the content is
+  reachable"), not a bug.
 
 ### Established atoms available (Atoms.axaml) — check here before inventing new markup
 
 `IndustryGroupBoxTheme` (+ `Classes="blueprint"` for corner marks), `IndustryBlueprintBorderTheme`
-(plain bordered, no title notch), `IndustryMiniButtonTheme`/`IndustryMiniToggleTheme` (chip
-Button/ToggleButton forms — **use `IndustryMiniToggleTheme` for any checkbox-like toggle with no
-mockup equivalent**, established pattern for Peak-hold/SWR-cutoff), `IndustryStepperTheme` (+
+(plain bordered, no title notch), `IndustryMiniButtonTheme`/`IndustryMiniToggleTheme`/
+`IndustryMiniRadioTheme` (chip Button/ToggleButton/RadioButton forms — use `IndustryMiniToggleTheme`
+for any checkbox-like toggle with no mockup equivalent; use `IndustryMiniRadioTheme` when the chips
+need real `GroupName` exclusive-select, which `ToggleButton` can't do), `IndustryStepperTheme` (+
 `IndustrySpinnerTheme` internally), `IndustrySliderTheme` (+ `.h6`/`.h8` height variants, default
-= 4px), `IndustrySegTheme`, `IndustryDisclosureToggleTheme`, `IndustryPlot` (new this session — dark
-plot-canvas frame), `ProgressBar.Industry` (new this session — re-skins Fluent's own percent-sizing
-logic, doesn't replace it), `IndustryTableHeader`/`HeaderRule`/`Cell`/`RowRule` (plain-Grid table,
-not `DataGrid`), `IndustryThumbnail`/`ThumbnailCaption`/`ThumbnailCall`/`ThumbnailMeta`,
-`IndustryHatchPanel`, `IndustryMeter`/`MeterTrack`/`MeterFill`/`MeterMarker` (use nested star-column
-Grids for the fill/marker, never a literal pixel Width — see bug #5 above), `IndustryRows`/`IndustryRow`/
-`RowLabel`/`RowValue`, `IndustryKicker` (accent-mono-uppercase — **NOT** for plain form-field labels
-like "Note"/"Override callsign", those are `IndustryRowLabel`, confirmed against the mockup's own
-CSS which has zero text-transform/letter-spacing/color on those specific labels), `IndustryInput`
-(TextBox/ComboBox/NumericUpDown). **No `IndustryCheckBox` atom exists** — the mockup itself never
-defines one (every mockup toggle is either `.seg` or `.mini`), so don't build one ad hoc; if Phase 6
-(Options, ~100 controls, many real checkboxes) needs one, that's the right place to design it
-properly, not a drive-by add during Phase 4/5.
-
-### Deferred / logged, not fixed — for later triage, not forgotten
-
-- **Mockup's "Macros" card** (F1-F6 mini-chip buttons, Receive tab right column) doesn't exist
-  anywhere in this app today — no backing command/feature. Building it is new scope, not a re-skin;
-  needs a real product decision on what F1-F6 actually invoke first.
-- **`ScanlineStudioTxToggleButtonTheme`** (Transmit/Stop button) needs its own dedicated
-  `IndustryTxToggleTheme` — large, high-visibility control, deliberately not touched yet (see bug
-  list item on why).
-- **User raised, mid-session**: the Receive tab's left column scrolls even though the static HTML
-  mockup (viewed at its own reference resolution) doesn't need to. User's own conclusion when asked:
-  "at least with scrollbar the content is reachable" — i.e. **keep the ScrollViewer**, not a bug to
-  fix, just a known deviation from the static mockup's own untested-at-smaller-sizes assumption.
-- Centre-column review's remaining nits not chased (all logged in commit `1378087`/`5728901`/
-  `dcd7433`/`25c05e7`'s own history, recoverable via `git log`): stepper button-cell width/height
-  asymmetry (mockup wants 18×22 both sides, currently asymmetric), stepper internal separator height
-  (10px stub vs full 22px), disabled-stepper partial grey background leak (Fluent's own disabled
-  TextBox background showing through), a ~40% oversized stepper `MinWidth`, minor color-mix rounding
-  nits (62% vs 60% muted text), a few DIP-level gutter/margin drifts. None block containment or
-  fidelity in a way that's visible without a ruler.
-- App-wide (not this session's scope, logged repeatedly across multiple reviews): page background is
-  `#F0F0F0` (`Cards.axaml`'s `ScanlineStudioPanelBackgroundColor`) vs the Industry design system's own
-  `#F2F2F3` — systemic token question, affects every not-yet-ported AND already-ported view equally
-  (both sample the SAME literal background since neither owns it), needs its own explicit decision
-  before Phase 7 cleanup, not a per-card fix.
+4px), `IndustrySegTheme`, `IndustryDisclosureToggleTheme`, `IndustryPlot` (dark plot-canvas frame),
+`ProgressBar.Industry`, `IndustryTableHeader`/`HeaderRule`/`Cell`/`RowRule` (plain-Grid table, not
+`DataGrid` — real `ItemsSource`-bound consumer as of Phase 6's Logbook table, not just header-only
+scaffolding), `IndustryThumbnail`/`ThumbnailCaption`(+`.gallery` size/padding variant)/`ThumbnailCall`
+(+`.gallery`)/`ThumbnailMeta`(+`.gallery`), `IndustryListBoxItemTheme` (real `ListBox` selection with
+no default FluentTheme `ListBoxItem` chrome — pair with either the thumbnail's own accent-*border*
+`:selected` style or the table row's own accent-*fill* `:selected` style, whichever matches the
+content's visual language), `IndustryHatchPanel`, `IndustryMeter`/`MeterTrack`/`MeterFill`/
+`MeterMarker` (nested star-column Grids for the fill/marker, never a literal pixel Width),
+`IndustryRows`/`IndustryRow`/`RowLabel`/`RowValue`, `IndustryKicker` (accent-mono-uppercase — NOT for
+plain form-field labels, those are `IndustryRowLabel`), `IndustryInput` (TextBox/ComboBox/
+NumericUpDown — does NOT cover DatePicker, which has no Industry theme; its default spinner-triplet
+template also ignores explicit Width, see Phase 6 above). `IndustryBtn21`/`22`/`24`/`25`/`26` (height
+variants; every call site also needs `IndustryBtnPrimary`/`Secondary` and usually `Padding="7,0"` —
+omitting the padding clips labels, a recurring bug across Phase 4/5). **No `IndustryCheckBox` atom
+exists** — no mockup ever defines one (every mockup toggle is `.seg` or `.mini`); if the Options
+window (~100 controls, many real checkboxes) needs one, that's the right place to design it properly.
 
 ### Process notes for whoever resumes this
 
-- **The `--` (double-hyphen) XML-comment bug bit this session repeatedly** — plain English em-dash
-  usage ("done -- confirmed") breaks Avalonia's XAML comment parser (`An XML comment cannot contain
-  '--'`). Write comments without literal double-hyphens from the start (use `,`/`;`/em-dash `—`
-  instead) rather than fixing it after every failed build.
-- **Tab-switching without `xdotool`** (not installed, no passwordless sudo to install it): this
-  sandbox has `python3-xlib` available — use `Xlib.ext.xtest.fake_input` to synthesize a real X11
-  click at absolute screen coordinates (window position + tab's on-screen offset). Working snippet
-  used throughout this session:
+- **The `--` (double-hyphen) XML-comment bug bites constantly** — plain English em-dash usage ("done
+  -- confirmed") breaks Avalonia's XAML comment parser. Write comments without literal double-hyphens
+  from the start (use `,`/`;`/em-dash `—` instead).
+- **Tab-switching**: `xdotool` not installed, no passwordless sudo to install it. Use
+  `python3-Xlib`'s `Xlib.ext.xtest.fake_input` to synthesize a real X11 click at absolute screen
+  coordinates:
   ```python
   from Xlib import X, display
   from Xlib.ext import xtest
   import time
   d = display.Display()
-  x, y = 3840 + int(104*1.15), int(176*1.15)  # window origin + tab offset, scaled
+  x, y = 3850 + <tab-x-offset>, 72 + <tab-y-offset>  # window origin + tab offset
   xtest.fake_input(d, X.MotionNotify, x=x, y=y); d.sync(); time.sleep(0.2)
   xtest.fake_input(d, X.ButtonPress, 1); d.sync(); time.sleep(0.05)
   xtest.fake_input(d, X.ButtonRelease, 1); d.sync()
   ```
-- App window goes on the HDMI-1 monitor at `(3840,0)`, size `1400x900`
-  (`wmctrl -r "Scanline Studio" -e 0,3840,0,1400,900`) — established convention this whole session.
-- Kill stale app instances before relaunching (`pkill -9 -f "ScanlineStudio.Host.dll"`) — multiple
-  instances accumulated silently more than once this session from failed/retried launch commands,
-  and screenshots from the wrong (stale) instance wasted real debugging time more than once.
+  A click sometimes needs a retry with corrected coordinates after zooming into a screenshot to find
+  the real target — don't assume a single click landed just because no error appeared.
+- **App window**: launch fresh each time (`DISPLAY=:0 dotnet <path>/ScanlineStudio.Host.dll`), then
+  `wmctrl -r "Scanline Studio" -e 0,3840,0,1400,1000` (HDMI-1 monitor) + `wmctrl -a "Scanline Studio"`
+  to focus. Kill stale instances first: `pkill -9 -f "ScanlineStudio.Host.dll"`.
+- **Screenshot**: python3-Xlib `root.get_image()` + `Image.frombytes(..., "raw", "BGRX")` — no
+  `import`/`scrot`/`maim`/`convert` available; `xwd` exists but PIL can't read it directly.
+- **Seeding real data** for a ListBox/table verification (don't rely on empty-state screenshots
+  alone — several real bugs only showed up with actual rows): SQLite tables live in
+  `~/.config/ScanlineStudio/history.db` (`ReceiveHistory` table for Gallery, `Qso` table for
+  Logbook) — insert a throwaway row directly via python's `sqlite3` module, delete it after. For a
+  TX Editor screenshot, seed a PNG into `~/Pictures/ScanlineStudio/Stock/` and click its thumbnail in
+  the app's own Stock picker.
+- For an isolated View-construction bug that a real click-through can't easily reach (e.g. an
+  exception fires inside an async command and gets silently swallowed), a throwaway harness
+  subclassing `App`, bypassing `MainViewModel`/DI, with real service instances + a synthetic
+  `ArrayImageSource` can isolate construction from the click/picker flow entirely — see the Phase 4
+  `translate(-5,-5)` bug for the exact technique (harness itself was scratchpad-only, not saved).
 
 ### Verification status
 
-Full solution build clean, `UI.Tests` 173/173, every commit this session. **Commits ahead of
-`origin/master`, not pushed** — verify with the user before pushing.
+Full solution build clean, `UI.Tests` 173/173, every commit this session. Commits ahead of
+`origin/master`, not pushed — verify with the user before pushing.
 
-**Phase 4 (Transmit tab) is now fully SHIPPED** (left/centre/right columns all ported). **Next
-action on resume**: Phase 5 (Gallery tab) — not started yet, still on old `Cards.axaml` styling.
+**Next action on resume**: confirm Options-window scope with the user, then start Phase 7 (cleanup) —
+the last phase of this redesign.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
