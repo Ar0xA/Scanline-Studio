@@ -5,7 +5,7 @@
              x:Class="ScanlineStudio.UI.Views.WaterfallPaneView"
              x:DataType="vm:WaterfallPaneViewModel">
 
-    <Border Classes="plot">
+    <Border Classes="IndustryPlot">
         <controls:WaterfallControl Frame="{Binding LatestFrame}" ZeroDb="{Binding ZeroDb}" GainDb="{Binding GainDb}" />
     </Border>
 

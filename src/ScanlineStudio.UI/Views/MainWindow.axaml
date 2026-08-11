@@ -328,19 +328,28 @@
                              IsVisible alone (auditor-caught: IsVisible would leave the collapsed
                              plot's own Star column at half width, producing a half-empty card
                              instead of the other plot expanding to fill it). -->
-                        <Border Grid.Row="0" Classes="card">
-                            <DockPanel LastChildFill="True">
-                                <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.Waterfall.CardHeader}" />
-                                    <TextBlock Grid.Column="1" Classes="caption" HorizontalAlignment="Right" Text="{loc:Translate Panes.Waterfall.RangeCaption}" />
-                                </Grid>
-                                <Grid ColumnSpacing="{DynamicResource ScanlineStudioSpacingSmall}" Margin="0,4,0,0">
+                        <!-- Ported to Industry atoms (was old Cards.axaml "card"/"cardHeader"/
+                             "caption"/"plot"/"label"/"tight"/"seg" styling). RangeCaption moved
+                             from the notch-title row into the card body (same precedent as the
+                             header row's own UTC-clock readout): the notch title's wrapping Border
+                             is HorizontalAlignment="Left" with no explicit Width, so a "*" column
+                             inside it has nothing finite to divide against; putting the caption in
+                             the body instead avoids that trap entirely. -->
+                        <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.Waterfall.CardHeader}" />
+                            </HeaderedContentControl.Header>
+                            <Grid RowDefinitions="Auto,*">
+                                <TextBlock Grid.Row="0" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
+                                           Foreground="{StaticResource IndustryTextMuted50}" HorizontalAlignment="Right"
+                                           Margin="0,0,0,4" Text="{loc:Translate Panes.Waterfall.RangeCaption}" />
+                                <Grid Grid.Row="1" ColumnSpacing="{StaticResource IndustrySpacingWide}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="{Binding Waterfall.ViewMode, Converter={x:Static conv:WaterfallViewModeToColumnWidthConverter.Instance}, ConverterParameter=Spectrum}" />
                                         <ColumnDefinition Width="{Binding Waterfall.ViewMode, Converter={x:Static conv:WaterfallViewModeToColumnWidthConverter.Instance}, ConverterParameter=Waterfall}" />
-                                        <ColumnDefinition Width="175" />
+                                        <ColumnDefinition Width="146" />
                                     </Grid.ColumnDefinitions>
-                                    <Border Classes="plot">
+                                    <Border Classes="IndustryPlot">
                                         <controls:SpectrumTraceControl Frame="{Binding Waterfall.LatestFrame}"
                                                                         ZeroDb="{Binding Waterfall.ZeroDb}"
                                                                         GainDb="{Binding Waterfall.GainDb}"
@@ -351,55 +360,59 @@
                                                                         BinsPerPixel="{Binding Waterfall.BinsPerPixel, Mode=OneWayToSource}" />
                                     </Border>
                                     <ContentControl Grid.Column="1" Content="{Binding Waterfall}" />
-                                    <StackPanel Grid.Column="2" Spacing="2">
+                                    <StackPanel Grid.Column="2" Classes="Industry IndustryRows" Spacing="1">
                                         <!-- Read-only: a live readout of what Start/Span/this
                                              control's own actual rendered width currently work out
                                              to, not an independent user input (auditor round-2
                                              finding: three independent knobs for two real degrees
                                              of freedom is over-determined and inconsistent). -->
-                                        <Grid ColumnDefinitions="Auto,*">
-                                            <TextBlock Classes="label" Text="{loc:Translate Panes.Waterfall.BinsPerPixel}" VerticalAlignment="Center" />
-                                            <NumericUpDown Grid.Column="1" Classes="tight" IsEnabled="False" Value="{Binding Waterfall.BinsPerPixel}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,*">
-                                            <TextBlock Classes="label" Text="{loc:Translate Panes.Waterfall.Start}" VerticalAlignment="Center" />
-                                            <NumericUpDown Grid.Column="1" Classes="tight" Increment="100" Value="{Binding Waterfall.StartHz}" />
-                                        </Grid>
-                                        <Grid ColumnDefinitions="Auto,*">
-                                            <TextBlock Classes="label" Text="{loc:Translate Panes.Waterfall.Span}" VerticalAlignment="Center" />
-                                            <NumericUpDown Grid.Column="1" Classes="tight" Increment="100" Value="{Binding Waterfall.SpanHz}" />
-                                        </Grid>
-                                        <!-- Gain/Zero: real now (batch 8a); drive both
-                                             WaterfallControl's color mapping AND
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.Waterfall.BinsPerPixel}" />
+                                            <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" MinWidth="62" HorizontalAlignment="Right" IsEnabled="False" Value="{Binding Waterfall.BinsPerPixel}" />
+                                        </Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.Waterfall.Start}" />
+                                            <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" MinWidth="72" HorizontalAlignment="Right" Increment="100" Value="{Binding Waterfall.StartHz}" />
+                                        </Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.Waterfall.Span}" />
+                                            <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" MinWidth="72" HorizontalAlignment="Right" Increment="100" Value="{Binding Waterfall.SpanHz}" />
+                                        </Grid></Border>
+                                        <!-- Gain/Zero share one row (mockup's own layout, not two
+                                             full-width slider rows), real now (batch 8a); drive
+                                             both WaterfallControl's color mapping AND
                                              SpectrumTraceControl's vertical scale (see
                                              SpectrumTraceMath.MapDbToY's own doc comment for why the
-                                             same sliders control both). -->
-                                        <Grid ColumnDefinitions="Auto,*">
-                                            <TextBlock Classes="label" Text="{loc:Translate Panes.Waterfall.Gain}" VerticalAlignment="Center" />
-                                            <Slider Grid.Column="1" Minimum="20" Maximum="80" Value="{Binding Waterfall.GainDb}" />
-                                        </Grid>
-                                        <!-- Minimum/Maximum here are load-bearing: RangeBase coerces
-                                             Value into [Minimum,Maximum] and Value is TwoWay by
-                                             default, so if these were ever dropped or overridden by a
-                                             style, a -70 ZeroDb default would clamp against
+                                             same sliders control both). Minimum/Maximum are load-
+                                             bearing: RangeBase coerces Value into [Minimum,Maximum]
+                                             and Value is TwoWay by default, so if these were ever
+                                             dropped a -70 ZeroDb default would clamp against
                                              RangeBase's own default 0..100 range and silently write
                                              the clamped value back into the view-model. -->
-                                        <Grid ColumnDefinitions="Auto,*">
-                                            <TextBlock Classes="label" Text="{loc:Translate Panes.Waterfall.Zero}" VerticalAlignment="Center" />
-                                            <Slider Grid.Column="1" Minimum="-70" Maximum="30" Value="{Binding Waterfall.ZeroDb}" />
-                                        </Grid>
-                                        <CheckBox Content="{loc:Translate Panes.Waterfall.PeakHold}" IsChecked="{Binding Waterfall.PeakHoldEnabled}" />
-                                        <Border Classes="segment" HorizontalAlignment="Left">
-                                            <StackPanel Orientation="Horizontal">
-                                                <RadioButton Classes="seg" GroupName="PlotView" IsChecked="{Binding Waterfall.IsViewBoth}" Content="{loc:Translate Panes.Waterfall.ViewBoth}" />
-                                                <RadioButton Classes="seg" GroupName="PlotView" IsChecked="{Binding Waterfall.IsViewSpectrumOnly}" Content="{loc:Translate Panes.Waterfall.ViewSpec}" />
-                                                <RadioButton Classes="seg" GroupName="PlotView" IsChecked="{Binding Waterfall.IsViewWaterfallOnly}" Content="{loc:Translate Panes.Waterfall.ViewWf}" />
-                                            </StackPanel>
-                                        </Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,38,Auto,38" ColumnSpacing="6">
+                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.Waterfall.Gain}" VerticalAlignment="Center" />
+                                            <Slider Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustrySliderTheme}" Minimum="20" Maximum="80" Value="{Binding Waterfall.GainDb}" />
+                                            <TextBlock Grid.Column="2" Classes="IndustryRowLabel" Text="{loc:Translate Panes.Waterfall.Zero}" VerticalAlignment="Center" />
+                                            <Slider Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustrySliderTheme}" Minimum="-70" Maximum="30" Value="{Binding Waterfall.ZeroDb}" />
+                                        </Grid></Border>
+                                        <!-- No mockup CheckBox atom exists (the "Peak hold" toggle is
+                                             real app functionality, batch 8b, with no mockup
+                                             equivalent), represented as a .mini toggle chip instead,
+                                             matching the app's own established convention for real-
+                                             functionality toggles without a direct mockup site (e.g.
+                                             the header row's CAT-linked chip). Own row, since the
+                                             mockup's segment row (below) has no Peak-hold sibling to
+                                             model a combined layout on. -->
+                                        <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" HorizontalAlignment="Left" Margin="0,2,0,0" IsChecked="{Binding Waterfall.PeakHoldEnabled}" Content="{loc:Translate Panes.Waterfall.PeakHold}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="2" Margin="0,2,0,0">
+                                            <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}" GroupName="PlotView" IsChecked="{Binding Waterfall.IsViewBoth}" Content="{loc:Translate Panes.Waterfall.ViewBoth}" />
+                                            <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}" GroupName="PlotView" IsChecked="{Binding Waterfall.IsViewSpectrumOnly}" Content="{loc:Translate Panes.Waterfall.ViewSpec}" />
+                                            <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}" GroupName="PlotView" IsChecked="{Binding Waterfall.IsViewWaterfallOnly}" Content="{loc:Translate Panes.Waterfall.ViewWf}" />
+                                        </StackPanel>
                                     </StackPanel>
                                 </Grid>
-                            </DockPanel>
-                        </Border>
+                            </Grid>
+                        </HeaderedContentControl>
                         <Border Grid.Row="1" Classes="card">
                             <DockPanel LastChildFill="True">
                                 <TextBlock DockPanel.Dock="Top" Classes="cardHeader" Text="{loc:Translate Panes.RxImage.CardHeader}" />

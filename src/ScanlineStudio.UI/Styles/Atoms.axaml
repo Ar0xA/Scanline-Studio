@@ -321,7 +321,22 @@
                                               Padding="0" MinWidth="0" MinHeight="0"
                                               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                               IsVisible="{TemplateBinding ShowButtonSpinner}">
-                                    <Path Data="M 0 0 L 8 0" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
+                                    <!-- Explicit Width/Height + centered-in-box Data (design-fidelity-
+                                         agent-caught fix, Phase 3's first real consumer of this atom):
+                                         this glyph's original geometry "M 0 0 L 8 0" is a horizontal
+                                         line with a ZERO-HEIGHT bounding box. Stretch="None" alone
+                                         did NOT fix it (confirmed empirically, pixel-level, after
+                                         trying it first), the Path's own DesiredSize/render box
+                                         still comes out degenerate from a zero-extent geometry
+                                         regardless of Stretch mode, unlike the sibling IncreaseButton's
+                                         "M 0 4 L 8 4 M 4 0 L 4 8" cross, which has a proper 2D extent
+                                         and rendered fine at the same site untouched. Fixed by giving
+                                         the Path an explicit non-degenerate 8x8 box and moving the
+                                         line to the vertical center of it (y=4, not y=0), the same
+                                         "give it a real box, don't rely on the geometry's own
+                                         bounding box" technique as the blueprint corner-mark fix. -->
+                                    <Path Data="M 0 4 L 8 4" Width="8" Height="8" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
+                                          Stretch="None"
                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </RepeatButton>
                                 <ContentPresenter Name="PART_ContentPresenter" Grid.Column="1"
@@ -334,7 +349,8 @@
                                               Padding="0" MinWidth="0" MinHeight="0"
                                               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                               IsVisible="{TemplateBinding ShowButtonSpinner}">
-                                    <Path Data="M 0 4 L 8 4 M 4 0 L 4 8" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
+                                    <Path Data="M 0 4 L 8 4 M 4 0 L 4 8" Width="8" Height="8" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
+                                          Stretch="None"
                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </RepeatButton>
                             </Grid>
@@ -959,6 +975,18 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
         <Setter Property="Background" Value="{StaticResource IndustryHatchStripeBrush}" />
+    </Style>
+
+    <!-- 13. Plot canvas frame (waterfall/spectrum/scope/editor-preview containers) — dark
+         accent-900 background + hairline divider border, per every `<canvas>` wrapper's inline
+         style in the mockup HTML (e.g. SSTV Console.dc.html's Spectrum/waterfall plots). Phase 3+
+         first consumer; the plot's OWN pixel content (waterfall gradient, spectrum trace, editor
+         canvas) is unaffected — this is only the surrounding frame chrome. -->
+    <Style Selector="Border.IndustryPlot">
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Background" Value="{StaticResource IndustryAccent900}" />
     </Style>
 
     <!-- 16. Disclosure header — .gbt group-box-title typography (NOT kicker text — item 16's own
