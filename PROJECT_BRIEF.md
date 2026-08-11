@@ -5,7 +5,7 @@ Scratch file for resuming after `/clear` — not a spec doc, delete or ignore on
 everything but the active entry below was already in a detailed commit message or migrated into
 `spec/14-roadmap.md`/`CLAUDE.md` — see git history for this file if older context is ever needed.
 
-## Resume here (2026-08-11, latest, ACTIVE) — Options window ported to Industry design, Phase 7 next
+## Resume here (2026-08-11, latest, ACTIVE) — Phase 7 shipped, full Industry redesign effort CLOSED
 
 **What this is**: full pixel-perfect port of the app's UI from the old "Aesthetic Directive" look
 (`spec/09-ui.md`) to a new "Industry" wireframe design system (`mockups/guidance/`: steel-blue
@@ -28,7 +28,73 @@ plan: `~/.claude/plans/transient-jumping-bentley.md` — 8 phases (0 fonts/token
   for that kind of UI (user's own direction for Logbook: "just go for what's normal in a general
   logbook"), own lighter design-review pass, more layout freedom than the pixel-matched tabs.
 
-### Status: Phases 0-6 SHIPPED. Options window ported to Industry (below). Phase 7 (cleanup) NOT STARTED — this is the LAST phase.
+### Status: Phases 0-7 ALL SHIPPED. The full "Industry" redesign effort is CLOSED, not committed yet.
+
+**Phase 7 (cleanup) SHIPPED (2026-08-11), not yet committed.** Last phase of the redesign. Before
+deleting anything, grepped the whole `src/ScanlineStudio.UI` tree for every class/resource-key
+defined in the 3 old files and found several real remaining consumers the earlier phases hadn't
+caught (TX transmit/stop-transmit buttons, TX/radio-header error text color, a favorites-flyout
+`CheckBox`, the status-bar TX-inhibit LED+label, the RX plot frame) — ported each 1:1 to a new
+Industry-prefixed atom (same colors, just relocated) rather than leaving them as landmines:
+- New atoms (`Atoms.axaml`/`AtomsTokens.axaml`): `IndustryBtnDanger` (tinted/outlined red button,
+  ported from `Button.halt`), `IndustryTxToggle` (`:checked`-only solid-red override, ported from
+  `ScanlineStudioTxToggleButtonTheme`), `Ellipse.IndustryLed`/`.active`/`.alert` and
+  `TextBlock.IndustryReadoutSmall` (status-bar LED+label, ported from `Ellipse.led`/
+  `TextBlock.readoutSmall`), `IndustryDanger`/`IndustryDangerForeground` color tokens (the one new
+  *reused* color — everywhere else ported a literal one-off hex instead of minting a token, per
+  this file's own "don't invent a class for a single call site" convention).
+- Deleted `Styles/Tokens.axaml`/`Cards.axaml`/`ChromeOverrides.axaml` plus the now-fully-unused
+  `Avalonia.Controls.DataGrid` package/StyleInclude (confirmed zero `<DataGrid` usage anywhere —
+  already superseded by the plain-`Grid` `IndustryTable*` atoms in Phases 3/4).
+- Updated `spec/09-ui.md`'s "Visual design direction" section to describe the Industry language
+  instead of the old "Aesthetic Directive," in the doc's own established supersession-note style.
+
+**A real regression was caught and fixed mid-session, not by inspection — the user noticed it live
+on their own screen.** Deleting `Cards.axaml` silently removed the app's *only* source of a page
+background: a bare, non-class-scoped `Window` selector (`Background="#F0F0F0"`) that
+`MainWindow.axaml`'s own root `<Window>` element had always relied on without ever setting its own
+`Background`. Every card/border still painted its own explicit background correctly, so most of
+the app still looked right — but any uncovered area (most visibly the Transmit tab's centre
+column, which is legitimately blank until `ActiveEditor` is non-null, `MainViewModel.cs:57-58`)
+turned pure white instead of the Industry gray. This is exactly the "app-wide page background
+token mismatch (#F0F0F0 vs Industry's own #F2F2F3)" item this doc had already flagged as needing
+an explicit decision before Phase 7 cleanup — the decision just didn't get made at delete time.
+Fixed by setting `Background="{StaticResource IndustryBg}"` directly on `MainWindow.axaml`'s root
+`Window` (resolves the mismatch in favor of the real Industry token, not the old gray;
+`OptionsWindowView.axaml` was already unaffected, it has its own root `Border
+Background="{StaticResource IndustryBg}"` from the earlier Options pass). Confirmed via real-
+window screenshots on Transmit/Gallery/Logbook after the fix — consistent gray everywhere, no
+white gaps. **Diagnosis technique worth remembering**: `git stash push -u -- src/ScanlineStudio.UI`
+to isolate "is this from my uncommitted change or pre-existing" — confirmed the blank *editor
+content* itself was pre-existing/correct (a `git stash` test proved it was already blank before any
+Phase 7 edit), which narrowed the real bug down to just the background color specifically, not a
+wrongly-suspected content-loss regression.
+
+**Also confirmed NOT a bug, while investigating**: the Transmit tab's centre column (TX Image
+Editor) looked completely empty on a fresh launch, which read as "the whole editor is missing"
+compared to the always-populated HTML mock. Verified by seeding a throwaway stock image
+(`~/Pictures/ScanlineStudio/Stock/`, deleted after) and clicking it in the app's own Stock
+picker — the full editor (tool strip, canvas, insert-field chips, saved templates, brightness/
+contrast/etc. sliders, Transmit/Tune/Preview-audio/Halt row) rendered correctly and matches the
+mock closely. `ActiveEditor` is genuinely null until an image is selected, and a null `Content`
+correctly renders nothing — this is real, intentional empty-state behavior from Piece 2, not a
+regression. User's explicit call: leave this behavior as-is (not adding a placeholder or an
+auto-selected default image).
+
+**Verified**: full solution build clean (0 warnings/errors), `UI.Tests` 173/173 (unaffected count —
+this phase touched no test-covered logic, only markup/resources). Real-window screenshots of
+Receive/Transmit/Gallery/Logbook tabs post-fix, plus the favorites-edit flyout to confirm
+`IndustryCheckBoxTheme` renders correctly in its second real consumer site. **Not committed yet**
+— this session's Options-window work (below) is already committed (`c392ac8`); Phase 7 + the
+background-regression fix are still working-tree changes, verify with the user before committing.
+
+**Not done, deliberately out of scope for this phase**: `WaterfallPaletteTests` weren't re-run in
+isolation this session (the waterfall gradient's own colors are untouched by Phase 7, and the full
+`UI.Tests` run that already includes them passed) — re-run standalone if ever specifically
+suspicious. The final "band-by-band against LAYOUT-SPEC §7" screenshot pass was scoped down to just
+the controls Phase 7 actually touched (TX toggle/stop, status-bar LED, RX plot frame, favorites
+checkbox) plus a background spot-check across all 4 tabs, not a full re-verification of every band
+already verified in Phases 0-6 — those are unaffected by this phase's changes.
 
 **Options window ported to Industry design (2026-08-11), done, not yet committed.** User asked to
 do this before Phase 7 (Phase 7's cleanup deletes the old `Cards.axaml`/`Tokens.axaml`/
@@ -129,16 +195,11 @@ history.db`'s `Qso` table, deleted after. **Design-fidelity check for Phase 6: n
 phase's own "more freedom, no pixel target" framing may mean the full agent pass isn't the same kind
 of required gate it was for 4/5, but confirm with the user or use judgment before/instead of Phase 7.
 
-### Phase 7 (cleanup) — NEXT, LAST PHASE
+### Phase 7 (cleanup) — SHIPPED, see the detailed entry higher up in this "Resume here" section
 
-Per the plan doc: delete dead old-design resources/classes (`Cards.axaml`/`Tokens.axaml`/
-`ChromeOverrides.axaml`) once nothing references them, update `spec/09-ui.md`'s "Aesthetic Directive"
-section to describe the new Industry design language, confirm `NoHardcodedAxamlStringsTests`/
-`NoThicknessSpacingMismatchTests`/`WaterfallPaletteTests` still pass, full solution build+test green,
-final full-app real-window screenshot pass band-by-band against LAYOUT-SPEC §7. **Options window is
-now done** (see above) — it was the last live consumer of several old-design classes, so this
-should unblock the Phase 7 deletion; double-check with a repo-wide grep for `Cards.axaml`/
-`Tokens.axaml`/`ChromeOverrides.axaml` class names before deleting, don't just assume.
+The full 8-phase Industry redesign effort is closed. Nothing left to plan here — if a future
+session needs the exact atom-by-atom migration detail, it's in this same "Resume here" section's
+Phase 7 writeup above, not repeated twice in this file.
 
 ### Deferred / logged, not fixed — carried forward, still outstanding
 
@@ -226,11 +287,15 @@ window (~100 controls, many real checkboxes) needs one, that's the right place t
 
 ### Verification status
 
-Full solution build clean, `UI.Tests` 173/173, every commit this session. Commits ahead of
-`origin/master`, not pushed — verify with the user before pushing.
+Full solution build clean, `UI.Tests` 173/173. Options-window work committed (`c392ac8`). Phase 7
+(cleanup, old-file deletion, spec update, the `MainWindow` background regression fix) is done but
+**not yet committed** — working-tree changes only. Commits ahead of `origin/master`, not pushed —
+verify with the user before pushing.
 
-**Next action on resume**: confirm Options-window scope with the user, then start Phase 7 (cleanup) —
-the last phase of this redesign.
+**Next action on resume**: verify with the user whether Phase 7's working-tree changes should be
+committed (if not already done by the time this is read), then the whole Industry redesign effort
+is fully closed — no more phases queued. Whatever comes next is a new subject, not a continuation
+of this one.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
