@@ -6,30 +6,43 @@
              x:Class="ScanlineStudio.UI.Views.TxControlsPaneView"
              x:DataType="vm:TxControlsPaneViewModel">
 
-    <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingMedium}">
+    <!-- Ported to Industry atoms (was old Cards.axaml "card"/"cardHeader"/"kv"/"label"/"value"/
+         "caption"/"pill"/"segment"/"seg"/"small"/"plot" styling). Transmit/Stop toggle row
+         deliberately LEFT UNTOUCHED: ScanlineStudioTxToggleButtonTheme was flagged as a landmine
+         in the original redesign plan's own round-1 auditor review (a StaticResource on an
+         old-design key that would crash the pane at XAML load if the old Tokens/Cards/
+         ChromeOverrides files were ever deleted while still referenced), needs a real dedicated
+         IndustryTxToggleTheme design pass, not a drive-by re-skin. -->
+    <!-- Margin top=6 (real-window-caught fix, same reasoning as the Receive tab's own left
+         column): the ScrollViewer wrapping this UserControl in MainWindow.axaml necessarily clips
+         its content to its own viewport, so the FIRST card's title notch here needs literal
+         headroom reserved before it, or it clips against the viewport's own top edge; confirmed
+         this margin has to live on the scrolled CONTENT itself, not on the ScrollViewer element
+         (tried that first, it did not fix the clipping). -->
+    <StackPanel Classes="Industry" Spacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,0,0">
 
         <!-- TX mode card: mode selector + favorite-mode quick buttons. Membership is user-
              configured via the "Edit favorites..." popup, backed by TxPaneUiSettings.FavoriteModeIds. -->
-        <Border Classes="card">
-            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.ModeLabel}" />
+        <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+            <HeaderedContentControl.Header>
+                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.ModeLabel}" />
+            </HeaderedContentControl.Header>
+            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                 <!-- Auto/Manual segment replaces the old plain CheckBox as the real affordance
                      for AutoFollowRxMode; same underlying real property, mock2's own control
                      shape (a two-option segment reads better than a checkbox for this). -->
-                <Border Classes="segment">
-                    <UniformGrid Columns="2">
-                        <RadioButton Classes="seg" GroupName="TxModeAutoManual" IsChecked="{Binding AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualAuto}" />
-                        <RadioButton Classes="seg" GroupName="TxModeAutoManual" IsChecked="{Binding !AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualManual}" />
-                    </UniformGrid>
-                </Border>
+                <Grid ColumnDefinitions="*,*" Margin="0,0,0,2">
+                    <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="TxModeAutoManual" IsChecked="{Binding AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualAuto}" />
+                    <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="TxModeAutoManual" IsChecked="{Binding !AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualManual}" />
+                </Grid>
                 <!-- Visual scaffolding only below this point (spec/14-roadmap.md backlog): "Auto
                      picks" caption, quick-mode pill grid, Duration/Geometry/VOX-tone rows have no
                      real data source. -->
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.AutoPicksLabel}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.AutoPicksValue}" />
-                </Grid>
-                <ComboBox ItemsSource="{Binding AvailableModes}"
+                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.AutoPicksLabel}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.AutoPicksValue}" />
+                </Grid></Border>
+                <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}"
                           SelectedItem="{Binding SelectedMode}"
                           HorizontalAlignment="Stretch">
                     <ComboBox.ItemTemplate>
@@ -38,37 +51,39 @@
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>
-                <UniformGrid Columns="4">
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC1}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC2}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SCDX}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M1}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M2}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M3}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.M4}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.R36}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.R72}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD50}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD90}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD120}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD160}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD180}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.PD290}" HorizontalAlignment="Center" /></Border>
-                    <Border Classes="pill" Margin="1"><TextBlock Text="{loc:Translate Panes.QuickModeGrid.SC2180}" HorizontalAlignment="Center" /></Border>
+                <UniformGrid Columns="4" Rows="4">
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC1}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SCDX}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M1}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M2}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M3}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M4}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.R36}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.R72}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD50}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD90}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD120}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD160}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD180}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD290}" /></Border>
+                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2180}" /></Border>
                 </UniformGrid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.DurationLabel}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.DurationValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.GeometryLabel}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.GeometryValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.VoxToneLabel}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.VoxToneValue}" />
-                </Grid>
-                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxControls.FavoritesLabel}" />
+                <StackPanel Classes="Industry IndustryRows">
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.DurationLabel}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.DurationValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.GeometryLabel}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.GeometryValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VoxToneLabel}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.VoxToneValue}" />
+                    </Grid></Border>
+                </StackPanel>
+                <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.FavoritesLabel}" />
                 <ItemsControl ItemsSource="{Binding FavoriteModes}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -77,14 +92,15 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:FavoriteModeButtonViewModel">
-                            <Button Content="{Binding Mode.DisplayName}"
+                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                    Content="{Binding Mode.DisplayName}"
                                     Command="{Binding SelectCommand}"
                                     CommandParameter="{Binding Mode}"
-                                    Margin="0,0,4,4" />
+                                    Margin="0,0,3,3" />
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <Button Classes="small" Content="{loc:Translate Panes.TxControls.EditFavorites}" HorizontalAlignment="Left">
+                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Content="{loc:Translate Panes.TxControls.EditFavorites}" HorizontalAlignment="Left">
                     <Button.Flyout>
                         <Flyout>
                             <ItemsControl ItemsSource="{Binding FavoriteModeOptions}">
@@ -98,27 +114,29 @@
                     </Button.Flyout>
                 </Button>
             </StackPanel>
-        </Border>
+        </HeaderedContentControl>
 
         <!-- Identification: visual scaffolding only; blocked on the missing operator-callsign/
              profile setting (spec/14-roadmap.md's "TX macros / CW-ID" backlog). -->
-        <Border Classes="card">
-            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxId.CardHeader}" />
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.FskId}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxId.FskIdValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.CwId}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxId.CwIdValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.Tail}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxId.TailValue}" />
-                </Grid>
+        <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+            <HeaderedContentControl.Header>
+                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxId.CardHeader}" />
+            </HeaderedContentControl.Header>
+            <StackPanel Classes="Industry IndustryRows">
+                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.FskId}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxId.FskIdValue}" />
+                </Grid></Border>
+                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.CwId}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxId.CwIdValue}" />
+                </Grid></Border>
+                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.Tail}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxId.TailValue}" />
+                </Grid></Border>
             </StackPanel>
-        </Border>
+        </HeaderedContentControl>
 
         <!-- Output: merged Drive slider (moved from the header's standalone card in
              MainWindow.axaml; same underlying RadioStatus.TxVolumePercent value via the
@@ -128,44 +146,51 @@
              SWR auto-cutoff. Each meter row only renders when the connected rig/backend actually
              negotiated that capability; never a placeholder for an unsupported rig
              (spec/14-roadmap.md's Piece 6 design decision). -->
-        <Border Classes="card">
-            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.OutputLabel}" />
-                <Grid Classes="kv" ColumnDefinitions="Auto,*,Auto">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.DriveLabel}" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Margin="4,0"
+        <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+            <HeaderedContentControl.Header>
+                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.OutputLabel}" />
+            </HeaderedContentControl.Header>
+            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.DriveLabel}" VerticalAlignment="Center" />
+                    <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0"
                             Value="{Binding RadioStatus.TxVolumePercent}"
                             Minimum="0" Maximum="100" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="2" Classes="value"
+                    <TextBlock Grid.Column="2" Classes="IndustryRowValue"
                                Text="{Binding RadioStatus.TxVolumePercent}"
                                VerticalAlignment="Center" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.OutputDeviceLabel}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.OutputDeviceValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowPowerMeter}">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Power}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding LivePowerPercent}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowAlcMeter}">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Alc}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding LiveAlcLevel}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*" IsVisible="{Binding ShowSwrMeter}">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.Swr}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding LiveSwrRatio}" />
-                </Grid>
+                </Grid></Border>
+                <StackPanel Classes="Industry IndustryRows">
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.OutputDeviceLabel}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.OutputDeviceValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow" IsVisible="{Binding ShowPowerMeter}"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.Power}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LivePowerPercent}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow" IsVisible="{Binding ShowAlcMeter}"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.Alc}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LiveAlcLevel}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow" IsVisible="{Binding ShowSwrMeter}"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.Swr}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LiveSwrRatio}" />
+                    </Grid></Border>
+                </StackPanel>
 
                 <!-- SWR auto-cutoff: disabled/greyed out (not just unchecked) when the rig doesn't
-                     report SWR; a checked-but-non-functional toggle would be worse than no toggle. -->
-                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                    <CheckBox Content="{loc:Translate Panes.TxControls.SwrCutoffEnabled}"
-                              IsChecked="{Binding SwrCutoffEnabled}"
-                              IsEnabled="{Binding ShowSwrMeter}"
-                              ToolTip.Tip="{loc:Translate Panes.TxControls.SwrCutoffEnabled.Help}" />
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.SwrCutoffThresholdLabel}" VerticalAlignment="Center" />
-                    <TextBox Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
+                     report SWR; a checked-but-non-functional toggle would be worse than no toggle.
+                     No mockup CheckBox atom exists (same reasoning as the waterfall's Peak-hold
+                     chip), represented as an IndustryMiniToggle chip instead. -->
+                <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}" Margin="0,2,0,0">
+                    <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}"
+                                  Content="{loc:Translate Panes.TxControls.SwrCutoffEnabled}"
+                                  IsChecked="{Binding SwrCutoffEnabled}"
+                                  IsEnabled="{Binding ShowSwrMeter}"
+                                  ToolTip.Tip="{loc:Translate Panes.TxControls.SwrCutoffEnabled.Help}" />
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.SwrCutoffThresholdLabel}" VerticalAlignment="Center" />
+                    <TextBox Classes="Industry IndustryInput" Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
                 </StackPanel>
 
                 <!-- Tone map is real (static per-mode SstvModeDefinition.LuminanceMinHz/MaxHz
@@ -175,31 +200,36 @@
                      specifically was researched and deliberately deferred, not just not yet done,
                      see ~/.claude/plans/wandering-glowing-otter.md. ALC/Power/SWR values themselves
                      are NOT duplicated here; the real conditional rows above already cover that. -->
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMap}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{Binding ToneMapText}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.TxClock}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.Telemetry.TxClockValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudio}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudioValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBw}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBwValue}" />
-                </Grid>
-                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxControls.Telemetry.MeterCaption}" />
-                <Border Classes="plot" MinHeight="20" />
+                <StackPanel Classes="Industry IndustryRows">
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMap}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ToneMapText}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.TxClock}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.TxClockValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudio}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudioValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBw}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBwValue}" />
+                    </Grid></Border>
+                </StackPanel>
+                <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.Telemetry.MeterCaption}" />
+                <Border Classes="IndustryHatchPanel" MinHeight="20" />
             </StackPanel>
-        </Border>
+        </HeaderedContentControl>
 
-        <!-- Stock/browse image source. -->
-        <Border Classes="card">
-            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxControls.StockLabel}" />
+        <!-- Stock/browse image source: real app feature, no mockup equivalent (same class of
+             deliberate addition as the Receive tab's Mode-override ComboBox). -->
+        <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+            <HeaderedContentControl.Header>
+                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.StockLabel}" />
+            </HeaderedContentControl.Header>
+            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                 <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120">
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -216,24 +246,24 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
-                <Button Content="{loc:Translate Panes.TxControls.SelectImage}"
+                <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.SelectImage}"
                         Command="{Binding SelectImageCommand}"
-                        HorizontalAlignment="Stretch" />
-                <TextBlock Classes="caption" Text="{Binding SelectedFileName}"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                <TextBlock Classes="IndustryRowLabel" Text="{Binding SelectedFileName}"
                            IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
                 <Image Source="{Binding PreviewImage}"
                        Stretch="Uniform"
                        MaxHeight="160"
                        IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
             </StackPanel>
-        </Border>
+        </HeaderedContentControl>
 
         <TextBlock Text="{Binding ErrorMessage}"
                    Foreground="{DynamicResource ScanlineStudioTxActiveColor}"
                    TextWrapping="Wrap"
                    IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
-        <StackPanel Orientation="Horizontal" Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
+        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
             <ToggleButton Content="{loc:Translate Panes.TxControls.Transmit}"
                           Theme="{StaticResource ScanlineStudioTxToggleButtonTheme}"
                           Command="{Binding TransmitCommand}"
@@ -245,49 +275,55 @@
         <!-- Outgoing metadata: visual scaffolding only; blocked on the same missing operator-
              profile setting as Identification, plus a "to station"/report/QSO-context concept
              that doesn't exist yet (spec/14-roadmap.md backlog). -->
-        <Border Classes="card">
-            <StackPanel Spacing="{DynamicResource ScanlineStudioSpacingSmall}">
-                <TextBlock Classes="cardHeader" Text="{loc:Translate Panes.TxOutgoing.CardHeader}" />
-                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxOutgoing.InSignalCaption}" />
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.VisCode}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.VisCodeValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.FskId}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxId.FskIdValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxId.CwId}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.CwIdValue}" />
-                </Grid>
-                <TextBlock Classes="caption" Text="{loc:Translate Panes.TxOutgoing.BurnedCaption}" />
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.Callsign}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.CallsignValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.ToStation}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.ToStationValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.GridBeam}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.GridBeamValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.Report}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.ReportValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.FreqMode}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.FreqModeValue}" />
-                </Grid>
-                <Grid Classes="kv" ColumnDefinitions="Auto,*">
-                    <TextBlock Classes="label" Text="{loc:Translate Panes.TxOutgoing.DateUtc}" />
-                    <TextBlock Grid.Column="1" Classes="value" Text="{loc:Translate Panes.TxOutgoing.DateUtcValue}" />
-                </Grid>
+        <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+            <HeaderedContentControl.Header>
+                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxOutgoing.CardHeader}" />
+            </HeaderedContentControl.Header>
+            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                <TextBlock Classes="Industry IndustryKicker" Text="{loc:Translate Panes.TxOutgoing.InSignalCaption}" />
+                <StackPanel Classes="Industry IndustryRows">
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.VisCode}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.VisCodeValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.FskId}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxId.FskIdValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.CwId}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.CwIdValue}" />
+                    </Grid></Border>
+                </StackPanel>
+                <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxOutgoing.BurnedCaption}" />
+                <StackPanel Classes="Industry IndustryRows">
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.Callsign}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.CallsignValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.ToStation}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.ToStationValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.GridBeam}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.GridBeamValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.Report}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.ReportValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.FreqMode}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.FreqModeValue}" />
+                    </Grid></Border>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.DateUtc}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.DateUtcValue}" />
+                    </Grid></Border>
+                </StackPanel>
             </StackPanel>
-        </Border>
+        </HeaderedContentControl>
 
     </StackPanel>
 
