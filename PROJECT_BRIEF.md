@@ -375,22 +375,66 @@ class of findings when that column's turn comes.
 **Verified**: full solution build clean, `UI.Tests` 173/173. Full-window screenshot confirms
 containment (nothing else clipped) and the uppercase changes rendering correctly.
 
-**Decision point for the user, not made unilaterally**: the centre and right columns need a real
-Industry-atom port (card chrome, legend notches, corner marks, atom-level controls replacing raw
-NumericUpDown/Slider/CheckBox, DataGrid header restyle, the Previous-frames nested-group-box +
-proportional-grid rework) — this is comparable in size to the ALREADY-SHIPPED Phase 1 (atoms) +
-Phase 2 (chrome) work, not a continuation of this session's touch-up passes. Options: (a) scope it as
-its own proper phase with plan + auditor plan-review before building, matching this project's own
-"audit UI design before building" convention, rather than doing it ad hoc under today's fix-and-log
-process; (b) keep doing cheap/safe wins only (uppercasing, obvious containment bugs) on old-style
-cards without the full port, deferring the real redesign; (c) something else the user prioritizes
-differently. Flagged rather than silently either doing a multi-hour unplanned redesign or leaving it
-as a buried nit-list item.
+**User decided: full port, card by card, no separate plan-review gate.** Asked directly (flagged as
+a decision point, not made unilaterally) — user's answer: "rework it into the new design. Do this for
+each new card that already also has an old design." Confirmed this IS effectively Phase 3
+(centre+right column) → Phase 4 (Transmit) → Phase 5 (Gallery) → Phase 6 (Logbook+Options) → Phase 7
+(cleanup) from the original plan (`~/.claude/plans/transient-jumping-bentley.md`), which already
+covers this exact scope — not new work being invented, just resuming the plan's own remaining phases.
+Per the user's own stated priority order this same session: **containment (fits, nothing clipped) >
+closeness to mockup > pixel-perfect** (concessions accepted where Avalonia's layout model genuinely
+can't match CSS), try every finding but cap at 3 try/review/adjust cycles, log what's left.
 
-**Not yet committed** — `git status --short`: `assets/locale/en.json`, `Views/MainWindow.axaml`.
+**Centre column: FULLY PORTED, all 3 cards, committed as 3 separate batches** (`1378087`
+Spectrum & waterfall, `5728901` Incoming frame + Previous frames, `dcd7433` Decode activity — each
+own build+test+screenshot-verified before commit, matching this session's established per-card
+process; no separate auditor plan-review round used, per the plan's own stated policy that phases
+2-5 get "lighter single-pass review" since they're mostly 1:1 markup ports, not new visual
+architecture).
 
-**Next**: awaiting user direction on the centre/right-column port scope above. If deferred, right
-column would otherwise be next in the original per-card verification sequence.
+- **Spectrum & waterfall**: `IndustryGroupBoxTheme` chrome, new `IndustryPlot` atom (dark
+  accent-900 plot-canvas frame, reused by `WaterfallPaneView.axaml` too), `IndustryStepperTheme`
+  for Bins/px·Start·Span, `IndustrySliderTheme` for Gain/Zero (now sharing one row per the
+  mockup, was two full-width rows), `IndustrySegTheme` for Both/Spec/WF, an `IndustryMiniToggleTheme`
+  chip for Peak hold (real functionality, no mockup equivalent — same treatment as the header row's
+  CAT-linked chip). **Found and fixed a real latent bug in `IndustryStepperTheme` itself** (first
+  real consumer of the atom, built in Phase 1 but never actually rendered until now): the decrement
+  glyph's Path geometry (`M 0 0 L 8 0`) has a zero-height bounding box, degenerate for Stretch's
+  scale computation — silently failed to render regardless of Stretch mode, so every stepper in the
+  app had an invisible/unusable "−" button. Fixed with an explicit non-degenerate Path box (`Width=
+  "8" Height="8"`, line recentered to y=4), applied to both glyphs for symmetry. `Stretch="None"`
+  ALONE (the exact fix that worked for the earlier corner-mark bug) did NOT fix this one — a real
+  empirical lesson, not assumed from precedent.
+- **Incoming frame**: one of the design's 2 real `gb blueprint` sites (title notch + corner marks
+  together) — confirmed working via the same crisp-1px stroke fix from the header-row corner-mark
+  work. Bottom action bar → `IndustryBtn25`; new lightweight `ProgressBar.Industry` re-skin (reuses
+  Fluent's own percent-sizing logic, just recolors/resizes, not a full ControlTemplate replacement)
+  for the frame-decode progress bar. Nested "Previous frames" group box was missing entirely before
+  (bare caption + WrapPanel) — now a real nested `HeaderedContentControl` using the
+  `IndustryThumbnail`/`ThumbnailCaption`/`ThumbnailCall`/`ThumbnailMeta` atoms (also unused until
+  now), with `UniformGrid Columns="2"` replacing the WrapPanel-of-fixed-120px-items (mockup's own
+  `grid-template-columns:repeat(2,1fr)` is proportional, not fixed-size — old thumbnails were ~2.9x
+  smaller than the mockup's real cell size).
+- **Decode activity**: real `Avalonia.Controls.DataGrid` (header-only, no `ItemsSource`, no data
+  rows possible today) replaced with a plain `Grid` + the `IndustryTable` atoms
+  (`IndustryTableHeaderRule`/`IndustryTableHeader`), matching the original plan's own item-10
+  decision not to fight DataGrid's chrome for a static scaffolding table. Border-per-cell, not one
+  Border around the whole header row, so each column gets its own padding (mockup's `<th>`
+  semantics are per-cell).
+
+**Verified per card**: full solution build clean, `UI.Tests` 173/173 throughout every commit,
+real-window screenshots zoomed per card confirming containment + corner-mark/stepper-glyph pixel
+fidelity. Two more `--`-in-XML-comment build breaks hit and fixed along the way (now a recurring
+self-inflicted snag this session — worth remembering to write comments without literal double-hyphens
+in future XAML edits, not just when it happens to get caught by the build).
+
+**Not yet reviewed**: a `design-fidelity` pass across the whole centre column together (as opposed to
+each card's own individual self-check) hasn't run yet — queued next, before moving to the right
+column, to catch anything a per-card view might miss (e.g. inter-card spacing/alignment across all 3
+now-ported cards together).
+
+**Next**: right column (Frame metadata / Unattended RX / Session frames / Macros) — same process,
+card by card, commit per card.
 
 ## Previously (2026-08-10) — GUI wiring survey refreshed, RX telemetry work closed
 
