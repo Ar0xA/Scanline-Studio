@@ -179,6 +179,63 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     public string OutputDeviceNameDisplay => OutputDeviceName ?? "—";
 
+    /// <summary>Frame-metadata-style read-only summary of what <see cref="ISstvSessionService.TransmitAsync"/>
+    /// would actually resolve right now (CW-ID/FSK station-ID subsystem Phase 6) -- backs the
+    /// Transmit tab's "Identification" card. Loaded once at construction via
+    /// <see cref="ISstvSessionService.GetStationIdTransmitOptionsAsync"/>, same "not re-fetched on a
+    /// live settings change while this pane stays open" convention as <see cref="OutputDeviceName"/>
+    /// above.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FskIdDisplay))]
+    [NotifyPropertyChangedFor(nameof(TailDisplay))]
+    private bool _fskIdEnabled;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FskIdDisplay))]
+    private string? _identificationCallsign;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CwIdDisplay))]
+    [NotifyPropertyChangedFor(nameof(TailDisplay))]
+    private bool _cwIdEnabled;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CwIdDisplay))]
+    private int _identificationCwWpm;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CwIdDisplay))]
+    private double _identificationCwToneFrequencyHz;
+
+    /// <summary>Mockup's own "DL2QSK"-shaped value -- the callsign as-configured (not the
+    /// wire-normalized form <c>AnalogFmSstvEncoder</c> actually sends; see
+    /// <c>StationIdTransmitOptions.Callsign</c>'s own doc comment for why normalization happens
+    /// there, not here). "Off" (localized) when FSK-ID TX is disabled -- <b>not</b> when the
+    /// callsign happens to be empty while enabled (that's a real, if unusual, configuration state
+    /// this card should still describe accurately, not hide behind the same fallback text).</summary>
+    public string FskIdDisplay => FskIdEnabled
+        ? IdentificationCallsign ?? string.Empty
+        : _localization.GetString("Panes.TxId.Off");
+
+    /// <summary>Mockup's own "18 WPM · 800 Hz"-shaped value.</summary>
+    public string CwIdDisplay => CwIdEnabled
+        ? _localization.GetString("Panes.TxId.CwIdFormat", IdentificationCwWpm, IdentificationCwToneFrequencyHz)
+        : _localization.GetString("Panes.TxId.Off");
+
+    /// <summary>Summary of what actually gets appended after the image
+    /// (<c>Main.cpp:7018-7025</c>'s real order: FSK-ID packet first, then CW-ID -- independent, not
+    /// mutually exclusive, matching <c>AnalogFmSstvEncoder.GenerateFrequencySegments</c>'s own
+    /// append order). Genuinely new wording (mockup's own "CW after frame" is one specific
+    /// combination, not a format this reuses verbatim) -- a reasonable, low-risk reading of what
+    /// this row is for, not a citation-backed legacy string.</summary>
+    public string TailDisplay => (FskIdEnabled, CwIdEnabled) switch
+    {
+        (true, true) => _localization.GetString("Panes.TxId.TailBoth"),
+        (true, false) => _localization.GetString("Panes.TxId.TailFskOnly"),
+        (false, true) => _localization.GetString("Panes.TxId.TailCwOnly"),
+        (false, false) => _localization.GetString("Panes.TxId.Off"),
+    };
+
     public TxControlsPaneViewModel(
         ISstvSessionService sstvSession,
         IImageFileLoader imageFileLoader,
@@ -217,6 +274,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _ = LoadTxPaneUiSettingsAsync();
         _ = LoadSafetySettingsAsync();
         _ = LoadOutputDeviceNameAsync();
+        _ = LoadIdentificationSummaryAsync();
     }
 
     /// <summary>Fired when a picked source's original image has loaded and a
@@ -311,6 +369,25 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // Best-effort, same reasoning as LoadTxPaneUiSettingsAsync above -- a failure here
             // leaves the field null (no device shown) rather than blocking construction.
             Log.LoadOutputDeviceNameFailed(_logger, ex);
+        }
+    }
+
+    private async Task LoadIdentificationSummaryAsync()
+    {
+        try
+        {
+            var stationId = await _sstvSession.GetStationIdTransmitOptionsAsync();
+            FskIdEnabled = stationId.FskIdEnabled;
+            IdentificationCallsign = stationId.Callsign;
+            CwIdEnabled = stationId.CwEnabled;
+            IdentificationCwWpm = stationId.CwWpm;
+            IdentificationCwToneFrequencyHz = stationId.CwToneFrequencyHz;
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, same reasoning as LoadOutputDeviceNameAsync above -- a failure here
+            // leaves the card showing "Off" for everything rather than blocking construction.
+            Log.LoadIdentificationSummaryFailed(_logger, ex);
         }
     }
 
@@ -738,6 +815,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured TX output device name failed")]
         public static partial void LoadOutputDeviceNameFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading the CW-ID/FSK-ID Identification card summary failed")]
+        public static partial void LoadIdentificationSummaryFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading radio safety settings failed")]
         public static partial void LoadSafetySettingsFailed(ILogger logger, Exception ex);

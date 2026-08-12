@@ -1,26 +1,15 @@
-namespace ScanlineStudio.Core.Sstv;
+using ScanlineStudio.Abstractions.Sstv;
 
-/// <summary>Mirrors legacy's <c>sys.m_CWID</c> tri-state (<c>Main.cpp:7021-7025</c>,
-/// <c>Option.cpp:586-592</c>) -- NOT a bool. <see cref="SoundFile"/> corresponds to
-/// <c>OutputMMV</c> (sound-file station ID), deliberately unimplemented in v1 (out of scope per the
-/// CW-ID/FSK station-ID subsystem plan) -- modeled as its own enum member anyway so a future
-/// sound-file feature doesn't need a breaking settings migration. Selecting it today silently
-/// transmits no CW-ID at all, matching legacy's own behavior when no sound file is configured
-/// (<c>!sys.m_MMVID.IsEmpty()</c> gate failing), not a bug.</summary>
-public enum CwIdMode
-{
-    Off = 0,
-    Cw = 1,
-    SoundFile = 2,
-}
+namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>Persisted CW-ID/FSK station-ID configuration -- see the CW-ID/FSK station-ID subsystem
 /// implementation plan for the full legacy citation trail. <see cref="ScanlineStudio.Application.SstvSessionService"/>
 /// is the only reader (resolves this alongside <c>OperatorSettings</c>/<c>IMacroTextResolver</c> into
 /// a <see cref="ScanlineStudio.Abstractions.Sstv.StationIdTransmitOptions"/> right before each
-/// transmission -- see that type's own doc comment for why the split exists). No Options-dialog
-/// wiring exists yet (that's a later phase); every field defaults to legacy's own compiled-in
-/// default, so an absent section behaves exactly like a fresh legacy install with nothing configured.
+/// transmission -- see that type's own doc comment for why the split exists). The Options dialog's
+/// Identification tab (CW-ID/FSK station-ID subsystem Phase 6) writes this section; every field
+/// defaults to legacy's own compiled-in default, so an absent section behaves exactly like a fresh
+/// legacy install with nothing configured.
 ///
 /// Several properties are nullable even though their real default isn't the CLR default (<c>0</c>/
 /// <c>false</c>) -- System.Text.Json does not honor an <c>init</c>-only property's C# initializer
@@ -38,6 +27,11 @@ public sealed record StationIdSettings
     /// <summary><c>Main.cpp:907</c>.</summary>
     public const double DefaultCwToneFrequencyHz = 1000;
 
+    /// <summary><c>Main.cpp:906</c> -- legacy's first-run pre-fill for <see cref="CwText"/>. Purely a
+    /// UI nicety (never fires while <see cref="CwIdMode"/> itself defaults to <see cref="CwIdMode.Off"/>),
+    /// applied the same "absent means apply the documented default" way as <see cref="DefaultCwWpm"/>.</summary>
+    public const string DefaultCwText = "DE %m";
+
     /// <summary><c>LogFile.cpp:378</c>: <c>Log.m_LogSet.m_FSKNR</c> defaults to 1 (enabled), not 0 --
     /// the one field on this record whose legacy default is "on."</summary>
     public const bool DefaultNrRstEnabled = true;
@@ -52,12 +46,17 @@ public sealed record StationIdSettings
     /// resolves it at TX time, not here). <see langword="null"/>/empty both mean "nothing configured,"
     /// matching <c>OutputCWID</c>'s own <c>!sys.m_CWIDText.IsEmpty()</c> gate
     /// (<c>Main.cpp:6969</c>) -- checked on this RAW field, not the resolved text. Legacy pre-fills
-    /// this to <c>"DE %m"</c> (<c>Main.cpp:906</c>) even though <see cref="CwIdMode"/> itself defaults
-    /// to <see cref="CwIdMode.Off"/> (so it never fires by default either way) -- purely a
-    /// first-run-UI nicety, not behaviorally load-bearing; left <see langword="null"/> here and
-    /// deferred to the Options-dialog phase's initial-value handling, not duplicated as a settings
-    /// default (would hit the same STJ trap this doc comment describes for a value that isn't the
-    /// empty-string CLR default).</summary>
+    /// this to <see cref="DefaultCwText"/> even though <see cref="CwIdMode"/> itself defaults to
+    /// <see cref="CwIdMode.Off"/> (so it never fires by default either way) -- purely a
+    /// first-run-UI nicety, not behaviorally load-bearing; the CLR default here stays
+    /// <see langword="null"/> (matching this record's own no-non-null-initializer STJ-trap rule).
+    /// UNLIKE <see cref="CwWpm"/>/<see cref="CwToneFrequencyHz"/>'s "null means apply the documented
+    /// default" rule, <see cref="DefaultCwText"/> is applied ONLY by
+    /// <c>ScanlineStudio.Application.OptionsSettingsService</c>'s Options-dialog display path (so
+    /// the empty box shows the legacy first-run hint) -- <c>SstvSessionService</c>'s TX-time
+    /// resolution reads this field raw and treats <see langword="null"/>/empty as "nothing
+    /// configured" per the <c>OutputCWID</c> gate cited above, exactly matching legacy's own
+    /// zero-initialized-then-user-typed-over field, not a "null == DE %m" substitution.</summary>
     public string? CwText { get; init; }
 
     /// <summary>WPM, wired to actually drive CW-ID dot length (a deliberate, user-approved deviation
