@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Settings;
@@ -165,6 +166,42 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(TestQrzLookupCommand))]
     private bool _isTestingQrzLookup;
 
+    /// <summary>Backs the Identification tab's "ID method" 3-way radio group -- see
+    /// <see cref="CwIdMode"/>'s own doc comment for what each value means. Unlike every OTHER
+    /// value this group's radio buttons could carry, <see cref="ScanlineStudio.Abstractions.Sstv.CwIdMode.SoundFile"/>
+    /// is NOT selectable here -- the sound-file ID feature itself is unimplemented (out of v1 scope),
+    /// so its `RadioButton` stays individually disabled with a not-implemented tooltip, matching this
+    /// dialog's own established per-control (not whole-group) disable convention already used for
+    /// the sound-file text/browse row directly below it.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsIdMethodOffSelected))]
+    [NotifyPropertyChangedFor(nameof(IsIdMethodCwSelected))]
+    private CwIdMode _cwIdMode;
+
+    [ObservableProperty]
+    private string? _cwText;
+
+    /// <summary>WPM, wired to actually drive CW-ID dot length -- see <c>CwMorseGenerator</c>'s own
+    /// doc comment for why this is a deliberate, user-approved deviation from an apparent legacy bug
+    /// (the WPM UI value never actually applied to post-image CW-ID timing there). Literal `28`
+    /// (not a reference to `ScanlineStudio.Core.Sstv.StationIdSettings.DefaultCwWpm`, which
+    /// `ScanlineStudio.UI` cannot reference -- `UiLayeringArchitectureTests`) is only a brief
+    /// pre-load placeholder, same as <see cref="SampleRate"/>/<see cref="SenseLevel"/>'s own
+    /// hardcoded-literal-default convention elsewhere in this class; <see cref="LoadSafeAsync"/>
+    /// overwrites it immediately via <see cref="ApplyFromSnapshot"/>.</summary>
+    [ObservableProperty]
+    private int _cwWpm = 28;
+
+    /// <summary>Literal `1000`, same reasoning as <see cref="CwWpm"/>'s own doc comment.</summary>
+    [ObservableProperty]
+    private double _cwToneFrequencyHz = 1000;
+
+    [ObservableProperty]
+    private bool _fskIdTxEnabled;
+
+    [ObservableProperty]
+    private bool _fskIdRxEnabled;
+
     public OptionsWindowViewModel(
         OptionsSettingsService optionsSettingsService,
         ILocalizationService localization,
@@ -281,6 +318,34 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             if (value)
             {
                 SenseLevel = 3;
+            }
+        }
+    }
+
+    /// <summary>Backs the Identification tab's "ID method" radio group -- same computed-bool idiom
+    /// as <see cref="IsSenseLevelVeryLowSelected"/>/etc above. No <c>IsIdMethodSoundFileSelected</c>
+    /// counterpart -- see <see cref="CwIdMode"/>'s own doc comment for why that option's `RadioButton`
+    /// stays individually disabled rather than wired.</summary>
+    public bool IsIdMethodOffSelected
+    {
+        get => CwIdMode == CwIdMode.Off;
+        set
+        {
+            if (value)
+            {
+                CwIdMode = CwIdMode.Off;
+            }
+        }
+    }
+
+    public bool IsIdMethodCwSelected
+    {
+        get => CwIdMode == CwIdMode.Cw;
+        set
+        {
+            if (value)
+            {
+                CwIdMode = CwIdMode.Cw;
             }
         }
     }
@@ -416,6 +481,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         QrzLookupEnabled = snapshot.QrzLookupEnabled;
         QrzLookupUsername = snapshot.QrzLookupUsername;
         QrzLookupPassword = snapshot.QrzLookupPassword;
+        // Clamp, not trust -- same reasoning as SenseLevel above: a hand-edited settings.json could
+        // in principle carry an out-of-range enum value. Falls back to Off, matching CwIdMode's own
+        // CLR/legacy default.
+        CwIdMode = Enum.IsDefined(snapshot.CwIdMode) ? snapshot.CwIdMode : CwIdMode.Off;
+        CwText = snapshot.CwText;
+        CwWpm = snapshot.CwWpm;
+        CwToneFrequencyHz = snapshot.CwToneFrequencyHz;
+        FskIdTxEnabled = snapshot.FskIdTxEnabled;
+        FskIdRxEnabled = snapshot.FskIdRxEnabled;
     }
 
     [RelayCommand]
@@ -454,7 +528,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             QrzLookupPassword: QrzLookupPassword,
             CaptureChannelSource: CaptureChannelSource,
             StereoTxEnabled: StereoTxEnabled,
-            AppPriorityIsHigh: AppPriorityIsHigh);
+            AppPriorityIsHigh: AppPriorityIsHigh,
+            CwIdMode: CwIdMode,
+            CwText: CwText,
+            CwWpm: CwWpm,
+            CwToneFrequencyHz: CwToneFrequencyHz,
+            FskIdTxEnabled: FskIdTxEnabled,
+            FskIdRxEnabled: FskIdRxEnabled);
 
         try
         {
@@ -562,6 +642,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         TestQrzLookupStatus = null;
     }
 
+    [RelayCommand]
+    private void ResetIdentificationToDefault()
+    {
+        Log.ResetSectionInvoked(_logger, "Identification");
+        var defaults = OptionsSettingsService.Defaults;
+        CwIdMode = defaults.CwIdMode;
+        CwText = defaults.CwText;
+        CwWpm = defaults.CwWpm;
+        CwToneFrequencyHz = defaults.CwToneFrequencyHz;
+        FskIdTxEnabled = defaults.FskIdTxEnabled;
+        FskIdRxEnabled = defaults.FskIdRxEnabled;
+    }
+
     private bool CanTestQrzLookup() => !IsTestingQrzLookup && !string.IsNullOrWhiteSpace(QrzLookupUsername) && !string.IsNullOrWhiteSpace(QrzLookupPassword);
 
     [RelayCommand(CanExecute = nameof(CanTestQrzLookup))]
@@ -601,6 +694,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         ResetTxToDefault();
         ResetDecodeToDefault();
         ResetQrzToDefault();
+        ResetIdentificationToDefault();
         IsConfirmingResetAll = false;
     }
 

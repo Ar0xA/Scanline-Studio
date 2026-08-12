@@ -1,8 +1,10 @@
+using System.Collections.Generic;
 using System.Globalization;
 using Microsoft.Extensions.Logging.Abstractions;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Localization;
@@ -330,7 +332,8 @@ public sealed class OptionsWindowViewModelTests
             Settings = new AppSettings()
                 .WithSection(RadioConnectionSettings.SectionKey, new RadioConnectionSettings { BackendId = "rigctld", Host = "x", Port = 1 }, RadioSettingsJsonContext.Default.RadioConnectionSettings)
                 .WithSection(OperatorSettings.SectionKey, new OperatorSettings { Callsign = "SOMECALL" }, OperatorSettingsJsonContext.Default.OperatorSettings)
-                .WithSection(SstvDecoderSettings.SectionKey, new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false }, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
+                .WithSection(SstvDecoderSettings.SectionKey, new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false }, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
+                .WithSection(StationIdSettings.SectionKey, new StationIdSettings { CwIdMode = CwIdMode.Cw, CwWpm = 40 }, StationIdSettingsJsonContext.Default.StationIdSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
@@ -347,6 +350,10 @@ public sealed class OptionsWindowViewModelTests
         Assert.Null(vm.Callsign);
         Assert.True(vm.AutoSyncEnabled);
         Assert.True(vm.AutoSlantEnabled);
+        // Auditor round-2 finding: ConfirmResetAll originally omitted Identification entirely --
+        // this is the blind spot that let that regression through undetected.
+        Assert.Equal(CwIdMode.Off, vm.CwIdMode);
+        Assert.Equal(28, vm.CwWpm);
     }
 
     [AvaloniaFact]
@@ -649,5 +656,148 @@ public sealed class OptionsWindowViewModelTests
         vm.ResetGeneralToDefaultCommand.Execute(null);
 
         Assert.False(vm.RememberWindowPosition);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_NoStationIdSection_DefaultsToOffAndLegacyCwDefaults()
+    {
+        // StationIdSettings.CwIdMode default (Off), DefaultCwWpm (28), DefaultCwToneFrequencyHz
+        // (1000) -- matching legacy's own compiled-in defaults (Main.cpp:902-907).
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(CwIdMode.Off, vm.CwIdMode);
+        Assert.True(vm.IsIdMethodOffSelected);
+        Assert.False(vm.IsIdMethodCwSelected);
+        Assert.Equal("DE %m", vm.CwText);
+        Assert.Equal(28, vm.CwWpm);
+        Assert.Equal(1000.0, vm.CwToneFrequencyHz);
+        Assert.False(vm.FskIdTxEnabled);
+        Assert.False(vm.FskIdRxEnabled);
+    }
+
+    [AvaloniaFact]
+    public void IsIdMethodCwSelected_Set_UpdatesCwIdModeAndTheSiblingProperty()
+    {
+        // Same computed-bool-radio-group idiom as IsSenseLevelXSelected/etc -- setting one to true
+        // switches the underlying enum, which flips the OTHER computed property too.
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsIdMethodCwSelected = true;
+
+        Assert.Equal(CwIdMode.Cw, vm.CwIdMode);
+        Assert.True(vm.IsIdMethodCwSelected);
+        Assert.False(vm.IsIdMethodOffSelected);
+    }
+
+    [AvaloniaFact]
+    public void IsIdMethodCwSelected_Set_RaisesPropertyChangedForItselfAndTheOffSibling()
+    {
+        // OptionsWindowView.axaml's CW text/frequency/speed sub-panel binds
+        // IsVisible="{Binding IsIdMethodCwSelected}" -- a passing bool-value assertion alone (the
+        // test above) doesn't prove that binding actually re-evaluates on toggle; only a real
+        // PropertyChanged notification does.
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.IsIdMethodCwSelected = true;
+
+        Assert.Contains(nameof(vm.IsIdMethodCwSelected), raised);
+        Assert.Contains(nameof(vm.IsIdMethodOffSelected), raised);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_OutOfRangeCwIdModeInSettings_ClampsToOff()
+    {
+        // ApplyFromSnapshot's Enum.IsDefined guard -- a hand-edited/future-downgrade settings.json
+        // could carry an enum value this build doesn't know about.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                StationIdSettings.SectionKey,
+                new StationIdSettings { CwIdMode = (CwIdMode)99 },
+                StationIdSettingsJsonContext.Default.StationIdSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(CwIdMode.Off, vm.CwIdMode);
+        Assert.True(vm.IsIdMethodOffSelected);
+    }
+
+    [AvaloniaFact]
+    public void ResetIdentificationToDefault_RestoresEveryField()
+    {
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.CwIdMode = CwIdMode.Cw;
+        vm.CwText = "DE OTHERCALL";
+        vm.CwWpm = 40;
+        vm.CwToneFrequencyHz = 600;
+        vm.FskIdTxEnabled = true;
+        vm.FskIdRxEnabled = true;
+
+        vm.ResetIdentificationToDefaultCommand.Execute(null);
+
+        Assert.Equal(CwIdMode.Off, vm.CwIdMode);
+        Assert.Equal("DE %m", vm.CwText);
+        Assert.Equal(28, vm.CwWpm);
+        Assert.Equal(1000.0, vm.CwToneFrequencyHz);
+        Assert.False(vm.FskIdTxEnabled);
+        Assert.False(vm.FskIdRxEnabled);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveAsync_PersistsIdentificationFields_ReloadedCorrectlyOnNextConstruction()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.CwIdMode = CwIdMode.Cw;
+        vm.CwText = "DE %m";
+        vm.CwWpm = 22;
+        vm.CwToneFrequencyHz = 700;
+        vm.FskIdTxEnabled = true;
+        vm.FskIdRxEnabled = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var reloaded = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(CwIdMode.Cw, reloaded.CwIdMode);
+        Assert.Equal("DE %m", reloaded.CwText);
+        Assert.Equal(22, reloaded.CwWpm);
+        Assert.Equal(700.0, reloaded.CwToneFrequencyHz);
+        Assert.True(reloaded.FskIdTxEnabled);
+        Assert.True(reloaded.FskIdRxEnabled);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveAsync_NrRstFieldsWithNoUiControl_ArePreservedNotResetToDefault()
+    {
+        // OptionsSnapshot's own doc comment: StationIdSettings.NrRstEnabled/NrRstText have no
+        // Options-dialog control yet -- a Save from this dialog must not silently reset them
+        // (same "preserve previous" contract as SstvDecoderSettings.AfcEnabled).
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                StationIdSettings.SectionKey,
+                new StationIdSettings { NrRstEnabled = true, NrRstText = "599123" },
+                StationIdSettingsJsonContext.Default.StationIdSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.FskIdTxEnabled = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var stationId = settingsStore.Settings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings);
+        Assert.True(stationId!.NrRstEnabled);
+        Assert.Equal("599123", stationId.NrRstText);
+        Assert.True(stationId.FskIdTxEnabled);
     }
 }

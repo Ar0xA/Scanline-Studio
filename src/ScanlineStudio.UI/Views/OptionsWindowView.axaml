@@ -401,10 +401,14 @@
                     </ScrollViewer>
                 </TabItem>
 
-                <!-- New tab: ID methods + VOX + tune-satellite trigger. All disabled; none of
-                     CW/FSK/sound-file ID, VOX, or the satellite-tune trigger exist yet. Tune
-                     frequency/duration themselves are real (header's Tune row) and intentionally
-                     NOT duplicated here. -->
+                <!-- ID method (CW/FSK) is real (CW-ID/FSK station-ID subsystem, Phase 6). Sound-file
+                     ID, VOX, and the satellite-tune trigger stay disabled: none of those exist
+                     yet. Tune frequency/duration themselves are real (header's Tune row) and
+                     intentionally NOT duplicated here. NR/RST TX enable/text have no control here
+                     at all (no mockup row exists for them yet: StationIdSettings.NrRstEnabled/
+                     NrRstText are real, tested backend settings, preserved as-is by this dialog's
+                     Save the same way SstvDecoderSettings.AfcEnabled is; see OptionsSnapshot's
+                     own doc comment). -->
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Identification.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
@@ -413,23 +417,27 @@
                                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Identification.IdMethodHeader}" />
                                 </HeaderedContentControl.Header>
                                 <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.Off}" IsChecked="True" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.Cw}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethodPlaceholder" Content="{loc:Translate Options.Identification.IdMethod.SoundFile}" />
+                                    <WrapPanel>
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethod" Content="{loc:Translate Options.Identification.IdMethod.Off}" IsChecked="{Binding IsIdMethodOffSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethod" Content="{loc:Translate Options.Identification.IdMethod.Cw}" IsChecked="{Binding IsIdMethodCwSelected}" />
+                                        <!-- Sound-file ID (OutputMMV) is unimplemented, out of v1 scope: stays individually
+                                             disabled rather than joining the live radio group (CwIdMode's own doc comment). -->
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethod" Content="{loc:Translate Options.Identification.IdMethod.SoundFile}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </WrapPanel>
 
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Identification.CwText}" />
-                                    <TextBox Classes="Industry IndustryInput" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <StackPanel IsVisible="{Binding IsIdMethodCwSelected}" Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Identification.CwText}" />
+                                        <TextBox Classes="Industry IndustryInput" Text="{Binding CwText}" />
 
-                                    <Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwFrequency}" />
-                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="800" Minimum="300" Maximum="3000" HorizontalAlignment="Left" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </Grid>
-                                    <Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwSpeed}" />
-                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="18" Minimum="10" Maximum="40" HorizontalAlignment="Left" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </Grid>
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwFrequency}" />
+                                            <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding CwToneFrequencyHz}" Minimum="100" Maximum="3000" HorizontalAlignment="Left" />
+                                        </Grid>
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwSpeed}" />
+                                            <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding CwWpm}" Minimum="10" Maximum="50" HorizontalAlignment="Left" />
+                                        </Grid>
+                                    </StackPanel>
 
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.SoundFile}" />
@@ -441,9 +449,9 @@
                                     </Grid>
 
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.FskEncode}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding FskIdTxEnabled}" />
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.FskDecode}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding FskIdRxEnabled}" />
                                 </StackPanel>
                             </HeaderedContentControl>
 
@@ -467,6 +475,8 @@
                                     <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Identification.TuneSatellite.Help}" />
                                 </StackPanel>
                             </ContentControl>
+
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetIdentificationToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
