@@ -313,14 +313,16 @@
                     </ScrollViewer>
                 </TabItem>
 
-                <!-- New tab: RX/demod behavior. Auto-Sync/Auto-Slant wired 2026-08-11 (real
-                     SstvDecoderSettings fields, restart-required). Everything else stays disabled:
-                     Sense level/RX BPF/Demod type/RX buffer have no backing settings surface at all
-                     (AnalogFmSstvDecoder hardcodes them internally, confirmed by reading its full
-                     public surface); Auto-stop/Auto-restart DO have real backing fields
-                     (AutoStopEnabled/SyncRestartEnabled) but their loc text doesn't match what those
-                     fields actually gate, left stub pending a wording fix, see
-                     OptionsWindowViewModel's AutoSyncEnabled/AutoSlantEnabled doc comment. -->
+                <!-- RX/demod behavior tab. Auto-Sync/Auto-Slant wired 2026-08-11, Auto-stop/
+                     Auto-restart + Sense level wired 2026-08-12, Demod type wired 2026-08-12
+                     (demod-type runtime-dispatch subsystem, all 4 phases), all real
+                     SstvDecoderSettings fields, restart-required. RX BPF/RX buffer/Auto-start remain
+                     disabled: no backing settings surface exists yet for RX BPF/RX buffer (each
+                     needs its own larger DSP-scoping pass: RX BPF a CalcBPF-equivalent FIR
+                     filter-preset port, RX buffer a whole buffered-line-replay subsystem), and
+                     Auto-start's real legacy behavior lives on the legacy TOOLBAR (SBAuto), not in
+                     Option.dfm: a placement question, not investigated further; see
+                     spec/16-gui-wiring-survey.md's Decode-tab section for all three. -->
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Decode.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
@@ -349,10 +351,10 @@
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.DemodType}" />
                                         <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.DemodType.Help}" />
                                     </StackPanel>
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.Pll}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.ZeroCrossing}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodTypePlaceholder" Content="{loc:Translate Options.Decode.DemodType.Hilbert}" IsChecked="True" />
+                                    <WrapPanel>
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodType" Content="{loc:Translate Options.Decode.DemodType.Pll}" IsChecked="{Binding IsDemodTypePllSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodType" Content="{loc:Translate Options.Decode.DemodType.ZeroCrossing}" IsChecked="{Binding IsDemodTypeZeroCrossingSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodType" Content="{loc:Translate Options.Decode.DemodType.Hilbert}" IsChecked="{Binding IsDemodTypeHilbertSelected}" />
                                     </WrapPanel>
 
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Decode.RxBuffer}" />

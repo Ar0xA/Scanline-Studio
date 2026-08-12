@@ -607,7 +607,7 @@
   "Options.Decode.RxBpf.Sharp": "Sharp",
   "Options.Decode.RxBpf.VerySharp": "Very sharp",
   "Options.Decode.DemodType": "Demodulator type",
-  "Options.Decode.DemodType.Help": "Which FM discriminator algorithm decodes the audio. Hilbert transform is what this app actually uses today (matches legacy's own shipped default); PLL is used internally for AVT only; zero-crossing isn't ported.",
+  "Options.Decode.DemodType.Help": "Which FM discriminator algorithm decodes the audio. Hilbert transform matches legacy's own shipped default. PLL and zero crossing are real, selectable alternatives; PLL is also always used internally for AVT training regardless of this setting. Takes effect after restarting.",
   "Options.Decode.DemodType.Pll": "PLL",
   "Options.Decode.DemodType.ZeroCrossing": "Zero crossing",
   "Options.Decode.DemodType.Hilbert": "Hilbert transform",
