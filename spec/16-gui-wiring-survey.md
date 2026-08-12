@@ -508,14 +508,24 @@ codec + this whole tab's UI) is comparable in size to the QRZ lookup feature —
 dedicated session (`spec/14-roadmap.md`'s "CW-ID / FSK station-ID subsystem" entry has the full
 citation trail), not bundled into an ordinary wiring pass.
 
-### Advanced tab — fully STUB
+### Advanced tab — fully STUB, re-confirmed 2026-08-12
 
 PLL (VCO gain/loop order/loop cutoff/out cutoff), Zero-crossing (order/cutoff/smoothing) +
 Differentiator, TX BPF/LPF + sample-clock offset, Loopback mode, Polynomial calibration,
 Clock-adjust wizard, Level-calibration wizard — every control (`OptionsWindowView.axaml:456-536`,
 same chip/checkbox re-skin) is `IsEnabled="False"`. Filter-response preview buttons from legacy
 (`DispTxBpf` etc.) were deliberately omitted rather than stubbed, since there's nothing real yet
-to preview.
+to preview. This tab's own loc caption (`Options.Advanced.Caption`) already honestly states "None
+of these are wired to real behavior yet" — a deliberate, pre-existing decision from an earlier
+session, not an oversight this pass needed to correct. Most rows tie directly to the already-deferred
+Decode-tab items: PLL/Zero-crossing tuning only matters once Demod-type gets real runtime dispatch
+(deferred, see Decode tab section); TX BPF/LPF's "enable" toggles tie to `TxOutputBandpassFilter`,
+which this port already applies unconditionally (a deliberate simplification per that class's own
+doc comment) — making it a real, user-toggleable bypass is a small, bounded change, but it's still
+core TX-encode-path code with real over-the-air spectral consequences, so it gets the same
+auditor-reviewed care as the rest of this tab rather than being cherry-picked out on its own.
+Loopback/Polynomial-calibration/Clock-adjust-wizard/Level-calibration-wizard have no investigated
+backend at all — full calibration-flow UI, unbuilt. Whole tab correctly stays deferred as a unit.
 
 ---
 

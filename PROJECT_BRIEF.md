@@ -212,26 +212,41 @@ needs its own dedicated session, not bundled into an ordinary wiring pass. Doc-o
 pass (`spec/14-roadmap.md`/`spec/16-gui-wiring-survey.md` updated with full citations); no code
 touched.
 
+**Options Advanced tab re-confirmed, stays deferred as a unit** — same session. Its own loc caption
+already honestly declared "None of these are wired to real behavior yet" from an earlier session —
+re-checked row by row, not just trusted: PLL/Zero-crossing tuning ties to the already-deferred
+Demod-type work; TX BPF/LPF's "enable" toggles tie to `TxOutputBandpassFilter` (already built,
+applied unconditionally) — a small, bounded change to make it a real toggle, but real over-the-air
+spectral consequences, so it gets the same care as the rest of this tab rather than being
+cherry-picked; Loopback/calibration wizards have no investigated backend at all. Whole tab correctly
+stays deferred. Doc-only, no code touched.
+
 **`spec/14-roadmap.md`'s "Must-implement backlog" is the prioritized list to work from**, not the
 survey directly — the survey tells you WHAT is stub/fake, the backlog tells you what order to
-tackle it in and why. Status:
+tackle it in and why. Status as of this session's full pass through it:
 - [x] Logbook UI pane, DSP decode-accuracy residuals, waterfall color/palette, RX history browser
   affordances — all shipped and closed.
-- [ ] **Options dialogs (real functionality behind the ~50+ disabled controls)** — **BLOCKED on
-  user scoping input, ask again before touching.** The Options window is a real, Industry-styled
-  7-tab dialog, but its actual functional wiring is unchanged — still `IsEnabled="False"` +
-  `Options.NotImplemented.Help` placeholders underneath. Several of its stub sections overlap with
-  the CW-ID/FSK and other items below — a real per-section split plus an auditor UI-design
-  plan-review pass is needed before building anything (not a straight port). **User was asked which
-  pieces to prioritize once already and never answered — re-ask, don't assume.**
+- [x] **Options dialogs — full pass complete this session, per user's "keep going the list"
+  standing authorization (no longer blocked on a scoping answer).** General/Audio/Decode tabs: every
+  control with a real, buildable backend is now wired (Sense level, Remember-window-position, App
+  priority, Stereo capture source, Stereo TX). Radio tab: fully scoped, nothing left to wire (2
+  stubs resolved as obsolete/removed, 1 as a real future backend). Decode's remaining 4 controls
+  (RX BPF/Demod type/RX buffer/Auto-start), Identification tab + CW-ID/FSK, and the Advanced tab are
+  all thoroughly scoped and DEFERRED to their own dedicated sessions (each needs golden-vector-level
+  DSP rigor or new architecture, not an ordinary wiring pass) — see each one's own entry above and
+  in `spec/16-gui-wiring-survey.md`/`spec/14-roadmap.md` for full citations. Nothing left
+  unexamined; every remaining stub control in the Options window has a documented reason.
 - [x] **QRZ.com callsign lookup — done, see above.** OCR split out separately, deferred (user:
   "eh, maybe one day"), not on this list anymore — see `spec/14-roadmap.md`'s "Explicitly deferred
   beyond v1" section.
-- [ ] CW-ID / FSK station-ID subsystem — real legacy feature (`sstv.cpp:2465-2551`'s STX `0x2a`),
-  zero replacement built. User-deferred once already; confirm priority before starting.
-- [ ] VOX, RTS-on-RX, Sound-file ID (blocked on CW-ID landing first), JPEG save quality (blocked
-  on a JPEG save path existing at all, images are PNG-only today) — smaller, lower-priority items,
-  see the roadmap doc's own backlog section for the one-line reason each is still open.
+- [ ] CW-ID / FSK station-ID subsystem — scoped this session (see above), needs its own dedicated
+  session (comparable size to the QRZ lookup feature).
+- [x] RTS-on-RX — **resolved, not deferred**: obsolete raw-serial concept, fully superseded by the
+  real `IRadioController.SetPttAsync` CAT-backend PTT path. Moved to `docs/removed-features.md`.
+- [ ] VOX, Sound-file ID — bundled with the deferred CW-ID/FSK subsystem, not independent items.
+- [ ] JPEG save quality — re-scoped this session: bundled with the Gallery's still-STUB "Export
+  frame" button (legacy's real `m_JPEGQuality` applies to the manual Save-Image-As dialog, not the
+  automatic RX-history save this port already does differently), not a standalone Options control.
 
 **Established process for this kind of work** (proven across many prior batches, reuse it):
 research → plan → auditor plan-review (2 rounds for anything touching decode-path/concurrency/
@@ -242,18 +257,35 @@ relevant test suite, real-window screenshot/DB-level check if UI-visible) → co
 Escalation path if stuck: ask the auditor; if the auditor also can't resolve it, log to
 `spec/14-roadmap.md`'s "Verify later with human" section rather than stalling.
 
-**Next action on resume**: user said "just keep going the normal list, we have the priority list
-just keep going no need to ask me until the list is finished" (2026-08-12) — standing authorization
-to proceed through the Must-implement backlog autonomously, no per-item confirmation needed. Still
-following the established process (research → auditor plan-review for anything DSP/architecture →
-implement → verify → commit) at each step, just not pausing between items. Working order so far:
-Decode tab wiring (done) → Decode tab's 4 DSP items (all scoped, deferred to dedicated sessions,
-see above) → Options General tab (window-geometry done, JPEG re-scoped) → Options Audio tab (3
-already-wired-backend controls exposed, 2 confirmed-correctly-stub, done, see above) → next up:
-**Options Radio tab** (OmniRig/RTS-on-RX/PTT-lock — check each against `Option.dfm`'s
-`OmniCheck`/`CBRTS`/`PTTLock` controls the same way Audio's controls turned out mostly
-already-backed; don't assume they need new work without checking first), then
-**Identification tab + CW-ID/FSK** (scope together, real overlap), then **Advanced tab** (likely
-overlaps the deferred Demod-type/RX-BPF work), then the smaller items (VOX, Sound-file ID, JPEG —
-now known to belong with Export-frame). Task-tracker IDs 31-41 hold the full breakdown if resuming
-mid-list after a `/clear`.
+**"Keep going the list" pass is DONE — the whole Must-implement backlog has been worked through once.**
+User said "just keep going the normal list, we have the priority list just keep going no need to ask
+me until the list is finished" (2026-08-12) — standing authorization to proceed autonomously, which
+this session did end to end: every Options tab (General/Audio/Radio/Decode/Identification/Advanced)
+has been checked control-by-control, every genuinely wireable one is now wired (7 more this pass:
+Remember-window-position, App priority, Stereo capture source, Stereo TX, plus Sense level from
+earlier in the session), and every remaining stub has a documented, cited reason (either "correctly
+stays stub" with evidence, or "needs its own dedicated DSP/architecture session" with a scoped
+starting point). Nothing was skipped or left unexamined.
+
+**What's left is 6 substantial, independently-schedulable pieces, each needing its own dedicated
+session** (not more ordinary wiring — see each one's own entry above for the full citation trail):
+1. **RX BPF** — Kaiser/Bessel filter math is reusable from `TxOutputBandpassFilter`, but needs
+   per-tap-count sync-anchor-correction re-derivation with golden-vector tests.
+2. **Demod type** — runtime dispatch between 3 already-ported demodulators, the biggest/riskiest.
+3. **RX buffer** — needs a whole buffered-line-replay subsystem built first; the UI control alone
+   would be a fake no-op today.
+4. **Auto-start** — needs a design pass to find the right internal "disarmed, still live" gating
+   point across multiple sync-detection branches.
+5. **CW-ID/FSK station-ID subsystem** (+ Identification tab) — TX Morse/FSK encoders are small and
+   bounded, but the full bundled scope (+ TX/RX FSK-ID codec + tab UI) is comparable in size to the
+   QRZ lookup feature.
+6. **Advanced tab** — PLL/Zero-crossing tuning is gated on Demod-type (#2); TX BPF/LPF toggles are a
+   small, bounded change with real RF-spectral consequences; Loopback/calibration wizards are
+   unbuilt.
+
+Smaller/already-resolved items, no longer open: RTS-on-RX (removed feature, resolved), VOX/Sound-file
+ID (bundled into #5), JPEG quality (bundled with the Gallery's still-stub "Export frame" button, a
+separate small item not on this numbered list). Ask the user which of the 6 to scope/build next —
+each is a real feature-design decision (which demodulator dispatch shape, which Morse-timing
+fidelity level, etc.), not something to default-pick autonomously the way "wire this checkbox" was.
+Task-tracker IDs 31-41 hold the full per-item breakdown if resuming mid-list after a `/clear`.
