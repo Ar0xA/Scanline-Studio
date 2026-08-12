@@ -332,7 +332,7 @@ public sealed class OptionsWindowViewModelTests
             Settings = new AppSettings()
                 .WithSection(RadioConnectionSettings.SectionKey, new RadioConnectionSettings { BackendId = "rigctld", Host = "x", Port = 1 }, RadioSettingsJsonContext.Default.RadioConnectionSettings)
                 .WithSection(OperatorSettings.SectionKey, new OperatorSettings { Callsign = "SOMECALL" }, OperatorSettingsJsonContext.Default.OperatorSettings)
-                .WithSection(SstvDecoderSettings.SectionKey, new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false }, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
+                .WithSection(SstvDecoderSettings.SectionKey, new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, DemodType = DemodType.Pll }, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
                 .WithSection(StationIdSettings.SectionKey, new StationIdSettings { CwIdMode = CwIdMode.Cw, CwWpm = 40 }, StationIdSettingsJsonContext.Default.StationIdSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
@@ -350,6 +350,7 @@ public sealed class OptionsWindowViewModelTests
         Assert.Null(vm.Callsign);
         Assert.True(vm.AutoSyncEnabled);
         Assert.True(vm.AutoSlantEnabled);
+        Assert.Equal(DemodType.Hilbert, vm.DemodType);
         // Auditor round-2 finding: ConfirmResetAll originally omitted Identification entirely --
         // this is the blind spot that let that regression through undetected.
         Assert.Equal(CwIdMode.Off, vm.CwIdMode);
@@ -364,12 +365,13 @@ public sealed class OptionsWindowViewModelTests
         // value and falls through to the default would pass a true/true assertion by coincidence.
         // AutoStop is the inverse case (its own default is false) -- explicit true here for the
         // same "wouldn't pass by coincidence" reasoning. SenseLevel: 1 is also the default, so use
-        // 2 ("High") for the same reason.
+        // 2 ("High") for the same reason. DemodType: Hilbert is also the default, so use Pll for
+        // the same reason.
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 SstvDecoderSettings.SectionKey,
-                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 2 },
+                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 2, DemodType = DemodType.Pll },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
@@ -382,6 +384,9 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(2, vm.SenseLevel);
         Assert.True(vm.IsSenseLevelHighSelected);
         Assert.False(vm.IsSenseLevelLowSelected);
+        Assert.Equal(DemodType.Pll, vm.DemodType);
+        Assert.True(vm.IsDemodTypePllSelected);
+        Assert.False(vm.IsDemodTypeHilbertSelected);
     }
 
     [AvaloniaFact]
@@ -398,6 +403,8 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(vm.SyncRestartEnabled);
         Assert.Equal(1, vm.SenseLevel);
         Assert.True(vm.IsSenseLevelLowSelected);
+        Assert.Equal(DemodType.Hilbert, vm.DemodType);
+        Assert.True(vm.IsDemodTypeHilbertSelected);
     }
 
     [AvaloniaFact]
@@ -424,6 +431,47 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void Constructor_ClampsOutOfRangePersistedDemodTypeToHilbert()
+    {
+        // A hand-edited settings.json can persist an enum value outside 0-2 -- ApplyFromSnapshot
+        // must clamp to Hilbert, matching SstvDecoderSettings.DemodType's own doc comment (unlike
+        // SenseLevel, BOTH the absent-key and out-of-range fallbacks resolve to the SAME value here).
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                SstvDecoderSettings.SectionKey,
+                new SstvDecoderSettings { DemodType = (DemodType)99 },
+                SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(DemodType.Hilbert, vm.DemodType);
+        Assert.True(vm.IsDemodTypeHilbertSelected);
+        Assert.False(vm.IsDemodTypePllSelected);
+        Assert.False(vm.IsDemodTypeZeroCrossingSelected);
+    }
+
+    [AvaloniaFact]
+    public void IsDemodTypePllSelected_Set_RaisesPropertyChangedForAllThreeSiblings()
+    {
+        // Round-1 code-review finding: a passing bool-value assertion alone (the tests above) doesn't
+        // prove the live radio group actually re-renders on toggle/load/reset -- only a real
+        // PropertyChanged notification does. Mirrors IsIdMethodCwSelected_Set_RaisesPropertyChangedForItselfAndTheOffSibling's
+        // own reasoning; CwIdMode and SenseLevel both already have this coverage, DemodType didn't.
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.IsDemodTypePllSelected = true;
+
+        Assert.Contains(nameof(vm.IsDemodTypePllSelected), raised);
+        Assert.Contains(nameof(vm.IsDemodTypeZeroCrossingSelected), raised);
+        Assert.Contains(nameof(vm.IsDemodTypeHilbertSelected), raised);
+    }
+
+    [AvaloniaFact]
     public async Task SaveCommand_PersistsDecodeTogglesWithoutDisturbingOtherDecoderFields()
     {
         // AfcEnabled pre-set to a non-default value -- this dialog doesn't edit it, Save must
@@ -443,6 +491,7 @@ public sealed class OptionsWindowViewModelTests
         vm.AutoStopEnabled = true;
         vm.SyncRestartEnabled = false;
         vm.SenseLevel = 3;
+        vm.DemodType = DemodType.ZeroCrossing;
 
         await vm.SaveCommand.ExecuteAsync(null);
 
@@ -452,6 +501,7 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(decoder?.AutoStopEnabled);
         Assert.False(decoder?.SyncRestartEnabled);
         Assert.Equal(3, decoder?.SenseLevel);
+        Assert.Equal(DemodType.ZeroCrossing, decoder?.DemodType);
         Assert.False(decoder?.AfcEnabled);
     }
 
@@ -462,7 +512,7 @@ public sealed class OptionsWindowViewModelTests
         {
             Settings = new AppSettings().WithSection(
                 SstvDecoderSettings.SectionKey,
-                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 3 },
+                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 3, DemodType = DemodType.ZeroCrossing },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
@@ -472,6 +522,7 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(vm.AutoStopEnabled);
         Assert.False(vm.SyncRestartEnabled);
         Assert.Equal(3, vm.SenseLevel);
+        Assert.Equal(DemodType.ZeroCrossing, vm.DemodType);
 
         vm.ResetDecodeToDefaultCommand.Execute(null);
 
@@ -481,6 +532,8 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(vm.SyncRestartEnabled);
         Assert.Equal(1, vm.SenseLevel);
         Assert.True(vm.IsSenseLevelLowSelected);
+        Assert.Equal(DemodType.Hilbert, vm.DemodType);
+        Assert.True(vm.IsDemodTypeHilbertSelected);
     }
 
     [AvaloniaFact]
