@@ -311,8 +311,15 @@ internal static class VisHeader
     /// LSB first, bit=1 sent as <see cref="LeaderFrequencyHz"/> (1900Hz), bit=0 sent as
     /// <see cref="NarrowSpaceFrequencyHz"/> (2100Hz) — legacy only ever transmits/reads the low 6
     /// bits of a byte this way, so higher bits are silently dropped, matching the source's own
-    /// 6-iteration loop rather than a general 8-bit byte encoding.</summary>
-    private static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFskBits(byte value)
+    /// 6-iteration loop rather than a general 8-bit byte encoding. <c>WriteFSK</c> itself applies
+    /// no semantic offset -- callers decide whether a given byte is a raw control value (STX/EOT/
+    /// checksum, sent as-is) or a displayable character (offset by the caller before this call,
+    /// see <c>FskStationIdEncoder</c>'s doc comment for the callsign/NR-packet case).
+    /// Internal (not private): shared with <see cref="FskStationIdEncoder"/>, which needs the
+    /// identical low-level tone generator for a differently-shaped packet (no leading leader tone,
+    /// see that class's own doc comment) -- both packet types share this physical layer, not the
+    /// higher-level packet framing.</summary>
+    internal static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFskBits(byte value)
     {
         for (var bitIndex = 0; bitIndex < 6; bitIndex++)
         {
