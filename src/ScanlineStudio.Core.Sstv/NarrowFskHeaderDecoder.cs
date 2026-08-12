@@ -1,11 +1,56 @@
 namespace ScanlineStudio.Core.Sstv;
 
+/// <summary>Discriminated result of <see cref="NarrowFskHeaderDecoder.ProcessSample"/> -- at most one
+/// of <see cref="ModeCode"/>/<see cref="StationIdCallsign"/>/<see cref="StationIdCompactNr"/>/
+/// <see cref="StationIdNrText"/> is set per instance, mirroring legacy's distinct successful-decode
+/// outcomes from the ONE shared state machine (mode-announce lock vs. station-ID callsign commit vs.
+/// station-ID NR/RST commit, itself two sub-forms -- <c>sstv.cpp:2586-2598</c>, <c>:2485-2494</c>,
+/// <c>:2544-2551</c>, <c>:2526-2534</c> respectively). <see cref="StationIdCompactNr"/> (from the
+/// compact numeric sub-form, legacy mode 10) and <see cref="StationIdNrText"/> (from the
+/// alphanumeric string sub-form, legacy mode 8) are DELIBERATELY separate, not one field with a
+/// try-parse: the string sub-form exists precisely for NR/RST values that don't fit the compact
+/// numeric form, so a value that fails to parse as a number is a legitimate, real result, not
+/// evidence of a decode error -- collapsing them would silently drop it. Callers must NOT treat a
+/// <see cref="StationIdCallsign"/>/<see cref="StationIdCompactNr"/>/<see cref="StationIdNrText"/>
+/// result the same way as a <see cref="ModeCode"/> result: only a mode-announce lock represents
+/// "found the packet this scan exists to find, stop and commit a mode" -- a station-ID commit is a
+/// side-channel informational event that must let the enclosing scan keep running (see
+/// <see cref="AnalogFmSstvDecoder"/>'s own <c>TryNarrowFskScan</c> for the consumer side of this
+/// contract, and its doc comment for why getting this wrong would silently break AVT
+/// training/header scanning).</summary>
+internal readonly record struct FskDecodeResult(
+    int SamplesSinceBitClockOrigin,
+    int? ModeCode = null,
+    string? StationIdCallsign = null,
+    uint? StationIdCompactNr = null,
+    string? StationIdNrText = null)
+{
+    public static FskDecodeResult ForModeCode(int modeCode, int samplesSinceBitClockOrigin) =>
+        new(samplesSinceBitClockOrigin, ModeCode: modeCode);
+
+    public static FskDecodeResult ForStationIdCallsign(string callsign, int samplesSinceBitClockOrigin) =>
+        new(samplesSinceBitClockOrigin, StationIdCallsign: callsign);
+
+    public static FskDecodeResult ForStationIdCompactNr(uint nr, int samplesSinceBitClockOrigin) =>
+        new(samplesSinceBitClockOrigin, StationIdCompactNr: nr);
+
+    public static FskDecodeResult ForStationIdNrText(string nrText, int samplesSinceBitClockOrigin) =>
+        new(samplesSinceBitClockOrigin, StationIdNrText: nrText);
+}
+
 /// <summary>
 /// Direct, literal port of <c>CSSTVDEM::DecodeFSK(int m, int s)</c> (<c>sstv.cpp:2378-2606</c>) --
 /// the real per-sample state machine legacy uses to decode the MN/MC narrow-mode-announce packet
 /// (<see cref="VisHeader.GenerateNarrowModeSegments"/>), replacing a prior proxy in
 /// <see cref="AnalogFmSstvDecoder"/> that averaged the shared PLL's demodulated-frequency stream over
 /// a fixed window instead -- the same bug shape Piece 9 already fixed for VIS-bit decode.
+///
+/// Also decodes the FSK station-ID packet (<c>STX 0x2a</c>, legacy modes 5-10, `Main.cpp:2465-2551`)
+/// -- the SAME shared state machine legacy uses, diverging from the mode-announce path only after
+/// the sync byte (mode 4's dispatch). Legacy reuses ONE checksum field (`m_fsks`) and ONE length
+/// counter (`m_fskcnt`) across BOTH packet types (never active simultaneously, since only one path
+/// is reachable per packet) -- this port reuses <see cref="_runningXor"/> and
+/// <see cref="_stationIdSubPacketCount"/> the same way, not separate fields per path.
 ///
 /// <c>m</c>/<c>s</c> are <c>int(d19)</c>/<c>int(dsp)</c> in legacy: the 1900Hz mark and 2100Hz
 /// (<see cref="VisHeader.NarrowSpaceFrequencyHz"/>) space envelope detectors
@@ -37,14 +82,16 @@ namespace ScanlineStudio.Core.Sstv;
 ///   (<c>m&gt;s</c> =&gt; 1) is shifted into a 6-bit accumulator LSB-first and the boundary advances by
 ///   a FRACTIONAL (double) 22ms increment that is truncated to int only for the next comparison --
 ///   this drift-corrects the 24-bit stream the way naive repeated integer addition would not.</item>
-/// <item>Byte dispatch (every 6th bit, still inside the mode-4+ default case): mode 4 expects STX
-///   0x2d (anything else, including the unrelated 0x2a callsign-ID packet this class does not
-///   implement, resets to mode 0 exactly like any other unrecognized byte -- see
-///   docs/removed-features.md); mode 16 expects marker 0x15; mode 17 stores the raw mode-code byte;
-///   mode 18 checks it against the running XOR checksum and, on match, resolves the mode code. Mode
-///   ALWAYS resets to 0 after mode 18's dispatch, success or failure -- legacy never permanently gives
-///   up on a bad checksum or unrecognized mode code, it just resumes scanning on the very next sample
-///   (matching the same "resume, don't abort" shape already fixed once on the VIS-bit path).</item>
+/// <item>Byte dispatch (every 6th bit, still inside the mode-4+ default case): mode 4 branches on
+///   STX -- 0x2d advances to mode 16 (mode-announce path, below), 0x2a advances to mode 5
+///   (station-ID path, `Main.cpp:2465-2551` -- see this class's own second doc-comment paragraph),
+///   anything else resets to mode 0. Mode-announce: mode 16 expects marker 0x15; mode 17 stores the
+///   raw mode-code byte; mode 18 checks it against the running XOR checksum and, on match, resolves
+///   the mode code. Mode ALWAYS resets to 0 after mode 18's dispatch, success or failure -- legacy
+///   never permanently gives up on a bad checksum or unrecognized mode code, it just resumes
+///   scanning on the very next sample (matching the same "resume, don't abort" shape already fixed
+///   once on the VIS-bit path). Station-ID modes 5-10 follow the identical always-resume
+///   discipline.</item>
 /// </list>
 ///
 /// Each <see cref="ProcessSample"/> call reads the current mode once and runs exactly one case's
@@ -66,8 +113,16 @@ internal sealed class NarrowFskHeaderDecoder
     private int _nextBitBoundary;
     private int _bitAccumulator;
     private int _bitCount;
-    private int _runningXor;
+    private int _runningXor; // shared checksum accumulator (legacy m_fsks), both packet types
     private int _modeCodeByte;
+
+    // Station-ID (STX 0x2a) state, legacy modes 5-10. `_stationIdSubPacketCount` mirrors legacy's
+    // `m_fskcnt` reuse: counts callsign chars during mode 5, reset to 0 by mode 6, then reused
+    // to count NR/RST string chars during mode 7 -- one shared counter, not two, matching source.
+    private int _stationIdSubPacketCount;
+    private readonly System.Text.StringBuilder _stationIdCallsignBuffer = new();
+    private readonly System.Text.StringBuilder _stationIdNrStringBuffer = new();
+    private int _stationIdNr; // legacy m_fskNR, compact-form 12-bit accumulator (2x 6-bit halves)
 
     // S8 fix (spec/14-roadmap.md): tracks samples elapsed since the mode-3->4 transition ("bit-clock
     // origin" -- the instant bit sampling begins), NOT an absolute sample index. Deliberately relative:
@@ -89,12 +144,23 @@ internal sealed class NarrowFskHeaderDecoder
         _sampleRate = sampleRate;
     }
 
+    /// <summary>Legacy <c>m_fskdecode</c> (`sstv.h:708`, ini key <c>RXFSKID</c>) -- gates whether a
+    /// station-ID callsign/NR commit is accepted (modes 6/8; mode 10's compact-NR commit does NOT
+    /// check this, a legacy asymmetry confirmed unreachable in practice since mode 10 is only
+    /// reachable through mode 6, which already requires this flag -- see `Main.cpp:2485`/`:2544`).
+    /// Does NOT gate the mode-announce path at all (legacy has no such gate there). Defaults to
+    /// legacy's own real default (off, zero-initialized, `Main.cpp:1880`'s `ReadInteger` falls back
+    /// to whatever this field already was) -- Phase 4 wires this to the live user setting.</summary>
+    public bool StationIdDecodeEnabled { get; set; }
+
     /// <summary>Feeds one sample's mark(1900Hz)/space(2100Hz) envelope pair through the state
     /// machine. Returns the decoded mode code and how many samples ago this instance's own internal
     /// "bit-clock origin" (the mode-3->4 transition, see <see cref="_samplesSinceBitClockOrigin"/>'s
     /// own doc comment) occurred, once a full packet locks with a valid checksum; otherwise null
     /// (still searching -- every legacy failure path resumes scanning internally, so there is no
-    /// separate "aborted" outcome to report).
+    /// separate "aborted" outcome to report). See <see cref="FskDecodeResult"/>'s own doc comment for
+    /// the station-ID (callsign/NR) outcomes this can also return, and why a caller must not treat
+    /// them the same way as a mode-code lock.
     ///
     /// Code-level auditor review note (S8 fix, spec/14-roadmap.md): assumes CONTIGUOUS feeding since
     /// whatever sample last produced the current "bit-clock origin" -- i.e. every sample in between
@@ -107,7 +173,7 @@ internal sealed class NarrowFskHeaderDecoder
     /// (any real gap of more than about one bit period, ~22ms, already desyncs the bit clock and
     /// resets this state machine to mode 0 on its own, via the existing `d &lt; AmplitudeThreshold`
     /// check), and no test has ever reached it.</summary>
-    public (int ModeCode, int SamplesSinceBitClockOrigin)? ProcessSample(int m, int s)
+    public FskDecodeResult? ProcessSample(int m, int s)
     {
         var d = Math.Abs(m - s);
 
@@ -200,11 +266,11 @@ internal sealed class NarrowFskHeaderDecoder
                         if (_bitCount >= 6)
                         {
                             _bitCount = 0;
-                            var lockedCode = DispatchByte(_bitAccumulator);
+                            var result = DispatchByte(_bitAccumulator);
                             _bitAccumulator = 0;
-                            if (lockedCode is not null)
+                            if (result is not null)
                             {
-                                return (lockedCode.Value, _samplesSinceBitClockOrigin);
+                                return result;
                             }
                         }
                     }
@@ -215,26 +281,173 @@ internal sealed class NarrowFskHeaderDecoder
         return null;
     }
 
+    private const int StationIdStxByte = 0x2a;
+    private const int StationIdEotByte = 0x01;
+    private const int StationIdCompactNrMarkerByte = 0x02;
+    private const int MaxCallsignLength = 16; // FskStationIdWireFormat.MaxCallsignLength, kept in
+                                               // sync manually (that class isn't a dependency of
+                                               // this one, matching TX/RX not sharing code directly).
+    private const int MaxNrStringLength = 8;
+
     // sstv.cpp:2445-2598 -- fires once per completed 6-bit byte, dispatched on the CURRENT mode
-    // (still 4/16/17/18 at this point, distinct from the outer default case covering all of 4+).
-    private int? DispatchByte(int fskc)
+    // (still 4/16/17/18/5/6/7/8/9/10 at this point, distinct from the outer default case covering
+    // all of 4+).
+    private FskDecodeResult? DispatchByte(int fskc)
     {
         switch (_mode)
         {
             case 4: // First SYNC -- sstv.cpp:2446-2464
-                if (fskc == VisHeader.NarrowStxByte) // 0x2d
+                if (fskc == StationIdStxByte) // 0x2a
                 {
+                    _stationIdSubPacketCount = 0;
+                    _runningXor = 0;
+                    _stationIdCallsignBuffer.Clear();
+                    _mode = 5;
+                }
+                else if (fskc == VisHeader.NarrowStxByte) // 0x2d
+                {
+                    // Code-review finding: legacy resets m_fskcnt on BOTH branches (sstv.cpp:2448 and
+                    // :2455) -- an earlier version of this code only reset _stationIdSubPacketCount on
+                    // the 0x2a branch. Provably harmless either way (nothing reads this counter again
+                    // before mode 5 or mode 9 next resets it themselves), but matched here for exact
+                    // fidelity rather than relying on that argument.
+                    _stationIdSubPacketCount = 0;
                     _runningXor = 0;
                     _modeCodeByte = 0;
                     _mode = 16;
                 }
                 else
                 {
-                    // 0x2a (the unimplemented FSK callsign-ID packet, sstv.cpp:2447) and every other
-                    // value are treated identically to legacy's own `else` branch, sstv.cpp:2461-2463.
                     _mode = 0;
                 }
                 break;
+
+            case 5: // station-ID: store callsign data -- sstv.cpp:2465-2482
+                if (fskc == StationIdEotByte)
+                {
+                    _mode = _stationIdSubPacketCount >= 1 ? 6 : 0;
+                }
+                else
+                {
+                    _runningXor ^= fskc;
+                    _stationIdCallsignBuffer.Append((char)(fskc + 0x20));
+                    _stationIdSubPacketCount++;
+                    if (_stationIdSubPacketCount >= MaxCallsignLength + 1)
+                    {
+                        _mode = 0;
+                    }
+                }
+                break;
+
+            case 6: // station-ID: check callsign XOR -- sstv.cpp:2483-2499
+            {
+                _runningXor &= 0x3f;
+                FskDecodeResult? committed = null;
+                if (fskc == _runningXor && StationIdDecodeEnabled)
+                {
+                    // sstv.cpp:2487-2488: SkipSpace(leading) + StrCopy(...,16) + clipsp(trailing) --
+                    // .Trim() covers the combined leading+trailing whitespace trim; the 16-char cap
+                    // is a redundant safety net here (case 5's own MaxCallsignLength+1 abort already
+                    // bounds any surviving, non-aborted callsign to <= 16 chars), kept for fidelity.
+                    var callsign = _stationIdCallsignBuffer.ToString().Trim();
+                    if (callsign.Length > MaxCallsignLength)
+                    {
+                        callsign = callsign[..MaxCallsignLength];
+                    }
+
+                    committed = FskDecodeResult.ForStationIdCallsign(callsign, _samplesSinceBitClockOrigin);
+                    _stationIdSubPacketCount = 0;
+                    _runningXor = 0;
+                    _stationIdNrStringBuffer.Clear();
+                    _mode = 7;
+                }
+                else
+                {
+                    _mode = 0;
+                }
+
+                return committed;
+            }
+
+            case 7: // station-ID: store NR/RST data -- sstv.cpp:2500-2525
+                if (fskc == StationIdEotByte)
+                {
+                    _mode = _stationIdSubPacketCount >= 1 ? 8 : 0;
+                }
+                else if (fskc == StationIdCompactNrMarkerByte)
+                {
+                    // Code-review finding: legacy does NOT reset m_fskcnt here (sstv.cpp:2509-2513) --
+                    // an earlier version of this code reset _stationIdSubPacketCount, reasoning mode 9
+                    // "uses it purely as a 2-halves counter." That reasoning is wrong for corrupt/
+                    // malformed input specifically: if NR-string chars were already accumulated before
+                    // this marker byte arrived (fskcnt>0), legacy enters mode 9 with that nonzero count
+                    // and only consumes ONE more 6-bit half before checking XOR (mode 9's own `>=2`
+                    // threshold), not two. Matching legacy exactly here, including that behavior, since
+                    // "the safer choice" isn't this port's call to make on a byte-exact wire protocol.
+                    _runningXor = StationIdCompactNrMarkerByte;
+                    _stationIdNr = 0;
+                    _mode = 9;
+                }
+                else if (fskc >= 0x10)
+                {
+                    _runningXor ^= fskc;
+                    _stationIdNrStringBuffer.Append((char)(fskc + 0x20));
+                    _stationIdSubPacketCount++;
+                    if (_stationIdSubPacketCount >= MaxNrStringLength + 1)
+                    {
+                        _mode = 0;
+                    }
+                }
+                else
+                {
+                    _mode = 0;
+                }
+                break;
+
+            case 8: // station-ID: check NR/RST-string XOR -- sstv.cpp:2526-2534
+            {
+                _runningXor &= 0x3f;
+                FskDecodeResult? committed = null;
+                if (fskc == _runningXor && StationIdDecodeEnabled)
+                {
+                    // sstv.cpp:2530: clipsp (trailing-whitespace trim only, no leading-space skip
+                    // unlike the callsign path's SkipSpace+clipsp pair) -- .Trim() trims both ends,
+                    // a slightly broader (harmless) match rather than a narrower, wrong one.
+                    var nrText = _stationIdNrStringBuffer.ToString().Trim();
+                    committed = FskDecodeResult.ForStationIdNrText(nrText, _samplesSinceBitClockOrigin);
+                }
+
+                _mode = 0; // legacy ALWAYS resets here, unlike mode 6 -- sstv.cpp:2533
+                return committed;
+            }
+
+            case 9: // station-ID: compact NR bit accumulation -- sstv.cpp:2535-2543
+                _runningXor ^= fskc;
+                _stationIdNr = (_stationIdNr << 6) + fskc;
+                _stationIdSubPacketCount++;
+                if (_stationIdSubPacketCount >= 2)
+                {
+                    _mode = 10;
+                }
+
+                break;
+
+            case 10: // station-ID: check compact-NR XOR -- sstv.cpp:2544-2551. NOTE: unlike modes 6/8,
+                      // legacy does NOT check m_fskdecode here (a confirmed-unreachable-in-practice
+                      // asymmetry, see StationIdDecodeEnabled's own doc comment -- mode 10 is only
+                      // reachable via mode 9, only reachable via mode 7, only reachable via mode 6,
+                      // which already gated on the flag).
+            {
+                _runningXor &= 0x3f;
+                FskDecodeResult? committed = null;
+                if (fskc == _runningXor)
+                {
+                    committed = FskDecodeResult.ForStationIdCompactNr((uint)_stationIdNr, _samplesSinceBitClockOrigin);
+                }
+
+                _mode = 0;
+                return committed;
+            }
 
             case 16: // marker byte -- sstv.cpp:2552-2560
                 _runningXor ^= fskc;
@@ -252,8 +465,9 @@ internal sealed class NarrowFskHeaderDecoder
                 _mode = 0; // legacy always resets here, checksum pass or fail (sstv.cpp:2597)
                 if (fskc == _runningXor)
                 {
-                    return _modeCodeByte;
+                    return FskDecodeResult.ForModeCode(_modeCodeByte, _samplesSinceBitClockOrigin);
                 }
+
                 break;
         }
 
