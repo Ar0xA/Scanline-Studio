@@ -341,7 +341,7 @@ public class SstvRoundTripTests
     // smoke test only, per this subsystem's own implementation plan -- round-trip can't catch
     // encoder/decoder agreeing while both are wrong; the real verification is GoldenVectorTests.cs's
     // real-legacy-capture Theory test.
-    private static async Task AssertEncodeThenDecodeRoundTrip(SstvModeDefinition mode, IImageSource sourceImage, double maxAveragePerChannelDelta, int sampleRate, DemodType demodType = DemodType.Hilbert)
+    private static async Task AssertEncodeThenDecodeRoundTrip(SstvModeDefinition mode, IImageSource sourceImage, double maxAveragePerChannelDelta, int sampleRate, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide)
     {
         var encoder = new AnalogFmSstvEncoder(sampleRate);
         var samples = new List<float>();
@@ -358,7 +358,7 @@ public class SstvRoundTripTests
 
             Assert.Equal(encoder.SampleRate, readSampleRate);
 
-            var decoder = new AnalogFmSstvDecoder(readSampleRate, demodType: demodType);
+            var decoder = new AnalogFmSstvDecoder(readSampleRate, demodType: demodType, rxBpfPreset: rxBpfPreset);
             SstvModeDefinition? detectedMode = null;
             IImageSource? decodedImage = null;
             decoder.ModeDetected += m => detectedMode = m;
@@ -419,6 +419,24 @@ public class SstvRoundTripTests
         var mode = SstvModeRegistry.Mn110;
         var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
         await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: tolerance, sampleRate: 11025, demodType: demodType);
+    }
+
+    // RX BPF subsystem Phase 2 -- coarse smoke test only, secondary to GoldenVectorTests.cs's real-
+    // legacy-capture RxBpfDecoderFixtures Theory (the actual verification, per this subsystem's own
+    // implementation plan): proves the 3 non-default presets (Off/Narrow/VeryNarrow) are wired as
+    // genuine alternatives that round-trip a real image, including Off's buffer-trim-cursor fix not
+    // silently breaking decode entirely. Wide, the 4th preset, is covered separately -- every OTHER
+    // test in this file that calls AssertEncodeThenDecodeRoundTrip without an explicit rxBpfPreset
+    // already exercises it via the method's own default.
+    [Theory]
+    [InlineData(RxBpfPreset.Off)]
+    [InlineData(RxBpfPreset.Narrow)]
+    [InlineData(RxBpfPreset.VeryNarrow)]
+    public async Task EncodeThenDecode_RxBpfPreset_NormalWidthMode_RoundTripsWithinTolerance(RxBpfPreset rxBpfPreset)
+    {
+        var mode = SstvModeRegistry.MartinM1;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: 10.0, sampleRate: 11025, rxBpfPreset: rxBpfPreset);
     }
 
     private static ArrayImageSource CreateGradientTestImage(int width, int height)
