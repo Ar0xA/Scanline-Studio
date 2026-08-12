@@ -51,8 +51,7 @@
 
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}"
                                               Content="{loc:Translate Options.General.RememberWindow}"
-                                              IsEnabled="False"
-                                              ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding RememberWindowPosition}" />
                                     <Grid ColumnDefinitions="Auto,Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.General.JpegQuality}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.General.JpegQuality.Help}" />
