@@ -58,14 +58,42 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // sets m_SenseLvl = 1 unconditionally (sstv.cpp:1489) before calling SetSenseLvl(), and the only
     // other write path (Main.cpp:1865's `ReadInteger("Define","DEMSLVL", pDem->m_SenseLvl)`) falls
     // back to that same ctor value when the INI key is absent -- so case 1 (3500/1750/5700) is what
-    // ships out of the box, NOT the switch's `default:` branch (2400/1200/5000), which is only
-    // reachable via a discrete 4-option "Sense Level" UI setting (Option.dfm's RGSLvl radio group)
-    // this port doesn't expose yet. Verified by reading the constructor directly, not assumed from
-    // the switch's own default label. m_SLvl2 is always m_SLvl*0.5 in every case (sstv.cpp:1798/1803/
-    // 1808/1813) -- ported as a derived value, not a second independent constant.
+    // ships out of the box, NOT the switch's `default:` branch (2400/1200/5000). Verified by reading
+    // the constructor directly, not assumed from the switch's own default label. m_SLvl2 is always
+    // m_SLvl*0.5 in every case (sstv.cpp:1798/1803/1808/1813) -- ported as a derived value, not a
+    // second independent constant. Kept as named consts (not folded into SenseLevelPresets below)
+    // because several existing tests (VisLockStateMachineTests, VisToneRaceHeaderTests,
+    // SenseLevelCalibrationTests) reference them directly as "the default preset's known-good
+    // values" for standalone construction outside a full AnalogFmSstvDecoder.
     internal const double SLvl = 3500.0;
     internal const double SLvl2 = SLvl * 0.5;
     internal const double SLvl3 = 5700.0;
+
+    // The full 4-option "Sense Level" / squelch table (Option.dfm's RGSLvl radio group,
+    // Options.Decode.SenseLevel in this port), exposed via the SstvDecoderSettings.SenseLevel /
+    // Options > Decode wiring (restart-only -- see the ctor's senseLevel parameter doc below).
+    // Index = legacy m_SenseLvl = Option.cpp:612's RGSLvl->ItemIndex directly, no offset. Row 1 is
+    // derived from the named consts above rather than re-typed, and every SLvl2 is SLvl*0.5 per row
+    // (matching SetSenseLvl's own m_SLvl2 = m_SLvl*0.5 in every branch) rather than a 4th literal --
+    // both deliberately avoid a hand-duplicated-literal transcription-typo risk (an earlier draft of
+    // this table had preset 2's SLvl2 (2400) accidentally colliding with preset 0's SLvl (2400)).
+    internal static readonly (double SLvl, double SLvl2, double SLvl3)[] SenseLevelPresets =
+    [
+        (2400.0, 2400.0 * 0.5, 5000.0), // 0 -- "Very low" (switch default:, sstv.cpp:1812-1814)
+        (SLvl, SLvl2, SLvl3),           // 1 -- "Low", the real shipped default
+        (4800.0, 4800.0 * 0.5, 6800.0), // 2 -- "High"
+        (6000.0, 6000.0 * 0.5, 8000.0), // 3 -- "Very high"
+    ];
+
+    // internal, not private -- matches SLvl/SLvl2/SLvl3/SenseLevelPresets' own accessibility above,
+    // so a test can directly confirm the ctor's senseLevel argument actually reached these fields
+    // (an amplitude-based behavioral test is unreliable here: LevelAgc is a true AGC that normalizes
+    // toward a target level regardless of input amplitude once settled, so scaling a synthetic
+    // tone's input amplitude down does not reliably produce a proportionally scaled steady-state
+    // envelope to assert against).
+    internal readonly double _slvl;
+    internal readonly double _slvl2;
+    internal readonly double _slvl3;
 
     private readonly int _sampleRate;
     private readonly List<double> _demodulatedFrequencies = [];
@@ -556,7 +584,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // side only because this flag didn't exist yet. Restart-only, same reasoning as _afcEnabled above.
     private readonly bool _autoSlantEnabled;
 
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true)
+    /// <param name="senseLevel">Squelch preset index (0-3, "Very low".."Very high"), see
+    /// <see cref="SenseLevelPresets"/>. Out-of-range values (e.g. a hand-edited settings.json) fall
+    /// back to index 0, matching legacy's own SetSenseLvl switch `default:` branch -- deliberately
+    /// NOT the same fallback as an absent/null setting (see SstvDecoderSettings.SenseLevel's own doc
+    /// comment). Restart-only: unlike legacy's Option.cpp:613 (which calls SetSenseLvl() on the live
+    /// CSSTVDEM instantly), this is read once at DI construction (ScanlineStudio.Host.Program), same
+    /// limitation as afcEnabled/autoStopEnabled/etc. above -- most user-visible for this particular
+    /// field since squelch is the control most likely to be adjusted while actively chasing a signal.</param>
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1)
     {
         _sampleRate = sampleRate;
         _afcEnabled = afcEnabled;
@@ -564,6 +600,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _autoStopEnabled = autoStopEnabled;
         _syncRestartEnabled = syncRestartEnabled;
         _autoSlantEnabled = autoSlantEnabled;
+        (_slvl, _slvl2, _slvl3) = SenseLevelPresets[senseLevel is >= 0 and <= 3 ? senseLevel : 0];
         _demodulator = new HilbertFmDemodulator(sampleRate);
         _searchBandpassFilter = new SearchBandpassFilter(sampleRate);
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
@@ -572,7 +609,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _syncBypassTracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypassFskDetector = new SyncEnvelopeDetector(sampleRate, VisHeader.NarrowSpaceFrequencyHz);
         _syncBypassNarrowTracker = new SyncIntervalTracker(sampleRate, isNarrow: true, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
-        _visLockStateMachine = new VisLockStateMachine(sampleRate, SLvl, SLvl2);
+        _visLockStateMachine = new VisLockStateMachine(sampleRate, _slvl, _slvl2);
         _narrowFskDecoder = new NarrowFskHeaderDecoder(sampleRate); // S8 fix -- constructed once, decoder-lifetime, never Reset()
         _levelAgc = new LevelAgc(sampleRate);
         // Band-2 item S5 -- params match TryDecodeVisDataBits' own previous cold-start construction
@@ -2543,7 +2580,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // with the stale post-lock Search value in between.
         if (_visLockStateMachine.IsAtOrBeforeConfirmLock)
         {
-            if (d12 > d19 && d12 > SLvl2 && d12 - d19 >= SLvl2)
+            if (d12 > d19 && d12 > _slvl2 && d12 - d19 >= _slvl2)
             {
                 _syncBypassTracker.UpdateMax(d12);
             }
@@ -2571,7 +2608,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // frozen outside case 0, resuming from the same phase once back in Search.
         if (_visLockStateMachine.IsSearching)
         {
-            if (d19 > d12 && d19 > dsp && d19 > SLvl3 && d19 - d12 >= SLvl3 && d19 - dsp >= SLvl)
+            if (d19 > d12 && d19 > dsp && d19 > _slvl3 && d19 - d12 >= _slvl3 && d19 - dsp >= _slvl)
             {
                 if (_syncBypassNarrowPhaseActive)
                 {
@@ -2606,7 +2643,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // d12/d19 once and shares them; recombining that here would mean VisLockStateMachine no
         // longer owning its own envelope detectors, a bigger change than this fix, left for a
         // follow-up).
-        if (d12 > d19 && d12 > SLvl && d12 - d19 >= SLvl)
+        if (d12 > d19 && d12 > _slvl && d12 - d19 >= _slvl)
         {
             if (_syncBypass1PrimaryHeld)
             {
@@ -3376,7 +3413,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 var d12 = D12At(sample);
                 d19 = D19At(sample);
 
-                if (d12 > d19 && d12 > SLvl && d12 - d19 >= SLvl)
+                if (d12 > d19 && d12 > _slvl && d12 - d19 >= _slvl)
                 {
                     if (++holdCount >= confirmHoldSamples)
                     {
@@ -3424,7 +3461,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
                 if (sample == nextDecisionSample)
                 {
-                    if (!VisBitDecision.TryDecide(d11, d13, d19, SLvl2, out var bit))
+                    if (!VisBitDecision.TryDecide(d11, d13, d19, _slvl2, out var bit))
                     {
                         rejected = true;
                         sample++; // advance past this already-processed sample before the outer loop

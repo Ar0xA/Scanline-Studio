@@ -56,6 +56,7 @@ public sealed partial class OptionsSettingsService
         // default, sys.m_AutoStop = 0, Main.cpp:900).
         AutoStopEnabled: new SstvDecoderSettings().AutoStopEnabled ?? false,
         SyncRestartEnabled: new SstvDecoderSettings().SyncRestartEnabled ?? true,
+        SenseLevel: new SstvDecoderSettings().SenseLevel ?? 1,
         QrzLookupEnabled: new QrzLookupSettings().Enabled ?? false,
         QrzLookupUsername: new QrzLookupSettings().Username,
         QrzLookupPassword: new QrzLookupSettings().Password);
@@ -90,6 +91,7 @@ public sealed partial class OptionsSettingsService
             AutoSlantEnabled: decoder.AutoSlantEnabled ?? true,
             AutoStopEnabled: decoder.AutoStopEnabled ?? false,
             SyncRestartEnabled: decoder.SyncRestartEnabled ?? true,
+            SenseLevel: decoder.SenseLevel ?? 1,
             QrzLookupEnabled: qrzLookup.Enabled ?? false,
             QrzLookupUsername: qrzLookup.Username,
             QrzLookupPassword: qrzLookup.Password);
@@ -130,13 +132,16 @@ public sealed partial class OptionsSettingsService
                 // is always-on with no user-facing toggle of its own, see that field's own doc
                 // comment). AutoStopEnabled/SyncRestartEnabled wired 2026-08-12, after fixing their
                 // own loc text's field/label semantics mismatch (see OptionsWindowView.axaml's own
-                // comment at that row).
+                // comment at that row). SenseLevel wired same batch, one item later -- no loc-text
+                // fix needed for it (already accurate, see AnalogFmSstvDecoder.SenseLevelPresets'
+                // own doc comment for the legacy source).
                 previousDecoder with
                 {
                     AutoSyncEnabled = snapshot.AutoSyncEnabled,
                     AutoSlantEnabled = snapshot.AutoSlantEnabled,
                     AutoStopEnabled = snapshot.AutoStopEnabled,
                     SyncRestartEnabled = snapshot.SyncRestartEnabled,
+                    SenseLevel = snapshot.SenseLevel,
                 },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
             .WithSection(
