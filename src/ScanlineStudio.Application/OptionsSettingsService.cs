@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Localization;
 using ScanlineStudio.Core.Logbook;
@@ -59,7 +60,13 @@ public sealed partial class OptionsSettingsService
         SenseLevel: new SstvDecoderSettings().SenseLevel ?? 1,
         QrzLookupEnabled: new QrzLookupSettings().Enabled ?? false,
         QrzLookupUsername: new QrzLookupSettings().Username,
-        QrzLookupPassword: new QrzLookupSettings().Password);
+        QrzLookupPassword: new QrzLookupSettings().Password,
+        CaptureChannelSource: new AudioDeviceSettings().CaptureChannelSource,
+        StereoTxEnabled: new AudioDeviceSettings().StereoTxEnabled,
+        // AppPerformanceSettings.ProcessPriority's own desired "unset" default is null ("don't touch
+        // the OS default"), which is also ProcessPriorityClass.Normal in every practical sense -- see
+        // that record's own doc comment. AppPriorityIsHigh: false round-trips that correctly.
+        AppPriorityIsHigh: new AppPerformanceSettings().ProcessPriority == System.Diagnostics.ProcessPriorityClass.High);
 
     public async Task<OptionsSnapshot> LoadAsync(CancellationToken ct = default)
     {
@@ -71,6 +78,7 @@ public sealed partial class OptionsSettingsService
         var operatorSettings = _loadedSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
         var decoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
         var qrzLookup = _loadedSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
+        var appPerformance = _loadedSettings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings) ?? new AppPerformanceSettings();
 
         return new OptionsSnapshot(
             CultureCode: localization.CultureCode,
@@ -94,7 +102,10 @@ public sealed partial class OptionsSettingsService
             SenseLevel: decoder.SenseLevel ?? 1,
             QrzLookupEnabled: qrzLookup.Enabled ?? false,
             QrzLookupUsername: qrzLookup.Username,
-            QrzLookupPassword: qrzLookup.Password);
+            QrzLookupPassword: qrzLookup.Password,
+            CaptureChannelSource: audio.CaptureChannelSource,
+            StereoTxEnabled: audio.StereoTxEnabled,
+            AppPriorityIsHigh: appPerformance.ProcessPriority == System.Diagnostics.ProcessPriorityClass.High);
     }
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
@@ -107,8 +118,23 @@ public sealed partial class OptionsSettingsService
             .WithSection(LocalizationSettings.SectionKey, new LocalizationSettings { CultureCode = snapshot.CultureCode }, LocalizationSettingsJsonContext.Default.LocalizationSettings)
             .WithSection(
                 AudioDeviceSettings.SectionKey,
-                previousAudio with { CaptureDeviceId = snapshot.CaptureDeviceId, PlaybackDeviceId = snapshot.PlaybackDeviceId, SampleRate = snapshot.SampleRate },
+                previousAudio with
+                {
+                    CaptureDeviceId = snapshot.CaptureDeviceId,
+                    PlaybackDeviceId = snapshot.PlaybackDeviceId,
+                    SampleRate = snapshot.SampleRate,
+                    CaptureChannelSource = snapshot.CaptureChannelSource,
+                    StereoTxEnabled = snapshot.StereoTxEnabled,
+                },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings)
+            .WithSection(
+                AppPerformanceSettings.SectionKey,
+                // null (not ProcessPriorityClass.Normal) for "Normal" -- matches
+                // AppPerformanceSettings.ProcessPriority's own "unset = don't touch the OS default"
+                // contract (see that record's own doc comment); Program.cs's read site already
+                // treats null as a no-op, functionally equivalent for a freshly-launched process.
+                new AppPerformanceSettings { ProcessPriority = snapshot.AppPriorityIsHigh ? System.Diagnostics.ProcessPriorityClass.High : null },
+                AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings)
             .WithSection(
                 RadioConnectionSettings.SectionKey,
                 previousRadio with

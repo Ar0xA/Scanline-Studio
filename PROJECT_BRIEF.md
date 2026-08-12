@@ -157,17 +157,38 @@ As..." dialog (`SaveBitmapMenu`/`SaveImage`, `Main.cpp:10059-10084`), not the au
 save this port already does differently (always PNG) — real scope is bundled with the Gallery's
 still-STUB "Export frame" button, not a standalone Options control.
 
+**Options Audio tab's 3 already-wired-backend controls exposed, closed** — same session, per the
+"keep going the list" instruction. Checked all 5 remaining Audio-tab stub controls against real
+backend code before wiring anything: `AudioDeviceSettings.CaptureChannelSource`/`StereoTxEnabled`
+and `AppPerformanceSettings.ProcessPriority` were ALL already fully implemented and already consumed
+by real call sites (`SstvSessionService.StartReceivingAsync`'s TX/RX paths, `Program.cs`'s startup
+priority-set) — genuinely real backend capability with zero Options UI path, exactly the same shape
+as the QRZ/Gallery-Note discoveries earlier this session. Wired all 3 (Application process priority
+Normal/High, Stereo capture source Mono/Left/Right, Stereo TX checkbox) with no new backend code at
+all. The other 2 stub controls were investigated and confirmed to correctly STAY stub, not gaps:
+**RX/TX FIFO size** configures Win32 `waveIn`/`waveOut` buffer-queue depth, a concept with no analog
+in this port's MiniAudio engine (superseded by its own automatic buffering). **Sound card thread
+priority** — legacy's own `sys.m_SoundPriority` is read/persisted but never actually applied to
+anything anywhere in legacy's own source (a dead control even there); this port's real analog
+(`AudioDeviceSettings.CaptureThreadPriority`, already wired) uses a different 5-value enum that
+doesn't map cleanly onto this control's existing 4 legacy-shaped options — needs its own
+correctly-labeled control in a future pass rather than a forced relabel. 5 new tests, 218/218 UI
+tests passing. Real-window verified: set all 3 controls, saved, confirmed `settings.json`
+(`CaptureChannelSource: 2`, `StereoTxEnabled: true`, `AppPerformance.ProcessPriority: 128`), reopened
+dialog to confirm reload, Reset section correctly restored all defaults.
+
 **Current wiring totals** (`spec/16-gui-wiring-survey.md`, ~286 controls tracked, fully current as
-of this commit): **~144 REAL, ~97 STUB, ~46 FAKE-LIVE, ~1 PARTIAL**. Densest remaining gaps: Receive
+of this commit): **~147 REAL, ~94 STUB, ~46 FAKE-LIVE, ~1 PARTIAL**. Densest remaining gaps: Receive
 tab's Sync&Slant/Input-chain/Signal-quality cards (SNR/squelch/notch/noise-floor — no live
 audio-chain measurement exists in `Core.Audio`/`Core.Sstv` for most of these, real new DSP work not
 just wiring); Options window's Decode's remaining 4 controls (RX BPF/Demod type/RX buffer/Auto-start,
-all now scoped and deferred, see above) plus Identification/Advanced tabs (~53 controls, still
-stub); Transmit tab's Queue/TX-log/Recently-sent cards (100% stub, no such features exist); TX image
-editor's canvas-overlay safe-area/callsign/report-plate text (FAKE-LIVE — reads as real burned-in TX
-content, arguably the most deceptive placeholder in the app). Remaining PARTIAL: RxFrameMeta's Note
-`TextBox` only (needs a real backing field on the frame/session model — Override-callsign's twin
-issue closed via the QRZ lookup wiring).
+all scoped and deferred, see above) plus Audio's RX/TX FIFO + Sound-card-priority (2, correctly
+staying stub, see above) plus Identification/Advanced tabs (~53 controls, still stub); Transmit
+tab's Queue/TX-log/Recently-sent cards (100% stub, no such features exist); TX image editor's
+canvas-overlay safe-area/callsign/report-plate text (FAKE-LIVE — reads as real burned-in TX content,
+arguably the most deceptive placeholder in the app). Remaining PARTIAL: RxFrameMeta's Note `TextBox`
+only (needs a real backing field on the frame/session model — Override-callsign's twin issue closed
+via the QRZ lookup wiring).
 
 **`spec/14-roadmap.md`'s "Must-implement backlog" is the prioritized list to work from**, not the
 survey directly — the survey tells you WHAT is stub/fake, the backlog tells you what order to
@@ -203,11 +224,13 @@ Escalation path if stuck: ask the auditor; if the auditor also can't resolve it,
 just keep going no need to ask me until the list is finished" (2026-08-12) — standing authorization
 to proceed through the Must-implement backlog autonomously, no per-item confirmation needed. Still
 following the established process (research → auditor plan-review for anything DSP/architecture →
-implement → verify → commit) at each step, just not pausing between items. Working order in
-progress this session: Decode tab wiring (done) → Decode tab's 4 DSP items (all scoped, deferred to
-dedicated sessions, see above) → Options General tab (window-geometry done, JPEG re-scoped) → next
-up: **Options Audio tab** (FIFO/priority/stereo-source, against `Option.dfm`'s `GB1`/`SoundPriority`/
-`Source` controls), then **Options Radio tab** (OmniRig/RTS-on-RX/PTT-lock), then
+implement → verify → commit) at each step, just not pausing between items. Working order so far:
+Decode tab wiring (done) → Decode tab's 4 DSP items (all scoped, deferred to dedicated sessions,
+see above) → Options General tab (window-geometry done, JPEG re-scoped) → Options Audio tab (3
+already-wired-backend controls exposed, 2 confirmed-correctly-stub, done, see above) → next up:
+**Options Radio tab** (OmniRig/RTS-on-RX/PTT-lock — check each against `Option.dfm`'s
+`OmniCheck`/`CBRTS`/`PTTLock` controls the same way Audio's controls turned out mostly
+already-backed; don't assume they need new work without checking first), then
 **Identification tab + CW-ID/FSK** (scope together, real overlap), then **Advanced tab** (likely
 overlaps the deferred Demod-type/RX-BPF work), then the smaller items (VOX, Sound-file ID, JPEG —
 now known to belong with Export-frame). Task-tracker IDs 31-41 hold the full breakdown if resuming

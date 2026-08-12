@@ -119,6 +119,100 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void Constructor_LoadsAudioPerformanceFieldsFromPersistedSettings()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings()
+                .WithSection(AudioDeviceSettings.SectionKey, new AudioDeviceSettings { CaptureChannelSource = AudioChannelSource.Right, StereoTxEnabled = true }, AudioSettingsJsonContext.Default.AudioDeviceSettings)
+                .WithSection(AppPerformanceSettings.SectionKey, new AppPerformanceSettings { ProcessPriority = System.Diagnostics.ProcessPriorityClass.High }, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(AudioChannelSource.Right, vm.CaptureChannelSource);
+        Assert.True(vm.IsCaptureChannelRightSelected);
+        Assert.False(vm.IsCaptureChannelMonoSelected);
+        Assert.True(vm.StereoTxEnabled);
+        Assert.True(vm.AppPriorityIsHigh);
+        Assert.True(vm.IsAppPriorityHighSelected);
+        Assert.False(vm.IsAppPriorityNormalSelected);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_DefaultsAudioPerformanceFieldsWhenSectionsMissing()
+    {
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(AudioChannelSource.Mono, vm.CaptureChannelSource);
+        Assert.True(vm.IsCaptureChannelMonoSelected);
+        Assert.False(vm.StereoTxEnabled);
+        Assert.False(vm.AppPriorityIsHigh);
+        Assert.True(vm.IsAppPriorityNormalSelected);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_PersistsAudioPerformanceFields()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsCaptureChannelLeftSelected = true;
+        vm.StereoTxEnabled = true;
+        vm.IsAppPriorityHighSelected = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var audio = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        Assert.Equal(AudioChannelSource.Left, audio?.CaptureChannelSource);
+        Assert.True(audio?.StereoTxEnabled);
+
+        var appPerformance = settingsStore.Settings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings);
+        Assert.Equal(System.Diagnostics.ProcessPriorityClass.High, appPerformance?.ProcessPriority);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_PersistsAppPriorityAsNull_NotExplicitNormal_WhenNormalSelected()
+    {
+        // AppPerformanceSettings.ProcessPriority's own contract: null means "don't touch the OS
+        // default," which is what "Normal" must save as, not ProcessPriorityClass.Normal explicitly.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(AppPerformanceSettings.SectionKey, new AppPerformanceSettings { ProcessPriority = System.Diagnostics.ProcessPriorityClass.High }, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsAppPriorityNormalSelected = true;
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var appPerformance = settingsStore.Settings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings);
+        Assert.Null(appPerformance?.ProcessPriority);
+    }
+
+    [AvaloniaFact]
+    public void ResetAudioToDefaultCommand_RestoresAudioPerformanceFields()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings()
+                .WithSection(AudioDeviceSettings.SectionKey, new AudioDeviceSettings { CaptureChannelSource = AudioChannelSource.Right, StereoTxEnabled = true }, AudioSettingsJsonContext.Default.AudioDeviceSettings)
+                .WithSection(AppPerformanceSettings.SectionKey, new AppPerformanceSettings { ProcessPriority = System.Diagnostics.ProcessPriorityClass.High }, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(AudioChannelSource.Right, vm.CaptureChannelSource);
+
+        vm.ResetAudioToDefaultCommand.Execute(null);
+
+        Assert.Equal(AudioChannelSource.Mono, vm.CaptureChannelSource);
+        Assert.False(vm.StereoTxEnabled);
+        Assert.False(vm.AppPriorityIsHigh);
+    }
+
+    [AvaloniaFact]
     public void ResetRadioToDefaultCommand_RestoresNoneBackendAndClearsHostPort()
     {
         var settingsStore = new FakeSettingsStore
