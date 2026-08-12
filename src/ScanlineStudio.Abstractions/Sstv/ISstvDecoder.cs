@@ -211,4 +211,25 @@ public interface ISstvDecoder
     ///
     /// Safe to read from any thread, same guarantee as <see cref="SlantPpm"/> above.</summary>
     int BufferedSampleCount { get; }
+
+    /// <summary>Legacy <c>m_fskdecode</c> equivalent (<c>sstv.h:708</c>, <c>.ini</c> key
+    /// <c>RXFSKID</c>) -- whether the FSK station-ID (STX <c>0x2a</c>) continuation is decoded at
+    /// all; the shared mode-announce front half (STX <c>0x2d</c>) always runs regardless. Defaults
+    /// <see langword="false"/>, matching legacy's own default. Deliberately LIVE-settable (unlike
+    /// <see cref="AutoSlantEnabled"/>'s restart-only shape above) -- legacy's own
+    /// <c>m_fskdecode</c> is checked fresh on every dispatched byte (<c>sstv.cpp</c>'s station-ID
+    /// continuation cases), so toggling it live is the MORE faithful behavior here, not less. A
+    /// <c>RestartableSstvDecoder</c> implementation must apply a set value to its current inner
+    /// instance immediately AND preserve it across its own periodic reconstruction (see that class'
+    /// own <c>ISstvDecoderMaintenance</c> doc comment) -- a value silently dropped on the next
+    /// scheduled restart would be a real, hard-to-notice regression.
+    ///
+    /// <b>"Applied immediately" is best-effort visibility, not a memory-model guarantee</b> (round-2
+    /// audit finding): the underlying storage is a plain, non-volatile field with no acquire/release
+    /// pairing on the decode-thread read side, matching legacy's own equally unsynchronized
+    /// <c>m_fskdecode</c> global -- harmless for the one production caller today (set once, before
+    /// capture starts, never concurrently with an in-flight <see cref="PushSamples"/>), but a future
+    /// caller that toggles this mid-reception from a different thread should not assume the change is
+    /// visible to the decode thread within any particular bound.</summary>
+    bool StationIdDecodeEnabled { get; set; }
 }

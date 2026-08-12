@@ -516,12 +516,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     public event Action<FskStationIdDecodedInfo>? StationIdDecoded;
 
     /// <summary>Legacy <c>m_fskdecode</c> equivalent (see <see cref="NarrowFskHeaderDecoder.StationIdDecodeEnabled"/>'s
-    /// own doc comment) -- defaults false, matching legacy's real default. Phase 4 (settings layer)
-    /// wires this to the live user setting; exposed as a property now (not deferred to Phase 4) so
-    /// both places this port constructs a <see cref="NarrowFskHeaderDecoder"/> --
-    /// <see cref="_narrowFskDecoder"/> (the persistent scan) and <see cref="TryDecodeNarrowModeHeader"/>'s
-    /// own fresh per-call instance -- stay consistent by construction rather than needing Phase 4 to
-    /// remember both separately.</summary>
+    /// own doc comment) -- defaults false, matching legacy's real default. Wired to the live user
+    /// setting (<c>StationIdSettings.FskIdRxEnabled</c>) by <c>SstvSessionService.StartReceivingAsync</c>,
+    /// re-applied on every RX start; <see cref="ScanlineStudio.Core.Sstv.RestartableSstvDecoder"/>
+    /// (the type actually registered for DI, not this class directly) additionally preserves a set
+    /// value across its own periodic inner-decoder reconstruction -- see that class' own
+    /// <c>StationIdDecodeEnabled</c> doc comment. Exposed as a plain property (not deferred until
+    /// that wiring existed) so both places this port constructs a <see cref="NarrowFskHeaderDecoder"/>
+    /// -- <see cref="_narrowFskDecoder"/> (the persistent scan) and <see cref="TryDecodeNarrowModeHeader"/>'s
+    /// own fresh per-call instance -- stay consistent by construction rather than needing the settings
+    /// wiring to remember both separately.</summary>
     public bool StationIdDecodeEnabled
     {
         get => _narrowFskDecoder.StationIdDecodeEnabled;
@@ -3322,9 +3326,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             }
 
             // A station-ID (STX 0x2a) result reaching this specific single-shot, fixed-headerStart
-            // verification is unlikely but not as vanishingly so once Phase 4 wires
-            // StationIdDecodeEnabled=true here too (a minimal callsign packet, ~600ms, fits inside
-            // this method's own ~950ms search ceiling). Unlike the "unregistered mode code" case
+            // verification is unlikely but not vanishingly so now that StationIdDecodeEnabled can be
+            // live-set true (Application-layer settings wiring, see that property's own doc comment) --
+            // a minimal callsign packet, ~600ms, fits inside this method's own ~950ms search ceiling.
+            // Unlike the "unregistered mode code" case
             // below (a genuinely FAILED decode this method's own design deliberately doesn't retry),
             // a station-ID result isn't a failure -- it's simply not what this method is looking for.
             // `continue` rather than `return false` (code-review finding): a real mode-announce
