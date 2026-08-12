@@ -8,6 +8,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public event Action<SstvModeDefinition>? ModeDetected;
 
+    public event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+
     public event Action<SstvModeDefinition>? DecodeRestarted;
 
     public void ResetAgc()
@@ -45,6 +47,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     public void RaiseLineDecoded(DecodedImageUpdate update) => LineDecoded?.Invoke(update);
 
     public void RaiseModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
+
+    public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
 
     public void RaiseDecodeRestarted(SstvModeDefinition abandonedMode) => DecodeRestarted?.Invoke(abandonedMode);
 }

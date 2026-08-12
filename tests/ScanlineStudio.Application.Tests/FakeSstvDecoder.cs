@@ -16,6 +16,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance
 
     public event Action<SstvModeDefinition>? ModeDetected;
 
+    public event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+
     public event Action<SstvModeDefinition>? DecodeRestarted;
 
     public event Action? RestartOverdue;
@@ -68,6 +70,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance
     }
 
     public void RaiseModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
+
+    public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
 
     public void RaiseLineDecoded(DecodedImageUpdate update) => LineDecoded?.Invoke(update);
 
