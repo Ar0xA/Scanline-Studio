@@ -209,6 +209,30 @@ public sealed partial class SstvSessionService : ISstvSessionService
         remove => _decoder.ModeDetected -= value;
     }
 
+    public event Action<FskStationIdDecodedInfo>? StationIdDecoded
+    {
+        add => _decoder.StationIdDecoded += value;
+        remove => _decoder.StationIdDecoded -= value;
+    }
+
+    public async Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default)
+    {
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var operatorSettings = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
+            ?? new OperatorSettings();
+
+        // Auditor code-review finding on Phase 5 (real bug, fixed): a decoded FSK station-ID
+        // callsign is ALWAYS normalized by construction (every transmitter, including this port's
+        // own, runs StationIdCallsignNormalizer.Normalize before sending) -- comparing it against the
+        // operator's RAW stored callsign (e.g. "w1aw") would silently fail the self-filter for any
+        // operator whose stored callsign isn't already uppercase/trimmed. Normalizing here, not just
+        // storing it normalized in OperatorSettings, keeps the raw-as-typed value available for
+        // every OTHER consumer (macros/display/QRZ) that doesn't want it force-uppercased.
+        return string.IsNullOrEmpty(operatorSettings.Callsign)
+            ? operatorSettings.Callsign
+            : StationIdCallsignNormalizer.Normalize(operatorSettings.Callsign);
+    }
+
     /// <summary>See <see cref="ISstvSessionService.SlantPpm"/> / <see cref="ISstvDecoder.SlantPpm"/>.</summary>
     public double? SlantPpm => _decoder.SlantPpm;
 

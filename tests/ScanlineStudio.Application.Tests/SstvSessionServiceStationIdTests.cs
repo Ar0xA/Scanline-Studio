@@ -265,4 +265,75 @@ public sealed class SstvSessionServiceStationIdTests
 
         Assert.False(decoder.StationIdDecodeEnabled);
     }
+
+    [Fact]
+    public void StationIdDecoded_IsAPurePassThroughOfTheDecodersOwnEvent()
+    {
+        // CW-ID/FSK station-ID subsystem Phase 5: ISstvSessionService.StationIdDecoded's own doc
+        // comment says this is a pure pass-through, NOT self-filtered here -- the operator-callsign
+        // self-filter lives in the UI-layer consumer (RxImagePaneViewModel), which fetches the
+        // operator's own callsign via GetOperatorCallsignAsync below instead. Verifies that split by
+        // proving THIS layer forwards every raised event unfiltered, including one that happens to
+        // carry the operator's own callsign.
+        var (service, _, decoder, settingsStore) = CreateService();
+        WithOperatorSettings(settingsStore, new OperatorSettings { Callsign = "W1AW" });
+        var received = new List<FskStationIdDecodedInfo>();
+        service.StationIdDecoded += info => received.Add(info);
+
+        decoder.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW"));
+
+        Assert.Single(received);
+        Assert.Equal("W1AW", received[0].Callsign);
+    }
+
+    [Fact]
+    public async Task GetOperatorCallsignAsync_ReturnsConfiguredCallsign()
+    {
+        var (service, _, _, settingsStore) = CreateService();
+        WithOperatorSettings(settingsStore, new OperatorSettings { Callsign = "W1AW" });
+
+        var callsign = await service.GetOperatorCallsignAsync();
+
+        Assert.Equal("W1AW", callsign);
+    }
+
+    [Fact]
+    public async Task GetOperatorCallsignAsync_NoOperatorSectionConfigured_ReturnsNull()
+    {
+        var (service, _, _, _) = CreateService();
+
+        var callsign = await service.GetOperatorCallsignAsync();
+
+        Assert.Null(callsign);
+    }
+
+    [Fact]
+    public async Task GetOperatorCallsignAsync_NormalizesTheStoredCallsign()
+    {
+        // Auditor code-review finding on Phase 5 (real bug, fixed): a decoded FSK station-ID
+        // callsign is ALWAYS normalized by construction (StationIdCallsignNormalizer.Normalize runs
+        // before every transmission, including this port's own). Returning the operator's callsign
+        // AS STORED (e.g. "  w1aw  ") instead of normalized would make the self-filter comparison in
+        // RxImagePaneViewModel silently fail against a real decoded "W1AW" for any operator whose
+        // stored callsign wasn't already uppercase/trimmed -- OperatorSettings.Callsign itself is
+        // left as-typed in storage (used for macros/display/QRZ elsewhere), so this method must
+        // normalize fresh on every call.
+        var (service, _, _, settingsStore) = CreateService();
+        WithOperatorSettings(settingsStore, new OperatorSettings { Callsign = "  w1aw  " });
+
+        var callsign = await service.GetOperatorCallsignAsync();
+
+        Assert.Equal("W1AW", callsign);
+    }
+
+    [Fact]
+    public async Task GetOperatorCallsignAsync_EmptyCallsign_StaysEmpty_NotNull()
+    {
+        var (service, _, _, settingsStore) = CreateService();
+        WithOperatorSettings(settingsStore, new OperatorSettings { Callsign = "" });
+
+        var callsign = await service.GetOperatorCallsignAsync();
+
+        Assert.Equal("", callsign);
+    }
 }

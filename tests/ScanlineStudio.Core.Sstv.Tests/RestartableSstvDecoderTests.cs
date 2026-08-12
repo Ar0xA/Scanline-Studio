@@ -144,6 +144,34 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void StationIdDecoded_ForwardsFromTheCurrentInner()
+    {
+        // CW-ID/FSK station-ID subsystem Phase 5 (RestartableSstvDecoder.StationIdDecoded's own doc
+        // comment: forwarding the event was explicitly left for this phase, Phase 4 only wired the
+        // enable FLAG). Uses the real production type (Program.cs registers RestartableSstvDecoder,
+        // not AnalogFmSstvDecoder directly) end to end: real encode -> real decode -> the wrapper's
+        // own forwarded event, not AnalogFmSstvDecoder's event checked in isolation.
+        const int sampleRate = 11025;
+        var mode = SstvModeRegistry.Robot36;
+        var stationId = new StationIdTransmitOptions { FskIdEnabled = true, Callsign = "W1AW" };
+        var samples = EncodeRealTransmission(mode, out _, stationId);
+
+        // Same general pre-lock-scan-gate property Phase 4's own wiring tests documented
+        // (AnalogFmSstvEncoderStationIdWiringTests' PadPastFixedWindowCeiling) -- not specific to
+        // this wrapper class.
+        var padded = samples.Concat(new float[sampleRate * 2]).ToArray();
+
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue, stationIdDecodeEnabled: true);
+        var stationIdEvents = new List<FskStationIdDecodedInfo>();
+        decoder.StationIdDecoded += info => stationIdEvents.Add(info);
+
+        decoder.PushSamples(padded);
+
+        Assert.Single(stationIdEvents);
+        Assert.Equal("W1AW", stationIdEvents[0].Callsign);
+    }
+
+    [Fact]
     public void ForceMode_ForwardsToTheCurrentInner()
     {
         var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue);
@@ -386,14 +414,14 @@ public class RestartableSstvDecoderTests
         decoder.PushSamples(new float[10]);
     }
 
-    private static float[] EncodeRealTransmission(SstvModeDefinition mode, out ArrayImageSource sourceImage)
+    private static float[] EncodeRealTransmission(SstvModeDefinition mode, out ArrayImageSource sourceImage, StationIdTransmitOptions? stationId = null)
     {
         var image = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
         sourceImage = image;
 
         var encoder = new AnalogFmSstvEncoder(11025);
         var samples = new List<float>();
-        var enumerator = encoder.EncodeAsync(mode, image).GetAsyncEnumerator();
+        var enumerator = encoder.EncodeAsync(mode, image, stationId).GetAsyncEnumerator();
         try
         {
             while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
