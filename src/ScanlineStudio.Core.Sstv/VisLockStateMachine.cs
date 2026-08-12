@@ -49,8 +49,10 @@ namespace ScanlineStudio.Core.Sstv;
 /// <c>m_sint2</c>/<c>m_sint3</c>, all closed the same piece): every legacy condition below now also
 /// checks the absolute-amplitude thresholds (<c>m_SLvl</c>/<c>m_SLvl2</c>) legacy checks on top of
 /// the relative comparisons, using the caller-supplied <c>slvl</c>/<c>slvl2</c> (see
-/// <c>AnalogFmSstvDecoder</c>'s <c>SLvl</c>/<c>SLvl2</c> constants for where those values come from
-/// and why). This mitigates, without fully eliminating, the false-positive risk documented below --
+/// <c>AnalogFmSstvDecoder</c>'s <c>SenseLevelPresets</c> table -- and its own <c>SLvl</c>/<c>SLvl2</c>
+/// consts for the default/"Low" row specifically -- for where those values come from and why; since
+/// the Options > Decode "Sense level" wiring, the caller's actual value is the user-selected preset,
+/// not always the default). This mitigates, without fully eliminating, the false-positive risk documented below --
 /// the risk was never really "no AGC", it was "no absolute floor on what counts as a real tone
 /// peak", and that floor is now in place.
 ///

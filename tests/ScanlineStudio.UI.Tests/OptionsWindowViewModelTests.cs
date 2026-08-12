@@ -261,12 +261,13 @@ public sealed class OptionsWindowViewModelTests
         // SstvDecoderSettings' doc comment), so a load path that silently ignores the persisted
         // value and falls through to the default would pass a true/true assertion by coincidence.
         // AutoStop is the inverse case (its own default is false) -- explicit true here for the
-        // same "wouldn't pass by coincidence" reasoning.
+        // same "wouldn't pass by coincidence" reasoning. SenseLevel: 1 is also the default, so use
+        // 2 ("High") for the same reason.
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 SstvDecoderSettings.SectionKey,
-                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false },
+                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 2 },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
@@ -276,6 +277,9 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.AutoSlantEnabled);
         Assert.True(vm.AutoStopEnabled);
         Assert.False(vm.SyncRestartEnabled);
+        Assert.Equal(2, vm.SenseLevel);
+        Assert.True(vm.IsSenseLevelHighSelected);
+        Assert.False(vm.IsSenseLevelLowSelected);
     }
 
     [AvaloniaFact]
@@ -290,6 +294,31 @@ public sealed class OptionsWindowViewModelTests
         // fresh-install default too (sys.m_AutoStop = 0, Main.cpp:900).
         Assert.False(vm.AutoStopEnabled);
         Assert.True(vm.SyncRestartEnabled);
+        Assert.Equal(1, vm.SenseLevel);
+        Assert.True(vm.IsSenseLevelLowSelected);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_ClampsOutOfRangePersistedSenseLevelToVeryLow()
+    {
+        // A hand-edited settings.json can persist a value outside 0-3 -- ApplyFromSnapshot must
+        // clamp to index 0 ("Very low"), matching legacy's own SetSenseLvl switch `default:` branch
+        // (deliberately NOT the same fallback as an absent section, which resolves to 1 above).
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                SstvDecoderSettings.SectionKey,
+                new SstvDecoderSettings { SenseLevel = 7 },
+                SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, vm.SenseLevel);
+        Assert.True(vm.IsSenseLevelVeryLowSelected);
+        Assert.False(vm.IsSenseLevelLowSelected);
+        Assert.False(vm.IsSenseLevelHighSelected);
+        Assert.False(vm.IsSenseLevelVeryHighSelected);
     }
 
     [AvaloniaFact]
@@ -311,6 +340,7 @@ public sealed class OptionsWindowViewModelTests
         vm.AutoSlantEnabled = false;
         vm.AutoStopEnabled = true;
         vm.SyncRestartEnabled = false;
+        vm.SenseLevel = 3;
 
         await vm.SaveCommand.ExecuteAsync(null);
 
@@ -319,17 +349,18 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(decoder?.AutoSlantEnabled);
         Assert.True(decoder?.AutoStopEnabled);
         Assert.False(decoder?.SyncRestartEnabled);
+        Assert.Equal(3, decoder?.SenseLevel);
         Assert.False(decoder?.AfcEnabled);
     }
 
     [AvaloniaFact]
-    public void ResetDecodeToDefaultCommand_RestoresAllFourToggles()
+    public void ResetDecodeToDefaultCommand_RestoresAllDecodeFields()
     {
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 SstvDecoderSettings.SectionKey,
-                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false },
+                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 3 },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
@@ -338,6 +369,7 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.AutoSlantEnabled);
         Assert.True(vm.AutoStopEnabled);
         Assert.False(vm.SyncRestartEnabled);
+        Assert.Equal(3, vm.SenseLevel);
 
         vm.ResetDecodeToDefaultCommand.Execute(null);
 
@@ -345,6 +377,8 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(vm.AutoSlantEnabled);
         Assert.False(vm.AutoStopEnabled);
         Assert.True(vm.SyncRestartEnabled);
+        Assert.Equal(1, vm.SenseLevel);
+        Assert.True(vm.IsSenseLevelLowSelected);
     }
 
     [AvaloniaFact]

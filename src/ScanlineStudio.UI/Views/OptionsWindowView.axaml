@@ -323,11 +323,11 @@
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.SenseLevel}" />
                                         <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.SenseLevel.Help}" />
                                     </StackPanel>
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.VeryLow}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.Low}" IsChecked="True" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.High}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevelPlaceholder" Content="{loc:Translate Options.Decode.SenseLevel.VeryHigh}" />
+                                    <WrapPanel>
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevel" Content="{loc:Translate Options.Decode.SenseLevel.VeryLow}" IsChecked="{Binding IsSenseLevelVeryLowSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevel" Content="{loc:Translate Options.Decode.SenseLevel.Low}" IsChecked="{Binding IsSenseLevelLowSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevel" Content="{loc:Translate Options.Decode.SenseLevel.High}" IsChecked="{Binding IsSenseLevelHighSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SenseLevel" Content="{loc:Translate Options.Decode.SenseLevel.VeryHigh}" IsChecked="{Binding IsSenseLevelVeryHighSelected}" />
                                     </WrapPanel>
 
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Decode.RxBpf}" />
