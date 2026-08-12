@@ -51,4 +51,5 @@ public sealed record OptionsSnapshot(
     double CwToneFrequencyHz,
     bool FskIdTxEnabled,
     bool FskIdRxEnabled,
-    DemodType DemodType);
+    DemodType DemodType,
+    RxBpfPreset RxBpfPreset);

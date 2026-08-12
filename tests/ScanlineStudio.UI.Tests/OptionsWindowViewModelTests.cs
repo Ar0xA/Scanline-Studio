@@ -332,7 +332,7 @@ public sealed class OptionsWindowViewModelTests
             Settings = new AppSettings()
                 .WithSection(RadioConnectionSettings.SectionKey, new RadioConnectionSettings { BackendId = "rigctld", Host = "x", Port = 1 }, RadioSettingsJsonContext.Default.RadioConnectionSettings)
                 .WithSection(OperatorSettings.SectionKey, new OperatorSettings { Callsign = "SOMECALL" }, OperatorSettingsJsonContext.Default.OperatorSettings)
-                .WithSection(SstvDecoderSettings.SectionKey, new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, DemodType = DemodType.Pll }, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
+                .WithSection(SstvDecoderSettings.SectionKey, new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, DemodType = DemodType.Pll, RxBpfPreset = RxBpfPreset.Narrow }, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
                 .WithSection(StationIdSettings.SectionKey, new StationIdSettings { CwIdMode = CwIdMode.Cw, CwWpm = 40 }, StationIdSettingsJsonContext.Default.StationIdSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
@@ -351,6 +351,7 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(vm.AutoSyncEnabled);
         Assert.True(vm.AutoSlantEnabled);
         Assert.Equal(DemodType.Hilbert, vm.DemodType);
+        Assert.Equal(RxBpfPreset.Wide, vm.RxBpfPreset);
         // Auditor round-2 finding: ConfirmResetAll originally omitted Identification entirely --
         // this is the blind spot that let that regression through undetected.
         Assert.Equal(CwIdMode.Off, vm.CwIdMode);
@@ -366,12 +367,13 @@ public sealed class OptionsWindowViewModelTests
         // AutoStop is the inverse case (its own default is false) -- explicit true here for the
         // same "wouldn't pass by coincidence" reasoning. SenseLevel: 1 is also the default, so use
         // 2 ("High") for the same reason. DemodType: Hilbert is also the default, so use Pll for
-        // the same reason.
+        // the same reason. RxBpfPreset: Wide is also the default, so use VeryNarrow for the same
+        // reason.
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 SstvDecoderSettings.SectionKey,
-                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 2, DemodType = DemodType.Pll },
+                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 2, DemodType = DemodType.Pll, RxBpfPreset = RxBpfPreset.VeryNarrow },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
@@ -387,6 +389,9 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(DemodType.Pll, vm.DemodType);
         Assert.True(vm.IsDemodTypePllSelected);
         Assert.False(vm.IsDemodTypeHilbertSelected);
+        Assert.Equal(RxBpfPreset.VeryNarrow, vm.RxBpfPreset);
+        Assert.True(vm.IsRxBpfVeryNarrowSelected);
+        Assert.False(vm.IsRxBpfWideSelected);
     }
 
     [AvaloniaFact]
@@ -405,6 +410,8 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(vm.IsSenseLevelLowSelected);
         Assert.Equal(DemodType.Hilbert, vm.DemodType);
         Assert.True(vm.IsDemodTypeHilbertSelected);
+        Assert.Equal(RxBpfPreset.Wide, vm.RxBpfPreset);
+        Assert.True(vm.IsRxBpfWideSelected);
     }
 
     [AvaloniaFact]
@@ -453,6 +460,29 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void Constructor_ClampsOutOfRangePersistedRxBpfPresetToWide()
+    {
+        // A hand-edited settings.json can persist an enum value outside 0-3 -- ApplyFromSnapshot
+        // must clamp to Wide, matching SstvDecoderSettings.RxBpfPreset's own doc comment (unlike
+        // SenseLevel, BOTH the absent-key and out-of-range fallbacks resolve to the SAME value here).
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                SstvDecoderSettings.SectionKey,
+                new SstvDecoderSettings { RxBpfPreset = (RxBpfPreset)99 },
+                SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(RxBpfPreset.Wide, vm.RxBpfPreset);
+        Assert.True(vm.IsRxBpfWideSelected);
+        Assert.False(vm.IsRxBpfOffSelected);
+        Assert.False(vm.IsRxBpfNarrowSelected);
+        Assert.False(vm.IsRxBpfVeryNarrowSelected);
+    }
+
+    [AvaloniaFact]
     public void IsDemodTypePllSelected_Set_RaisesPropertyChangedForAllThreeSiblings()
     {
         // Round-1 code-review finding: a passing bool-value assertion alone (the tests above) doesn't
@@ -469,6 +499,24 @@ public sealed class OptionsWindowViewModelTests
         Assert.Contains(nameof(vm.IsDemodTypePllSelected), raised);
         Assert.Contains(nameof(vm.IsDemodTypeZeroCrossingSelected), raised);
         Assert.Contains(nameof(vm.IsDemodTypeHilbertSelected), raised);
+    }
+
+    [AvaloniaFact]
+    public void IsRxBpfNarrowSelected_Set_RaisesPropertyChangedForAllFourSiblings()
+    {
+        // Same reasoning as IsDemodTypePllSelected_Set_RaisesPropertyChangedForAllThreeSiblings above
+        // -- 4-way exclusive here, not 3.
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.IsRxBpfNarrowSelected = true;
+
+        Assert.Contains(nameof(vm.IsRxBpfOffSelected), raised);
+        Assert.Contains(nameof(vm.IsRxBpfWideSelected), raised);
+        Assert.Contains(nameof(vm.IsRxBpfNarrowSelected), raised);
+        Assert.Contains(nameof(vm.IsRxBpfVeryNarrowSelected), raised);
     }
 
     [AvaloniaFact]
@@ -492,6 +540,7 @@ public sealed class OptionsWindowViewModelTests
         vm.SyncRestartEnabled = false;
         vm.SenseLevel = 3;
         vm.DemodType = DemodType.ZeroCrossing;
+        vm.RxBpfPreset = RxBpfPreset.Narrow;
 
         await vm.SaveCommand.ExecuteAsync(null);
 
@@ -502,7 +551,36 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(decoder?.SyncRestartEnabled);
         Assert.Equal(3, decoder?.SenseLevel);
         Assert.Equal(DemodType.ZeroCrossing, decoder?.DemodType);
+        Assert.Equal(RxBpfPreset.Narrow, decoder?.RxBpfPreset);
         Assert.False(decoder?.AfcEnabled);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_PersistsRxBpfPresetOff_NotSilentlyDefaultedToWide()
+    {
+        // Phase-4 auditor code-review finding: RxBpfPreset.Off is deliberately the enum's 0 value
+        // (RxBpfPreset.cs's own doc comment) -- the SAME underlying int an absent settings.json key
+        // would deserialize to before the "?? Wide" fallback applies. This test locks down that Off
+        // is genuinely written and read back as Off (Enum.IsDefined true, distinct from "unset"), not
+        // silently coerced to Wide by some accidental default-value-loss path resembling the exact
+        // trap SstvDecoderSettings' own class doc comment warns bool fields about.
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.RxBpfPreset = RxBpfPreset.Off;
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var decoder = settingsStore.Settings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        Assert.NotNull(decoder?.RxBpfPreset);
+        Assert.Equal(RxBpfPreset.Off, decoder!.RxBpfPreset!.Value);
+
+        var reloaded = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(RxBpfPreset.Off, reloaded.RxBpfPreset);
+        Assert.True(reloaded.IsRxBpfOffSelected);
+        Assert.False(reloaded.IsRxBpfWideSelected);
     }
 
     [AvaloniaFact]
@@ -512,7 +590,7 @@ public sealed class OptionsWindowViewModelTests
         {
             Settings = new AppSettings().WithSection(
                 SstvDecoderSettings.SectionKey,
-                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 3, DemodType = DemodType.ZeroCrossing },
+                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false, SenseLevel = 3, DemodType = DemodType.ZeroCrossing, RxBpfPreset = RxBpfPreset.VeryNarrow },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
@@ -523,6 +601,7 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.SyncRestartEnabled);
         Assert.Equal(3, vm.SenseLevel);
         Assert.Equal(DemodType.ZeroCrossing, vm.DemodType);
+        Assert.Equal(RxBpfPreset.VeryNarrow, vm.RxBpfPreset);
 
         vm.ResetDecodeToDefaultCommand.Execute(null);
 
@@ -534,6 +613,8 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(vm.IsSenseLevelLowSelected);
         Assert.Equal(DemodType.Hilbert, vm.DemodType);
         Assert.True(vm.IsDemodTypeHilbertSelected);
+        Assert.Equal(RxBpfPreset.Wide, vm.RxBpfPreset);
+        Assert.True(vm.IsRxBpfWideSelected);
     }
 
     [AvaloniaFact]

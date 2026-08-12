@@ -64,6 +64,11 @@ public sealed partial class OptionsSettingsService
         // clamps a present-but-out-of-range value; this dialog's own ApplyFromSnapshot does the
         // equivalent Enum.IsDefined clamp for the same reason, see that method's own comment).
         DemodType: new SstvDecoderSettings().DemodType ?? DemodType.Hilbert,
+        // Absent -> Wide (legacy's real compiled-in default) -- same "?? Wide" resolution
+        // ScanlineStudio.Host.Program's ISstvDecoder registration applies (that read site also
+        // clamps a present-but-out-of-range value; this dialog's own ApplyFromSnapshot does the
+        // equivalent Enum.IsDefined clamp for the same reason, see that method's own comment).
+        RxBpfPreset: new SstvDecoderSettings().RxBpfPreset ?? RxBpfPreset.Wide,
         QrzLookupEnabled: new QrzLookupSettings().Enabled ?? false,
         QrzLookupUsername: new QrzLookupSettings().Username,
         QrzLookupPassword: new QrzLookupSettings().Password,
@@ -114,6 +119,7 @@ public sealed partial class OptionsSettingsService
             SyncRestartEnabled: decoder.SyncRestartEnabled ?? true,
             SenseLevel: decoder.SenseLevel ?? 1,
             DemodType: decoder.DemodType ?? DemodType.Hilbert,
+            RxBpfPreset: decoder.RxBpfPreset ?? RxBpfPreset.Wide,
             QrzLookupEnabled: qrzLookup.Enabled ?? false,
             QrzLookupUsername: qrzLookup.Username,
             QrzLookupPassword: qrzLookup.Password,
@@ -183,7 +189,9 @@ public sealed partial class OptionsSettingsService
                 // fix needed for it (already accurate, see AnalogFmSstvDecoder.SenseLevelPresets'
                 // own doc comment for the legacy source). DemodType wired 2026-08-12 (demod-type
                 // runtime-dispatch subsystem, Phase 4) -- see SstvDecoderSettings.DemodType's own doc
-                // comment for the absent-vs-out-of-range fallback shape.
+                // comment for the absent-vs-out-of-range fallback shape. RxBpfPreset wired 2026-08-12
+                // (RX BPF subsystem, Phase 4) -- same fallback shape as DemodType, see
+                // SstvDecoderSettings.RxBpfPreset's own doc comment.
                 previousDecoder with
                 {
                     AutoSyncEnabled = snapshot.AutoSyncEnabled,
@@ -192,6 +200,7 @@ public sealed partial class OptionsSettingsService
                     SyncRestartEnabled = snapshot.SyncRestartEnabled,
                     SenseLevel = snapshot.SenseLevel,
                     DemodType = snapshot.DemodType,
+                    RxBpfPreset = snapshot.RxBpfPreset,
                 },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
             .WithSection(
