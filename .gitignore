@@ -30,3 +30,7 @@ coverage*.info
 # OS cruft
 .DS_Store
 Thumbs.db
+
+# Python bytecode cache (tools/peer-audit/ and any other Python dev tooling)
+__pycache__/
+*.pyc
