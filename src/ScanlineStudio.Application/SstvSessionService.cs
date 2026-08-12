@@ -15,6 +15,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private readonly ISettingsStore _settingsStore;
     private readonly ISstvDecoder _decoder;
     private readonly ISstvEncoder _encoder;
+    private readonly IMacroTextResolver _macroTextResolver;
     private readonly IRadioSessionService _radioSession;
     private readonly ILogger<SstvSessionService> _logger;
     private readonly Action<ReadOnlyMemory<float>> _decoderHandler;
@@ -54,6 +55,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         ISettingsStore settingsStore,
         ISstvDecoder decoder,
         ISstvEncoder encoder,
+        IMacroTextResolver macroTextResolver,
         IWaterfallSource waterfall,
         IReceivedImageBuffer receivedImage,
         IRadioSessionService radioSession,
@@ -64,6 +66,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _settingsStore = settingsStore;
         _decoder = decoder;
         _encoder = encoder;
+        _macroTextResolver = macroTextResolver;
         Waterfall = waterfall;
         ReceivedImage = receivedImage;
         _radioSession = radioSession;
@@ -340,6 +343,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         var device = await ResolveDeviceAsync(forCapture: true, ct).ConfigureAwait(false);
         var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
+
+        // CW-ID/FSK station-ID subsystem Phase 4 code-review finding: this was documented (Phase 3's
+        // AnalogFmSstvDecoder.StationIdDecodeEnabled/NarrowFskHeaderDecoder.StationIdDecodeEnabled
+        // doc comments) as "Phase 4 wires this to the live user setting" but nothing ever did --
+        // m_fskdecode's port-equivalent field (StationIdSettings.FskIdRxEnabled) was a dead setting.
+        // Re-applied on every StartReceivingAsync call (not just once at DI-construction time, unlike
+        // the other decoder toggles below the audio-capture start) since ISstvDecoder.StationIdDecodeEnabled
+        // is deliberately live-settable -- see that property's own doc comment for why.
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var stationIdSettings = appSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)
+            ?? new StationIdSettings();
+        _decoder.StationIdDecodeEnabled = stationIdSettings.FskIdRxEnabled;
+
         await _audioEngine.StartCaptureAsync(
             device, settings.SampleRate, settings.CaptureThreadPriority,
             settings.PeriodSizeInFrames, settings.Periods, settings.CaptureChannelSource, ct).ConfigureAwait(false);
@@ -371,10 +387,68 @@ public sealed partial class SstvSessionService : ISstvSessionService
         Log.RxStopped(_logger);
     }
 
-    public Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
+    public async Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
     {
         Log.TxStarting(_logger, mode.Id, image.Width, image.Height);
-        return PlayWithPttAsync(_encoder.EncodeAsync(mode, image, ct), _encoder.SampleRate, ct);
+        var stationId = await ResolveStationIdTransmitOptionsAsync(ct).ConfigureAwait(false);
+        await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, ct), _encoder.SampleRate, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Resolves the CW-ID/FSK station-ID settings + operator identity into one fully-formed
+    /// <see cref="StationIdTransmitOptions"/> right before each transmission -- see that type's own
+    /// doc comment for why this resolution lives here (Application layer) rather than inside the
+    /// pure-DSP encoder. Settings-boundary validation for WPM/tone-frequency lives here too (Phase 1
+    /// code-review finding): a corrupted/hand-edited settings.json with WPM &lt;= 0 would otherwise
+    /// make <c>CwMorseGenerator.MillisecondsPerDotFromWpm</c> return Infinity/negative -- this falls
+    /// back to the documented default instead of letting a bad value reach the generator or abort an
+    /// in-flight transmission.</summary>
+    private async Task<StationIdTransmitOptions> ResolveStationIdTransmitOptionsAsync(CancellationToken ct)
+    {
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var stationIdSettings = appSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)
+            ?? new StationIdSettings();
+        var operatorSettings = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
+            ?? new OperatorSettings();
+
+        // Main.cpp:6969's !sys.m_CWIDText.IsEmpty() -- checked on the RAW (pre-macro) text, matching
+        // legacy exactly (a macro token that resolves to empty would still fire in legacy, since the
+        // gate never re-checks after MacroText expansion).
+        var cwEnabled = stationIdSettings.CwIdMode == CwIdMode.Cw && !string.IsNullOrEmpty(stationIdSettings.CwText);
+        var wpm = stationIdSettings.CwWpm is > 0 ? stationIdSettings.CwWpm.Value : StationIdSettings.DefaultCwWpm;
+        var toneFrequencyHz = stationIdSettings.CwToneFrequencyHz is > 0
+            ? stationIdSettings.CwToneFrequencyHz.Value
+            : StationIdSettings.DefaultCwToneFrequencyHz;
+        var nrRstEnabled = stationIdSettings.NrRstEnabled ?? StationIdSettings.DefaultNrRstEnabled;
+
+        // Auditor code-review finding on Phase 4 (real, low-severity, and refined in round 2): legacy
+        // caps the MACRO-RESOLVED CW-ID text at 77 chars for plain (non-macro) literal text --
+        // `MacroText`'s own break condition (`Main.cpp:10829`, `if (n >= (size-1)) break;` with
+        // `size = sizeof(bf)-2 = 78`) stops once `n` reaches 77, not 78; `sizeof(bf)-2` is the buffer
+        // SIZE passed in, not the actual max character count written. A macro token can overshoot
+        // this (`n += l` for a multi-char expansion checked only AFTER appending) -- legacy itself can
+        // write past `bf[80]` in that case, a real legacy buffer bug this port has no reason to
+        // reproduce; 77 is deliberately chosen as the exact literal-text limit, not an attempt to
+        // replicate the macro-overshoot case. An uncapped resolved text doesn't corrupt anything here
+        // either way (CwMorseGenerator has no buffer to overrun), just runs a longer Morse tail than
+        // legacy would have sent for the same configured literal text -- capped to match legacy's
+        // actual on-air behavior instead of silently diverging.
+        const int maxCwResolvedTextLength = 77;
+        var cwResolvedText = cwEnabled ? _macroTextResolver.Resolve(stationIdSettings.CwText!, operatorSettings) : string.Empty;
+        if (cwResolvedText.Length > maxCwResolvedTextLength)
+        {
+            cwResolvedText = cwResolvedText[..maxCwResolvedTextLength];
+        }
+
+        return new StationIdTransmitOptions
+        {
+            CwEnabled = cwEnabled,
+            CwResolvedText = cwResolvedText,
+            CwToneFrequencyHz = toneFrequencyHz,
+            CwWpm = wpm,
+            FskIdEnabled = stationIdSettings.FskIdTxEnabled,
+            Callsign = operatorSettings.Callsign ?? string.Empty,
+            NrRstText = nrRstEnabled ? stationIdSettings.NrRstText : null,
+        };
     }
 
     public Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default)

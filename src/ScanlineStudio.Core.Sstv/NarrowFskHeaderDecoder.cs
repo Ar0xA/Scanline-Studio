@@ -150,7 +150,9 @@ internal sealed class NarrowFskHeaderDecoder
     /// reachable through mode 6, which already requires this flag -- see `Main.cpp:2485`/`:2544`).
     /// Does NOT gate the mode-announce path at all (legacy has no such gate there). Defaults to
     /// legacy's own real default (off, zero-initialized, `Main.cpp:1880`'s `ReadInteger` falls back
-    /// to whatever this field already was) -- Phase 4 wires this to the live user setting.</summary>
+    /// to whatever this field already was) -- wired to the live user setting by
+    /// <c>SstvSessionService.StartReceivingAsync</c> via <see cref="AnalogFmSstvDecoder.StationIdDecodeEnabled"/>
+    /// (see that property's own doc comment for the full wiring chain).</summary>
     public bool StationIdDecodeEnabled { get; set; }
 
     /// <summary>Feeds one sample's mark(1900Hz)/space(2100Hz) envelope pair through the state
