@@ -8,12 +8,16 @@ namespace ScanlineStudio.Core.Sstv;
 /// cutoffs, same AGC formula) rather than an invented technique — see CLAUDE.md's "port first,
 /// invent second" rule for DSP/codec math.
 ///
-/// No longer this port's main picture-decode demodulator (<c>AnalogFmSstvDecoder</c> uses
-/// <see cref="HilbertFmDemodulator"/> for that, matching legacy's real compiled-in default,
-/// <c>m_Type=2</c>) — but still genuinely load-bearing, not vestigial: a dedicated instance drives
-/// AVT training-lock detection (<see cref="AvtTrainingLockStateMachine"/>), matching legacy's own
-/// real behavior of always using PLL there regardless of which demodulator handles the picture
-/// stream (`sstv.cpp:2129/2159/2169/2187/2222`, all outside the `m_Type`-dispatched switch).
+/// Used two separate ways in <c>AnalogFmSstvDecoder</c>: as a live, user-selectable main-picture
+/// demodulator (`demodType == Pll`, `DemodulatedFrequencyAt`'s dispatch switch -- legacy's real
+/// compiled-in DEFAULT is actually <see cref="HilbertFmDemodulator"/>, `m_Type=2`, not this class,
+/// but PLL is a real, legacy-faithful alternative a user can select), and, entirely independently of
+/// that setting, a SEPARATE dedicated instance always drives AVT training-lock detection
+/// (<see cref="AvtTrainingLockStateMachine"/>), matching legacy's own real behavior of always using
+/// PLL there regardless of which demodulator handles the picture stream
+/// (`sstv.cpp:2129/2159/2169/2187/2222`, all outside the `m_Type`-dispatched switch) -- see the
+/// demod-type runtime-dispatch subsystem's implementation plan for the explicit decision that the
+/// main-picture instance and the AVT instance stay separate, not shared.
 ///
 /// Legacy returns <c>outLPF.Do(m_out) * 32768 * vcogain</c> — an MMSSTV-internal scale. This port
 /// instead converts the loop's normalized frequency-deviation output back to Hz

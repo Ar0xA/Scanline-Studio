@@ -4,14 +4,19 @@ using ScanlineStudio.Abstractions.Sstv;
 namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>
-/// Generic decoder counterpart to <see cref="AnalogFmSstvEncoder"/>, using a ported
-/// <see cref="HilbertFmDemodulator"/> (see that type's doc comment) run continuously over the
-/// incoming sample stream for the main picture demodulation -- legacy's real compiled-in default
-/// (`m_Type=2`, `sstv.cpp:1492`), not the PLL this port used before the Hilbert demodulator piece.
-/// <see cref="PllFmDemodulator"/> stays genuinely in use, just no longer for the picture stream: a
-/// dedicated instance still drives AVT training-lock detection (see
-/// <see cref="AvtTrainingLockStateMachine"/>'s own doc comment for why legacy always uses PLL there
-/// regardless of the picture demodulator's own `m_Type`). Once VIS reveals the mode, per-line
+/// Generic decoder counterpart to <see cref="AnalogFmSstvEncoder"/>, dispatching the main-picture
+/// FM demodulation to one of three ported classes based on <see cref="DemodType"/> (the
+/// <c>demodType</c> constructor parameter, mirroring legacy's real <c>CSSTVDEM::m_Type</c>,
+/// `sstv.cpp:2256-2269`) -- <see cref="HilbertFmDemodulator"/> (legacy's real compiled-in default,
+/// `m_Type=2`, `sstv.cpp:1492`), <see cref="PllFmDemodulator"/>, or
+/// <c>ZeroCrossingFrequencyCounter</c> (both internal to this assembly). All three are constructed
+/// unconditionally regardless of the selected type, matching legacy's own always-constructed
+/// <c>CSSTVDEM</c> member fields. <see cref="PllFmDemodulator"/> is also used a SECOND, entirely
+/// separate way regardless of <c>demodType</c>: a dedicated instance always drives AVT training-lock
+/// detection (see <see cref="AvtTrainingLockStateMachine"/>'s own doc comment for why legacy always
+/// uses PLL there regardless of the picture demodulator's own `m_Type`) -- see the demod-type
+/// runtime-dispatch subsystem's implementation plan for the explicit decision that these stay
+/// separate instances rather than sharing state. Once VIS reveals the mode, per-line
 /// decoding is delegated to a
 /// <see cref="IScanlineDecoder"/> selected via <see cref="ScanlineCodecFactory"/> — the decoder
 /// can't know the family upfront the way the encoder does, since VIS detection is itself part of
@@ -99,7 +104,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly List<double> _demodulatedFrequencies = [];
     private int _demodulatedFrequenciesProcessedUpTo; // Band-1 item 4a: see DemodulatedFrequencyAt
     private readonly List<float> _rawSamples = [];
+    private readonly DemodType _demodType;
     private readonly HilbertFmDemodulator _demodulator;
+    // Demod-type subsystem Phase 2 -- main-picture-path alternatives to _demodulator above, live only
+    // when _demodType selects them (constructed unconditionally regardless, matching legacy's own
+    // always-constructed CSSTVDEM member fields -- cheap, and avoids null-conditional complexity in
+    // the dispatch switch). _pllDemodulator is a THIRD PllFmDemodulator instance, separate from
+    // _avtPllDemodulator below (see this subsystem's implementation plan for the explicit
+    // instance-sharing decision and why). _afcZeroCrossingCounter is a SEPARATE instance from
+    // _zeroCrossingDemodulator -- legacy's single m_fqc serves a dual role (main demod when
+    // m_Type==1, AFC-only frequency source when m_Type==0) because it's fed from ONE real-time pass;
+    // this port's AFC correction runs as a separate deferred bulk pass on its own cursor
+    // (_afcProcessedUpTo, see ApplyAfcCorrections), so the two roles need independent instances even
+    // though only one is ever actually fed samples for a given _demodType.
+    private readonly PllFmDemodulator _pllDemodulator;
+    private readonly ZeroCrossingFrequencyCounter _zeroCrossingDemodulator;
+    private readonly ZeroCrossingFrequencyCounter _afcZeroCrossingCounter;
+    private bool _mainPathIsNarrow; // narrow-mode edge tracker for the main-path PLL/ZeroCrossing retune -- Hilbert takes isNarrow per-call instead, needs no state here
     private readonly SearchBandpassFilter _searchBandpassFilter;
 
     // Band-1 S2 fix (pre-Phase-2 audit): the absolute sample index _rawSamples[0]/_demodulatedFrequencies[0]/
@@ -618,7 +639,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// CSSTVDEM instantly), this is read once at DI construction (ScanlineStudio.Host.Program), same
     /// limitation as afcEnabled/autoStopEnabled/etc. above -- most user-visible for this particular
     /// field since squelch is the control most likely to be adjusted while actively chasing a signal.</param>
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1)
+    /// <param name="demodType">Main-picture FM demodulator algorithm, mirrors legacy's
+    /// <c>CSSTVDEM::m_Type</c> (`sstv.cpp:2256-2269`). Legacy's real compiled-in default is
+    /// <see cref="DemodType.Hilbert"/> (`sstv.cpp:1492`), matching this port's own pre-existing
+    /// hardcoded behavior. Restart-only, same reasoning/limitation as every other parameter here.</param>
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert)
     {
         _sampleRate = sampleRate;
         _afcEnabled = afcEnabled;
@@ -627,7 +652,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _syncRestartEnabled = syncRestartEnabled;
         _autoSlantEnabled = autoSlantEnabled;
         (_slvl, _slvl2, _slvl3) = SenseLevelPresets[senseLevel is >= 0 and <= 3 ? senseLevel : 0];
+        _demodType = demodType;
         _demodulator = new HilbertFmDemodulator(sampleRate);
+        _pllDemodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz);
+        _zeroCrossingDemodulator = new ZeroCrossingFrequencyCounter(sampleRate);
+        _afcZeroCrossingCounter = new ZeroCrossingFrequencyCounter(sampleRate);
         _searchBandpassFilter = new SearchBandpassFilter(sampleRate);
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
@@ -820,7 +849,38 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // for the bandpass cache recurs here (this cursor also trails the anchor at Commit() time,
             // so pre-anchor samples correctly stay wide -- see HilbertFmDemodulator's own doc comment).
             var isNarrow = _mode is not null && _mode.NarrowModeCode is not null && thisIndex >= _bandpassLockedFromSample;
-            _demodulatedFrequencies.Add(_demodulator.ProcessSample(BandpassFilteredSampleAt(thisIndex) * 32768.0, isNarrow));
+
+            // Demod-type subsystem Phase 2, landmine #3 -- retune the main-path PLL/ZeroCrossing
+            // instance on the narrow-mode edge (not every sample). Only the CURRENTLY SELECTED
+            // instance is retuned: unlike legacy's CSSTVDEM::SetWidth (which unconditionally retunes
+            // all three regardless of m_Type), the non-selected instances here are never fed samples
+            // at all, so their own width state is unobservable dead state -- retuning only the live
+            // one is behaviorally identical, not a simplification that changes anything observable.
+            // Hilbert needs no such call: its isNarrow is a stateless per-call ProcessSample argument.
+            if (isNarrow != _mainPathIsNarrow)
+            {
+                _mainPathIsNarrow = isNarrow;
+                switch (_demodType)
+                {
+                    case DemodType.Pll:
+                        _pllDemodulator.SetWidth(isNarrow);
+                        break;
+                    case DemodType.ZeroCrossing:
+                        _zeroCrossingDemodulator.SetWidth(isNarrow);
+                        break;
+                }
+            }
+
+            var scaledSample = BandpassFilteredSampleAt(thisIndex) * 32768.0;
+            var demodulated = _demodType switch
+            {
+                // sstv.cpp:2256-2269's exact case order/shape (case 0=PLL, case 1=ZeroCrossing,
+                // default=Hilbert).
+                DemodType.Pll => _pllDemodulator.ProcessSample(scaledSample),
+                DemodType.ZeroCrossing => _zeroCrossingDemodulator.ProcessSample(scaledSample),
+                _ => _demodulator.ProcessSample(scaledSample, isNarrow),
+            };
+            _demodulatedFrequencies.Add(demodulated);
         }
 
         return _demodulatedFrequencies[Rel(index)];
@@ -2153,6 +2213,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _bandpassLockedFromSample = int.MaxValue; // Band-1 item 4b -- see field's own doc comment
 
         _afcTracker = null;
+        // Demod-type subsystem Phase 2, landmine #3 -- legacy's Stop() resets m_fqc back to wide too
+        // (sstv.cpp:1781 Clear(), :1790 SetWidth(0)) -- same reasoning as InitializeAfc's own
+        // SetWidth/Clear pair (this port's EndOfImage is the Stop() analogue). Order (SetWidth then
+        // Clear, not legacy's own Clear-then-SetWidth at this specific call site) doesn't matter here:
+        // Clear() always resets to the EXACT ZEROFQ-denormalized value for whichever width is active
+        // at the moment it runs, and SetWidth's own rescale is an algebraic identity when composed
+        // with that -- both orders converge to the identical final state.
+        _afcZeroCrossingCounter.SetWidth(isNarrow: false);
+        _afcZeroCrossingCounter.Clear();
         _syncEnvelopeDetector = null;
         _slantTracker = null;
         ResetReSyncState(); // legacy's Stop()-side m_Skip = 0, sstv.cpp:1789
@@ -3222,9 +3291,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // independent ways during plan-review (algebraic substitution into the `-n` relationship, and
         // a physical cross-check: the Hilbert path delays the picture stream by ~htap samples
         // relative to the sync envelope this fold tracks, so the picture arrives later and the anchor
-        // must move later too). Unconditional here, unlike legacy's `m_Type==2` check -- this port's
-        // main picture path is always HilbertFmDemodulator now, no PLL/Hilbert branching needed.
-        delta += _demodulator.HalfTap / 4;
+        // must move later too).
+        //
+        // Demod-type subsystem Phase 2, landmine #1 -- re-gated on `_demodType == Hilbert`, matching
+        // legacy's own `m_Type==2` check exactly (unconditional only while Hilbert was the sole
+        // reachable main-path type). Neither PllFmDemodulator nor ZeroCrossingFrequencyCounter has an
+        // equivalent group-delay constant, matching legacy: CPLL/CFQC have no such correction term at
+        // all -- the confirmed-correct behavior for those two types is simply no correction here.
+        if (_demodType == DemodType.Hilbert)
+        {
+            delta += _demodulator.HalfTap / 4;
+        }
 
         // Legacy's own equivalent of a negative result is DrawSSTVNormal skipping samples whose
         // phase is still negative (`if (n<0) continue`, Main.cpp:4146) rather than reading earlier
@@ -3836,12 +3913,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // normal 1200/1000/1325/400); AFCB/AFCW timing switches on a different, overlapping grouping
     // (SstvModeRegistry.IsFastAfcGroup) -- see AfcTracker's doc comment for both.
     //
-    // Piece: Hilbert demodulator port -- no longer constructs a ZeroCrossingFrequencyCounter here.
     // Legacy's real AFC source depends on m_Type (sstv.cpp:2255-2269): case 0/PLL feeds SyncFreq from
     // m_fqc.Do(...) (the zero-crossing counter, independent of the picture demodulator's own output);
     // cases 1/2 (zero-crossing/Hilbert) feed SyncFreq from the SAME `d` already used for the picture
-    // stream. This port's main picture path is now HilbertFmDemodulator (case 2's real shape), so AFC
-    // now reads directly from the already-demodulated buffer instead -- see ApplyAfcCorrections.
+    // stream. Demod-type subsystem Phase 2: _afcZeroCrossingCounter (constructed unconditionally in
+    // the ctor, see that field's own doc comment) is retuned/cleared below regardless of which type
+    // is selected -- it stays fully inert whenever _demodType != Pll, since ApplyAfcCorrections only
+    // ever reads from it in that case. (This doc comment previously claimed a ZeroCrossingFrequencyCounter
+    // was "no longer constructed here" at all, correct only while Hilbert was this port's sole live
+    // main-path type -- now stale, corrected here.)
     private void InitializeAfc(SstvModeDefinition mode)
     {
         // Math.Max, not a bare assignment -- bug found by independent review. A mid-reception
@@ -3853,6 +3933,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // _visLockProcessedUpTo in Commit(). A no-op for every non-restart Commit() (the new anchor
         // is always >= wherever AFC had gotten to in that case).
         _afcProcessedUpTo = Math.Max(_afcProcessedUpTo, _consumedSamples);
+
+        // Demod-type subsystem Phase 2, landmine #3 -- CSSTVDEM::SetWidth retunes m_fqc
+        // UNCONDITIONALLY regardless of m_Type (sstv.cpp:1707-1715), and legacy's real Start() calls
+        // SetWidth BEFORE Clear() (sstv.cpp:1719,1722), itself unconditional -- not gated on AVT or
+        // any AFC-enabled toggle (those don't exist as concepts inside Start() at all). Round-1
+        // code-review finding: an earlier version of this method placed these two calls AFTER the
+        // AVT/!_afcEnabled early return below, correct only by argument (the counter is only ever
+        // READ when _afcTracker is non-null AND _demodType==Pll, both of which this early return
+        // already excludes) rather than by construction -- moved here, before the early return, to
+        // match legacy's real unconditional placement and remove that argument-shaped invariant.
+        _afcZeroCrossingCounter.SetWidth(mode.NarrowModeCode is not null);
+        _afcZeroCrossingCounter.Clear();
 
         // AVT's own exclusion is real legacy behavior (see this method's own doc comment); the
         // !_afcEnabled branch is this port's new settings-driven toggle, layered on top without
@@ -4052,53 +4144,90 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var bound = Math.Min(Math.Min(TotalSamplesReceived, _afcBoundSample), upperBoundSample);
         for (; _afcProcessedUpTo < bound; _afcProcessedUpTo++)
         {
-            // Piece: Hilbert demodulator port -- re-sourced from sstv.cpp:2265-2270 (case 2/Hilbert),
-            // not case 0/PLL as an earlier version of this method modeled (case 0 feeds SyncFreq from
-            // a SEPARATE zero-crossing counter, m_fqc.Do(...), independent of the picture
-            // demodulator's own output; case 2 feeds SyncFreq from the SAME `d` already used for the
-            // picture stream: `d = m_hill.Do(m_lvl.m_Cur); ...; SyncFreq(d);`). `m_afc` itself is
-            // legacy's own always-on default (sstv.cpp:1471 -- no separate toggle to model; AVT's
-            // exclusion is already handled by _afcTracker staying null, see InitializeAfc).
-            //
-            // Corrected (ultracode audit finding #4): the `m_CurMax > 16` gate wraps ONLY the
-            // SyncFreq(d) *update* (sstv.cpp:2258/2263/2267) -- the standing correction itself,
+            // `m_afc` itself is legacy's own always-on default (sstv.cpp:1471 -- no separate toggle
+            // to model; AVT's exclusion is already handled by _afcTracker staying null, see
+            // InitializeAfc). Corrected (ultracode audit finding #4): the `m_CurMax > 16` gate wraps
+            // ONLY the SyncFreq *update* (sstv.cpp:2258/2263/2267) -- the standing correction itself,
             // `d += m_AFCDiff` (sstv.cpp:2270), is a SEPARATE, unconditional statement applied to
-            // every sample regardless of gate state. An earlier version of this method applied the
-            // correction inside the gate too, so a low-signal-level sample got no correction at all
-            // instead of the last-known standing one -- a discontinuity legacy never has.
-            //
-            // Reads _demodulatedFrequencies BEFORE this same iteration's own correction is added to
-            // it below -- matching legacy's exact sequencing, where SyncFreq(d) is called with the
-            // pre-correction `d`, and `d += m_AFCDiff` happens afterward (sstv.cpp:2270).
-            var measuredFrequencyHz = DemodulatedFrequencyAt(_afcProcessedUpTo);
-            if (AgcCurMaxAt(_afcProcessedUpTo) > 16.0)
-            {
-                _afcTracker.ProcessSample(measuredFrequencyHz);
+            // every sample regardless of gate state (see the unconditional add below, outside every
+            // branch).
+            var gated = AgcCurMaxAt(_afcProcessedUpTo) > 16.0;
 
-                // ultracode audit finding #1: legacy's InitTone retunes the sync-envelope tone
-                // resonator (m_iir12/19) on every SyncFreq lock update (sstv.cpp:1695-1705, called
-                // from sstv.cpp:2362) -- only while synced, which this whole per-line decode loop
-                // already implies (ApplyAfcCorrections only runs while a mode is locked and being
-                // decoded). Retune only when the correction actually changed, matching legacy's own
-                // call cadence (InitTone fires once per lock event, not once per gated sample).
-                //
-                // Milestone-audit fix: legacy's dfq = m_AFCDiff * m_AFC_BWH moves the resonator ONTO
-                // the actually-received tone (SetFreq(1200+dfq) ~= measured frequency) -- the
-                // opposite direction from CorrectionHz, which is designed to pull a MEASUREMENT back
-                // toward nominal (added to the demodulated stream below). Using CorrectionHz directly
-                // here retuned the resonator away from the signal by twice the real offset. dfq is
-                // the negation of CorrectionHz: verified by hand (measured=1210Hz, syncTarget=1200Hz
-                // -> CorrectionHz=-13.125, so the resonator should move to 1200+13.125=1213.125 (the
-                // real received frequency, +3.125's calibration nudge) -- i.e. 1200 + (-CorrectionHz).
-                var dfq = -_afcTracker.CorrectionHz;
-                if (_lastAppliedAfcRetuneHz != dfq)
+            // DemodulatedFrequencyAt must run EVERY iteration regardless of demod type, for two
+            // reasons: (1) it's what the standing correction below is added to -- the picture-path
+            // value is always the correction TARGET, even for PLL (case 0), where legacy's own
+            // `d += m_AFCDiff` (sstv.cpp:2270) applies to the PICTURE stream's own `d`, not to the
+            // separate m_fqc measurement; (2) it forward-fills _demodulatedFrequencies as a side
+            // effect (see that method's own doc comment) -- skipping this call for PLL samples would
+            // leave the list not yet filled up to _afcProcessedUpTo by the time the unconditional
+            // index below runs (a real bug an earlier version of this method had, caught by
+            // GoldenVectorTests.cs's own PLL-arm test throwing IndexOutOfRangeException immediately).
+            var pictureFrequencyHz = DemodulatedFrequencyAt(_afcProcessedUpTo);
+
+            // Demod-type subsystem Phase 2, landmine #2 -- AFC's frequency-MEASUREMENT source (as
+            // opposed to the correction TARGET above, which is always the picture stream) forks by
+            // demod type, matching legacy's real per-case behavior exactly (sstv.cpp:2256-2269):
+            if (_demodType == DemodType.Pll)
+            {
+                // case 0/PLL (sstv.cpp:2257-2258): SyncFreq is fed from a SEPARATE, independently-
+                // running zero-crossing counter (`m_fqc.Do(m_lvl.m_Cur)`), NOT the picture path's own
+                // PLL output -- and that call is itself INSIDE the gate (unlike cases 1/2 below,
+                // where the picture-path `d = <demod>.Do(...)` call is unconditional and only
+                // SyncFreq(d) is gated). Reintroduces _afcZeroCrossingCounter, dormant since Hilbert
+                // became the sole live main-path demod.
+                if (gated)
                 {
-                    _lastAppliedAfcRetuneHz = dfq;
-                    _syncEnvelopeDetector?.Retune(dfq);
+                    var measuredFrequencyHz = _afcZeroCrossingCounter.ProcessSample(BandpassFilteredSampleAt(_afcProcessedUpTo) * 32768.0);
+                    ApplyGatedAfcUpdate(measuredFrequencyHz);
+                }
+            }
+            else
+            {
+                // cases 1/2 (Zero-crossing/Hilbert as main path, sstv.cpp:2261-2268): SyncFreq feeds
+                // from the SAME `d` already used for the picture stream -- unchanged from this
+                // method's pre-Phase-2 behavior. Reads the pre-correction picture value -- matching
+                // legacy's exact sequencing, where SyncFreq(d) is called with the pre-correction `d`,
+                // and `d += m_AFCDiff` happens afterward (sstv.cpp:2270).
+                if (gated)
+                {
+                    ApplyGatedAfcUpdate(pictureFrequencyHz);
                 }
             }
 
             _demodulatedFrequencies[Rel(_afcProcessedUpTo)] += _afcTracker.CorrectionHz;
+        }
+    }
+
+    /// <summary>The gated half of <see cref="ApplyAfcCorrections"/>'s per-sample work -- feeds
+    /// <see cref="_afcTracker"/> and retunes the sync-envelope resonator, shared by both demod-type
+    /// branches (only the frequency-source SIDE differs per type, this update logic doesn't).
+    /// <paramref name="measuredFrequencyHz"/> must already be the correct per-type measurement (the
+    /// AFC-dedicated zero-crossing counter's output for PLL, or the picture path's own output for
+    /// Zero-crossing/Hilbert) -- this method doesn't know or care which.</summary>
+    private void ApplyGatedAfcUpdate(double measuredFrequencyHz)
+    {
+        _afcTracker!.ProcessSample(measuredFrequencyHz);
+
+        // ultracode audit finding #1: legacy's InitTone retunes the sync-envelope tone resonator
+        // (m_iir12/19) on every SyncFreq lock update (sstv.cpp:1695-1705, called from
+        // sstv.cpp:2362) -- only while synced, which this whole per-line decode loop already
+        // implies (ApplyAfcCorrections only runs while a mode is locked and being decoded). Retune
+        // only when the correction actually changed, matching legacy's own call cadence (InitTone
+        // fires once per lock event, not once per gated sample).
+        //
+        // Milestone-audit fix: legacy's dfq = m_AFCDiff * m_AFC_BWH moves the resonator ONTO the
+        // actually-received tone (SetFreq(1200+dfq) ~= measured frequency) -- the opposite direction
+        // from CorrectionHz, which is designed to pull a MEASUREMENT back toward nominal (added to
+        // the demodulated stream by ApplyAfcCorrections' caller). Using CorrectionHz directly here
+        // retuned the resonator away from the signal by twice the real offset. dfq is the negation
+        // of CorrectionHz: verified by hand (measured=1210Hz, syncTarget=1200Hz -> CorrectionHz=
+        // -13.125, so the resonator should move to 1200+13.125=1213.125 (the real received
+        // frequency, +3.125's calibration nudge) -- i.e. 1200 + (-CorrectionHz).
+        var dfq = -_afcTracker.CorrectionHz;
+        if (_lastAppliedAfcRetuneHz != dfq)
+        {
+            _lastAppliedAfcRetuneHz = dfq;
+            _syncEnvelopeDetector?.Retune(dfq);
         }
     }
 
