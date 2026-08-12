@@ -79,18 +79,30 @@ rendered correctly, proving the error-parsing path against the real server, not 
 fixtures). 359 tests passing across the 3 affected test projects (208 UI + 73 Application + 78
 Core.Logbook, including 10+5 new QRZ-specific tests).
 
-**Current wiring totals** (`spec/16-gui-wiring-survey.md`, ~281 controls tracked, not yet re-audited
-post-`13a8ca7`): was **~130 REAL, ~103 STUB, ~47 FAKE-LIVE, ~2 PARTIAL** before this session's fix;
-"Open in Log" flips from STUB to REAL, survey doc itself not yet updated to reflect it. Densest
-remaining gaps: Receive tab's Sync&Slant/Input-
-chain/Signal-quality cards (SNR/squelch/notch/noise-floor — no live audio-chain measurement exists
-in `Core.Audio`/`Core.Sstv` for most of these, real new DSP work not just wiring); Options window's
-Decode's remaining 7 controls plus Identification/Advanced tabs (~53 controls, still stub);
-Transmit tab's Queue/TX-log/Recently-sent cards (100% stub, no such features exist); TX image
-editor's canvas-overlay safe-area/callsign/report-plate text (FAKE-LIVE — reads as real burned-in
-TX content, arguably the most deceptive placeholder in the app). Remaining PARTIAL: RxFrameMeta
-Note/Override-callsign `TextBox`es (needs a real backing field on the frame/session model — checked
-directly this session, genuinely harder than the Gallery-side Note fix, not just a stale note).
+**Auto-stop/Auto-restart wired + Tx-tab stale checkbox removed, closed** — same session, right after
+QRZ lookup. Checked `Options.Decode.AutoStop`/`AutoRestart`'s loc text against what
+`SstvDecoderSettings.AutoStopEnabled`/`SyncRestartEnabled`'s own doc comments actually say the
+fields gate (legacy line-cited): both labels were factually wrong ("Auto-stop when sync looks
+stable" and "Auto-restart sync on loss" — backwards/vague vs. the real behavior). Fixed the wording
+first (now "Auto-stop on erratic/weak signal" / "Restart onto a stronger sync mid-reception"), then
+wired both checkboxes through the same `OptionsSnapshot`/`OptionsSettingsService` pattern as
+Auto-Sync/Auto-Slant. Also removed the TX tab's `Options.Tx.QrzLookup` checkbox — a stale duplicate
+placeholder that predated the real QRZ.com tab (commit `4f14396`) and was now just confusing/
+redundant next to it; removed outright (loc keys deleted too), not left stub. 4 existing
+`OptionsWindowViewModelTests` extended (2 renamed to drop the now-inaccurate "AutoSync/AutoSlant"
+naming), 208/208 UI tests still passing. `spec/16-gui-wiring-survey.md` fully updated for this
+entry, QRZ lookup, and Open in Log — no more stale rows/counts anywhere in it as of this commit.
+
+**Current wiring totals** (`spec/16-gui-wiring-survey.md`, ~286 controls tracked, fully current as
+of this commit): **~142 REAL, ~99 STUB, ~46 FAKE-LIVE, ~1 PARTIAL**. Densest remaining gaps: Receive
+tab's Sync&Slant/Input-chain/Signal-quality cards (SNR/squelch/notch/noise-floor — no live
+audio-chain measurement exists in `Core.Audio`/`Core.Sstv` for most of these, real new DSP work not
+just wiring); Options window's Decode's remaining 5 controls plus Identification/Advanced tabs
+(~53 controls, still stub); Transmit tab's Queue/TX-log/Recently-sent cards (100% stub, no such
+features exist); TX image editor's canvas-overlay safe-area/callsign/report-plate text (FAKE-LIVE —
+reads as real burned-in TX content, arguably the most deceptive placeholder in the app). Remaining
+PARTIAL: RxFrameMeta's Note `TextBox` only (needs a real backing field on the frame/session model —
+Override-callsign's twin issue closed this session via the QRZ lookup wiring).
 
 **`spec/14-roadmap.md`'s "Must-implement backlog" is the prioritized list to work from**, not the
 survey directly — the survey tells you WHAT is stub/fake, the backlog tells you what order to
@@ -122,9 +134,14 @@ relevant test suite, real-window screenshot/DB-level check if UI-visible) → co
 Escalation path if stuck: ask the auditor; if the auditor also can't resolve it, log to
 `spec/14-roadmap.md`'s "Verify later with human" section rather than stalling.
 
-**Next action on resume**: ask the user which Must-implement backlog item to start with — Options
-dialogs needs their scoping answer specifically; CW-ID/FSK is the next-biggest unblocked item
-(`SetLinkedQsoIdAsync` and QRZ.com lookup are both done, see above). Small housekeeping item if
-picking this back up: `spec/16-gui-wiring-survey.md`'s "Open in Log" row/wiring-totals table (stale
-since `13a8ca7`) and its Frame-metadata "Grid/dist·QRZ"/"Lookup QRZ" rows (stale since the QRZ
-lookup commit) haven't been updated to reflect either yet.
+**Next action on resume**: user said "wire what you can, check if off, then start on the items that
+need functionality" — the "wire what you can" phase is now done (Open in Log, QRZ lookup,
+Auto-stop/Auto-restart all shipped; survey doc fully current). What's left in Options is no longer
+simple wiring — every remaining stub section needs genuinely NEW backend functionality, not just a
+binding: General (window-geometry persistence, JPEG quality — blocked on PNG-only save path),
+Audio (FIFO/priority/stereo-source hooks), Radio (OmniRig/RTS-on-RX/PTT-lock), Decode (Sense-level/
+RX-BPF/Demod-type/RX-buffer), Identification (100% stub, overlaps CW-ID/FSK below), Advanced (100%
+stub, PLL/filter-tuning internals). Each is its own feature-scoping decision, not more "just wire
+it" — ask the user which section to scope/build next, or offer CW-ID/FSK (`sstv.cpp:2465-2551`'s
+STX `0x2a`, zero replacement built, user-deferred once already) as the alternative next-biggest
+unblocked item.

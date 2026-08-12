@@ -295,17 +295,11 @@
                                 </StackPanel>
                             </ContentControl>
 
-                            <!-- Disabled placeholder: legacy's YONIQ-fork-specific QRZ.com lookup
-                                 toggle; legacy hardcodes a personal API password for this, which
-                                 is not being resurrected in any form; only the bare enable concept
-                                 is represented. -->
-                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
-                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Tx.QrzLookup}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" VerticalAlignment="Center" />
-                                    <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.QrzLookup.Help}" />
-                                </StackPanel>
-                            </ContentControl>
+                            <!-- Removed 2026-08-12: this disabled QRZ.com-lookup placeholder is now
+                                 superseded by the real "QRZ.com" tab (QrzLookupEnabled/Username/
+                                 Password, wired in commit 4f14396). Leaving both would mean two
+                                 different "QRZ lookup" toggles in two different tabs, one real and
+                                 one a dead stub, which reads as a bug, not a feature. -->
 
                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetTxToDefaultCommand}" />
                         </StackPanel>
@@ -370,10 +364,19 @@
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.On}" IsChecked="True" />
                                     </WrapPanel>
 
+                                    <!-- Wired 2026-08-12: SstvDecoderSettings.AutoStopEnabled/SyncRestartEnabled are
+                                         real, already-consumed decoder settings; these two were left STUB
+                                         specifically because their OLD loc text lied about what the fields actually
+                                         gate (AutoStop said "when sync looks stable", the field really gates
+                                         stopping on erratic/WEAK signal; AutoRestart said "on loss", the field
+                                         really gates restarting onto a STRONGER sync found mid-reception): fixed
+                                         both labels to match SstvDecoderSettings.cs's own verified doc comments
+                                         before wiring, not shipping a control that still lies. Same "takes effect
+                                         on next app restart" caveat as every other Options-dialog setting. -->
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoStop}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding AutoStopEnabled}" />
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoRestart}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding SyncRestartEnabled}" />
                                     <!-- Wired 2026-08-11: SstvDecoderSettings.AutoSyncEnabled/AutoSlantEnabled are real,
                                          already-consumed decoder settings (RestartableSstvDecoder via
                                          ScanlineStudio.Host.Program's ISstvDecoder registration); this dialog was the
