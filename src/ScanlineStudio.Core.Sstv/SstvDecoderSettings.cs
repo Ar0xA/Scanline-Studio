@@ -90,4 +90,19 @@ public sealed record SstvDecoderSettings
     /// for the full reasoning). Not the same "different fallback" pattern <see cref="SenseLevel"/>
     /// uses -- don't copy that shape here.</summary>
     public DemodType? DemodType { get; init; }
+
+    /// <summary>Port of legacy's real, user-selectable <c>CSSTVDEM::m_bpf</c> (RX bandpass-filter
+    /// sharpness, <c>Option.dfm</c>'s <c>RGRxBPF</c> radio group, <c>sstv.cpp:1522-1550</c>'s
+    /// <c>CalcBPF</c>) -- same <see cref="DemodType"/> shape, matching (not different) fallback
+    /// values: absent means "apply <see cref="RxBpfPreset.Wide"/>" (legacy's real compiled-in
+    /// default, <c>sstv.cpp:1416</c>, <c>m_bpf=1</c>), and a PRESENT-but-out-of-range value (e.g. a
+    /// hand-edited settings.json with an enum member this build doesn't know) ALSO clamps to
+    /// <see cref="RxBpfPreset.Wide"/> -- a deliberate divergence from legacy's own real behavior
+    /// here, NOT a replicated bug: an out-of-range legacy <c>DEMBPF</c> reaches <c>CalcBPF</c>'s
+    /// <c>default:</c> arm (<c>sstv.cpp:1546-1548</c>), which sets <c>bpftap=0</c> while <c>m_bpf</c>
+    /// itself stays nonzero -- so the <c>if(m_bpf)</c> gate (<c>sstv.cpp:1826</c>) still passes and
+    /// <c>m_BPF.Do</c> runs against a zero-length/stale coefficient table, a real legacy bug, not a
+    /// behavior worth preserving. This port's clamp-to-Wide sidesteps it entirely, same reasoning as
+    /// <see cref="DemodType"/>'s own clamp-not-replicate-the-bug decision above.</summary>
+    public RxBpfPreset? RxBpfPreset { get; init; }
 }

@@ -129,6 +129,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // the null-coalesce keeps the buffer-trim cursor (_bandpassFilteredProcessedUpTo) advancing under
     // Off exactly like every other preset.
     private readonly SearchBandpassFilter? _searchBandpassFilter;
+    // RX BPF subsystem Phase 3: stored separately from _searchBandpassFilter (which is null for Off,
+    // so it can't itself answer "which preset was selected") -- exists solely for RxBpfPresetForTests,
+    // mirroring _demodType/DemodTypeForTests' own shape below.
+    private readonly RxBpfPreset _rxBpfPreset;
 
     // Band-1 S2 fix (pre-Phase-2 audit): the absolute sample index _rawSamples[0]/_demodulatedFrequencies[0]/
     // _agcSamples[0]/_agcCurMaxSamples[0]/_bandpassFilteredSamples[0] currently correspond to -- 0
@@ -675,6 +679,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // set first, but that's incidental to field-declaration order, not a guarantee; a future
         // reorder would silently default the field to `false` with no compiler error and no test
         // catching it unless a test specifically pins fcl with sync-restart on.
+        _rxBpfPreset = rxBpfPreset;
         _searchBandpassFilter = rxBpfPreset == RxBpfPreset.Off
             ? null
             : new SearchBandpassFilter(sampleRate, rxBpfPreset, syncRestartEnabled);
@@ -4020,6 +4025,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// <see cref="RestartableSstvDecoder"/> rebuild, not just that the wrapper still remembers what
     /// it was told.</summary>
     internal DemodType DemodTypeForTests => _demodType;
+
+    /// <summary>Test-only visibility into the RX BPF preset this instance was actually constructed
+    /// with -- production code has no need to read this back (and <see cref="_searchBandpassFilter"/>
+    /// itself can't answer this, since it's null for <see cref="RxBpfPreset.Off"/>). Same reasoning as
+    /// <see cref="DemodTypeForTests"/> above.</summary>
+    internal RxBpfPreset RxBpfPresetForTests => _rxBpfPreset;
 
     /// <summary>Test-only visibility into the Auto-Slant sync-envelope detector -- the one AFC
     /// retunes (ultracode audit finding #1). Null until <see cref="InitializeSlant"/> runs for a
