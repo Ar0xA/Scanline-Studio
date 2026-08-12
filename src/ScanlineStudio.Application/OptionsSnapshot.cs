@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Audio;
+
 namespace ScanlineStudio.Application;
 
 /// <summary>Plain, UI-safe view over every settings section the Options dialog edits -- exists so
@@ -28,4 +30,7 @@ public sealed record OptionsSnapshot(
     string? QrzLookupPassword,
     bool AutoStopEnabled,
     bool SyncRestartEnabled,
-    int SenseLevel);
+    int SenseLevel,
+    AudioChannelSource CaptureChannelSource,
+    bool StereoTxEnabled,
+    bool AppPriorityIsHigh);
