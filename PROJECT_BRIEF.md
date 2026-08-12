@@ -10,7 +10,28 @@ in order: `13a8ca7` Open in Log, `4f14396` QRZ lookup, `e132044` Auto-stop/Auto-
 in `spec/16-gui-wiring-survey.md` (wiring inventory) and `spec/14-roadmap.md` (backlog + research).
 Nothing lost — see git history for this file if older narrative is ever needed.
 
-## Resume here (2026-08-12, ACTIVE) — CW-ID / FSK station-ID subsystem
+## Resume here (2026-08-12, ACTIVE) — CW-ID / FSK station-ID subsystem, implementing Phase 1
+
+**Status: plan-review fully DONE (2 rounds, both auditor-verified against legacy source), building
+Phase 1.** v1 scope confirmed with user: FSK+CW+NR/RST, sound-file deferred, `.ini` import deferred.
+Two product decisions also confirmed with user: CW-ID speed follows the configured WPM (fixing an
+apparent legacy bug where it's effectively pinned to a default), and no automatic QRZ lookup fires on
+FSK-ID decode (fill the callsign field only). Full plan (exact legacy citations, phase-by-phase file
+lists, tests, both review rounds' corrections folded in) lives at
+`/home/artien/.claude/plans/abundant-weaving-lark.md` — **read that file first on resume**, this
+section is just status, not a duplicate of the plan content.
+
+Both plan-review rounds found and fixed real protocol-level errors by reading legacy source directly
+(round 1: wrong NR predicate, wrong CW-timing citation, missing TX-encoder silence representation,
+under-specified RX-decoder return-type change; round 2, independently re-verifying round 1's fixes:
+wrong NR/RST auto-fill gate — was using the callsign's gate for both, they're different predicates —
+plus a missing `AnalogFmSstvDecoder.TryNarrowFskScan` consumer-contract note that would have silently
+broken AVT training/header scanning, plus two missing Morse special-cases (`/` and `.`)). Wire
+protocol is now independently confirmed correct in every byte-level detail checked.
+
+Task list has all 6 phases pre-created (`Phase 1` = silence representation + CW Morse generator,
+... `Phase 6` = Options/Transmit UI + e2e) — see current task list, don't recreate. Phase 1 is
+`in_progress`.
 
 **What this is**: the next item off the Must-implement backlog, picked explicitly by the user (not
 autonomously) after the "wire what you can" pass finished everything wireable in the Options window.
@@ -94,12 +115,14 @@ on the frame/session model).
 ## Established process (proven across many prior batches, reuse it)
 
 research → plan → auditor plan-review (2 rounds for anything touching decode-path/concurrency/
-schema; skip for pure UI-plumbing with no DSP/concurrency risk) → implement → auditor code-review
-(soft cap ~3 rounds — round 1 finds real blockers, round 2 catches an incomplete fix, round 3
-usually closes it, loop in the user rather than a round 4) → verify (build + full relevant test
-suite, real-window screenshot/DB-level check if UI-visible) → commit → push. Escalation path if
-stuck: ask the auditor; if the auditor also can't resolve it, log to `spec/14-roadmap.md`'s "Verify
-later with human" section rather than stalling.
+schema; skip for pure UI-plumbing with no DSP/concurrency risk) → implement → **local peer-audit**
+(`tools/peer-audit/`, free/fast, log to `tools/peer-audit/TRACKING.md` — added 2026-08-12, see
+CLAUDE.md §7b; review checkpoint at 5 logged uses) → auditor code-review (soft cap ~3 rounds —
+round 1 finds real blockers, round 2 catches an incomplete fix, round 3 usually closes it, loop in
+the user rather than a round 4) → verify (build + full relevant test suite, real-window
+screenshot/DB-level check if UI-visible) → commit → push. Escalation path if stuck: ask the
+auditor; if the auditor also can't resolve it, log to `spec/14-roadmap.md`'s "Verify later with
+human" section rather than stalling.
 
 Real-window testing has caught bugs build+tests never would this session (twice, both in the
 window-geometry work: a startup deadlock and a cross-thread UI-property crash) — keep testing the
