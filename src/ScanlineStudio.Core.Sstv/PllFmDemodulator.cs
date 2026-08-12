@@ -40,11 +40,19 @@ namespace ScanlineStudio.Core.Sstv;
 /// </summary>
 internal sealed class PllFmDemodulator
 {
+    // sstv.h:441-442 -- CPLL::SetWidth's narrow band is a fixed compile-time constant, unlike the
+    // wide band (this instance's own constructor low/high -- both current call sites already pass
+    // legacy's real wide default, 1500-2300, but nothing here hardcodes that assumption).
+    private const double NarrowLowHz = 2044.0;
+    private const double NarrowHighHz = 2300.0;
+
     private readonly Vco _vco;
     private readonly IirFilter _loopFilter = new();
     private readonly IirFilter _outputFilter = new();
-    private readonly double _centerFrequencyHz;
-    private readonly double _bandwidthHz;
+    private readonly double _wideLowHz;
+    private readonly double _wideHighHz;
+    private double _centerFrequencyHz;
+    private double _bandwidthHz;
 
     private double _err;
     private double _max = 1.0;
@@ -62,14 +70,37 @@ internal sealed class PllFmDemodulator
         int outputOrder = 3,
         double outputCutoffHz = 900)
     {
-        _centerFrequencyHz = (lowFrequencyHz + highFrequencyHz) / 2.0;
-        _bandwidthHz = highFrequencyHz - lowFrequencyHz;
+        _wideLowHz = lowFrequencyHz;
+        _wideHighHz = highFrequencyHz;
 
-        _vco = new Vco(sampleRate, _centerFrequencyHz);
-        _vco.SetGain(-_bandwidthHz);
+        _vco = new Vco(sampleRate, (lowFrequencyHz + highFrequencyHz) / 2.0);
+        SetWidth(isNarrow: false);
 
         _loopFilter.Design(loopCutoffHz, sampleRate, loopOrder);
         _outputFilter.Design(outputCutoffHz, sampleRate, outputOrder);
+    }
+
+    /// <summary>Direct port of <c>CPLL::SetWidth</c> (`sstv.cpp:266-279`) -- retunes center
+    /// frequency/bandwidth/VCO gain in place for a narrow-mode (MN/MC family) transition.
+    /// Deliberately does NOT reset loop/output filter Z-state, <see cref="_err"/>, the AGC tracking
+    /// window, or the VCO's own phase -- confirmed legacy's <c>SetWidth</c> touches only
+    /// <c>SetFreeFreq</c>/<c>SetVcoGain</c> (`sstv.cpp:271,274,277`), neither of which is
+    /// <c>MakeLoopLPF</c>/<c>MakeOutLPF</c> (the only two legacy calls that would reset filter
+    /// state) -- so a narrow-mode transition mid-lock preserves loop continuity exactly like
+    /// legacy's real soft retune, not a full re-acquisition. This port has no separate
+    /// <c>m_vcogain</c> tuning parameter (PLL/Zero-crossing tuning knobs are out of scope, deferred
+    /// to the Advanced tab), so unlike legacy's own <c>SetVcoGain(m_vcogain)</c> call, the VCO gain
+    /// here is always exactly <c>-bandwidthHz</c>, matching this class's own pre-existing
+    /// constructor convention.</summary>
+    public void SetWidth(bool isNarrow)
+    {
+        var lowHz = isNarrow ? NarrowLowHz : _wideLowHz;
+        var highHz = isNarrow ? NarrowHighHz : _wideHighHz;
+        _centerFrequencyHz = (lowHz + highHz) / 2.0;
+        _bandwidthHz = highHz - lowHz;
+
+        _vco.SetFreeFrequency(_centerFrequencyHz);
+        _vco.SetGain(-_bandwidthHz);
     }
 
     /// <summary>Processes one input sample; returns the demodulated instantaneous frequency in Hz.</summary>
