@@ -6,10 +6,10 @@
 > subagents run in isolated context and do NOT read this file.**
 
 Scanline Studio: cross-platform (.NET 8 + Avalonia) rewrite of YONIQ (MMSSTV fork), planned in `spec/00-spec/15`.
-Legacy source: https://github.com/w0eeemst/YONIQ (not in this repo). Specs reference legacy files
-assuming a local clone at `yoniq-old/YONIQ-main/` (gitignored, **never committed**) — clone it
+Legacy source (primary): https://github.com/w0eeemst/YONIQ — assume a local clone at `yoniq-old/YONIQ-main/`.
+QMSSTV reference (secondary, cross-check DSP/decoding only when YONIQ is ambiguous): https://github.com/ON4QZ/QSSTV
+— assume a local clone at `QSSTV-main/`. Neither is in this repo; both gitignored, **never committed** — clone
 separately to inspect.
-QMSSTV reference (secondary): https://github.com/ON4QZ/QSSTV — clone separately if you need to cross-check DSP/decoding logic; not in this repo. Assuming a local cline at `QSSTV-main/` (gitignored, **never committed**) — clone it
 
 ---
 
@@ -100,13 +100,13 @@ C++Builder/VCL conventions that **silently produce wrong results** if ported nai
   can be wrong the same way); legacy is `double`, the new DSP core is `float` — that needs a **stated,
   tested tolerance**, not an assumed "close enough."
 - **TX/RX are separate legacy code paths — read the matching one.** Legacy splits TX (`Main.cpp`'s
-  `TMmsstv::Line*` — `LineMRT`, `LineSCT`, `LineR36`, etc.) from RX (a separate per-pixel decode switch)
-  into different functions; never infer one from the other. **Real incident:** an earlier Scottie entry
-  inferred TX channel order from RX branch widths — got duration right (matched `GetTiming`) but
-  order/sync placement wrong (real order is separator-G-separator-B-sync-in-middle-separator-R, not
-  sync-first R,G,B) — and its round-trip test passed anyway, since encoder and decoder agreed with each
-  other while both were wrong about reality. **Duration match + round-trip pass are both necessary,
-  neither sufficient** — always check the actual matching source function.
+  `TMmsstv::Line*` — `LineMRT`, `LineSCT`, `LineR36`, etc.) from RX (a separate per-pixel decode
+  switch); never infer one from the other. **Real incident:** an earlier Scottie entry inferred TX
+  channel order from RX branch widths — duration matched `GetTiming`, but order/sync placement was
+  wrong (real order is separator-G-separator-B-sync-in-middle-separator-R, not sync-first R,G,B),
+  and round-trip testing didn't catch it since encoder and decoder agreed with each other while both
+  were wrong about reality. **Duration match + round-trip pass are both necessary, neither
+  sufficient** — always check the actual matching source function.
 - **Concurrency/scheduler rule:** every cross-thread `IObservable`/event stream must state its scheduler
   and its slow-subscriber behavior (buffer/drop/block). Legacy's `PostMessage` never blocked the
   producer; a naive `Subject` replacement can — a real regression on hot paths like radio polling.
@@ -161,21 +161,29 @@ concurrency. **Skip** for mechanical 1:1 translations (delegation has context ov
   <ported_candidate file="<path>.cs" lines="<start>-<end>">
     <!-- minimal C# snippet only -->
   </ported_candidate>
-
-  <checklist>
-    - Functional equivalence vs the legacy reference (read the MATCHING TX or RX function)
-    - Golden-vector parity within the stated tolerance (double legacy -> float port)
-    - Edge cases: nulls, boundaries, empty/short buffers, error states, off-by-one
-    - Encoding (CP932 where applicable), binary-as-bytes (no string for byte>=0x80/nulls)
-    - Integer width/sign, casting, overflow/wraparound
-    - Concurrency: scheduler + slow-subscriber behavior (buffer/drop/block)
-  </checklist>
 </audit_task>
 ```
 
+- **Checklist:** don't restate it — `.claude/agents/auditor.md`'s own system prompt already carries
+  the full checklist (functional equivalence, golden-vector parity, encoding, binary-as-bytes,
+  numeric fidelity, edge cases, concurrency, boundary hygiene) and is loaded automatically on every
+  invocation. A second copy here already drifted from it once; one source of truth now.
 - **Isolated context:** include only the minimal snippets needed; strip conversation history, duplicate
   logs, and already-fixed code.
 - **File targeting:** name target paths and focus line numbers; never dump whole files.
+
+### 7b. Local peer-audit (default workflow, runs before the Opus auditor)
+
+Run `tools/peer-audit/peer_audit.py` (local Ollama model, free/fast) on every port that would
+otherwise get either tier of review above — including "mechanical" ports that currently skip the
+Opus auditor entirely. It's a first pass, **not** a replacement: recall is unproven (see the
+tool's README negative-control gate), so a clean peer-audit verdict never skips or downgrades the
+real auditor call for non-trivial work. Slot: after `implement`, before `auditor code-review`.
+
+Log every real-workflow use in `tools/peer-audit/TRACKING.md` (verdict, agreement with the real
+auditor/human, any prompt/tool adjustment made and why). **Review checkpoint: after 5 logged
+uses**, stop and do an explicit go/no-go on whether it's earning its place — see TRACKING.md's
+review section.
 
 ---
 
