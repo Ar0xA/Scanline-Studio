@@ -117,17 +117,57 @@ loc text was already accurate, no label fix needed this time (unlike Auto-stop/A
 Restart-only, like every other decoder setting — most user-visible instance of that limitation so
 far, since squelch is the control most likely to be adjusted while actively chasing a signal.
 
+**All 4 remaining Decode-tab DSP controls investigated and scoped, 3 deferred** — same session,
+right after Sense level. **RX BPF**: legacy's `m_bpf` gate (`sstv.cpp:1826-1833`) is the pre-AGC
+filter feeding EVERY downstream stage (sync/demod/AVT), not peripheral; the Kaiser/Bessel FIR branch
+its Sharp/Very-sharp presets need is ALREADY ported once (`TxOutputBandpassFilter.cs`'s own
+`MakeFilter`/`I0`, reusable), but each preset also changes tap count → group delay, and
+`SearchBandpassFilter`'s own doc comment explicitly reasons sync-anchor correction needs no
+adjustment ONLY because today's single fixed preset never changes group delay — a user-selectable
+preset breaks that, needing golden-vector-verified re-derivation per tap count. **Demod type**: all
+3 demodulator classes (PLL/ZeroCrossing/Hilbert) already exist, but the main picture path is
+hardwired to Hilbert only — needs real runtime dispatch plus per-type sync-anchor handling, the
+biggest/riskiest of the four. **RX buffer**: DOES have a real legacy control after all
+(`sys.m_UseRxBuff`/`RGRBuf` — an earlier "no precedent" note in this doc was from grepping the wrong
+field names) but backs a sample-rate/slant-recalibration REPLAY mechanism
+(`Main.cpp:5601-5864`) this port's own code already documents it doesn't have
+(`AnalogFmSstvDecoder.cs:1281-1284`'s `m_ASDis` comment) — wiring the UI control today would be a
+fake no-op. **Auto-start**: gates an existing trigger (no new DSP math, looked tractable) but this
+port's `ISstvDecoder` has no "disarmed, still live" state exposed and legacy's trigger is inline
+across multiple branches, not one choke point — needs its own design pass. All 4 are logged in
+`spec/14-roadmap.md`'s "Options dialogs" bullet with full citations; none bundled into ordinary
+wiring sessions going forward — each needs its own dedicated DSP/architecture session.
+
+**Options General tab's "Remember window position and size" wired, closed** — same session. Real
+port of legacy's `sys.m_MemWindow` (`Option.cpp:250/616`): new `WindowGeometrySettings`
+(`ScanlineStudio.UI/Settings/`, deliberately bypasses `OptionsSnapshot`/`OptionsSettingsService`
+since it's a UI-owned section — routing it through `Application` would invert the layering; matches
+`TxPaneUiSettings`' existing precedent), `MainWindow.axaml.cs` restores/saves Position/Width/Height
+gated the same two ways legacy is (checkbox AND `WindowState == Normal`). **Two real bugs, both
+caught only by actually launching and closing the real app, not by build/tests**: a naive
+synchronous `.GetAwaiter().GetResult()` on the settings load deadlocked the app on startup (unlike
+`Program.cs`'s same-shaped precedent, which runs before Avalonia's UI-thread `SynchronizationContext`
+exists — this call site runs after; fixed with `Task.Run`), then reading `Width`/`Position` from
+inside that `Task.Run`'s pool-thread delegate crashed the app on close with "Call from invalid
+thread" (Avalonia `Layoutable` properties are UI-thread-only; fixed by capturing them into locals
+first). Full round-trip verified in the real app: toggled, saved, moved/resized, closed, relaunched,
+confirmed restored; Reset section correctly clears the flag without touching stored geometry.
+**JPEG quality re-scoped, not wired**: legacy's `m_JPEGQuality` applies to the manual "Save Image
+As..." dialog (`SaveBitmapMenu`/`SaveImage`, `Main.cpp:10059-10084`), not the automatic RX-history
+save this port already does differently (always PNG) — real scope is bundled with the Gallery's
+still-STUB "Export frame" button, not a standalone Options control.
+
 **Current wiring totals** (`spec/16-gui-wiring-survey.md`, ~286 controls tracked, fully current as
-of this commit): **~143 REAL, ~98 STUB, ~46 FAKE-LIVE, ~1 PARTIAL**. Densest remaining gaps: Receive
+of this commit): **~144 REAL, ~97 STUB, ~46 FAKE-LIVE, ~1 PARTIAL**. Densest remaining gaps: Receive
 tab's Sync&Slant/Input-chain/Signal-quality cards (SNR/squelch/notch/noise-floor — no live
 audio-chain measurement exists in `Core.Audio`/`Core.Sstv` for most of these, real new DSP work not
-just wiring); Options window's Decode's remaining 4 controls (RX BPF/Demod type/RX buffer/Auto-start)
-plus Identification/Advanced tabs (~53 controls, still stub); Transmit tab's Queue/TX-log/
-Recently-sent cards (100% stub, no such features exist); TX image editor's canvas-overlay safe-area/
-callsign/report-plate text (FAKE-LIVE — reads as real burned-in TX content, arguably the most
-deceptive placeholder in the app). Remaining PARTIAL: RxFrameMeta's Note `TextBox` only (needs a real
-backing field on the frame/session model — Override-callsign's twin issue closed via the QRZ lookup
-wiring).
+just wiring); Options window's Decode's remaining 4 controls (RX BPF/Demod type/RX buffer/Auto-start,
+all now scoped and deferred, see above) plus Identification/Advanced tabs (~53 controls, still
+stub); Transmit tab's Queue/TX-log/Recently-sent cards (100% stub, no such features exist); TX image
+editor's canvas-overlay safe-area/callsign/report-plate text (FAKE-LIVE — reads as real burned-in TX
+content, arguably the most deceptive placeholder in the app). Remaining PARTIAL: RxFrameMeta's Note
+`TextBox` only (needs a real backing field on the frame/session model — Override-callsign's twin
+issue closed via the QRZ lookup wiring).
 
 **`spec/14-roadmap.md`'s "Must-implement backlog" is the prioritized list to work from**, not the
 survey directly — the survey tells you WHAT is stub/fake, the backlog tells you what order to
@@ -159,20 +199,16 @@ relevant test suite, real-window screenshot/DB-level check if UI-visible) → co
 Escalation path if stuck: ask the auditor; if the auditor also can't resolve it, log to
 `spec/14-roadmap.md`'s "Verify later with human" section rather than stalling.
 
-**Next action on resume**: user said "wire what you can, check if off, then start on the items that
-need functionality" — the "wire what you can" phase is now done (Open in Log, QRZ lookup,
-Auto-stop/Auto-restart, Sense level all shipped; survey doc fully current). User picked "small
-pieces first" for the remaining Decode-tab controls: **RX BPF** (real legacy control, needs a
-`CalcBPF`-equivalent FIR-filter-preset port — `sstv.cpp:1522-1596`, 3 tap/frequency presets + OFF)
-and **Demod type** (real legacy control, needs enabling runtime dispatch between the 3
-already-ported-but-not-runtime-switchable demodulator classes in `AnalogFmSstvDecoder`'s main
-picture path — the bigger/riskier of the two, per-type sync-anchor-correction differences) are the
-next two Decode candidates, each its own scoping pass; **RX buffer** has no identified legacy
-Options-dialog precedent at all (checked directly) — likely needs correcting/repurposing before it's
-even clear what to build, not a straight port target. Beyond Decode, every other remaining Options
-section needs genuinely NEW backend functionality too: General (window-geometry persistence, JPEG
-quality — blocked on PNG-only save path), Audio (FIFO/priority/stereo-source hooks), Radio (OmniRig/
-RTS-on-RX/PTT-lock), Identification (100% stub, overlaps CW-ID/FSK below), Advanced (100% stub,
-PLL/filter-tuning internals). Ask the user which to scope/build next, or offer CW-ID/FSK
-(`sstv.cpp:2465-2551`'s STX `0x2a`, zero replacement built, user-deferred once already) as the
-alternative next-biggest unblocked item.
+**Next action on resume**: user said "just keep going the normal list, we have the priority list
+just keep going no need to ask me until the list is finished" (2026-08-12) — standing authorization
+to proceed through the Must-implement backlog autonomously, no per-item confirmation needed. Still
+following the established process (research → auditor plan-review for anything DSP/architecture →
+implement → verify → commit) at each step, just not pausing between items. Working order in
+progress this session: Decode tab wiring (done) → Decode tab's 4 DSP items (all scoped, deferred to
+dedicated sessions, see above) → Options General tab (window-geometry done, JPEG re-scoped) → next
+up: **Options Audio tab** (FIFO/priority/stereo-source, against `Option.dfm`'s `GB1`/`SoundPriority`/
+`Source` controls), then **Options Radio tab** (OmniRig/RTS-on-RX/PTT-lock), then
+**Identification tab + CW-ID/FSK** (scope together, real overlap), then **Advanced tab** (likely
+overlaps the deferred Demod-type/RX-BPF work), then the smaller items (VOX, Sound-file ID, JPEG —
+now known to belong with Export-frame). Task-tracker IDs 31-41 hold the full breakdown if resuming
+mid-list after a `/clear`.

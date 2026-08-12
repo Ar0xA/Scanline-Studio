@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Application;
+using ScanlineStudio.Settings;
+using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -26,10 +28,22 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private readonly ILocalizationService _localization;
     private readonly IAudioDeviceEnumerator _audioDeviceEnumerator;
     private readonly ILogbookSessionService _logbookSession;
+    private readonly ISettingsStore _settingsStore;
     private readonly ILogger<OptionsWindowViewModel> _logger;
 
     [ObservableProperty]
     private CultureInfo? _selectedCulture;
+
+    /// <summary>Backs the General tab's "Remember window position and size" checkbox -- unlike
+    /// every other Options field, this one is deliberately NOT part of <see cref="OptionsSnapshot"/>/
+    /// <see cref="OptionsSettingsService"/>: it gates <see cref="WindowGeometrySettings"/>, a
+    /// UI-owned settings section (see that record's own doc comment for why -- routing it through
+    /// <see cref="OptionsSettingsService"/>, which lives in <c>ScanlineStudio.Application</c>, would
+    /// require that project to reference a <c>ScanlineStudio.UI</c> type, inverting the layering).
+    /// Loaded/saved directly via <see cref="_settingsStore"/> instead, same pattern
+    /// <c>TxControlsPaneViewModel</c> already uses for its own UI-owned section.</summary>
+    [ObservableProperty]
+    private bool _rememberWindowPosition;
 
     [ObservableProperty]
     private AudioDeviceInfo? _selectedCaptureDevice;
@@ -132,12 +146,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         ILocalizationService localization,
         IAudioDeviceEnumerator audioDeviceEnumerator,
         ILogbookSessionService logbookSession,
+        ISettingsStore settingsStore,
         ILogger<OptionsWindowViewModel> logger)
     {
         _optionsSettingsService = optionsSettingsService;
         _localization = localization;
         _audioDeviceEnumerator = audioDeviceEnumerator;
         _logbookSession = logbookSession;
+        _settingsStore = settingsStore;
         _logger = logger;
 
         _ = LoadSafeAsync();
@@ -259,6 +275,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             var snapshot = await _optionsSettingsService.LoadAsync();
             ApplyFromSnapshot(snapshot);
 
+            var appSettings = await _settingsStore.LoadAsync();
+            RememberWindowPosition = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)?.RememberWindowPosition ?? false;
+
             await _audioDeviceEnumerator.RefreshAsync();
             CaptureDevices.Clear();
             foreach (var device in _audioDeviceEnumerator.InputDevices)
@@ -348,6 +367,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         {
             await _optionsSettingsService.SaveAsync(snapshot);
 
+            // See RememberWindowPosition's own doc comment for why this bypasses
+            // _optionsSettingsService entirely. Preserves Left/Top/Width/Height as-is -- those are
+            // MainWindow's own domain (captured passively on Closing), not user-edited fields here.
+            var appSettings = await _settingsStore.LoadAsync();
+            var currentGeometry = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
+            await _settingsStore.SaveAsync(appSettings.WithSection(WindowGeometrySettings.SectionKey, currentGeometry with { RememberWindowPosition = RememberWindowPosition }, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings));
+
             if (SelectedCulture is { } culture && !culture.Equals(_localization.CurrentCulture))
             {
                 try
@@ -381,6 +407,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     {
         Log.ResetSectionInvoked(_logger, "General");
         SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == OptionsSettingsService.Defaults.CultureCode);
+        RememberWindowPosition = false;
     }
 
     [RelayCommand]

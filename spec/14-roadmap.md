@@ -4498,6 +4498,57 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   plus an auditor UI-design plan-review pass (this project's own established convention for UI/UX
   choices) before any code, not a straight port. User asked which pieces to prioritize; no answer
   yet as of this note.
+  **Update 2026-08-12**: user authorized proceeding through this backlog "small pieces first,"
+  no further per-item confirmation needed. Decode tab: Auto-Sync/Auto-Slant/Auto-stop/Auto-restart/
+  Sense level all shipped (see `PROJECT_BRIEF.md` for detail). Remaining Decode controls scoped:
+  **RX BPF** — real legacy control (`Option.dfm`'s `RGRxBPF`), but bigger than a wiring task:
+  legacy's `m_bpf` gate (`sstv.cpp:1826-1833`) is the pre-AGC filter feeding EVERY downstream stage
+  (sync detection, demod, AVT), not a peripheral one; `SearchBandpassFilter.cs` already documents
+  this port only ever reaches the Wide preset. The "Sharp"/"Very sharp" presets need `MakeFilter`'s
+  Kaiser/Bessel branch (`fir.cpp:361-384`, `att>=21`) — **already ported once**, for
+  `TxOutputBandpassFilter.cs`'s TX filter (its own `MakeFilter`/`I0`), so the hard math is proven
+  and reusable, not a new algorithm — but each preset also changes tap count (24/64/96), hence
+  group delay, and `SearchBandpassFilter`'s own doc comment explicitly reasons sync-anchor
+  correction needs no adjustment ONLY because today's single fixed preset never changes group delay
+  mid-session; a user-selectable preset breaks that assumption and needs the sync-anchor correction
+  re-derived per tap count, with golden-vector verification (CLAUDE.md's Behavioral-parity rule) —
+  full DSP-parity work, not UI wiring. **Also found, logged not fixed (off-scope, one line)**:
+  `SearchBandpassFilter`'s H1 low cutoff is hardcoded to 1100Hz "since m_SyncRestart is hardwired
+  on" — stale as of this session's `SyncRestartEnabled` wiring (same legacy field, `m_SyncRestart`,
+  now user-toggleable; legacy's real `lfq` is `1100` when on / `1200` when off, `sstv.cpp:1523`) —
+  a latent fidelity gap in the already-shipped filter, not something to fix inside RX BPF's own
+  scope. **Demod type** — real legacy control (`RGDemType`: PLL/Zero-crossing/Hilbert,
+  `Option.cpp:63-65/242/542`), all 3 demodulator classes already exist in this port
+  (`PllFmDemodulator`/`ZeroCrossingFrequencyCounter`/`HilbertFmDemodulator`) but the main picture
+  path is hardwired to Hilbert only — needs real runtime dispatch plus per-type sync-anchor
+  handling, the biggest/riskiest of the four. **RX buffer** — **correction, re-investigated more
+  thoroughly same session**: DOES have a real legacy Options-dialog control after all
+  (`sys.m_UseRxBuff`, `Option.dfm`'s `RGRBuf` radio group, `Option.cpp:375/575`, 0/1/2 = Off/On/
+  Extended — matches this port's existing loc text exactly; the earlier "no precedent" note above
+  came from grepping the wrong field names). But its real purpose is backing a
+  sample-rate/slant-recalculation REPLAY mechanism (`UpdateSampFreq`/`RedrawSSTV`,
+  `Main.cpp:5601-5864`, gated by `m_ASDis`) that re-decodes already-received lines from a staged
+  raw-sample buffer (RAM for mode 1, disk via `CWaveStrage` for mode 2) after a mid-session
+  recalibration — and this port's own `AnalogFmSstvDecoder.cs:1281-1284` already explicitly
+  documents `m_ASDis` as "a buffered-line-replay mechanism this port doesn't have." Wiring
+  "RX buffering" as a UI control today would be a fake no-op (nothing to bind it to) unless the
+  entire buffered-line-replay subsystem is built first — its own separate, large architectural
+  feature (disk I/O, retroactive re-decode), not smaller than RX BPF/Demod-type. **Auto-start** — real legacy behavior (`SBAuto` toolbar button/`RxAutoPush`, `Main.cpp:6042-6060`):
+  arms/disarms the decoder's ability to auto-detect a NEW sync lock (`m_SyncMode=0` vs `-1`) without
+  stopping the AGC/level-meter pipeline — a real "gate an existing trigger" shape matching how
+  `AutoSyncEnabled`/`AutoStopEnabled` were wired this session (no new DSP math), which sounded
+  tractable at first. But this port's `AnalogFmSstvDecoder` has no exposed "disarmed, still live"
+  state on `ISstvDecoder` at all today (it's always continuously armed), and there's no single
+  `TryStart`-equivalent choke point the way `AutoStopEnabled` had — legacy's case-0 trigger is
+  inline across multiple sync-detection branches (the same ones `SLvl`/`_slvl` gate, per this
+  session's Sense-level work), so gating it needs real design work to find every branch and confirm
+  none of them have side effects on AGC/level-meter continuity if suppressed. Also toolbar-only in
+  legacy, not an Options-dialog control — a placement question on top. Smallest of the four, but
+  still needs its own scoping pass, not safe to bundle into an ordinary wiring session. All four
+  Decode items now scoped; RX BPF, Demod type, and RX buffer need dedicated DSP/architecture
+  sessions (golden-vector tests, 2-round auditor plan-review per CLAUDE.md §7); Auto-start needs a
+  smaller but still real design pass to find the right internal gating point. None bundled into
+  ordinary wiring passes going forward.
 - [x] **RX history browser affordances** — **shipped 2026-08-09, commit `1df5eac`.** Stale checkbox
   fixed 2026-08-11 (was never checked off despite landing). New `IReceiveHistoryStore.Recorded`
   event so the Gallery list/Receive-tab Previous-frames strip refresh live as frames land, plus a
