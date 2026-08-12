@@ -153,13 +153,23 @@ internal static partial class Program
             var appSettings = sp.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult();
             var decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
                 ?? new SstvDecoderSettings();
+            // Absent -> Hilbert (legacy's real compiled-in default); present-but-out-of-range (e.g. a
+            // hand-edited settings.json with an enum member this build doesn't know) ALSO clamps to
+            // Hilbert -- see SstvDecoderSettings.DemodType's own doc comment for why this is a
+            // deliberate, sane divergence from legacy's own real inconsistency here, not a copy of
+            // SenseLevel's own "different fallback for absent vs. out-of-range" shape below -- that
+            // one's out-of-range half isn't even in THIS file, it lives in
+            // AnalogFmSstvDecoder's own ctor (`senseLevel is >= 0 and <= 3 ? senseLevel : 0`,
+            // matching sstv.cpp:1811-1815's SetSenseLvl `default:` arm).
+            var demodType = decoderSettings.DemodType is { } dt && Enum.IsDefined(dt) ? dt : DemodType.Hilbert;
             return new RestartableSstvDecoder(
                 afcEnabled: decoderSettings.AfcEnabled ?? true,
                 syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true,
                 autoSyncEnabled: decoderSettings.AutoSyncEnabled ?? true,
                 autoStopEnabled: decoderSettings.AutoStopEnabled ?? false, // legacy fresh default is OFF (Main.cpp:900), unlike the other four
                 autoSlantEnabled: decoderSettings.AutoSlantEnabled ?? true,
-                senseLevel: decoderSettings.SenseLevel ?? 1);
+                senseLevel: decoderSettings.SenseLevel ?? 1,
+                demodType: demodType);
         });
         hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
         hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));
