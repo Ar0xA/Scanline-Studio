@@ -144,6 +144,29 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void DemodType_ConstructorValue_SurvivesAPeriodicSwap()
+    {
+        // Demod-type subsystem Phase 3 auditor code-review finding: DemodType has no public
+        // wrapper-level getter to assert against (it follows SenseLevel's "restart-only, no
+        // read-back" shape, not StationIdDecodeEnabled's live-settable/exposed one) -- so the only
+        // non-vacuous way to prove it survives CreateInner's periodic rebuild is to read the LIVE
+        // inner decoder's own value directly, same InnerXForTests pattern already established for
+        // StationIdDecodeEnabled above. Without this, a dropped `demodType` argument in CreateInner
+        // would silently revert a PLL/ZeroCrossing user to Hilbert after every ~12h restart, with no
+        // test able to catch it.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, demodType: DemodType.Pll);
+        Assert.Equal(DemodType.Pll, decoder.InnerDemodTypeForTests);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        Assert.Equal(DemodType.Pll, decoder.InnerDemodTypeForTests);
+    }
+
+    [Fact]
     public void StationIdDecoded_ForwardsFromTheCurrentInner()
     {
         // CW-ID/FSK station-ID subsystem Phase 5 (RestartableSstvDecoder.StationIdDecoded's own doc
