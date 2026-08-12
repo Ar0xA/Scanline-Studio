@@ -657,7 +657,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _pllDemodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz);
         _zeroCrossingDemodulator = new ZeroCrossingFrequencyCounter(sampleRate);
         _afcZeroCrossingCounter = new ZeroCrossingFrequencyCounter(sampleRate);
-        _searchBandpassFilter = new SearchBandpassFilter(sampleRate);
+        _searchBandpassFilter = new SearchBandpassFilter(sampleRate, RxBpfPreset.Wide, syncRestartEnabled);
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _syncBypass1900Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
