@@ -154,6 +154,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private DemodType _demodType = DemodType.Hilbert;
 
+    /// <summary>RX bandpass-filter sharpness -- see
+    /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.RxBpfPreset"/>'s own doc comment for
+    /// the legacy basis and the absent-vs-out-of-range fallback (both fallbacks here are the SAME
+    /// value, <see cref="RxBpfPreset.Wide"/>, same shape as <see cref="DemodType"/> above, not
+    /// <see cref="SenseLevel"/>'s "different fallback" shape). Backed by 4 <c>IsRxBpfXSelected</c>
+    /// computed properties below, same pattern as <see cref="IsDemodTypePllSelected"/>/etc.</summary>
+    [ObservableProperty]
+    private RxBpfPreset _rxBpfPreset = RxBpfPreset.Wide;
+
     [ObservableProperty]
     private bool _qrzLookupEnabled;
 
@@ -371,6 +380,61 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Backs the Decode tab's 4-way RX BPF radio group -- same computed-bool-property idiom
+    /// as <see cref="IsDemodTypePllSelected"/>/etc above (N-way-exclusive, not
+    /// <see cref="CwIdMode"/>'s 2-plus-disabled shape). Item order (0=Off/1=Wide/2=Narrow/
+    /// 3=VeryNarrow) matches <c>Option.dfm</c>'s real <c>RGRxBPF</c> item order and
+    /// <see cref="RxBpfPreset"/>'s own enum values. "Off" keeps its existing UI label "Normal" (a
+    /// deliberate, prior, already-committed relabeling of legacy's real "OFF" item -- not this
+    /// property's own naming choice).</summary>
+    public bool IsRxBpfOffSelected
+    {
+        get => RxBpfPreset == RxBpfPreset.Off;
+        set
+        {
+            if (value)
+            {
+                RxBpfPreset = RxBpfPreset.Off;
+            }
+        }
+    }
+
+    public bool IsRxBpfWideSelected
+    {
+        get => RxBpfPreset == RxBpfPreset.Wide;
+        set
+        {
+            if (value)
+            {
+                RxBpfPreset = RxBpfPreset.Wide;
+            }
+        }
+    }
+
+    public bool IsRxBpfNarrowSelected
+    {
+        get => RxBpfPreset == RxBpfPreset.Narrow;
+        set
+        {
+            if (value)
+            {
+                RxBpfPreset = RxBpfPreset.Narrow;
+            }
+        }
+    }
+
+    public bool IsRxBpfVeryNarrowSelected
+    {
+        get => RxBpfPreset == RxBpfPreset.VeryNarrow;
+        set
+        {
+            if (value)
+            {
+                RxBpfPreset = RxBpfPreset.VeryNarrow;
+            }
+        }
+    }
+
     /// <summary>Backs the Identification tab's "ID method" radio group -- same computed-bool idiom
     /// as <see cref="IsSenseLevelVeryLowSelected"/>/etc above. No <c>IsIdMethodSoundFileSelected</c>
     /// counterpart -- see <see cref="CwIdMode"/>'s own doc comment for why that option's `RadioButton`
@@ -532,6 +596,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         // SstvDecoderSettings.DemodType's own doc comment, not SenseLevel's "different fallback"
         // shape.
         DemodType = Enum.IsDefined(snapshot.DemodType) ? snapshot.DemodType : DemodType.Hilbert;
+        // Clamp, not trust -- same reasoning as DemodType above, both fallbacks (absent AND
+        // out-of-range) resolve to the SAME value here (Wide), matching
+        // SstvDecoderSettings.RxBpfPreset's own doc comment.
+        RxBpfPreset = Enum.IsDefined(snapshot.RxBpfPreset) ? snapshot.RxBpfPreset : RxBpfPreset.Wide;
         QrzLookupEnabled = snapshot.QrzLookupEnabled;
         QrzLookupUsername = snapshot.QrzLookupUsername;
         QrzLookupPassword = snapshot.QrzLookupPassword;
@@ -578,6 +646,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             SyncRestartEnabled: SyncRestartEnabled,
             SenseLevel: SenseLevel,
             DemodType: DemodType,
+            RxBpfPreset: RxBpfPreset,
             QrzLookupEnabled: QrzLookupEnabled,
             QrzLookupUsername: QrzLookupUsername,
             QrzLookupPassword: QrzLookupPassword,
@@ -685,6 +754,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         SyncRestartEnabled = defaults.SyncRestartEnabled;
         SenseLevel = defaults.SenseLevel;
         DemodType = defaults.DemodType;
+        RxBpfPreset = defaults.RxBpfPreset;
     }
 
     [RelayCommand]
@@ -779,6 +849,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsDemodTypePllSelected));
         OnPropertyChanged(nameof(IsDemodTypeZeroCrossingSelected));
         OnPropertyChanged(nameof(IsDemodTypeHilbertSelected));
+    }
+
+    partial void OnRxBpfPresetChanged(RxBpfPreset value)
+    {
+        OnPropertyChanged(nameof(IsRxBpfOffSelected));
+        OnPropertyChanged(nameof(IsRxBpfWideSelected));
+        OnPropertyChanged(nameof(IsRxBpfNarrowSelected));
+        OnPropertyChanged(nameof(IsRxBpfVeryNarrowSelected));
     }
 
     partial void OnCaptureChannelSourceChanged(AudioChannelSource value)
