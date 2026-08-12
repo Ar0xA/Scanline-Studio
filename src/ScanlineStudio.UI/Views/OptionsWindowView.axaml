@@ -123,10 +123,18 @@
                                 </StackPanel>
                             </ContentControl>
 
-                            <!-- Disabled placeholders: legacy RxFifo/TxFifo/SoundPriority/
-                                 AppPriority/Source(stereo)/CBSTX; no FIFO-size, process/sound
-                                 card priority, or stereo-source hook exists in the audio engine
-                                 yet. -->
+                            <!-- Wired 2026-08-12: AppPriority (AppPerformanceSettings.ProcessPriority),
+                                 Source/stereo (AudioDeviceSettings.CaptureChannelSource), CBSTX/StereoTx
+                                 (AudioDeviceSettings.StereoTxEnabled): all three had a real, already
+                                 wired backend with zero UI path. RxFifo/TxFifo stay disabled: legacy's
+                                 Win32 waveIn/waveOut buffer count concept has no analog in this port's
+                                 MiniAudio-based engine (superseded by its own automatic buffering, not
+                                 a gap). SoundPriority stays disabled too: legacy's own m_SoundPriority
+                                 is read/persisted but never actually applied to anything (dead control
+                                 in legacy itself, verified directly); this port's real capture-thread
+                                 priority knob (AudioDeviceSettings.CaptureThreadPriority) has different
+                                 enum semantics and deserves its own correctly-labeled control, not a
+                                 relabel of this mismatched one; left for a future pass. -->
                             <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
                                 <HeaderedContentControl.Header>
                                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Audio.PerformanceHeader}" />
@@ -153,22 +161,22 @@
                                     </WrapPanel>
 
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Audio.AppPriority}" />
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppPriorityPlaceholder" Content="{loc:Translate Options.Audio.AppPriority.Normal}" IsChecked="True" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppPriorityPlaceholder" Content="{loc:Translate Options.Audio.AppPriority.High}" />
+                                    <WrapPanel>
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppPriority" Content="{loc:Translate Options.Audio.AppPriority.Normal}" IsChecked="{Binding IsAppPriorityNormalSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppPriority" Content="{loc:Translate Options.Audio.AppPriority.High}" IsChecked="{Binding IsAppPriorityHighSelected}" />
                                     </WrapPanel>
 
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.StereoSource}" />
                                         <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.StereoSource.Help}" />
                                     </StackPanel>
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Mono}" IsChecked="True" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Left}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="StereoSourcePlaceholder" Content="{loc:Translate Options.Audio.StereoSource.Right}" />
+                                    <WrapPanel>
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="StereoSource" Content="{loc:Translate Options.Audio.StereoSource.Mono}" IsChecked="{Binding IsCaptureChannelMonoSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="StereoSource" Content="{loc:Translate Options.Audio.StereoSource.Left}" IsChecked="{Binding IsCaptureChannelLeftSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="StereoSource" Content="{loc:Translate Options.Audio.StereoSource.Right}" IsChecked="{Binding IsCaptureChannelRightSelected}" />
                                     </WrapPanel>
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Audio.StereoTx}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding StereoTxEnabled}" />
                                 </StackPanel>
                             </HeaderedContentControl>
 
