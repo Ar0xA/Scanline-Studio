@@ -336,4 +336,25 @@ public sealed class SstvSessionServiceStationIdTests
 
         Assert.Equal("", callsign);
     }
+
+    [Fact]
+    public async Task GetStationIdTransmitOptionsAsync_ResolvesTheSameWayTransmitAsyncWould_WithNoSideEffects()
+    {
+        // Phase 6 (Options/Transmit-tab UI wiring): GetStationIdTransmitOptionsAsync is the exact
+        // same resolution TransmitAsync itself uses (see that method's own doc comment) -- a
+        // read-only preview for the Transmit tab's Identification summary card. Must not transmit
+        // anything (no encoder call, no TX-encode side effect) just from being called.
+        var (service, encoder, _, settingsStore) = CreateService();
+        WithStationIdSettings(settingsStore, new StationIdSettings { CwIdMode = CwIdMode.Cw, CwText = "DE %m", CwWpm = 22, FskIdTxEnabled = true });
+        WithOperatorSettings(settingsStore, new OperatorSettings { Callsign = "W1AW" });
+
+        var resolved = await service.GetStationIdTransmitOptionsAsync();
+
+        Assert.True(resolved.CwEnabled);
+        Assert.Equal("DE W1AW", resolved.CwResolvedText);
+        Assert.Equal(22, resolved.CwWpm);
+        Assert.True(resolved.FskIdEnabled);
+        Assert.Equal("W1AW", resolved.Callsign);
+        Assert.Null(encoder.LastStationIdOptions); // no TransmitAsync call happened
+    }
 }

@@ -414,19 +414,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public async Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
     {
         Log.TxStarting(_logger, mode.Id, image.Width, image.Height);
-        var stationId = await ResolveStationIdTransmitOptionsAsync(ct).ConfigureAwait(false);
+        var stationId = await GetStationIdTransmitOptionsAsync(ct).ConfigureAwait(false);
         await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, ct), _encoder.SampleRate, ct).ConfigureAwait(false);
     }
 
     /// <summary>Resolves the CW-ID/FSK station-ID settings + operator identity into one fully-formed
-    /// <see cref="StationIdTransmitOptions"/> right before each transmission -- see that type's own
-    /// doc comment for why this resolution lives here (Application layer) rather than inside the
-    /// pure-DSP encoder. Settings-boundary validation for WPM/tone-frequency lives here too (Phase 1
-    /// code-review finding): a corrupted/hand-edited settings.json with WPM &lt;= 0 would otherwise
-    /// make <c>CwMorseGenerator.MillisecondsPerDotFromWpm</c> return Infinity/negative -- this falls
-    /// back to the documented default instead of letting a bad value reach the generator or abort an
-    /// in-flight transmission.</summary>
-    private async Task<StationIdTransmitOptions> ResolveStationIdTransmitOptionsAsync(CancellationToken ct)
+    /// <see cref="StationIdTransmitOptions"/> -- see that type's own doc comment for why this
+    /// resolution lives here (Application layer) rather than inside the pure-DSP encoder. Settings-
+    /// boundary validation for WPM/tone-frequency lives here too (Phase 1 code-review finding): a
+    /// corrupted/hand-edited settings.json with WPM &lt;= 0 would otherwise make
+    /// <c>CwMorseGenerator.MillisecondsPerDotFromWpm</c> return Infinity/negative -- this falls back
+    /// to the documented default instead of letting a bad value reach the generator or abort an
+    /// in-flight transmission. Also the read-only preview <see cref="ISstvSessionService.GetStationIdTransmitOptionsAsync"/>
+    /// exposes (see that member's own doc comment) -- <see cref="TransmitAsync"/> and that preview
+    /// path share this exact same resolution, so they can never disagree with each other.</summary>
+    public async Task<StationIdTransmitOptions> GetStationIdTransmitOptionsAsync(CancellationToken ct = default)
     {
         var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
         var stationIdSettings = appSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)

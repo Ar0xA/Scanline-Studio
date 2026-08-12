@@ -863,6 +863,77 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void TxControlsPaneViewModel_Constructed_IdentificationCardReflectsBothIdMethodsEnabled()
+    {
+        var sstvSession = new FakeSstvSessionService
+        {
+            AvailableModes = [TestMode],
+            StationIdTransmitOptionsToReturn = StationIdTransmitOptions.None with
+            {
+                FskIdEnabled = true,
+                Callsign = "W1AW",
+                CwEnabled = true,
+                CwWpm = 22,
+                CwToneFrequencyHz = 700,
+            },
+        };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        // FakeLocalizationService.GetString echoes the key itself -- FskIdDisplay only ever goes
+        // through the localizer for the "Off" fallback, so a non-"Off" result here proves it took
+        // the raw-callsign branch, not the format-string one.
+        Assert.Equal("W1AW", vm.FskIdDisplay);
+        Assert.Equal("Panes.TxId.CwIdFormat", vm.CwIdDisplay);
+        Assert.Equal("Panes.TxId.TailBoth", vm.TailDisplay);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_Constructed_NeitherIdMethodEnabled_IdentificationCardShowsOff()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], StationIdTransmitOptionsToReturn = StationIdTransmitOptions.None };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.TxId.Off", vm.FskIdDisplay);
+        Assert.Equal("Panes.TxId.Off", vm.CwIdDisplay);
+        Assert.Equal("Panes.TxId.Off", vm.TailDisplay);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_Constructed_FskEnabledOnlyWithEmptyCallsign_ShowsEmptyNotOff()
+    {
+        // FskIdDisplay's own contract: "Off" means FSK-ID TX is disabled, not that the configured
+        // callsign happens to be empty -- an enabled-but-unconfigured state must still be visible
+        // as such, not silently collapsed into the same fallback text as "disabled".
+        var sstvSession = new FakeSstvSessionService
+        {
+            AvailableModes = [TestMode],
+            StationIdTransmitOptionsToReturn = StationIdTransmitOptions.None with { FskIdEnabled = true, Callsign = "" },
+        };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(string.Empty, vm.FskIdDisplay);
+        Assert.NotEqual("Panes.TxId.Off", vm.FskIdDisplay);
+        Assert.Equal("Panes.TxId.TailFskOnly", vm.TailDisplay);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_Constructed_CwOnlyEnabled_TailShowsCwOnly()
+    {
+        var sstvSession = new FakeSstvSessionService
+        {
+            AvailableModes = [TestMode],
+            StationIdTransmitOptionsToReturn = StationIdTransmitOptions.None with { CwEnabled = true },
+        };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.TxId.TailCwOnly", vm.TailDisplay);
+    }
+
+    [AvaloniaFact]
     public void TxControlsPaneViewModel_SelectedModeChanges_RaisesPropertyChangedForToneMapText()
     {
         var narrowMode = TestMode with { Id = "narrow" }; // LuminanceMinHz/MaxHz not overridden here -- this test only needs a DIFFERENT mode instance, not different Hz values, to prove the reactive wiring fires

@@ -141,6 +141,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default) => Task.FromResult(OperatorCallsign);
 
+    public StationIdTransmitOptions StationIdTransmitOptionsToReturn { get; set; } = StationIdTransmitOptions.None;
+
+    public Task<StationIdTransmitOptions> GetStationIdTransmitOptionsAsync(CancellationToken ct = default) => Task.FromResult(StationIdTransmitOptionsToReturn);
+
     public event Action? MaintenanceWarningRaised;
 
     public event Action? MaintenanceWarningCleared;
