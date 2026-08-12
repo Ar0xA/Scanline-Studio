@@ -4611,17 +4611,38 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   confirmed OCR stays low-priority/someday, QRZ lookup is active.
 - [ ] **CW-ID / FSK station-ID subsystem** — real, working legacy feature (TX CW-ID tone + RX
   FSK-callsign-ID packet decode, `sstv.cpp:2465-2551`'s STX `0x2a`, distinct from the already-ported
-  mode-announce STX `0x2d` packets), zero replacement built. Already user-deferred once this session
-  (Identification card work, 2026-08-08) — included here for completeness since it's a real gap,
-  not because this list overrides that earlier call; confirm priority explicitly before starting.
+  mode-announce STX `0x2d` packets), zero replacement built. **Re-scoped 2026-08-12**: `WriteCWID`
+  (`sstv.cpp:2950-2990+`) is a compact, self-contained Morse encoder (a bit-packed lookup table +
+  dot/dash timing off `sys.m_CWIDSpeed`) — smaller than it sounds, but it's still core TX-encode-path
+  DSP code needing the same golden-vector rigor as any other codec port. `WriteFSK`
+  (`sstv.cpp:2942-2948`) is similarly small. The STATION-ID FSK decode this gates
+  (`m_fskcall`/`m_fskdata`, the case-5..10/16 state machine at `sstv.cpp:2465-2551`) is confirmed
+  NOT the same thing as this port's existing `NarrowFskHeaderDecoder` (that class decodes narrow-MODE
+  header signaling, a different FSK use — SSTV mode announcement, not station callsign ID); zero
+  callsign-FSK decode exists in this port today, confirming the Receive tab's Callsign/OCR row's
+  long-standing "no OCR/FSK-decoded-callsign source" gap has this as its real fix. Bundled scope if
+  built: TX Morse generator + TX/RX FSK-ID codec + the whole Identification tab UI (ID-method radio,
+  CW text/freq/speed fields, sound-file browse, FSK checkbox) — comparable in size to the QRZ lookup
+  feature, needs its own dedicated session (2-round auditor plan-review per CLAUDE.md §7), not
+  bundled into an ordinary wiring pass. Already user-deferred once this session (Identification card
+  work, 2026-08-08); confirm priority explicitly before starting.
 - [ ] **VOX** (TX tone-burst preamble for a rig's own VOX circuit) — real but niche, this port
   already has real CAT PTT. Low priority per this doc's own earlier framing.
-- [ ] **RTS-on-RX** (the other half of PTT lock) — no serial-control surface exists yet; may
-  conflict with Hamlib's own RTS-PTT ownership, needs a legacy re-check before deciding fit.
+- [x] ~~RTS-on-RX~~ — **RESOLVED 2026-08-12, moved to `docs/removed-features.md`, not a backlog
+  item.** Investigated directly while scoping the Options Radio tab: gates legacy's raw-serial
+  RTS-pin PTT keying (`Comm.cpp`), the same "hand-written per-rig protocol code" family CLAUDE.md §2
+  already excludes from this port. This port's real PTT path (`IRadioController.SetPttAsync`) goes
+  through Hamlib/rigctld/flrig, which own their connection lifecycle entirely — there is no
+  raw-serial-port concept left for this setting to gate. Not a conflict-to-investigate, an obsolete
+  concept already fully superseded; see that doc's "Raw-serial RTS-pin PTT keying" entry.
 - [ ] **Sound-file ID** — second TX station-ID method (play a recorded clip instead of CW), blocked
   on CW-ID's own subsystem landing first.
-- [ ] **JPEG save quality setting** — trivial, but literally has no format to apply to until/unless
-  a JPEG save path exists (images save as PNG only today).
+- [ ] **JPEG save quality setting** — **re-scoped 2026-08-12**: not blocked on "images are PNG-only"
+  in the sense originally written — legacy's real `m_JPEGQuality` applies to the manual "Save Image
+  As..." dialog (`SaveBitmapMenu`/`SaveImage`, `Main.cpp:10059-10084`), not the automatic RX-history
+  save this port already does differently (always PNG, by design, not a gap). Real scope is bundled
+  with the Gallery's still-STUB "Export frame" button (a manual save-as flow this port doesn't have
+  yet), not a standalone Options control — build together with Export frame, not independently.
 
 **Not on this list, and why** (checked directly, not assumed — corrections to two items an earlier
 automated survey pass flagged as still-open when they're actually already shipped):
@@ -4636,7 +4657,8 @@ automated survey pass flagged as still-open when they're actually already shippe
   all in "Explicitly deferred beyond v1" immediately below; real gaps, but the project has already
   decided these are out of scope for now, not silently missing.
 - Native per-rig CAT parsers, OmniRig COM, RX-history drag-in-compositing, CItems plugin ABI,
-  MMlink, Loglink live IPC, JASTA contest codes, CQ100 mode, legacy Windows font-switch buttons —
+  MMlink, Loglink live IPC, JASTA contest codes, CQ100 mode, legacy Windows font-switch buttons,
+  raw-serial RTS-pin PTT keying (RTS-on-RX/PTT-lock) —
   all in `docs/removed-features.md` as removed-with-a-stated-replacement (even where imperfect),
   not silent gaps.
 
