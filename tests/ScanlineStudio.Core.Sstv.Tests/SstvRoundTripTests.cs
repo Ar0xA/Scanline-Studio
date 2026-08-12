@@ -336,7 +336,12 @@ public class SstvRoundTripTests
         await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: 10.0, sampleRate: 44100);
     }
 
-    private static async Task AssertEncodeThenDecodeRoundTrip(SstvModeDefinition mode, IImageSource sourceImage, double maxAveragePerChannelDelta, int sampleRate)
+    // Demod-type subsystem Phase 2 -- optional, defaults to Hilbert (every existing call site's own
+    // implicit assumption, unchanged) so this doesn't require touching every one of them. A coarse
+    // smoke test only, per this subsystem's own implementation plan -- round-trip can't catch
+    // encoder/decoder agreeing while both are wrong; the real verification is GoldenVectorTests.cs's
+    // real-legacy-capture Theory test.
+    private static async Task AssertEncodeThenDecodeRoundTrip(SstvModeDefinition mode, IImageSource sourceImage, double maxAveragePerChannelDelta, int sampleRate, DemodType demodType = DemodType.Hilbert)
     {
         var encoder = new AnalogFmSstvEncoder(sampleRate);
         var samples = new List<float>();
@@ -353,7 +358,7 @@ public class SstvRoundTripTests
 
             Assert.Equal(encoder.SampleRate, readSampleRate);
 
-            var decoder = new AnalogFmSstvDecoder(readSampleRate);
+            var decoder = new AnalogFmSstvDecoder(readSampleRate, demodType: demodType);
             SstvModeDefinition? detectedMode = null;
             IImageSource? decodedImage = null;
             decoder.ModeDetected += m => detectedMode = m;
@@ -371,6 +376,49 @@ public class SstvRoundTripTests
         {
             File.Delete(wavPath);
         }
+    }
+
+    [Theory]
+    [InlineData(DemodType.Pll)]
+    [InlineData(DemodType.ZeroCrossing)]
+    public async Task EncodeThenDecode_NonHilbertDemodType_NormalWidthMode_RoundTripsWithinTolerance(DemodType demodType)
+    {
+        // Coarse smoke test only -- proves PLL/Zero-crossing are wired as genuine alternatives that
+        // decode a real image, not that they're byte-faithful to legacy (that's
+        // GoldenVectorTests.cs's job, per this subsystem's own implementation plan).
+        var mode = SstvModeRegistry.MartinM1;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: 10.0, sampleRate: 11025, demodType: demodType);
+    }
+
+    [Theory]
+    [InlineData(DemodType.Pll, 7.0)] // measured 3.44
+    // ZeroCrossing's higher tolerance is EXPECTED, not just tolerated -- see this test's own comment
+    // below for why, confirmed via this exact synthetic (zero-analog-noise) measurement.
+    [InlineData(DemodType.ZeroCrossing, 26.0)] // measured 13.08
+    public async Task EncodeThenDecode_NonHilbertDemodType_NarrowWidthMode_RoundTripsWithinTolerance(DemodType demodType, double tolerance)
+    {
+        // Same as above, narrow-width (MN/MC family) -- proves Phase 1's SetWidth/narrow-transition
+        // wiring (landmine #3) actually gets exercised end to end, not just at the unit level.
+        //
+        // ZeroCrossing's real measured delta here (13.08) is ~3.8x PLL's (3.44) on this SAME narrow
+        // fixture, with ZERO analog noise involved (pure synthetic self-encode-then-decode) -- rules
+        // OUT "real capture noise" as the cause (an earlier draft of GoldenVectorTests.cs's own
+        // comment for the same outlier on real legacy audio wrongly attributed it to noise
+        // sensitivity) and confirms this is deterministic and specific to zero-crossing timing (PLL/
+        // Hilbert never estimate crossing times at all, so neither shares this). NOT fully explained
+        // by a single identified mechanism, per round-2 code-review's own correction of this
+        // comment's first-pass explanation -- see GoldenVectorTests.cs's matching comment (same
+        // outlier, real audio) for the full reasoning: narrow's 256Hz-vs-wide's-800Hz span is a real
+        // 3.125x gain, but it's a MODE property shared identically by all three demod types, so it
+        // cancels in a same-mode ZeroCrossing-vs-PLL ratio like this one -- at most a contributing
+        // factor, not the whole story. Not chased further: comfortably within a real, generous margin
+        // of the measured value, and legacy's own CFQC would face the same technique-level tradeoff
+        // (plausible, not independently confirmed -- no real legacy m_Type=1 capture exists in this
+        // fixture set to check against).
+        var mode = SstvModeRegistry.Mn110;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: tolerance, sampleRate: 11025, demodType: demodType);
     }
 
     private static ArrayImageSource CreateGradientTestImage(int width, int height)

@@ -317,6 +317,100 @@ public class GoldenVectorTests
             $"restarts={restartCount}, detected mode=[{mode.Id}]");
     }
 
+    // Demod-type subsystem Phase 2 -- the one piece of verification this feature cannot skip, per
+    // that subsystem's own implementation plan: round-trip alone (SstvRoundTripTests.cs) can't catch
+    // encoder/decoder agreeing while both are wrong. This decodes the SAME real legacy-captured
+    // .mmv audio DecoderFixtures already uses, but with PLL/Zero-crossing selected as the live
+    // main-path demodulator instead of Hilbert. martin-m1 (normal-width) + mn110 (narrow-width, the
+    // one fixture that exercises Phase 1's SetWidth/narrow-transition wiring end to end).
+    //
+    // Caveat baked into the assertion, not just documented: the checked-in *_RX.bmp/tolerance
+    // numbers everywhere else in this file were captured/measured against legacy's own real
+    // m_Type=2 (Hilbert) decode -- a PLL or Zero-crossing decode must be judged against the SOURCE
+    // image (what was actually transmitted), never byte-matched against a Hilbert-captured
+    // reference, since legacy itself would produce a measurably different bitmap in PLL/ZC mode.
+    // This test already does that correctly (compares against sourceBmp, like every sibling test in
+    // this file) -- called out here so a future edit doesn't accidentally swap in a *_RX.bmp
+    // comparison instead.
+    public static readonly TheoryData<string, string, string, DemodType> NonHilbertDecoderFixtures = new()
+    {
+        { "martin-m1", "martin-m1.mmv", "martin-m1.bmp", DemodType.Pll },
+        { "martin-m1", "martin-m1.mmv", "martin-m1.bmp", DemodType.ZeroCrossing },
+        { "mn110", "mn110.mmv", "mn110.bmp", DemodType.Pll },
+        { "mn110", "mn110.mmv", "mn110.bmp", DemodType.ZeroCrossing },
+    };
+
+    [Theory]
+    [MemberData(nameof(NonHilbertDecoderFixtures))]
+    public void Decoder_DecodesRealLegacyAudio_NonHilbertDemodType_WithinToleranceOfSource(
+        string modeId, string mmvFile, string sourceBmp, DemodType demodType)
+    {
+        var source = BmpFile.Read(Path.Combine(FixtureDir, sourceBmp));
+        const int pictureHeight = 256; // both fixtures used here are 256 (DecoderFixtures' own table)
+        var (decoded, mode, restartCount) = DecodeMmvFixture(modeId, mmvFile, demodType);
+
+        var actual = CropToTop(decoded, pictureHeight);
+        var delta = MeasureAveragePerChannelDelta(source, actual, pictureHeight);
+
+        // Measured directly against this exact fixture set (not guessed), via the same temporary-
+        // zero-tolerance technique used throughout this file: martin-m1/Pll 2.05, martin-m1/
+        // ZeroCrossing 1.91, mn110/Pll 3.41, mn110/ZeroCrossing 12.60. Three of the four land within
+        // a small margin of both LegacyOwnDecode_MatchesSourceImage_EstablishesBaselineDelta's
+        // martin-m1 baseline (1.57) and Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource's own
+        // last-measured Hilbert-arm values for the same fixtures (martin-m1 ~1.94, mn110 ~3.57,
+        // this file's own comment history) -- confirming PLL specifically isn't structurally worse
+        // than Hilbert despite its Hz-conversion scale bridge never having been golden-vector-
+        // validated before this phase, per this subsystem's implementation plan's own concern.
+        //
+        // mn110/ZeroCrossing (12.60) is the one real outlier -- ~3.5x Hilbert's own number on the
+        // same fixture, though still comfortably under the ~42.67 corruption floor this exact
+        // gradient-formula source measures at elsewhere in this file, with 0 restarts and correct
+        // mode detection either way. Round-2 code-review: an earlier version of this comment
+        // attributed this to "real analog capture noise near each crossing" -- ruled OUT, not just
+        // downgraded, by cross-checking against SstvRoundTripTests.EncodeThenDecode_
+        // NonHilbertDemodType_NarrowWidthMode's own synthetic (ZERO analog noise) measurement on the
+        // SAME mode: ZeroCrossing 13.08 vs PLL 3.44 there too, essentially the same ~3.7-3.8x ratio
+        // with no noise involved at all -- confirmed deterministic and ZeroCrossing-specific, not
+        // noise-driven. Round-2-review correction to THIS comment's own first-pass replacement
+        // explanation: narrow's full-scale span (256Hz, NARROW_BWH*2, sstv.h:445) vs wide's 800Hz is
+        // a REAL 3.125x gain, but it's a property of the MODE, identical for all three demod types,
+        // so it cancels exactly in a same-mode ZeroCrossing-vs-Hilbert/PLL ratio like the ones cited
+        // above -- it cannot by itself explain a cross-demod-type difference. The magnitude is
+        // confirmed real, deterministic, and specific to zero-crossing timing (not shared by PLL/
+        // Hilbert, which never estimate crossing times at all) but NOT fully explained by a single
+        // identified mechanism -- the 3.125x gain is at most a contributing factor, not the whole
+        // story; a leading unverified hypothesis is that zero-crossing's per-crossing linear-
+        // interpolation error grows sharply as samples-per-half-cycle shrinks (narrow's 2044-2300Hz
+        // band sits at only ~2.4-2.7 samples/half-cycle at 11025Hz), but this has not been measured
+        // and should not be treated as established. Not chased further here: comfortably under the
+        // corruption floor, 0 restarts, correct mode detected, and legacy's own CFQC would face the
+        // identical technique-level tradeoff (plausible, not independently confirmed against a real
+        // legacy m_Type=1 capture, which doesn't exist in this fixture set).
+        //
+        // Narrow-mode wiring itself is confirmed correct by the mn110/Pll arm above (3.41, close to
+        // Hilbert's ~3.57) -- mn110/ZeroCrossing is comparatively weak evidence for Phase 1's
+        // SetWidth wiring specifically, since this port keeps ZeroCrossingFrequencyCounter in real Hz
+        // throughout, so SetWidth only moves the clamp bounds and the Clear()-reset value, not the
+        // underlying measurement math -- it would read back almost identically even if the narrow
+        // retune were silently missing. Both PLL and Hilbert arms are already covered for both
+        // fixtures (DecoderFixtures' own Theory + this Theory's Pll rows) -- 2 of the 3 demod types
+        // share one table by design, not a gap in the plan's "3 demod types" wording.
+        var toleranceByKey = new Dictionary<(string ModeId, DemodType DemodType), double>
+        {
+            [("martin-m1", DemodType.Pll)] = 4.0,
+            [("martin-m1", DemodType.ZeroCrossing)] = 4.0,
+            [("mn110", DemodType.Pll)] = 5.0, // matches the sibling Hilbert-arm margin for this same fixture (DecoderFixtures' own table, measured 3.57)
+            [("mn110", DemodType.ZeroCrossing)] = 25.0,
+        };
+        var tolerance = toleranceByKey[(modeId, demodType)];
+
+        Assert.Equal(0, restartCount);
+        Assert.True(
+            delta < tolerance,
+            $"[{modeId}/{demodType}] decoder-vs-source delta {delta:F2} exceeded tolerance {tolerance}. " +
+            $"restarts={restartCount}, detected mode=[{mode.Id}]");
+    }
+
     // Piece 2c-i: an independent, non-tautological timing check -- it verifies this port's timing
     // table against a real legacy BINARY's actual output, not against source a human read (unlike
     // SstvRoundTripTests.LineDuration_MatchesLegacyGetTiming, which cross-checks against
@@ -666,11 +760,11 @@ public class GoldenVectorTests
         return new ArrayImageSource(image.Width, image.Height, pixels);
     }
 
-    private static (IImageSource Decoded, SstvModeDefinition Mode, int RestartCount) DecodeMmvFixture(string modeId, string mmvFile)
+    private static (IImageSource Decoded, SstvModeDefinition Mode, int RestartCount) DecodeMmvFixture(string modeId, string mmvFile, DemodType demodType = DemodType.Hilbert)
     {
         var (samples, sampleRate) = MmvFile.Read(Path.Combine(FixtureDir, mmvFile));
 
-        var decoder = new AnalogFmSstvDecoder(sampleRate);
+        var decoder = new AnalogFmSstvDecoder(sampleRate, demodType: demodType);
         var detectedModesInOrder = new List<SstvModeDefinition>();
         var restartCount = 0;
         IImageSource? lastImageBeforeSecondLock = null;
