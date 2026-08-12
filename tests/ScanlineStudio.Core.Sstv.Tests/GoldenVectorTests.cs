@@ -411,6 +411,89 @@ public class GoldenVectorTests
             $"restarts={restartCount}, detected mode=[{mode.Id}]");
     }
 
+    // RX BPF subsystem Phase 2 -- round-2 auditor plan-review correction: does NOT extend
+    // DecoderFixtures above, which is consumed by TWO theories (this file's own
+    // Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource AND
+    // EncoderOutput_DecodesSimilarlyTo_RealLegacyAudioDecode further down) -- extending it would force
+    // both signatures to change and rerun the unrelated encoder cross-check per preset. Follows this
+    // file's own NonHilbertDecoderFixtures precedent instead: a separate table + the same
+    // DecodeMmvFixture optional-param shape.
+    //
+    // REGRESSION CHECK, NOT A PARITY CLAIM. Round-2 auditor code-review correction to an earlier
+    // draft of this comment, which wrongly claimed martin-m1.bmp/mn110.bmp were legacy DECODE captures
+    // at some believed-Wide DEMBPF setting -- they are NOT: per
+    // Fixtures/GoldenVectors/README.md, these two files are synthetic TX-direction gradient SOURCE
+    // images ("Not a legacy asset"), the same ones sourceBmp already means everywhere else in this
+    // file (DecoderFixtures compares against them too). Legacy's own RX-direction decodes are the
+    // SEPARATE *_RX.bmp files, which this test does not use at all. The real, stronger reason this is
+    // a regression check and not a parity claim: the measured delta here is this-port's-RX-output vs
+    // the ORIGINAL TRANSMITTED IMAGE, which bounds combined legacy-TX-encode + this-port-RX-decode
+    // error -- it has NO legacy-RX term at ANY DEMBPF setting, Wide included (DecoderFixtures' own
+    // Wide-preset baseline numbers, martin-m1 1.94/mn110 3.57, are exactly this same kind of
+    // source-vs-decode measurement, not a legacy-RX-vs-this-port-RX one either -- legacy's own
+    // DEMBPF setting when these .mmv files were originally transmitted/captured was never
+    // independently verified and does not matter for what this comparison actually measures). These
+    // fixture runs only prove "selecting a non-Wide preset doesn't break the decode, and its delta
+    // from the SOURCE image stays within a measured, stated bound" -- they do NOT and cannot prove
+    // this port's Narrow/VeryNarrow/Off decode numerically matches what real legacy would produce at
+    // that same DEMBPF setting, since no legacy-RX reference exists for any preset but Wide. The
+    // Kaiser-branch's actual numeric-parity burden is carried entirely by Phase 1's independently-
+    // computed coefficient fixtures (SearchBandpassFilterTests.cs) instead -- this table exists to
+    // catch a decoder-wiring regression (e.g. Off's buffer-trim-cursor fix silently reverting), not to
+    // validate the DSP math itself.
+    //
+    // mn110 (narrow-width) specifically exercises a real, in-scope effect even though narrow modes
+    // never reach H1/H3 (SearchBandpassFilter's own doc comment, H3/HBPFN out of scope): H2's tap
+    // count still scales with the selected preset (24/64/96 x rate), so Narrow/VeryNarrow are NOT
+    // no-ops for narrow-signal decodes -- worth confirming here, not assuming away.
+    public static readonly TheoryData<string, string, string, RxBpfPreset> RxBpfDecoderFixtures = new()
+    {
+        { "martin-m1", "martin-m1.mmv", "martin-m1.bmp", RxBpfPreset.Off },
+        { "martin-m1", "martin-m1.mmv", "martin-m1.bmp", RxBpfPreset.Narrow },
+        { "martin-m1", "martin-m1.mmv", "martin-m1.bmp", RxBpfPreset.VeryNarrow },
+        { "mn110", "mn110.mmv", "mn110.bmp", RxBpfPreset.Off },
+        { "mn110", "mn110.mmv", "mn110.bmp", RxBpfPreset.Narrow },
+        { "mn110", "mn110.mmv", "mn110.bmp", RxBpfPreset.VeryNarrow },
+    };
+
+    [Theory]
+    [MemberData(nameof(RxBpfDecoderFixtures))]
+    public void Decoder_DecodesRealLegacyAudio_RxBpfPreset_StaysWithinRegressionTolerance(
+        string modeId, string mmvFile, string sourceBmp, RxBpfPreset rxBpfPreset)
+    {
+        var source = BmpFile.Read(Path.Combine(FixtureDir, sourceBmp));
+        const int pictureHeight = 256; // both fixtures used here are 256 (DecoderFixtures' own table)
+        var (decoded, mode, restartCount) = DecodeMmvFixture(modeId, mmvFile, rxBpfPreset: rxBpfPreset);
+
+        var actual = CropToTop(decoded, pictureHeight);
+        var delta = MeasureAveragePerChannelDelta(source, actual, pictureHeight);
+
+        // Measured directly (not guessed), same temporary-zero-tolerance technique used throughout
+        // this file. Baseline (Wide, from DecoderFixtures above): martin-m1 1.94, mn110 3.57. All 6
+        // combinations here decode with 0 restarts and the correct mode detected first-try:
+        // martin-m1/Off 1.64, martin-m1/Narrow 3.92, martin-m1/VeryNarrow 3.11, mn110/Off 3.46,
+        // mn110/Narrow 4.05, mn110/VeryNarrow 3.06 -- all comfortably under the ~42.67 corruption
+        // floor this exact gradient-formula source measures at elsewhere in this file. Tolerances
+        // below are ~2x each measured value (same margin style as the rest of this file), NOT a
+        // parity claim against legacy at these presets -- see this test's own doc comment above.
+        var toleranceByKey = new Dictionary<(string ModeId, RxBpfPreset Preset), double>
+        {
+            [("martin-m1", RxBpfPreset.Off)] = 3.5,
+            [("martin-m1", RxBpfPreset.Narrow)] = 8.0,
+            [("martin-m1", RxBpfPreset.VeryNarrow)] = 6.5,
+            [("mn110", RxBpfPreset.Off)] = 7.0,
+            [("mn110", RxBpfPreset.Narrow)] = 8.5,
+            [("mn110", RxBpfPreset.VeryNarrow)] = 6.5,
+        };
+        var tolerance = toleranceByKey[(modeId, rxBpfPreset)];
+
+        Assert.Equal(0, restartCount);
+        Assert.True(
+            delta < tolerance,
+            $"[{modeId}/{rxBpfPreset}] decoder-vs-source delta {delta:F2} exceeded regression-guard tolerance {tolerance}. " +
+            $"restarts={restartCount}, detected mode=[{mode.Id}]");
+    }
+
     // Piece 2c-i: an independent, non-tautological timing check -- it verifies this port's timing
     // table against a real legacy BINARY's actual output, not against source a human read (unlike
     // SstvRoundTripTests.LineDuration_MatchesLegacyGetTiming, which cross-checks against
@@ -760,11 +843,11 @@ public class GoldenVectorTests
         return new ArrayImageSource(image.Width, image.Height, pixels);
     }
 
-    private static (IImageSource Decoded, SstvModeDefinition Mode, int RestartCount) DecodeMmvFixture(string modeId, string mmvFile, DemodType demodType = DemodType.Hilbert)
+    private static (IImageSource Decoded, SstvModeDefinition Mode, int RestartCount) DecodeMmvFixture(string modeId, string mmvFile, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide)
     {
         var (samples, sampleRate) = MmvFile.Read(Path.Combine(FixtureDir, mmvFile));
 
-        var decoder = new AnalogFmSstvDecoder(sampleRate, demodType: demodType);
+        var decoder = new AnalogFmSstvDecoder(sampleRate, demodType: demodType, rxBpfPreset: rxBpfPreset);
         var detectedModesInOrder = new List<SstvModeDefinition>();
         var restartCount = 0;
         IImageSource? lastImageBeforeSecondLock = null;
