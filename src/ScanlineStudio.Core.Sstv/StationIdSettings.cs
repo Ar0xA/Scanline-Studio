@@ -1,0 +1,94 @@
+namespace ScanlineStudio.Core.Sstv;
+
+/// <summary>Mirrors legacy's <c>sys.m_CWID</c> tri-state (<c>Main.cpp:7021-7025</c>,
+/// <c>Option.cpp:586-592</c>) -- NOT a bool. <see cref="SoundFile"/> corresponds to
+/// <c>OutputMMV</c> (sound-file station ID), deliberately unimplemented in v1 (out of scope per the
+/// CW-ID/FSK station-ID subsystem plan) -- modeled as its own enum member anyway so a future
+/// sound-file feature doesn't need a breaking settings migration. Selecting it today silently
+/// transmits no CW-ID at all, matching legacy's own behavior when no sound file is configured
+/// (<c>!sys.m_MMVID.IsEmpty()</c> gate failing), not a bug.</summary>
+public enum CwIdMode
+{
+    Off = 0,
+    Cw = 1,
+    SoundFile = 2,
+}
+
+/// <summary>Persisted CW-ID/FSK station-ID configuration -- see the CW-ID/FSK station-ID subsystem
+/// implementation plan for the full legacy citation trail. <see cref="ScanlineStudio.Application.SstvSessionService"/>
+/// is the only reader (resolves this alongside <c>OperatorSettings</c>/<c>IMacroTextResolver</c> into
+/// a <see cref="ScanlineStudio.Abstractions.Sstv.StationIdTransmitOptions"/> right before each
+/// transmission -- see that type's own doc comment for why the split exists). No Options-dialog
+/// wiring exists yet (that's a later phase); every field defaults to legacy's own compiled-in
+/// default, so an absent section behaves exactly like a fresh legacy install with nothing configured.
+///
+/// Several properties are nullable even though their real default isn't the CLR default (<c>0</c>/
+/// <c>false</c>) -- System.Text.Json does not honor an <c>init</c>-only property's C# initializer
+/// default when that property is absent from the JSON payload (the same confirmed STJ limitation
+/// <see cref="ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent"/> documents) -- treat
+/// <see langword="null"/> as "unset, apply the documented default" at every read site, never add a
+/// non-null property-initializer default here.</summary>
+public sealed record StationIdSettings
+{
+    public const string SectionKey = "StationId";
+
+    /// <summary><c>Main.cpp:905</c>.</summary>
+    public const int DefaultCwWpm = 28;
+
+    /// <summary><c>Main.cpp:907</c>.</summary>
+    public const double DefaultCwToneFrequencyHz = 1000;
+
+    /// <summary><c>LogFile.cpp:378</c>: <c>Log.m_LogSet.m_FSKNR</c> defaults to 1 (enabled), not 0 --
+    /// the one field on this record whose legacy default is "on."</summary>
+    public const bool DefaultNrRstEnabled = true;
+
+    /// <summary><c>Main.cpp:7021-7025</c>. Default <see cref="CwIdMode.Off"/> matches legacy's own
+    /// zero-initialized <c>sys.m_CWID</c> (<c>Main.cpp</c>'s startup defaults set it to 0 elsewhere in
+    /// the same block as the other station-ID fields below) and the enum's own CLR default -- plain
+    /// non-nullable, no STJ trap.</summary>
+    public CwIdMode CwIdMode { get; init; }
+
+    /// <summary><c>sys.m_CWIDText</c> -- raw, pre-macro-resolution text (<see cref="ScanlineStudio.Application.IMacroTextResolver"/>
+    /// resolves it at TX time, not here). <see langword="null"/>/empty both mean "nothing configured,"
+    /// matching <c>OutputCWID</c>'s own <c>!sys.m_CWIDText.IsEmpty()</c> gate
+    /// (<c>Main.cpp:6969</c>) -- checked on this RAW field, not the resolved text. Legacy pre-fills
+    /// this to <c>"DE %m"</c> (<c>Main.cpp:906</c>) even though <see cref="CwIdMode"/> itself defaults
+    /// to <see cref="CwIdMode.Off"/> (so it never fires by default either way) -- purely a
+    /// first-run-UI nicety, not behaviorally load-bearing; left <see langword="null"/> here and
+    /// deferred to the Options-dialog phase's initial-value handling, not duplicated as a settings
+    /// default (would hit the same STJ trap this doc comment describes for a value that isn't the
+    /// empty-string CLR default).</summary>
+    public string? CwText { get; init; }
+
+    /// <summary>WPM, wired to actually drive CW-ID dot length (a deliberate, user-approved deviation
+    /// from an apparent legacy bug -- see <see cref="CwMorseGenerator"/>'s own doc comment). Nullable
+    /// per this record's own doc comment -- <see langword="null"/> means "apply <see cref="DefaultCwWpm"/>."</summary>
+    public int? CwWpm { get; init; }
+
+    /// <summary><c>sys.m_CWIDFreq</c>. Nullable per this record's own doc comment -- <see langword="null"/>
+    /// means "apply <see cref="DefaultCwToneFrequencyHz"/>."</summary>
+    public double? CwToneFrequencyHz { get; init; }
+
+    /// <summary><c>sys.m_TXFSKID</c> (<c>Main.cpp:903</c>, default 0/false) -- plain non-nullable, no
+    /// STJ trap. Gates BOTH the post-image FSK-ID packet emission (jointly with the operator's own
+    /// callsign being non-empty, checked at the TX-options-resolution boundary, not here) AND which
+    /// footer-tone shape gets emitted (<c>Main.cpp:6997/7010</c>) -- unlike the callsign-emptiness
+    /// check, the footer-tone branch depends on THIS flag alone.</summary>
+    public bool FskIdTxEnabled { get; init; }
+
+    /// <summary><c>m_fskdecode</c> (<c>sstv.h:708</c>, <c>.ini</c> key <c>RXFSKID</c>, default
+    /// 0/false) -- plain non-nullable, no STJ trap. Consumed by
+    /// <see cref="ScanlineStudio.Core.Sstv.AnalogFmSstvDecoder.StationIdDecodeEnabled"/>.</summary>
+    public bool FskIdRxEnabled { get; init; }
+
+    /// <summary><c>Log.m_LogSet.m_FSKNR</c>. Nullable per this record's own doc comment --
+    /// <see langword="null"/> means "apply <see cref="DefaultNrRstEnabled"/> (true)."</summary>
+    public bool? NrRstEnabled { get; init; }
+
+    /// <summary>Legacy's real NR/RST source is the live "His RST" exchange field on the logging
+    /// window (<c>HisRST->Text</c>, <c>Main.cpp:6928</c>) -- this port has no "current QSO" concept
+    /// to source that from (see the implementation plan's RX-side note making the same call for
+    /// auto-fill), so v1 treats it as a simple, separately user-configured static value instead of
+    /// live contest-exchange automation. <see langword="null"/>/empty both mean nothing to send.</summary>
+    public string? NrRstText { get; init; }
+}

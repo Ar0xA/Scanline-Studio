@@ -60,6 +60,13 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private readonly long _criticalThresholdSamples;
     private readonly object _gate = new();
 
+    // NOT readonly, unlike every toggle above -- StationIdDecodeEnabled is deliberately
+    // LIVE-settable (see ISstvDecoder.StationIdDecodeEnabled's own doc comment for why), so this is
+    // both the "what to apply to a freshly-(re)built inner decoder" seed AND the current live value,
+    // kept in sync with _inner.StationIdDecodeEnabled by every write path (the property setter below
+    // and CreateInner) under _gate.
+    private bool _stationIdDecodeEnabled;
+
     private AnalogFmSstvDecoder _inner;
     private bool _warningRaised;
 
@@ -89,15 +96,33 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1)
-        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples, syncRestartEnabled, autoSyncEnabled, autoStopEnabled, autoSlantEnabled, senseLevel)
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.StationIdDecodeEnabled"/> directly -- NOT the wrapper's stored
+    /// <see cref="_stationIdDecodeEnabled"/> field the public <see cref="StationIdDecodeEnabled"/>
+    /// getter reads. Auditor round-2 finding: a test asserting only the public getter after a swap
+    /// would pass even if <see cref="CreateInner"/> stopped applying the stored value to a freshly
+    /// built inner entirely -- this exists so a test can prove the value actually reached the LIVE
+    /// inner decoder post-swap, not just that the wrapper still remembers what it was told.</summary>
+    internal bool InnerStationIdDecodeEnabledForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.StationIdDecodeEnabled;
+            }
+        }
+    }
+
+    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false)
+        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples, syncRestartEnabled, autoSyncEnabled, autoStopEnabled, autoSlantEnabled, senseLevel, stationIdDecodeEnabled)
     {
     }
 
     /// <summary>Test-only seam for injecting short thresholds instead of the real 12h/13h ones --
     /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
     /// trigger is sample-count-based, not wall-clock-based.</summary>
-    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1)
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false)
     {
         _afcEnabled = afcEnabled;
         _syncRestartEnabled = syncRestartEnabled;
@@ -107,6 +132,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         _senseLevel = senseLevel;
         _warningThresholdSamples = warningThresholdSamples;
         _criticalThresholdSamples = criticalThresholdSamples;
+        _stationIdDecodeEnabled = stationIdDecodeEnabled;
         _inner = CreateInner();
     }
 
@@ -267,6 +293,30 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// document and no need to take <see cref="_gate"/> to read it.</summary>
     public bool AutoSlantEnabled => _autoSlantEnabled;
 
+    /// <summary>See <see cref="ISstvDecoder.StationIdDecodeEnabled"/> for the full contract --
+    /// unlike <see cref="AutoSlantEnabled"/> above, this is genuinely live: a set value is applied to
+    /// the CURRENT inner instance immediately, under <see cref="_gate"/> (consistent with every
+    /// swap-affected accessor here), and also stored so <see cref="CreateInner"/> seeds a future
+    /// (re)built inner with the last value set, not the constructor default.</summary>
+    public bool StationIdDecodeEnabled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _stationIdDecodeEnabled;
+            }
+        }
+        set
+        {
+            lock (_gate)
+            {
+                _stationIdDecodeEnabled = value;
+                _inner.StationIdDecodeEnabled = value;
+            }
+        }
+    }
+
     /// <summary>Forwards to whichever inner instance is current. Same post-swap caveat as
     /// <see cref="SignalPeakLevel"/> above -- NOT reliably <see langword="false"/> immediately
     /// after a restart, since the triggering chunk is forwarded to the fresh inner and pre-lock
@@ -324,7 +374,10 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private AnalogFmSstvDecoder CreateInner()
     {
-        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel);
+        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel)
+        {
+            StationIdDecodeEnabled = _stationIdDecodeEnabled,
+        };
         decoder.LineDecoded += OnLineDecoded;
         decoder.ModeDetected += OnModeDetected;
         decoder.DecodeRestarted += OnDecodeRestarted;

@@ -38,6 +38,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     public IAsyncEnumerable<float> EncodeAsync(
         SstvModeDefinition mode,
         IImageSource image,
+        StationIdTransmitOptions? stationId = null,
         CancellationToken ct = default)
     {
         if (image.Width != mode.ImageWidth || image.Height != mode.ImageHeight)
@@ -47,12 +48,13 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                 nameof(image));
         }
 
-        return EncodeAsyncCore(mode, image, ct);
+        return EncodeAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, ct);
     }
 
     private async IAsyncEnumerable<float> EncodeAsyncCore(
         SstvModeDefinition mode,
         IImageSource image,
+        StationIdTransmitOptions stationId,
         [EnumeratorCancellation] CancellationToken ct)
     {
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
@@ -74,7 +76,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         var idealSamplesSoFar = 0.0;
         var emittedSamples = 0L;
 
-        foreach (var (frequencyHz, durationMs) in GenerateFrequencySegments(mode, image, lineEncoder))
+        foreach (var (frequencyHz, durationMs) in GenerateFrequencySegments(mode, image, lineEncoder, stationId))
         {
             ct.ThrowIfCancellationRequested();
 
@@ -182,7 +184,8 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     private static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFrequencySegments(
         SstvModeDefinition mode,
         IImageSource image,
-        IScanlineEncoder lineEncoder)
+        IScanlineEncoder lineEncoder,
+        StationIdTransmitOptions stationId)
     {
         // SHOULD item 5 (spec/14-roadmap.md): OutHEAD's pre-VIS leader-tone burst is emitted
         // UNCONDITIONALLY first, for every mode including AVT -- confirmed directly against source
@@ -246,34 +249,135 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
             }
         }
 
-        foreach (var segment in GenerateFooterSegments(mode))
+        foreach (var segment in GenerateFooterSegments(mode, stationId.FskIdEnabled))
         {
             yield return segment;
         }
+
+        // Main.cpp:7016-7027 (TMmsstv::SendSSTV, m_wLine == SSTVSET.m_TL+1): FSK-ID packet first,
+        // then CW-ID -- independent, not mutually exclusive; both fire (or don't) based on their own
+        // gates. FSK-ID's trigger gate is `sys.m_TXFSKID && !sys.m_Call.IsEmpty()` -- the caller
+        // (ScanlineStudio.Application.SstvSessionService) already resolved the FIRST half into
+        // stationId.FskIdEnabled; the second half (empty callsign) is left to
+        // FskStationIdEncoder.Generate's own existing empty-check (it yields nothing), not
+        // re-checked here, so this stays a single source of truth for that gate.
+        if (stationId.FskIdEnabled)
+        {
+            var callsign = NormalizeCallsignForStationId(stationId.Callsign);
+            var nrRstText = CapNrRstTextForStationId(stationId.NrRstText);
+            foreach (var segment in FskStationIdEncoder.Generate(callsign, nrRstText))
+            {
+                yield return segment;
+            }
+        }
+
+        // Main.cpp:7021-7025: `sys.m_CWID == 1` -> OutputCWID(); `== 2` -> OutputMMV() (sound-file,
+        // out of v1 scope -- StationIdTransmitOptions has no field for it at all, so there is nothing
+        // to branch on here; see CwIdMode's own doc comment for why selecting SoundFile silently
+        // transmits nothing today, matching legacy's own unconfigured-sound-file behavior).
+        if (stationId.CwEnabled)
+        {
+            var dotDurationMs = CwMorseGenerator.MillisecondsPerDotFromWpm(stationId.CwWpm);
+            foreach (var segment in CwMorseGenerator.Generate(stationId.CwResolvedText, stationId.CwToneFrequencyHz, dotDurationMs))
+            {
+                yield return segment;
+            }
+        }
+    }
+
+    // Option.cpp:445-448 (settings-boundary normalization -- CW-ID/FSK station-ID subsystem plan's
+    // round-2 finding: this is a FAITHFUL port of where legacy sets sys.m_Call, not new hardening).
+    // Order matters and is preserved exactly: StrCopy caps at MLCALL=16 chars FIRST, THEN jstrupr
+    // uppercases, THEN clipsp/SkipSpace trims -- not trim-then-cap. A pathological >16-char string
+    // that's mostly leading whitespace truncates away the real callsign entirely under this order;
+    // that matches legacy exactly, it is not "fixed" here. Scoped to the FSK-ID TX wire path only --
+    // OperatorSettings.Callsign itself is left as-typed (used for macros/display/QRZ elsewhere), so
+    // there is exactly one call site for this normalization and no risk of two copies drifting.
+    private static string NormalizeCallsignForStationId(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw))
+        {
+            return string.Empty;
+        }
+
+        var capped = raw.Length > FskStationIdWireFormat.MaxCallsignLength
+            ? raw[..FskStationIdWireFormat.MaxCallsignLength]
+            : raw;
+        return capped.ToUpperInvariant().Trim();
+    }
+
+    // Settings-boundary length cap for the NR/RST sub-packet's STRING form (the implementation
+    // plan's "cap lengths (16 char callsign, 8 char NR string)" -- legacy's OutputFSKID has no TX-
+    // side length check of its own; the 8-char bound is the RX decoder's abort threshold
+    // (sstv.cpp:2518), so an uncapped TX side could silently emit a packet no compliant receiver can
+    // decode).
+    //
+    // Code-review finding (real bug, fixed): an earlier version capped the RAW text's length before
+    // filtering. Every separator a real exchange contains (space, '-', '.', '/') is below '0' and is
+    // REMOVED by FskStationIdWireFormat.FilterNrRstChars, so raw length is NOT a safe proxy for
+    // filtered length -- e.g. raw "5 9 9 0 0 1 2" (13 chars, under the old raw cap) filters to
+    // "5990012" (7 digits), a DIFFERENT string than what capping the raw text first would have left
+    // for the encoder to filter, and can flip compact-vs-string form on the wire. Filtering FIRST,
+    // then capping the FILTERED result at 3 (RST digits) + MaxNrStringLength, is the only way to get
+    // an exact (not just safe-but-lossy) bound. FskStationIdEncoder.GenerateNrRstSubPacket re-filters
+    // its input internally -- harmless here since FilterNrRstChars is idempotent (filtering an
+    // already-filtered string is a no-op), so passing pre-filtered text through changes nothing about
+    // what that method computes.
+    private static string? CapNrRstTextForStationId(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw))
+        {
+            return null;
+        }
+
+        var filtered = FskStationIdWireFormat.FilterNrRstChars(raw);
+        const int maxFilteredLength = 3 + FskStationIdWireFormat.MaxNrStringLength;
+        return filtered.Length > maxFilteredLength ? filtered[..maxFilteredLength] : filtered;
     }
 
     // Main.cpp:6994-7013 (TMmsstv::SendSSTV, "MMSSTV フッター" -- footer): legacy always appends
-    // this immediately after the last image line. This is specifically the `!sys.m_TXFSKID` branch
-    // (no FSK station ID configured) -- the only branch implementable right now, since FSK/CW
-    // station ID is a deliberately deferred, separately-scoped feature (see spec/06-sstv-dsp.md's
-    // station-ID task list). The alternate branch, `mp->Write(fTxNarrow ? 1900 : 1500, 300)`, only
-    // runs when FSK ID *is* configured, so it isn't reachable yet either way and is left for that
-    // future work to add alongside the ID packet itself, not invented here as a guess.
+    // this immediately after the last image line.
     //
-    // `sys.m_VOX` isn't modeled anywhere in this port (no radio/PTT layer exists yet, per
-    // spec/14-roadmap's phase ordering) -- defaults to legacy's own default, off (`Main.cpp:822`),
-    // which is the more common case for typical (non-VOX-triggered) transmit anyway. If VOX support
-    // is ever added, this condition needs `|| isVoxEnabled` alongside the narrow-mode check below;
-    // flagged here rather than silently baked in as "always off" forever.
+    // Code-review correction: an earlier version of this comment justified the always-off assumption
+    // below by "no radio/PTT layer exists yet" -- stale, ScanlineStudio.Application.SstvSessionService's
+    // PlayWithPttAsync now keys/un-keys PTT for every TX call. The real reason is narrower: `sys.m_VOX`
+    // is a hardware Voice/Voltage-Operated-eXchange auto-keying MODE, not something this port's own
+    // software PTT control has any equivalent concept of at all (regardless of whether a PTT layer
+    // exists) -- defaults to legacy's own default, off (`Main.cpp:822`), which is also the more common
+    // case for typical (non-VOX-triggered) transmit anyway. If VOX support is ever modeled, this
+    // condition needs `|| isVoxEnabled` alongside the narrow-mode check below; flagged here rather
+    // than silently baked in as "always off" forever.
     internal const double FooterAlternatingToneDurationMs = 100.0;
 
     // SSTVSET.m_TW (`sstv.cpp:1109`) is one line's duration *in samples*; the footer's trailing
     // carrier is capped at `min(m_TW, SampFreq/2)` samples (`Main.cpp:6998-7000`) -- expressed here
     // in milliseconds (sample-rate-independent) as `min(LineDurationMs, 500ms)`.
+    //
+    // Round-2 auditor finding, traced further than the citation above: `m_TW` is set only by
+    // `CSSTVSET::SetMode` (`sstv.cpp:1109`), and every call site of that except ini-load is RX/VIS-
+    // detection-driven -- legacy's real footer carrier duration tracks the LAST RECEIVED mode, not
+    // the TX mode, a legacy quirk this port doesn't have an RX-mode-tracking equivalent for at the
+    // point this method runs. Using `mode` here (the TX mode being encoded) is a deliberate,
+    // evidently-intended divergence from that quirk -- not a restatement of what `m_TW` actually is.
     internal const double FooterMaxTrailingCarrierMs = 500.0;
 
-    internal static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFooterSegments(SstvModeDefinition mode)
+    // Main.cpp:7011: `mp->Write(WORD(SSTVSET.m_fTxNarrow ? 1900 : 1500), 300)` -- the FSK-ID-
+    // configured footer branch's single tone duration.
+    internal const double FskIdFooterToneDurationMs = 300.0;
+
+    internal static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFooterSegments(
+        SstvModeDefinition mode, bool fskIdEnabled = false)
     {
+        // Main.cpp:6997/7010-7011: this branch is selected purely on sys.m_TXFSKID -- independent of
+        // narrow-mode-ness (which only picks the tone frequency within this branch) and independent
+        // of whether a callsign is actually configured (that only gates packet emission, handled by
+        // the caller -- see GenerateFrequencySegments).
+        if (fskIdEnabled)
+        {
+            yield return (mode.NarrowModeCode is not null ? 1900 : 1500, FskIdFooterToneDurationMs);
+            yield break;
+        }
+
         var trailingCarrierMs = Math.Min(mode.LineDurationMs, FooterMaxTrailingCarrierMs);
 
         if (mode.NarrowModeCode is null)
