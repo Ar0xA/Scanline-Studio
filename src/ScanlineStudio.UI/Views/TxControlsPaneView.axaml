@@ -130,8 +130,10 @@
             </StackPanel>
         </HeaderedContentControl>
 
-        <!-- Identification: visual scaffolding only; blocked on the missing operator-callsign/
-             profile setting (spec/14-roadmap.md's "TX macros / CW-ID" backlog). -->
+        <!-- Identification: real (CW-ID/FSK station-ID subsystem, Phase 6). Reflects the CURRENT
+             effective Options-dialog configuration (ISstvSessionService.GetStationIdTransmitOptionsAsync),
+             loaded once at construction, not live-refreshed while this pane stays open (same
+             convention as the Output card's Device row below). -->
         <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
             <HeaderedContentControl.Header>
                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxId.CardHeader}" />
@@ -139,15 +141,15 @@
             <StackPanel Classes="Industry IndustryRows">
                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.FskId}" />
-                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxId.FskIdValue}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding FskIdDisplay}" />
                 </Grid></Border>
                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.CwId}" />
-                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxId.CwIdValue}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding CwIdDisplay}" />
                 </Grid></Border>
                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.Tail}" />
-                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxId.TailValue}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding TailDisplay}" />
                 </Grid></Border>
             </StackPanel>
         </HeaderedContentControl>

@@ -66,7 +66,13 @@ public sealed partial class OptionsSettingsService
         // AppPerformanceSettings.ProcessPriority's own desired "unset" default is null ("don't touch
         // the OS default"), which is also ProcessPriorityClass.Normal in every practical sense -- see
         // that record's own doc comment. AppPriorityIsHigh: false round-trips that correctly.
-        AppPriorityIsHigh: new AppPerformanceSettings().ProcessPriority == System.Diagnostics.ProcessPriorityClass.High);
+        AppPriorityIsHigh: new AppPerformanceSettings().ProcessPriority == System.Diagnostics.ProcessPriorityClass.High,
+        CwIdMode: new StationIdSettings().CwIdMode,
+        CwText: new StationIdSettings().CwText ?? StationIdSettings.DefaultCwText,
+        CwWpm: new StationIdSettings().CwWpm ?? StationIdSettings.DefaultCwWpm,
+        CwToneFrequencyHz: new StationIdSettings().CwToneFrequencyHz ?? StationIdSettings.DefaultCwToneFrequencyHz,
+        FskIdTxEnabled: new StationIdSettings().FskIdTxEnabled,
+        FskIdRxEnabled: new StationIdSettings().FskIdRxEnabled);
 
     public async Task<OptionsSnapshot> LoadAsync(CancellationToken ct = default)
     {
@@ -79,6 +85,7 @@ public sealed partial class OptionsSettingsService
         var decoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
         var qrzLookup = _loadedSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
         var appPerformance = _loadedSettings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings) ?? new AppPerformanceSettings();
+        var stationId = _loadedSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
 
         return new OptionsSnapshot(
             CultureCode: localization.CultureCode,
@@ -105,7 +112,13 @@ public sealed partial class OptionsSettingsService
             QrzLookupPassword: qrzLookup.Password,
             CaptureChannelSource: audio.CaptureChannelSource,
             StereoTxEnabled: audio.StereoTxEnabled,
-            AppPriorityIsHigh: appPerformance.ProcessPriority == System.Diagnostics.ProcessPriorityClass.High);
+            AppPriorityIsHigh: appPerformance.ProcessPriority == System.Diagnostics.ProcessPriorityClass.High,
+            CwIdMode: stationId.CwIdMode,
+            CwText: stationId.CwText ?? StationIdSettings.DefaultCwText,
+            CwWpm: stationId.CwWpm ?? StationIdSettings.DefaultCwWpm,
+            CwToneFrequencyHz: stationId.CwToneFrequencyHz ?? StationIdSettings.DefaultCwToneFrequencyHz,
+            FskIdTxEnabled: stationId.FskIdTxEnabled,
+            FskIdRxEnabled: stationId.FskIdRxEnabled);
     }
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
@@ -113,6 +126,7 @@ public sealed partial class OptionsSettingsService
         var previousAudio = _loadedSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
         var previousRadio = _loadedSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
         var previousDecoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
+        var previousStationId = _loadedSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
 
         var settings = _loadedSettings
             .WithSection(LocalizationSettings.SectionKey, new LocalizationSettings { CultureCode = snapshot.CultureCode }, LocalizationSettingsJsonContext.Default.LocalizationSettings)
@@ -173,7 +187,25 @@ public sealed partial class OptionsSettingsService
             .WithSection(
                 QrzLookupSettings.SectionKey,
                 new QrzLookupSettings { Enabled = snapshot.QrzLookupEnabled, Username = snapshot.QrzLookupUsername, Password = snapshot.QrzLookupPassword },
-                QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings)
+            .WithSection(
+                StationIdSettings.SectionKey,
+                // NrRstEnabled/NrRstText are preserved as-is -- same reasoning as AfcEnabled above,
+                // this dialog has no control for either yet (see OptionsSnapshot's own doc comment).
+                previousStationId with
+                {
+                    CwIdMode = snapshot.CwIdMode,
+                    // "?? string.Empty", not the raw snapshot value: a cleared TextBox must persist
+                    // as an explicit empty string, not null -- null round-trips back through
+                    // LoadAsync's "?? DefaultCwText" fallback as "DE %m" again, silently undoing the
+                    // user's clear on next load/save (auditor round 2 finding).
+                    CwText = snapshot.CwText ?? string.Empty,
+                    CwWpm = snapshot.CwWpm,
+                    CwToneFrequencyHz = snapshot.CwToneFrequencyHz,
+                    FskIdTxEnabled = snapshot.FskIdTxEnabled,
+                    FskIdRxEnabled = snapshot.FskIdRxEnabled,
+                },
+                StationIdSettingsJsonContext.Default.StationIdSettings);
 
         await _settingsStore.SaveAsync(settings, ct).ConfigureAwait(false);
         _loadedSettings = settings;

@@ -66,6 +66,16 @@ public interface ISstvSessionService : IAsyncDisposable
     /// as-typed in storage; this method normalizes fresh on every call, it never writes back.</summary>
     Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default);
 
+    /// <summary>Read-only preview of what <see cref="TransmitAsync"/> would actually resolve and
+    /// encode right now -- literally the same settings-resolution logic (CW-ID/FSK station-ID
+    /// subsystem Phase 4's <c>StationIdSettings</c>/<c>OperatorSettings</c> read + gate/fallback
+    /// logic), exposed here so a <c>ScanlineStudio.UI</c> consumer (e.g. the Transmit tab's
+    /// "Identification" summary card) can show the CURRENT effective configuration without
+    /// referencing <c>ScanlineStudio.Core.Sstv.StationIdSettings</c> directly (banned by
+    /// <c>UiLayeringArchitectureTests</c>). Side-effect-free -- reads settings, computes gates, does
+    /// NOT transmit anything.</summary>
+    Task<StationIdTransmitOptions> GetStationIdTransmitOptionsAsync(CancellationToken ct = default);
+
     /// <summary>Ultracode audit finding #34's automatic-restart mechanism (see
     /// <c>ScanlineStudio.Core.Sstv.RestartableSstvDecoder</c>) has gone past its warning threshold
     /// without an opportunity to swap yet -- fires at most once per restart cycle, cleared by
