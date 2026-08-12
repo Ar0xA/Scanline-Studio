@@ -50,4 +50,5 @@ public sealed record OptionsSnapshot(
     int CwWpm,
     double CwToneFrequencyHz,
     bool FskIdTxEnabled,
-    bool FskIdRxEnabled);
+    bool FskIdRxEnabled,
+    DemodType DemodType);
