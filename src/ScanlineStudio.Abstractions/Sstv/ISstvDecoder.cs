@@ -12,6 +12,16 @@ public interface ISstvDecoder
 
     event Action<SstvModeDefinition>? ModeDetected;
 
+    /// <summary>Delivery channel for a decoded FSK station-ID callsign/NR-RST (legacy STX
+    /// <c>0x2a</c>, <c>sstv.cpp:2465-2551</c>) -- fired from whatever runs the decode (the DSP/decode
+    /// pipeline thread, not the UI thread). Concurrency contract (CLAUDE.md §4): subscribers are
+    /// invoked SYNCHRONOUSLY on that thread, with no buffering and no marshaling -- a slow or
+    /// blocking subscriber blocks decode. Any UI-facing consumer must dispatch to its own thread
+    /// itself, immediately, rather than doing real work inline here (see
+    /// <c>ScanlineStudio.UI.ViewModels.RxImagePaneViewModel.OnStationIdDecoded</c> for the
+    /// established pattern). Gated by <see cref="StationIdDecodeEnabled"/> below.</summary>
+    event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+
     /// <summary>Fires when a stronger/cleaner sync lock is found mid-reception, aborting an
     /// in-progress image to restart on the new transmission (legacy's case-0 trigger, `sstv.cpp:1946-1950`,
     /// is ungated -- it keeps running even while already locked). Distinct from <see cref="ModeDetected"/>,

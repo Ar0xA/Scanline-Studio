@@ -135,6 +135,12 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public event Action<SstvModeDefinition>? ModeDetected;
 
+    public event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+
+    public string? OperatorCallsign { get; set; }
+
+    public Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default) => Task.FromResult(OperatorCallsign);
+
     public event Action? MaintenanceWarningRaised;
 
     public event Action? MaintenanceWarningCleared;
@@ -253,6 +259,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     public void RaiseModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
+
+    public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
 
     public void RaiseMaintenanceWarningRaised() => MaintenanceWarningRaised?.Invoke();
 

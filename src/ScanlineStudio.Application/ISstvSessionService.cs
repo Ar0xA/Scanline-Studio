@@ -37,6 +37,35 @@ public interface ISstvSessionService : IAsyncDisposable
 
     event Action<SstvModeDefinition>? ModeDetected;
 
+    /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.StationIdDecoded"/>
+    /// -- same synchronous, decode-thread concurrency contract as that event (see its own doc
+    /// comment), NOT gated on a call to <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> being
+    /// in-flight, since those calls fully pause RX capture for their own duration (no samples can
+    /// reach the decoder to raise this while one is running). <b>Narrower claim than an earlier
+    /// version of this doc comment made (auditor round-1 finding on Phase 5)</b>: this is NOT true
+    /// for the whole "PTT considered keyed" window in general -- <see cref="SetPttLockAsync"/> keys
+    /// PTT WITHOUT touching capture at all, so RX (and this event) can keep running while that lock
+    /// is engaged. No consumer needs an explicit "not transmitting" gate for the
+    /// <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> case specifically, but one is NOT
+    /// guaranteed redundant for a PTT-lock-engaged scenario if a future consumer ever cared about
+    /// that distinction.</summary>
+    event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+
+    /// <summary>The operator's own configured callsign (<c>OperatorSettings.Callsign</c>), run
+    /// through <c>ScanlineStudio.Core.Sstv.StationIdCallsignNormalizer.Normalize</c> (uppercase/trim/
+    /// 16-char cap, <c>Option.cpp:445-448</c>) -- exists so a <c>ScanlineStudio.UI</c> consumer (e.g.
+    /// a decoded-station-ID self-filter, avoiding auto-filling "his callsign" with the operator's
+    /// own) can read it without referencing <c>ScanlineStudio.Settings.ISettingsStore</c> directly,
+    /// which would violate this project's UI layering rule (<c>ScanlineStudio.UI</c> only talks to
+    /// <c>ScanlineStudio.Application</c> service interfaces). <b>Normalized, not the raw stored
+    /// value</b> (auditor round-1 finding on Phase 5 -- a real bug in an earlier version of this
+    /// method): a decoded FSK station-ID callsign is always normalized by construction, so comparing
+    /// it against an operator's un-normalized stored callsign (e.g. <c>"w1aw"</c>) would silently
+    /// fail to self-filter. <see langword="null"/> only when unset (empty stays empty, not
+    /// normalized away to something else) -- <c>OperatorSettings.Callsign</c> itself is left
+    /// as-typed in storage; this method normalizes fresh on every call, it never writes back.</summary>
+    Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default);
+
     /// <summary>Ultracode audit finding #34's automatic-restart mechanism (see
     /// <c>ScanlineStudio.Core.Sstv.RestartableSstvDecoder</c>) has gone past its warning threshold
     /// without an opportunity to swap yet -- fires at most once per restart cycle, cleared by
