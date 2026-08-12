@@ -486,7 +486,7 @@ not just wiring; Sense level needed a genuine DSP-table port, not just wiring), 
 remaining four controls (RX BPF/Demod type need their own larger DSP-scoping passes, RX buffer has
 no identified legacy precedent, Auto-start is toolbar-only in legacy).
 
-### Identification tab — fully STUB
+### Identification tab — fully STUB, scoped 2026-08-12 (deferred, not wired)
 
 ID method (Off/CW/Sound file), CW text/frequency/speed, sound-file path+browse, FSK
 encode/decode, VOX mode/edit-tone, Tune-satellite trigger — every control
@@ -495,6 +495,18 @@ encode/decode, VOX mode/edit-tone, Tune-satellite trigger — every control
 the real Tune frequency/duration fields live on `RadioStatusViewModel` —
 `TuneFrequencyHz`/`TuneDurationSeconds`/`TuneCommand` — and are intentionally NOT duplicated on
 this tab; they're just unmapped to any control anywhere in the current UI.)
+
+**Investigated directly, not left stub by default**: `WriteCWID`/`WriteFSK` (`sstv.cpp:2942-2990+`)
+are real, compact, self-contained legacy encoders (Morse lookup table + timing; simple FSK
+tone-shift bit-writer) — smaller than the tab's full scope suggests, but still core TX-encode DSP
+code needing golden-vector rigor, not a wiring task. The FSK-ID **decode** side
+(`m_fskcall`/`sstv.cpp:2465-2551`) is confirmed distinct from this port's existing
+`NarrowFskHeaderDecoder` (that class decodes narrow-MODE header signaling, not station callsign
+ID) — zero callsign-FSK decode exists here today, which is the real reason the Receive tab's
+Callsign/OCR row has stayed FAKE-LIVE this whole time. Full bundled scope (TX Morse + TX/RX FSK-ID
+codec + this whole tab's UI) is comparable in size to the QRZ lookup feature — needs its own
+dedicated session (`spec/14-roadmap.md`'s "CW-ID / FSK station-ID subsystem" entry has the full
+citation trail), not bundled into an ordinary wiring pass.
 
 ### Advanced tab — fully STUB
 

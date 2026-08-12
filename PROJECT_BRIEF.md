@@ -199,6 +199,19 @@ goes through Hamlib/rigctld/flrig, which own their own connection lifecycle, so 
 raw-serial-port concept left for these two settings to gate. New `docs/removed-features.md` entry
 added ("Raw-serial RTS-pin PTT keying"). Doc-only change, no code touched, no tests affected.
 
+**CW-ID/FSK station-ID subsystem + Options Identification tab investigated, deferred** — same
+session. `WriteCWID`/`WriteFSK` (`sstv.cpp:2942-2990+`) are real, compact legacy encoders (Morse
+lookup table, FSK tone-shift bit-writer) — smaller than the tab's overall scope, but still core
+TX-encode-path DSP code needing golden-vector rigor, not a wiring task. Confirmed the FSK-ID
+**decode** side (`m_fskcall`) is distinct from this port's existing `NarrowFskHeaderDecoder` (that
+decodes narrow-MODE header signaling, not station callsign ID) — zero callsign-FSK decode exists
+today, which is the real, now-understood reason the Receive tab's Callsign/OCR row has stayed
+FAKE-LIVE all session. Full bundled scope (TX Morse generator + TX/RX FSK-ID codec + the whole
+Identification tab UI) is comparable in size to the QRZ lookup feature built earlier this session —
+needs its own dedicated session, not bundled into an ordinary wiring pass. Doc-only change this
+pass (`spec/14-roadmap.md`/`spec/16-gui-wiring-survey.md` updated with full citations); no code
+touched.
+
 **`spec/14-roadmap.md`'s "Must-implement backlog" is the prioritized list to work from**, not the
 survey directly — the survey tells you WHAT is stub/fake, the backlog tells you what order to
 tackle it in and why. Status:
