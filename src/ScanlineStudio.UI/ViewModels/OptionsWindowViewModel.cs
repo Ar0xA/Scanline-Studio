@@ -98,6 +98,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _syncRestartEnabled = true;
 
+    /// <summary>Squelch/sense-level preset index (0-3, "Very low".."Very high") -- see
+    /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.SenseLevel"/>'s own doc comment for
+    /// the legacy basis and the absent-vs-out-of-range fallback distinction. Backed by 4
+    /// <c>IsSenseLevelXSelected</c> computed properties below, same pattern as
+    /// <see cref="IsNoneBackendSelected"/>/etc.</summary>
+    [ObservableProperty]
+    private int _senseLevel = 1;
+
     [ObservableProperty]
     private bool _qrzLookupEnabled;
 
@@ -185,6 +193,58 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
     public bool IsHamlibSelected => RadioBackendId == "hamlib";
 
+    /// <summary>Backs the Decode tab's 4-way Sense level radio group -- same computed-bool-property
+    /// idiom as <see cref="IsNoneBackendSelected"/>/etc. above. Index order (0=Very low..3=Very high)
+    /// matches <c>Option.dfm</c>'s real <c>RGSLvl</c> item order and
+    /// <see cref="ScanlineStudio.Core.Sstv.AnalogFmSstvDecoder.SenseLevelPresets"/>.</summary>
+    public bool IsSenseLevelVeryLowSelected
+    {
+        get => SenseLevel == 0;
+        set
+        {
+            if (value)
+            {
+                SenseLevel = 0;
+            }
+        }
+    }
+
+    public bool IsSenseLevelLowSelected
+    {
+        get => SenseLevel == 1;
+        set
+        {
+            if (value)
+            {
+                SenseLevel = 1;
+            }
+        }
+    }
+
+    public bool IsSenseLevelHighSelected
+    {
+        get => SenseLevel == 2;
+        set
+        {
+            if (value)
+            {
+                SenseLevel = 2;
+            }
+        }
+    }
+
+    public bool IsSenseLevelVeryHighSelected
+    {
+        get => SenseLevel == 3;
+        set
+        {
+            if (value)
+            {
+                SenseLevel = 3;
+            }
+        }
+    }
+
     /// <summary>Fired on Save (after a successful persist) and on Cancel -- the View closes the
     /// window either way; it does not need to distinguish which.</summary>
     public event Action? RequestClose;
@@ -239,6 +299,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         AutoSlantEnabled = snapshot.AutoSlantEnabled;
         AutoStopEnabled = snapshot.AutoStopEnabled;
         SyncRestartEnabled = snapshot.SyncRestartEnabled;
+        // Clamp, not trust -- a hand-edited settings.json can persist an out-of-range value; falls
+        // back to index 0 ("Very low"), matching legacy's own SetSenseLvl switch `default:` branch
+        // (see SstvDecoderSettings.SenseLevel's own doc comment for why 0, not 1, is the fallback
+        // here specifically -- deliberately different from the absent-key default).
+        SenseLevel = snapshot.SenseLevel is >= 0 and <= 3 ? snapshot.SenseLevel : 0;
         QrzLookupEnabled = snapshot.QrzLookupEnabled;
         QrzLookupUsername = snapshot.QrzLookupUsername;
         QrzLookupPassword = snapshot.QrzLookupPassword;
@@ -274,6 +339,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             AutoSlantEnabled: AutoSlantEnabled,
             AutoStopEnabled: AutoStopEnabled,
             SyncRestartEnabled: SyncRestartEnabled,
+            SenseLevel: SenseLevel,
             QrzLookupEnabled: QrzLookupEnabled,
             QrzLookupUsername: QrzLookupUsername,
             QrzLookupPassword: QrzLookupPassword);
@@ -359,6 +425,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         AutoSlantEnabled = defaults.AutoSlantEnabled;
         AutoStopEnabled = defaults.AutoStopEnabled;
         SyncRestartEnabled = defaults.SyncRestartEnabled;
+        SenseLevel = defaults.SenseLevel;
     }
 
     [RelayCommand]
@@ -424,6 +491,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsNoneBackendSelected));
         OnPropertyChanged(nameof(IsRigctldBackendSelected));
         OnPropertyChanged(nameof(IsHamlibBackendSelected));
+    }
+
+    partial void OnSenseLevelChanged(int value)
+    {
+        OnPropertyChanged(nameof(IsSenseLevelVeryLowSelected));
+        OnPropertyChanged(nameof(IsSenseLevelLowSelected));
+        OnPropertyChanged(nameof(IsSenseLevelHighSelected));
+        OnPropertyChanged(nameof(IsSenseLevelVeryHighSelected));
     }
 
     private static partial class Log

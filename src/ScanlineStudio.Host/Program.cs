@@ -158,7 +158,8 @@ internal static partial class Program
                 syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true,
                 autoSyncEnabled: decoderSettings.AutoSyncEnabled ?? true,
                 autoStopEnabled: decoderSettings.AutoStopEnabled ?? false, // legacy fresh default is OFF (Main.cpp:900), unlike the other four
-                autoSlantEnabled: decoderSettings.AutoSlantEnabled ?? true);
+                autoSlantEnabled: decoderSettings.AutoSlantEnabled ?? true,
+                senseLevel: decoderSettings.SenseLevel ?? 1);
         });
         hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
         hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));
