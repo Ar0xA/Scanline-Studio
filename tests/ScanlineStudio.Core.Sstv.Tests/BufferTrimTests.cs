@@ -67,6 +67,47 @@ public class BufferTrimTests
     }
 
     [Fact]
+    public void BufferedSampleCount_StaysBounded_ForLongNeverLockingStream_WithRxBpfOff()
+    {
+        // RX BPF subsystem Phase 2 -- round-1 auditor plan-review blocker, verified directly: the
+        // originally-planned Off-bypass shape (a method-level early return out of
+        // BandpassFilteredSampleAt when _searchBandpassFilter is null) would have skipped the fill
+        // loop entirely, pinning _bandpassFilteredProcessedUpTo at 0 for the whole session -- that
+        // cursor is load-bearing in BOTH TrimBuffers watermark branches, so pinning it at 0 would make
+        // TrimBuffers a permanent no-op under Off, i.e. exactly the unbounded-growth bug
+        // BufferedSampleCount_StaysBounded_ForLongNeverLockingStream above exists to catch, just gated
+        // behind a preset this port didn't have when that test was written. The actual fix (a
+        // null-coalesce INSIDE the existing fill loop, see BandpassFilteredSampleAt's own doc comment)
+        // keeps the cursor advancing regardless -- this test proves that end to end, not just that the
+        // code compiles under Off.
+        const int sampleRate = 11025;
+        var decoder = new AnalogFmSstvDecoder(sampleRate, rxBpfPreset: RxBpfPreset.Off);
+        var random = new Random(Seed: 12345);
+
+        const int totalSeconds = 30;
+        const int totalSamples = sampleRate * totalSeconds;
+        const int chunkSize = 512;
+
+        var buffer = new float[chunkSize];
+        for (var pushed = 0; pushed < totalSamples; pushed += chunkSize)
+        {
+            var length = Math.Min(chunkSize, totalSamples - pushed);
+            for (var i = 0; i < length; i++)
+            {
+                buffer[i] = (float)(random.NextDouble() * 0.02 - 0.01);
+            }
+
+            decoder.PushSamples(buffer.AsMemory(0, length));
+        }
+
+        var bufferedSeconds = decoder.BufferedSampleCount / (double)sampleRate;
+        Assert.True(
+            bufferedSeconds < 15.0,
+            $"Expected buffered sample count to stay well below the full 30s pushed even with RxBpfPreset.Off selected, " +
+            $"but {decoder.BufferedSampleCount} samples ({bufferedSeconds:F1}s) are still held -- the Off-bypass buffer-trim-cursor fix regressed.");
+    }
+
+    [Fact]
     public async Task DecodedImage_StillDecodesCorrectly_WhenPrecededByLongSilence_ThatTriggeredTrimming()
     {
         // NOT a pixel-identical/tight-tolerance comparison against a baseline with no silence lead-in

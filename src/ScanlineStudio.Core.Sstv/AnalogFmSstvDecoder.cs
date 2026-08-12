@@ -121,7 +121,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private readonly ZeroCrossingFrequencyCounter _zeroCrossingDemodulator;
     private readonly ZeroCrossingFrequencyCounter _afcZeroCrossingCounter;
     private bool _mainPathIsNarrow; // narrow-mode edge tracker for the main-path PLL/ZeroCrossing retune -- Hilbert takes isNarrow per-call instead, needs no state here
-    private readonly SearchBandpassFilter _searchBandpassFilter;
+    // RX BPF subsystem Phase 2: null represents RxBpfPreset.Off -- a TRUE bypass matching legacy's own
+    // `if(m_bpf){...}` gate (sstv.cpp:1826), not a discard-output filter. Legacy's Off path never calls
+    // m_BPF.Do at all, so the delay line itself is never advanced under Off; constructing a real filter
+    // and throwing its output away would NOT be equivalent (it would silently prime the delay line), so
+    // null is the only correct representation -- see BandpassFilteredSampleAt's own doc comment for how
+    // the null-coalesce keeps the buffer-trim cursor (_bandpassFilteredProcessedUpTo) advancing under
+    // Off exactly like every other preset.
+    private readonly SearchBandpassFilter? _searchBandpassFilter;
 
     // Band-1 S2 fix (pre-Phase-2 audit): the absolute sample index _rawSamples[0]/_demodulatedFrequencies[0]/
     // _agcSamples[0]/_agcCurMaxSamples[0]/_bandpassFilteredSamples[0] currently correspond to -- 0
@@ -643,7 +650,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// <c>CSSTVDEM::m_Type</c> (`sstv.cpp:2256-2269`). Legacy's real compiled-in default is
     /// <see cref="DemodType.Hilbert"/> (`sstv.cpp:1492`), matching this port's own pre-existing
     /// hardcoded behavior. Restart-only, same reasoning/limitation as every other parameter here.</param>
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert)
+    /// <param name="rxBpfPreset">RX bandpass-filter sharpness, mirrors legacy's real
+    /// <c>CSSTVDEM::m_bpf</c> (`sstv.cpp:1522-1550`'s <c>CalcBPF</c>, `.ini` key <c>DEMBPF</c>).
+    /// Legacy's real compiled-in default is <see cref="RxBpfPreset.Wide"/> (`sstv.cpp:1416`,
+    /// `m_bpf=1`), matching this port's own pre-existing hardcoded behavior before the RX BPF
+    /// runtime-dispatch subsystem made the other three live alternatives. Restart-only, same
+    /// reasoning/limitation as every other parameter here.</param>
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide)
     {
         _sampleRate = sampleRate;
         _afcEnabled = afcEnabled;
@@ -657,7 +670,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _pllDemodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz);
         _zeroCrossingDemodulator = new ZeroCrossingFrequencyCounter(sampleRate);
         _afcZeroCrossingCounter = new ZeroCrossingFrequencyCounter(sampleRate);
-        _searchBandpassFilter = new SearchBandpassFilter(sampleRate, RxBpfPreset.Wide, syncRestartEnabled);
+        // Round-2 auditor finding: pass the `syncRestartEnabled` CTOR PARAMETER directly here, not the
+        // `_syncRestartEnabled` FIELD assigned two lines above -- today the field happens to already be
+        // set first, but that's incidental to field-declaration order, not a guarantee; a future
+        // reorder would silently default the field to `false` with no compiler error and no test
+        // catching it unless a test specifically pins fcl with sync-restart on.
+        _searchBandpassFilter = rxBpfPreset == RxBpfPreset.Off
+            ? null
+            : new SearchBandpassFilter(sampleRate, rxBpfPreset, syncRestartEnabled);
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _syncBypass1900Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
@@ -789,6 +809,21 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // for the handful of samples strictly before the lock anchor that item 4a's fix means get computed
     // AFTER Commit() already fired (auditor code-level review of item 4a, round 3) -- those must stay H2
     // like legacy, not flip to H1 just because _mode happens to be set by the time they're computed.
+    //
+    // RX BPF subsystem Phase 2: `_searchBandpassFilter?.ProcessSample(...) ?? FilteredRawSampleAt(...)`
+    // is RxBpfPreset.Off's bypass -- matching legacy's `if(m_bpf){...}` gate (sstv.cpp:1826-1833) where
+    // `d` is simply never reassigned. LOAD-BEARING: this must stay a null-coalesce INSIDE the existing
+    // fill loop, never a method-level `if (_searchBandpassFilter is null) return FilteredRawSampleAt(index);`
+    // early return -- an early return would skip the loop entirely, pinning _bandpassFilteredProcessedUpTo
+    // at 0 for the whole session. That cursor is load-bearing in BOTH TrimBuffers watermark branches
+    // (`watermark = Math.Min(watermark, Math.Max(0, _bandpassFilteredProcessedUpTo - 1))`) and its
+    // unconditional RemoveRange -- pinning it at 0 makes TrimBuffers a permanent no-op under Off, i.e.
+    // unbounded _rawSamples/_agcSamples growth for the entire session (round-1 auditor plan-review
+    // finding, caught before any code was written). The cursor must advance every sample regardless of
+    // preset, Off included -- a future "simplification" back to an early return would silently
+    // reintroduce this leak. FirstLockedBandpassIndex (diagnostic-only) still gets set under Off even
+    // though no real filter selection occurs there -- harmless, but not a meaningful lock signal when
+    // the preset is Off.
     private double BandpassFilteredSampleAt(int index)
     {
         for (; _bandpassFilteredProcessedUpTo <= index; _bandpassFilteredProcessedUpTo++)
@@ -800,7 +835,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 FirstLockedBandpassIndex ??= thisIndex; // diagnostic-only, see its own doc comment
             }
 
-            _bandpassFilteredSamples.Add(_searchBandpassFilter.ProcessSample(FilteredRawSampleAt(thisIndex), useLocked));
+            var rawFiltered = FilteredRawSampleAt(thisIndex);
+            _bandpassFilteredSamples.Add(_searchBandpassFilter?.ProcessSample(rawFiltered, useLocked) ?? rawFiltered);
         }
 
         return _bandpassFilteredSamples[Rel(index)];
