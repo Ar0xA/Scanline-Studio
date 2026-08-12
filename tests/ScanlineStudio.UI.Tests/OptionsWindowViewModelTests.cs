@@ -260,11 +260,13 @@ public sealed class OptionsWindowViewModelTests
         // Explicit false for both -- true is also each field's own desired default (see
         // SstvDecoderSettings' doc comment), so a load path that silently ignores the persisted
         // value and falls through to the default would pass a true/true assertion by coincidence.
+        // AutoStop is the inverse case (its own default is false) -- explicit true here for the
+        // same "wouldn't pass by coincidence" reasoning.
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 SstvDecoderSettings.SectionKey,
-                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false },
+                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
@@ -272,20 +274,26 @@ public sealed class OptionsWindowViewModelTests
 
         Assert.False(vm.AutoSyncEnabled);
         Assert.False(vm.AutoSlantEnabled);
+        Assert.True(vm.AutoStopEnabled);
+        Assert.False(vm.SyncRestartEnabled);
     }
 
     [AvaloniaFact]
-    public void Constructor_DefaultsDecodeAutoSyncAndAutoSlantToTrueWhenSectionMissing()
+    public void Constructor_DefaultsDecodeTogglesWhenSectionMissing()
     {
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.AutoSyncEnabled);
         Assert.True(vm.AutoSlantEnabled);
+        // AutoStopEnabled's own desired default is false, unlike the other three -- legacy's real
+        // fresh-install default too (sys.m_AutoStop = 0, Main.cpp:900).
+        Assert.False(vm.AutoStopEnabled);
+        Assert.True(vm.SyncRestartEnabled);
     }
 
     [AvaloniaFact]
-    public async Task SaveCommand_PersistsDecodeAutoSyncAndAutoSlantWithoutDisturbingOtherDecoderFields()
+    public async Task SaveCommand_PersistsDecodeTogglesWithoutDisturbingOtherDecoderFields()
     {
         // AfcEnabled pre-set to a non-default value -- this dialog doesn't edit it, Save must
         // preserve it as-is rather than resetting the whole SstvDecoder section.
@@ -301,34 +309,42 @@ public sealed class OptionsWindowViewModelTests
 
         vm.AutoSyncEnabled = false;
         vm.AutoSlantEnabled = false;
+        vm.AutoStopEnabled = true;
+        vm.SyncRestartEnabled = false;
 
         await vm.SaveCommand.ExecuteAsync(null);
 
         var decoder = settingsStore.Settings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
         Assert.False(decoder?.AutoSyncEnabled);
         Assert.False(decoder?.AutoSlantEnabled);
+        Assert.True(decoder?.AutoStopEnabled);
+        Assert.False(decoder?.SyncRestartEnabled);
         Assert.False(decoder?.AfcEnabled);
     }
 
     [AvaloniaFact]
-    public void ResetDecodeToDefaultCommand_RestoresBothToggles()
+    public void ResetDecodeToDefaultCommand_RestoresAllFourToggles()
     {
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 SstvDecoderSettings.SectionKey,
-                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false },
+                new SstvDecoderSettings { AutoSyncEnabled = false, AutoSlantEnabled = false, AutoStopEnabled = true, SyncRestartEnabled = false },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         Assert.False(vm.AutoSyncEnabled);
         Assert.False(vm.AutoSlantEnabled);
+        Assert.True(vm.AutoStopEnabled);
+        Assert.False(vm.SyncRestartEnabled);
 
         vm.ResetDecodeToDefaultCommand.Execute(null);
 
         Assert.True(vm.AutoSyncEnabled);
         Assert.True(vm.AutoSlantEnabled);
+        Assert.False(vm.AutoStopEnabled);
+        Assert.True(vm.SyncRestartEnabled);
     }
 
     [AvaloniaFact]
