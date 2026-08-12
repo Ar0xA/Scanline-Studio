@@ -62,9 +62,13 @@ def resolve_and_contain(path_str: str, allowed_roots: list[Path], label: str) ->
     """Returns None (not raises) on containment failure when called from a tool
     handler, so the model gets a normal error result instead of the process dying.
 
-    Relative paths are tried against each allowed root in turn (not the repo
-    root), since callers pass paths relative to the specific legacy/candidate
-    tree, e.g. --legacy-file fir.cpp means yoniq-old/YONIQ-main/fir.cpp."""
+    Relative paths are tried against each allowed root in turn (e.g. --legacy-file
+    fir.cpp means yoniq-old/YONIQ-main/fir.cpp) AND against the repo root directly
+    (bug found via real usage, tools/peer-audit/TRACKING.md row 2: the model guessed
+    a repo-root-relative path like "src/ScanlineStudio.Core.Sstv/Foo.cs" for a tool
+    call, which silently failed to resolve under root-relative-only matching --
+    trying REPO_ROOT too makes both conventions work without the model needing to
+    guess which one this tool expects)."""
     if Path(path_str).is_absolute():
         try:
             p = Path(path_str).resolve()
@@ -74,12 +78,12 @@ def resolve_and_contain(path_str: str, allowed_roots: list[Path], label: str) ->
             return p
         return None
 
-    for root in allowed_roots:
+    for root in [*allowed_roots, REPO_ROOT]:
         try:
             candidate = (root / path_str).resolve()
         except Exception:
             continue
-        if candidate.is_file() and candidate.is_relative_to(root.resolve()):
+        if candidate.is_file() and any(candidate.is_relative_to(r.resolve()) for r in allowed_roots):
             return candidate
     return None
 
@@ -120,8 +124,14 @@ def brace_balance_warning(snippet_lines: list[str]) -> str | None:
 
 
 def find_enclosing_signature(all_lines: list[str], start: int, window: int = 100) -> str:
+    # Bug found via real usage (TRACKING.md row 2): a purely-backward search starting exactly at
+    # `start` misses the common case where `start` is a comment/divider line and the real function
+    # signature is one or two lines INTO the slice (e.g. a `//---` divider immediately followed by
+    # the signature) -- it found a wrong, earlier function instead. Extend the initial window a
+    # few lines forward into the slice before searching backward.
     lo = max(1, start - window)
-    for i in range(start - 1, lo - 2, -1):
+    hi = min(len(all_lines), start + 5)
+    for i in range(hi - 1, lo - 2, -1):
         if i < 0 or i >= len(all_lines):
             continue
         line = all_lines[i]
@@ -449,6 +459,15 @@ def main() -> int:
 
         if not final_text.startswith("VERDICT (LOCAL PEER-AUDIT"):
             final_text = f"WARNING: model did not use the required watermarked verdict format.\n\n{final_text}"
+        elif "EQUIVALENT | NOT EQUIVALENT | EQUIVALENT-WITH-RISKS" in final_text.splitlines()[0]:
+            # Bug found via real usage (TRACKING.md row 2): the model can echo the prompt's own
+            # placeholder text verbatim instead of picking one option -- most likely after a
+            # confusing tool-call result derails it. This is not a real verdict; flag it loudly
+            # rather than silently accepting the literal template as if it meant something.
+            final_text = (
+                "WARNING: model echoed the verdict TEMPLATE verbatim instead of picking one option "
+                "-- not a real verdict, treat as INCOMPLETE.\n\n" + final_text
+            )
 
         truncation_flag = "  *** done_reason=length -- output may have been CUT OFF ***" if done_reason == "length" else ""
 
