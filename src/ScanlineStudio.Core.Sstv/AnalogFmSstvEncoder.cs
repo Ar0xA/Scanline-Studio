@@ -93,20 +93,90 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
 
             for (var i = 0; i < samplesToEmit; i++)
             {
-                phase += phaseIncrement;
-                if (phase >= 2 * Math.PI)
+                double sample;
+                if (frequencyHz <= 0)
                 {
-                    phase -= 2 * Math.PI;
+                    // Station-ID work (spec/14-roadmap.md's "CW-ID / FSK station-ID subsystem"):
+                    // CW-ID's inter-element/inter-letter/inter-word gaps are real silence, not a
+                    // 0Hz tone. Matches legacy CSSTVMOD::Do (sstv.cpp:2865-2875) exactly: emit 0
+                    // amplitude and do NOT advance the VCO phase (`m_vco.Do()` is skipped entirely
+                    // when the buffered value is <= 0), so a tone immediately after a gap resumes
+                    // in-phase rather than restarting from phase 0. The output bandpass filter
+                    // still runs over the zero samples below (sstv.cpp:2914), same as every other
+                    // segment -- do not special-case it out of the filter call.
+                    sample = 0.0;
+                }
+                else
+                {
+                    phase += phaseIncrement;
+                    if (phase >= 2 * Math.PI)
+                    {
+                        phase -= 2 * Math.PI;
+                    }
+
+                    sample = Math.Sin(phase);
                 }
 
                 // Filtered in double, narrowed to float only here -- legacy's whole chain
                 // (CSSTVMOD::Do's `d`) is double; narrowing before filtering would lose precision
                 // the filter itself doesn't need to lose.
-                yield return (float)bandpassFilter.ProcessSample(Math.Sin(phase));
+                yield return (float)bandpassFilter.ProcessSample(sample);
             }
         }
 
         await Task.CompletedTask;
+    }
+
+    // Test-only seam (mirrors GenerateFooterSegments' existing internal-for-testing pattern below):
+    // renders an arbitrary segment sequence through the identical frequency-to-sample math used by
+    // EncodeAsyncCore above (running-accumulator sample count, silence handling, output bandpass
+    // filter) without needing a full SstvModeDefinition/IImageSource/CancellationToken round trip.
+    // Kept as a small, deliberately independent implementation rather than extracted shared code:
+    // EncodeAsyncCore's per-sample loop can't cleanly share a `ref double phase` across an iterator
+    // method boundary, and this method has no cancellation/async concerns of its own to preserve.
+    internal static IEnumerable<float> RenderSegments(
+        IEnumerable<(double FrequencyHz, double DurationMs)> segments,
+        int sampleRate,
+        bool applyFilter = true)
+    {
+        var phase = 0.0;
+        var bandpassFilter = new TxOutputBandpassFilter(sampleRate);
+        var idealSamplesSoFar = 0.0;
+        var emittedSamples = 0L;
+
+        foreach (var (frequencyHz, durationMs) in segments)
+        {
+            idealSamplesSoFar += durationMs / 1000.0 * sampleRate;
+            var targetEmitted = (long)idealSamplesSoFar;
+            var samplesToEmit = targetEmitted - emittedSamples;
+            emittedSamples = targetEmitted;
+
+            var phaseIncrement = 2 * Math.PI * frequencyHz / sampleRate;
+
+            for (var i = 0; i < samplesToEmit; i++)
+            {
+                double sample;
+                if (frequencyHz <= 0)
+                {
+                    sample = 0.0;
+                }
+                else
+                {
+                    phase += phaseIncrement;
+                    if (phase >= 2 * Math.PI)
+                    {
+                        phase -= 2 * Math.PI;
+                    }
+
+                    sample = Math.Sin(phase);
+                }
+
+                // applyFilter=false is test-only (verifying raw VCO phase behavior, e.g. that
+                // silence doesn't disturb phase continuity, independent of filter transients) --
+                // production always filters, matching EncodeAsyncCore.
+                yield return (float)(applyFilter ? bandpassFilter.ProcessSample(sample) : sample);
+            }
+        }
     }
 
     private static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFrequencySegments(
