@@ -51,6 +51,27 @@ public class AnalogFmSstvEncoderFooterTests
     }
 
     [Fact]
+    public void GenerateFooterSegments_FskIdEnabled_NormalMode_EmitsSingle300MsToneAt1500Hz()
+    {
+        // Main.cpp:7010-7011: mp->Write(WORD(SSTVSET.m_fTxNarrow ? 1900 : 1500), 300) -- selected
+        // purely on sys.m_TXFSKID, replacing BOTH of the !fskIdEnabled branches entirely (not just
+        // the trailing-carrier duration -- this is a completely different tone shape).
+        var mode = SstvModeRegistry.Robot36;
+        var segments = AnalogFmSstvEncoder.GenerateFooterSegments(mode, fskIdEnabled: true).ToList();
+
+        Assert.Equal([(1500.0, 300.0)], segments);
+    }
+
+    [Fact]
+    public void GenerateFooterSegments_FskIdEnabled_NarrowMode_EmitsSingle300MsToneAt1900Hz()
+    {
+        var mode = SstvModeRegistry.Mn73;
+        var segments = AnalogFmSstvEncoder.GenerateFooterSegments(mode, fskIdEnabled: true).ToList();
+
+        Assert.Equal([(1900.0, 300.0)], segments);
+    }
+
+    [Fact]
     public async Task EncodeAsync_TotalSampleCount_FloorsTheIdealTotal_NotRoundToNearest()
     {
         // ultracode audit finding #25: legacy's CSSTVMOD::Do floors its running ideal-sample-position

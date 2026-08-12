@@ -49,7 +49,7 @@ public sealed class SstvSessionServiceTests
         var receivedImage = new FakeReceivedImageBuffer();
         var radioSession = new FakeRadioSessionService();
 
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, decoder, encoder, waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
         return (service, audioEngine, decoder, waterfall, radioSession, settingsStore);
     }
 
@@ -568,7 +568,7 @@ public sealed class SstvSessionServiceTests
             OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [8000])],
         };
         var service = new SstvSessionService(
-            audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(),
+            audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(),
             new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
 
         var percent = await service.GetTxVolumePercentAsync();
@@ -604,7 +604,7 @@ public sealed class SstvSessionServiceTests
         var deviceEnumerator = new FakeAudioDeviceEnumerator();
         var settingsStore = new FakeSettingsStore { Settings = new AppSettings() };
         var service = new SstvSessionService(
-            audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(),
+            audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(),
             new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
 
         var result = service.CaptureOverrunCount;

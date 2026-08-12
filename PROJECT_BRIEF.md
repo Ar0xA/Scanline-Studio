@@ -10,9 +10,9 @@ in order: `13a8ca7` Open in Log, `4f14396` QRZ lookup, `e132044` Auto-stop/Auto-
 in `spec/16-gui-wiring-survey.md` (wiring inventory) and `spec/14-roadmap.md` (backlog + research).
 Nothing lost — see git history for this file if older narrative is ever needed.
 
-## Resume here (2026-08-12, ACTIVE) — CW-ID / FSK station-ID subsystem, Phases 1-3 DONE, starting Phase 4
+## Resume here (2026-08-12, ACTIVE) — CW-ID / FSK station-ID subsystem, Phases 1-4 DONE, starting Phase 5
 
-**Status: Phases 1-3 complete and committed.** Phase 1 (`26f674f`): silence representation in
+**Status: Phases 1-4 complete and committed.** Phase 1 (`26f674f`): silence representation in
 `AnalogFmSstvEncoder.cs` + `CwMorseGenerator.cs`. Phase 2: `FskStationIdEncoder.cs` +
 `FskStationIdWireFormat.cs` (TX FSK-ID packet + NR/RST sub-packet) — auditor independently
 re-derived the exact same golden-vector bytes by hand. Phase 3: `NarrowFskHeaderDecoder.cs` extended
@@ -20,11 +20,67 @@ with the station-ID continuation (legacy modes 5-10) + `AnalogFmSstvDecoder.cs`'
 `TryNarrowFskScan`/`TryDecodeNarrowModeHeader` consumer-contract changes (station-ID results must
 NOT abort AVT training/header scanning the way a real mode-announce lock does) — 2 review rounds,
 round 1 found the phase's single most important gap (the discrimination logic was correct by review
-but had ZERO test coverage), closed with a real end-to-end test using this port's own Phase 1/2
-building blocks (`FskStationIdEncoder` + `AnalogFmSstvEncoder.RenderSegments` → real audio →
-`AnalogFmSstvDecoder.PushSamples`). 724/724 tests pass. Starting Phase 4 (settings data layer + TX
-pipeline wiring — this is where `StationIdDecodeEnabled` finally gets wired to a live user setting
-instead of its current placeholder-false default).
+but had ZERO test coverage), closed with a real end-to-end test. Phase 4 (settings data layer + TX
+pipeline wiring) — 2 auditor review rounds, both closed clean, committed:
+- New `StationIdSettings.cs`/`CwIdMode` enum (Core.Sstv) + `StationIdSettingsJsonContext.cs` —
+  persisted settings, nullable-with-documented-default pattern for fields whose legacy default isn't
+  the CLR default (`CwWpm`=28, `CwToneFrequencyHz`=1000, `NrRstEnabled`=true).
+- New `StationIdTransmitOptions.cs` (Abstractions.Sstv) — the resolved-per-transmission DTO crossing
+  the Application/Core.Sstv boundary; `ISstvEncoder.EncodeAsync` gained an optional
+  `stationId` param (placed before `ct`, so ~90 existing 2-arg call sites are unaffected).
+- `AnalogFmSstvEncoder.cs`: footer-branch selection (`GenerateFooterSegments(mode, fskIdEnabled)`,
+  the previously-deferred FSK-ID-configured branch is now implemented), post-image FSK-ID/CW-ID
+  segment append, and the settings-boundary callsign normalization (`Option.cpp:445-448`, exact
+  truncate-then-uppercase-then-trim order) + NR/RST raw-text length cap — all scoped to this file
+  only, Phase 2/3's already-reviewed internal types untouched.
+- `SstvSessionService.cs`: new `IMacroTextResolver` constructor dependency, `TransmitAsync` now
+  async and resolves `StationIdSettings`+`OperatorSettings` into a `StationIdTransmitOptions` per
+  call (`ResolveStationIdTransmitOptionsAsync`), including WPM/tone-frequency settings-boundary
+  validation (Phase 1 code-review finding: invalid values fall back to the documented default rather
+  than reaching the generator or aborting TX).
+- 7 new Core.Sstv tests (footer branch + full encode-then-decode wiring, including a real finding:
+  post-`EndOfImage` narrow-FSK scanning needs the SAME `MaxSearchCeilingMs` trailing-silence padding
+  Phase 3's tests already required — a general pre-lock-scan-gate-re-arms-every-image property, not
+  new) + 10 new Application tests (settings-resolution gates/fallbacks, via a new
+  `FakeSstvEncoder.LastStationIdOptions` capture field). 731/731 Core.Sstv tests pass, 83/83
+  Application tests pass, full solution builds clean.
+- Local peer-audit run (row 4, `tools/peer-audit/`, logged): template-echo failure again (now
+  3-for-4 non-functional on this feature) but surfaced a float-vs-double numeric-fidelity claim,
+  relayed to the real auditor for independent verification — refuted (false positive), confirming my
+  own read.
+- **Auditor code-review round 1 (returned): EQUIVALENT-WITH-RISKS, 2 real [risk] findings, both
+  fixed**: (a) `CapNrRstTextForStationId` capped the RAW NR/RST text before filtering instead of
+  after — separators get removed by `FilterNrRstChars`, so raw length wasn't a safe proxy for
+  filtered length and could flip compact-vs-string wire form for real exchange text; fixed by
+  filtering first, then capping. (b) `StationIdSettings.FskIdRxEnabled` was a fully dead setting —
+  nothing ever wired it to a decoder despite Phase 3's own doc comments promising "Phase 4 wires
+  this." Fixed: added `bool StationIdDecodeEnabled { get; set; }` to `ISstvDecoder` (deliberately
+  live-settable, unlike the restart-only `AutoSlantEnabled`-style toggles), `RestartableSstvDecoder`
+  now stores + preserves it across its own periodic inner-decoder rebuild, and
+  `SstvSessionService.StartReceivingAsync` applies it from settings on every RX start. Also fixed 3
+  nits (stale VOX comment, missing 78-char CW-ID text cap per `Main.cpp:6972-6974`, missing test
+  coverage for `CwIdMode.SoundFile`'s gate and the truncate-then-trim callsign ordering) and accepted
+  2 as-is (CP932-byte-vs-char divergence, footer-carrier-source nit — both already the "evidently
+  intended" behavior per the auditor's own round-1 read). 6 new tests added across the fix set;
+  735/735 Core.Sstv tests, 87/87 Application tests, 28/28 Imaging tests, 78/78 Logbook tests (the
+  latter two needed their own `FakeSstvDecoder` copies updated for the new interface member) — all
+  green.
+- **Auditor code-review round 2: EQUIVALENT-WITH-RISKS, ready to commit — closed clean, no round 3
+  needed.** Independently re-derived the NR/RST fix by hand from source (confirmed correct); traced
+  the footer-carrier `m_TW` provenance further than round 1 (a genuine legacy RX-vs-TX-mode quirk,
+  confirmed the port's TX-mode choice is still the right call, added a clarifying comment); caught
+  one real gap of its own — the two swap-survival tests asserted only the wrapper's own stored
+  field, which would pass even if the fix were reverted — fixed with a new
+  `RestartableSstvDecoder.InnerStationIdDecodeEnabledForTests` accessor reading the live inner
+  decoder directly; caught a 78-vs-77-char off-by-one in the CW-ID text cap (`MacroText`'s real break
+  condition, `Main.cpp:10829`) and a stale "Phase 4 wires this" doc-comment forward-reference — both
+  fixed. Final state: 735/735 Core.Sstv tests, 87/87 Application tests, both full solution builds
+  clean throughout. **Committed.**
+
+Next: Phase 5 (RX consumer / auto-fill wiring — `RxImagePaneViewModel.OverrideCallsign`, two
+different gates for callsign vs NR/RST writes, no automatic QRZ lookup). Note for Phase 5:
+`RestartableSstvDecoder` doesn't forward the `StationIdDecoded` event at all yet (only the enable
+flag was in Phase 4's scope) — that forwarding is Phase 5's job, not a gap in Phase 4.
 
 v1 scope confirmed with user: FSK+CW+NR/RST, sound-file deferred, `.ini` import deferred.
 

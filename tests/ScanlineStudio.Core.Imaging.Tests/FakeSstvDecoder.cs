@@ -36,6 +36,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public bool AutoSlantEnabled => true;
 
+    public bool StationIdDecodeEnabled { get; set; }
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
     }

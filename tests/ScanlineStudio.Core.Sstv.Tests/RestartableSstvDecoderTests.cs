@@ -89,6 +89,61 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void StationIdDecodeEnabled_ConstructorValue_SurvivesAPeriodicSwap()
+    {
+        // Auditor code-review finding on CW-ID/FSK Phase 4: unlike every OTHER toggle in this class
+        // (AutoSlantEnabled etc., all restart-only/readonly), StationIdDecodeEnabled is deliberately
+        // LIVE-settable (see ISstvDecoder.StationIdDecodeEnabled's own doc comment) -- a naive
+        // implementation could easily forward a set value to the CURRENT inner without also storing
+        // it for CreateInner() to re-apply on the next periodic rebuild, silently reverting to the
+        // constructor default (false) the next time this class swaps its inner decoder.
+        //
+        // Round-2 finding: asserting only the public StationIdDecodeEnabled getter here would be
+        // VACUOUS -- that getter reads the wrapper's own stored field, which Swap()/CreateInner()
+        // could stop applying entirely and this assertion would still pass. InnerStationIdDecodeEnabledForTests
+        // reads the LIVE inner decoder's own property instead, so this actually proves the value
+        // reached the fresh post-swap instance, not just that the wrapper remembers what it was told.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, stationIdDecodeEnabled: true);
+        Assert.True(decoder.StationIdDecodeEnabled);
+        Assert.True(decoder.InnerStationIdDecodeEnabledForTests);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        Assert.True(decoder.StationIdDecodeEnabled);
+        Assert.True(decoder.InnerStationIdDecodeEnabledForTests);
+    }
+
+    [Fact]
+    public void StationIdDecodeEnabled_SetLiveAfterConstruction_AlsoSurvivesAPeriodicSwap()
+    {
+        // Same finding as StationIdDecodeEnabled_ConstructorValue_SurvivesAPeriodicSwap above, but for
+        // the property SETTER path specifically -- proves the setter updates the STORED field
+        // (_stationIdDecodeEnabled), not just the current inner instance directly, which is the only
+        // way a later swap could know to re-apply it. Same round-2 non-vacuous-assertion fix applied
+        // here too.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000);
+        Assert.False(decoder.StationIdDecodeEnabled);
+        Assert.False(decoder.InnerStationIdDecodeEnabledForTests);
+
+        decoder.StationIdDecodeEnabled = true;
+        Assert.True(decoder.StationIdDecodeEnabled);
+        Assert.True(decoder.InnerStationIdDecodeEnabledForTests);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]);
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests);
+        Assert.True(decoder.StationIdDecodeEnabled);
+        Assert.True(decoder.InnerStationIdDecodeEnabledForTests);
+    }
+
+    [Fact]
     public void ForceMode_ForwardsToTheCurrentInner()
     {
         var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue);
