@@ -54,6 +54,30 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private int _sampleRate = 11025;
 
+    /// <summary>Which channel of a stereo capture device to decode -- real, already-wired backend
+    /// field (<see cref="ScanlineStudio.Application.OptionsSnapshot.CaptureChannelSource"/> -&gt;
+    /// <c>AudioDeviceSettings.CaptureChannelSource</c> -&gt; <c>SstvSessionService.StartReceivingAsync</c>
+    /// -&gt; the real native channel-extraction path) that had no UI path before. Backed by 3
+    /// <c>IsCaptureChannelXSelected</c> computed properties below, same pattern as
+    /// <see cref="SenseLevel"/>/<see cref="RadioBackendId"/>.</summary>
+    [ObservableProperty]
+    private AudioChannelSource _captureChannelSource = AudioChannelSource.Mono;
+
+    /// <summary>Duplicates the TX signal to both output channels -- real, already-wired backend
+    /// field (<c>AudioDeviceSettings.StereoTxEnabled</c>, consumed by <c>SstvSessionService</c>'s TX
+    /// path) that had no UI path before.</summary>
+    [ObservableProperty]
+    private bool _stereoTxEnabled;
+
+    /// <summary>OS process scheduling priority -- real, already-wired backend field
+    /// (<c>AppPerformanceSettings.ProcessPriority</c>, applied once at startup in
+    /// <c>ScanlineStudio.Host.Program</c>) that had no UI path before. Only Normal/High are offered,
+    /// matching legacy's own real UI scope (<c>Option.dfm</c>'s <c>AppPriority</c> radio group only
+    /// ever exposed 2 of <see cref="System.Diagnostics.ProcessPriorityClass"/>'s 6 real values,
+    /// deliberately -- Realtime priority can hang/crash a misbehaving process's own host).</summary>
+    [ObservableProperty]
+    private bool _appPriorityIsHigh;
+
     [ObservableProperty]
     private string _radioBackendId = "none";
 
@@ -261,6 +285,69 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Backs the Audio tab's 3-way Stereo capture source radio group -- same computed-bool
+    /// idiom as <see cref="IsSenseLevelVeryLowSelected"/>/etc above.</summary>
+    public bool IsCaptureChannelMonoSelected
+    {
+        get => CaptureChannelSource == AudioChannelSource.Mono;
+        set
+        {
+            if (value)
+            {
+                CaptureChannelSource = AudioChannelSource.Mono;
+            }
+        }
+    }
+
+    public bool IsCaptureChannelLeftSelected
+    {
+        get => CaptureChannelSource == AudioChannelSource.Left;
+        set
+        {
+            if (value)
+            {
+                CaptureChannelSource = AudioChannelSource.Left;
+            }
+        }
+    }
+
+    public bool IsCaptureChannelRightSelected
+    {
+        get => CaptureChannelSource == AudioChannelSource.Right;
+        set
+        {
+            if (value)
+            {
+                CaptureChannelSource = AudioChannelSource.Right;
+            }
+        }
+    }
+
+    /// <summary>Backs the Audio tab's 2-way App priority radio group.</summary>
+    public bool IsAppPriorityNormalSelected
+    {
+        get => !AppPriorityIsHigh;
+        set
+        {
+            if (value)
+            {
+                AppPriorityIsHigh = false;
+            }
+        }
+    }
+
+    public bool IsAppPriorityHighSelected
+    {
+        get => AppPriorityIsHigh;
+        set
+        {
+            if (value)
+            {
+                AppPriorityIsHigh = true;
+            }
+        }
+    }
+
     /// <summary>Fired on Save (after a successful persist) and on Cancel -- the View closes the
     /// window either way; it does not need to distinguish which.</summary>
     public event Action? RequestClose;
@@ -304,6 +391,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     {
         SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == snapshot.CultureCode) ?? _localization.CurrentCulture;
         SampleRate = snapshot.SampleRate;
+        CaptureChannelSource = Enum.IsDefined(snapshot.CaptureChannelSource) ? snapshot.CaptureChannelSource : AudioChannelSource.Mono;
+        StereoTxEnabled = snapshot.StereoTxEnabled;
+        AppPriorityIsHigh = snapshot.AppPriorityIsHigh;
         RadioBackendId = snapshot.RadioBackendId is "none" or "rigctld" or "hamlib" ? snapshot.RadioBackendId : "none";
         RigctldHost = snapshot.RigctldHost;
         RigctldPort = snapshot.RigctldPort;
@@ -361,7 +451,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             SenseLevel: SenseLevel,
             QrzLookupEnabled: QrzLookupEnabled,
             QrzLookupUsername: QrzLookupUsername,
-            QrzLookupPassword: QrzLookupPassword);
+            QrzLookupPassword: QrzLookupPassword,
+            CaptureChannelSource: CaptureChannelSource,
+            StereoTxEnabled: StereoTxEnabled,
+            AppPriorityIsHigh: AppPriorityIsHigh);
 
         try
         {
@@ -418,6 +511,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         SelectedCaptureDevice = CaptureDevices.FirstOrDefault(d => d.Id == defaults.CaptureDeviceId);
         SelectedPlaybackDevice = PlaybackDevices.FirstOrDefault(d => d.Id == defaults.PlaybackDeviceId);
         SampleRate = defaults.SampleRate;
+        CaptureChannelSource = defaults.CaptureChannelSource;
+        StereoTxEnabled = defaults.StereoTxEnabled;
+        AppPriorityIsHigh = defaults.AppPriorityIsHigh;
     }
 
     [RelayCommand]
@@ -526,6 +622,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsSenseLevelLowSelected));
         OnPropertyChanged(nameof(IsSenseLevelHighSelected));
         OnPropertyChanged(nameof(IsSenseLevelVeryHighSelected));
+    }
+
+    partial void OnCaptureChannelSourceChanged(AudioChannelSource value)
+    {
+        OnPropertyChanged(nameof(IsCaptureChannelMonoSelected));
+        OnPropertyChanged(nameof(IsCaptureChannelLeftSelected));
+        OnPropertyChanged(nameof(IsCaptureChannelRightSelected));
+    }
+
+    partial void OnAppPriorityIsHighChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsAppPriorityNormalSelected));
+        OnPropertyChanged(nameof(IsAppPriorityHighSelected));
     }
 
     private static partial class Log
