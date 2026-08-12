@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Sstv;
+
 namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>Decoder-behavior toggles. See <see cref="AnalogFmSstvDecoder"/>'s own constructor doc
@@ -73,4 +75,19 @@ public sealed record SstvDecoderSettings
     /// record's own class-level doc comment for the absent-vs-out-of-range fallback distinction, and
     /// <c>AnalogFmSstvDecoder.SenseLevelPresets</c> for the preset table itself.</summary>
     public int? SenseLevel { get; init; }
+
+    /// <summary>Port of legacy's real, user-selectable <c>CSSTVDEM::m_Type</c> (main-picture FM
+    /// demodulator algorithm, <c>Option.dfm</c>'s <c>RGDemType</c> radio group,
+    /// <c>sstv.cpp:2256-2269</c>) -- another absent-vs-out-of-range case like <see cref="SenseLevel"/>
+    /// above, but with matching (not different) fallback values this time: absent means "apply
+    /// <see cref="DemodType.Hilbert"/>" (legacy's real compiled-in default, <c>sstv.cpp:1492</c>), and
+    /// a PRESENT-but-out-of-range value (e.g. a hand-edited settings.json with an enum member this
+    /// build doesn't know) ALSO clamps to <see cref="DemodType.Hilbert"/> -- a deliberate, sane
+    /// divergence from legacy's own real inconsistency here (an out-of-range legacy <c>DemType</c>
+    /// gets Hilbert demodulation via the switch's <c>default:</c> arm, `sstv.cpp:2265-2268`, but NOT
+    /// the `m_Type==2`-gated sync-anchor correction, `Main.cpp:3794` -- this port's own clamp
+    /// deliberately gets both, see the demod-type runtime-dispatch subsystem's implementation plan
+    /// for the full reasoning). Not the same "different fallback" pattern <see cref="SenseLevel"/>
+    /// uses -- don't copy that shape here.</summary>
+    public DemodType? DemodType { get; init; }
 }

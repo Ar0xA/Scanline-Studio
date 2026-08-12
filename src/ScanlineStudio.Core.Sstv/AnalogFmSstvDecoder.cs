@@ -3977,6 +3977,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// <see cref="InitializeAfc"/> -- production code has no need to read this back.</summary>
     internal bool HasAfcTrackerForTests => _afcTracker is not null;
 
+    /// <summary>Test-only visibility into the demod type this instance was actually constructed
+    /// with -- production code has no need to read this back. Same reasoning as
+    /// <see cref="RestartableSstvDecoder.InnerStationIdDecodeEnabledForTests"/>: exists so a test can
+    /// prove a value actually reached the LIVE inner decoder after a
+    /// <see cref="RestartableSstvDecoder"/> rebuild, not just that the wrapper still remembers what
+    /// it was told.</summary>
+    internal DemodType DemodTypeForTests => _demodType;
+
     /// <summary>Test-only visibility into the Auto-Slant sync-envelope detector -- the one AFC
     /// retunes (ultracode audit finding #1). Null until <see cref="InitializeSlant"/> runs for a
     /// non-AVT mode.</summary>
