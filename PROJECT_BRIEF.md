@@ -190,6 +190,15 @@ arguably the most deceptive placeholder in the app). Remaining PARTIAL: RxFrameM
 only (needs a real backing field on the frame/session model — Override-callsign's twin issue closed
 via the QRZ lookup wiring).
 
+**Options Radio tab fully scoped, nothing to wire** — same session. All 3 remaining stub controls
+investigated and confirmed to correctly stay stub, not gaps: OmniRig radio button is a real
+future backend, already fully documented in `docs/removed-features.md`. RTS-on-RX and PTT-lock both
+gate legacy's raw-serial RTS-pin PTT keying (`Comm.cpp`) — the same "hand-written per-rig protocol
+code" family CLAUDE.md §2 already excludes; this port's real PTT path (`IRadioController.SetPttAsync`)
+goes through Hamlib/rigctld/flrig, which own their own connection lifecycle, so there's no
+raw-serial-port concept left for these two settings to gate. New `docs/removed-features.md` entry
+added ("Raw-serial RTS-pin PTT keying"). Doc-only change, no code touched, no tests affected.
+
 **`spec/14-roadmap.md`'s "Must-implement backlog" is the prioritized list to work from**, not the
 survey directly — the survey tells you WHAT is stub/fake, the backlog tells you what order to
 tackle it in and why. Status:
