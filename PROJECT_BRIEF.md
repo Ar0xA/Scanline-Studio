@@ -10,204 +10,56 @@ in order: `13a8ca7` Open in Log, `4f14396` QRZ lookup, `e132044` Auto-stop/Auto-
 in `spec/16-gui-wiring-survey.md` (wiring inventory) and `spec/14-roadmap.md` (backlog + research).
 Nothing lost — see git history for this file if older narrative is ever needed.
 
-## Resume here (2026-08-12, ACTIVE) — CW-ID / FSK station-ID subsystem, Phases 1-5 DONE, starting Phase 6
+## CW-ID / FSK station-ID subsystem — ALL 6 PHASES DONE, committed and pushed-pending (2026-08-12)
 
-**Status: Phases 1-4 complete and committed.** Phase 1 (`26f674f`): silence representation in
-`AnalogFmSstvEncoder.cs` + `CwMorseGenerator.cs`. Phase 2: `FskStationIdEncoder.cs` +
-`FskStationIdWireFormat.cs` (TX FSK-ID packet + NR/RST sub-packet) — auditor independently
-re-derived the exact same golden-vector bytes by hand. Phase 3: `NarrowFskHeaderDecoder.cs` extended
-with the station-ID continuation (legacy modes 5-10) + `AnalogFmSstvDecoder.cs`'s
-`TryNarrowFskScan`/`TryDecodeNarrowModeHeader` consumer-contract changes (station-ID results must
-NOT abort AVT training/header scanning the way a real mode-announce lock does) — 2 review rounds,
-round 1 found the phase's single most important gap (the discrimination logic was correct by review
-but had ZERO test coverage), closed with a real end-to-end test. Phase 4 (settings data layer + TX
-pipeline wiring) — 2 auditor review rounds, both closed clean, committed:
-- New `StationIdSettings.cs`/`CwIdMode` enum (Core.Sstv) + `StationIdSettingsJsonContext.cs` —
-  persisted settings, nullable-with-documented-default pattern for fields whose legacy default isn't
-  the CLR default (`CwWpm`=28, `CwToneFrequencyHz`=1000, `NrRstEnabled`=true).
-- New `StationIdTransmitOptions.cs` (Abstractions.Sstv) — the resolved-per-transmission DTO crossing
-  the Application/Core.Sstv boundary; `ISstvEncoder.EncodeAsync` gained an optional
-  `stationId` param (placed before `ct`, so ~90 existing 2-arg call sites are unaffected).
-- `AnalogFmSstvEncoder.cs`: footer-branch selection (`GenerateFooterSegments(mode, fskIdEnabled)`,
-  the previously-deferred FSK-ID-configured branch is now implemented), post-image FSK-ID/CW-ID
-  segment append, and the settings-boundary callsign normalization (`Option.cpp:445-448`, exact
-  truncate-then-uppercase-then-trim order) + NR/RST raw-text length cap — all scoped to this file
-  only, Phase 2/3's already-reviewed internal types untouched.
-- `SstvSessionService.cs`: new `IMacroTextResolver` constructor dependency, `TransmitAsync` now
-  async and resolves `StationIdSettings`+`OperatorSettings` into a `StationIdTransmitOptions` per
-  call (`ResolveStationIdTransmitOptionsAsync`), including WPM/tone-frequency settings-boundary
-  validation (Phase 1 code-review finding: invalid values fall back to the documented default rather
-  than reaching the generator or aborting TX).
-- 7 new Core.Sstv tests (footer branch + full encode-then-decode wiring, including a real finding:
-  post-`EndOfImage` narrow-FSK scanning needs the SAME `MaxSearchCeilingMs` trailing-silence padding
-  Phase 3's tests already required — a general pre-lock-scan-gate-re-arms-every-image property, not
-  new) + 10 new Application tests (settings-resolution gates/fallbacks, via a new
-  `FakeSstvEncoder.LastStationIdOptions` capture field). 731/731 Core.Sstv tests pass, 83/83
-  Application tests pass, full solution builds clean.
-- Local peer-audit run (row 4, `tools/peer-audit/`, logged): template-echo failure again (now
-  3-for-4 non-functional on this feature) but surfaced a float-vs-double numeric-fidelity claim,
-  relayed to the real auditor for independent verification — refuted (false positive), confirming my
-  own read.
-- **Auditor code-review round 1 (returned): EQUIVALENT-WITH-RISKS, 2 real [risk] findings, both
-  fixed**: (a) `CapNrRstTextForStationId` capped the RAW NR/RST text before filtering instead of
-  after — separators get removed by `FilterNrRstChars`, so raw length wasn't a safe proxy for
-  filtered length and could flip compact-vs-string wire form for real exchange text; fixed by
-  filtering first, then capping. (b) `StationIdSettings.FskIdRxEnabled` was a fully dead setting —
-  nothing ever wired it to a decoder despite Phase 3's own doc comments promising "Phase 4 wires
-  this." Fixed: added `bool StationIdDecodeEnabled { get; set; }` to `ISstvDecoder` (deliberately
-  live-settable, unlike the restart-only `AutoSlantEnabled`-style toggles), `RestartableSstvDecoder`
-  now stores + preserves it across its own periodic inner-decoder rebuild, and
-  `SstvSessionService.StartReceivingAsync` applies it from settings on every RX start. Also fixed 3
-  nits (stale VOX comment, missing 78-char CW-ID text cap per `Main.cpp:6972-6974`, missing test
-  coverage for `CwIdMode.SoundFile`'s gate and the truncate-then-trim callsign ordering) and accepted
-  2 as-is (CP932-byte-vs-char divergence, footer-carrier-source nit — both already the "evidently
-  intended" behavior per the auditor's own round-1 read). 6 new tests added across the fix set;
-  735/735 Core.Sstv tests, 87/87 Application tests, 28/28 Imaging tests, 78/78 Logbook tests (the
-  latter two needed their own `FakeSstvDecoder` copies updated for the new interface member) — all
-  green.
-- **Auditor code-review round 2: EQUIVALENT-WITH-RISKS, ready to commit — closed clean, no round 3
-  needed.** Independently re-derived the NR/RST fix by hand from source (confirmed correct); traced
-  the footer-carrier `m_TW` provenance further than round 1 (a genuine legacy RX-vs-TX-mode quirk,
-  confirmed the port's TX-mode choice is still the right call, added a clarifying comment); caught
-  one real gap of its own — the two swap-survival tests asserted only the wrapper's own stored
-  field, which would pass even if the fix were reverted — fixed with a new
-  `RestartableSstvDecoder.InnerStationIdDecodeEnabledForTests` accessor reading the live inner
-  decoder directly; caught a 78-vs-77-char off-by-one in the CW-ID text cap (`MacroText`'s real break
-  condition, `Main.cpp:10829`) and a stale "Phase 4 wires this" doc-comment forward-reference — both
-  fixed. Final state: 735/735 Core.Sstv tests, 87/87 Application tests, both full solution builds
-  clean throughout. **Committed.**
+All 6 phases complete, each with its own commit and (Phases 2-6) 2-round auditor code review:
+Phase 1 `26f674f` (silence representation), Phase 2 (FSK wire format), Phase 3 `18338d8` (RX
+continuation decoder), Phase 4 `1185d91` (settings + TX/RX pipeline wiring), Phase 5 `bee6c6d` (RX
+consumer/auto-fill), Phase 6 `d6b0d6d` (Options dialog + Transmit-tab UI wiring). Wire protocol
+independently confirmed byte-for-byte legacy-faithful across multiple auditor rounds — see git log
+for each phase's full commit message if the detailed citation trail is ever needed again.
 
-**Phase 5 (RX consumer / auto-fill wiring) implemented, not yet committed, auditor round 1 in
-progress (async):**
-- Moved `FskStationIdDecodedInfo` from `ScanlineStudio.Core.Sstv` to `ScanlineStudio.Abstractions.Sstv`
-  (needed so `ISstvDecoder` can declare the event); added `event StationIdDecoded` to
-  `ISstvDecoder`/`RestartableSstvDecoder` (subscribe/unsubscribe-on-swap, matching the existing
-  `LineDecoded`/`ModeDetected`/`DecodeRestarted` pattern) and `ISstvSessionService`/`SstvSessionService`
-  (pure pass-through, no filtering at this layer).
-- New `ISstvSessionService.GetOperatorCallsignAsync()` — lets `RxImagePaneViewModel` read
-  `OperatorSettings.Callsign` for the self-filter without violating the UI-layering rule (`ScanlineStudio.UI`
-  must never reference `ISettingsStore` directly — a real constraint documented on this same
-  ViewModel's own `CanLookupQrz` method).
-- `RxImagePaneViewModel`: new `DecodedNrRst` property (no AXAML row exists for it yet — the
-  RxFrameMeta card's mockup has no RST field, unlike Override Callsign; real tested backing state
-  ahead of UI exposure, same pattern several sibling still-literal rows already follow). New
-  `OnStationIdDecoded`/`ApplyStationIdDecodedAsync`/`ApplyDecodedNrRst`: self-filters the decoded
-  callsign against the operator's own (exact, case-sensitive), auto-fills `OverrideCallsign`, formats
-  compact/string NR-RST as `"595" + text` into `DecodedNrRst`. **Real scope simplification, documented
-  not silently dropped**: legacy's `!TX-active && (!QSO-active || ...)` write gates are omitted as
-  runtime checks entirely — both structurally always-true in this port (RX capture fully pauses
-  during TX; no "current QSO" tracker exists) — and the `strcmp`-before-write dedup checks are
-  omitted too, relying on `[ObservableProperty]`'s generated setters already no-op'ing equal values.
-  `AddCall`/QRZ-auto-lookup-thread/`FindCall`/`RxAutoPush` not ported (no call-history log exists,
-  no-auto-QRZ already user-decided, `RxAutoPush` unrelated) — one-line scope note in the code.
-- 6 new UI.Tests (self-filter positive/negative/case-sensitivity, compact-NR formatting, NR-text
-  formatting, no-QRZ-triggered), 3 new Application.Tests (`StationIdDecoded` pass-through,
-  `GetOperatorCallsignAsync`), 1 new Core.Sstv.Tests (`RestartableSstvDecoder.StationIdDecoded`
-  forwards through the real production wrapper type). 736/736 Core.Sstv, 90/90 Application, 224/224
-  UI.Tests, 28/28 Imaging, 78/78 Logbook — all green, full solution build clean.
-- Local peer-audit run (row 5): template-echo again — this was usage #5, **triggering the review
-  checkpoint**: go/no-go decision made (`tools/peer-audit/TRACKING.md`'s "Review 1"), peer-audit
-  **demoted from the default workflow to ad-hoc/opt-in** (1-for-5 genuinely useful, one real miss).
-  `CLAUDE.md` §7b updated accordingly.
-- **Auditor code-review round 1: NOT EQUIVALENT (1 real blocker), fixed; round 2: EQUIVALENT, ready
-  to commit, no round 3 needed.** Blocker: the self-filter compared the operator's callsign AS
-  STORED against an always-normalized decoded callsign — an operator with a lowercase-stored
-  callsign (`"w1aw"`) would never self-filter against a real decoded `"W1AW"`, defeating the whole
-  point of the check. Fixed by extracting the existing TX-side normalization
-  (`AnalogFmSstvEncoder`'s private helper) into a new shared public
-  `StationIdCallsignNormalizer.Normalize` (Core.Sstv) used by BOTH the TX wire path (Phase 4,
-  unchanged behavior) and `SstvSessionService.GetOperatorCallsignAsync` (normalizes fresh on every
-  read; `OperatorSettings.Callsign` itself stays as-typed in storage). Round 2 independently
-  re-derived the normalization order from `Option.cpp:445-448`/`ComLib.cpp` again (not just diffed)
-  and traced the "decoded callsign is always normalized" premise all the way to the RX decoder's own
-  6-bit alphabet (uppercase-only by construction) — confirmed the fix is legacy-faithful, not just
-  self-consistent. Also fixed: a doc-comment overclaim narrowed ("TX-active is structurally
-  impossible" only holds for a `TransmitAsync`/`TuneAsync` call in flight, not for
-  `SetPttLockAsync`'s PTT-keyed-without-pausing-capture case) and `HisCallChange(NULL)` added to the
-  explicit not-ported list. 4 remaining nits from round 2, all accepted as-is (cosmetic/no-guard-
-  needed, none blocking). 8 new tests (`StationIdCallsignNormalizerTests` x6,
-  `GetOperatorCallsignAsync` normalization x2). 742/742 Core.Sstv, 92/92 Application, 224/224
-  UI.Tests — all green, full solution build clean.
+**Phase 6 close-out (last piece of this feature):**
+- UI wiring: Options dialog's Identification tab (ID method radio group, CW text/frequency/speed,
+  FSK encode/decode checkboxes, per-section + all-sections reset) and the Transmit pane's read-only
+  Identification summary card, both bound to the already-tested settings/encoder layer.
+- 2 auditor code-review rounds: round 1 found one real blocker (Reset-All silently skipped the new
+  Identification section) plus narrower-than-legacy WPM/tone-frequency UI bounds and a missing
+  Transmit-summary test; round 2 independently re-verified every fix against source and closed
+  clean (only minor hardening left: explicit-empty-string persistence for a cleared CW text field,
+  a doc overclaim, a test blind spot — all fixed same session).
+- Full end-to-end test added (`tests/ScanlineStudio.UI.Tests/StationIdEndToEndTests.cs`): REAL
+  `AnalogFmSstvEncoder` TX-encodes CW+FSK+NR/RST, REAL `AnalogFmSstvDecoder` decodes it, events
+  relayed into a real `RxImagePaneViewModel` — proves operator B's `OverrideCallsign`/`DecodedNrRst`
+  auto-fill from a genuine wire round-trip (not fabricated event objects), and that operator A's own
+  self-loopback correctly self-filters the callsign while still applying NR/RST (the one real
+  asymmetry in that method — no self-filter on the NR/RST branch, intentional, asserted explicitly).
+- Real-window (non-headless) verification done: launched the actual app, visually confirmed the
+  Transmit tab's Identification card and the Options dialog's Identification tab (ID method
+  toggle, CW sub-panel visibility, "DE %m"/1000 Hz/28 WPM defaults) all render and bind correctly.
+  Screenshot mishap during this step (see below) — resolved, not still open.
+  All 3 affected test suites green: UI.Tests 237/237, Application.Tests 93/93, Core.Sstv.Tests
+  742/742. Full solution build clean throughout.
 
-**Phase 5 committed** (`bee6c6d`). Next: Phase 6 (Options dialog + Transmit-tab UI wiring, final e2e
-test — user paused work here; check for direction before starting).
+**Real incident this session, resolved, noted for future screenshot work**: `gnome-screenshot -w`
+("grab a window") captured the ACTIVE window, not a specific one — after a `pyautogui` click that
+(due to a coordinate-space bug, see below) landed on the primary monitor and shifted focus there,
+one capture briefly exposed the user's primary-monitor windows (a Firefox/Mastodon session, an
+unrelated terminal). Screenshot deleted immediately, user notified, and the approach fixed:
+switched to `mss` region-grab bounded to the HDMI-1 rectangle only (`left:3840,top:0,width:2560,
+height:1440`) — captures that geometry regardless of window focus, can never pull in the primary
+monitor. Root cause of the mis-click: `pyautogui.click()` coordinates read off a *window-relative*
+screenshot were used directly as *global* screen coordinates, missing the window's own origin
+offset (window origin + scaled-image-coordinate = correct global click point). User's explicit
+follow-up instruction: **screenshot ONLY the second/secondary monitor (HDMI-1) region going
+forward** — never full-screen, never "active window" mode. No `xdotool`/`ydotool` available in this
+sandbox (no passwordless sudo); the working toolchain is a `pip`-installed `pyautogui` + `mss` venv
+at `/tmp/.../scratchpad/venv` (ephemeral, session-scoped — recreate if needed in a future session,
+don't assume it persists).
 
-v1 scope confirmed with user: FSK+CW+NR/RST, sound-file deferred, `.ini` import deferred.
-
-**`tools/peer-audit/` removed** (2026-08-12, after Phase 5): tried as a local-model complementary
-review step across Phases 1-5, hit its planned 5-use review checkpoint at 1-for-5 genuinely useful
-(one real miss, mostly template-echo failures from `qwen2.5-coder:14b`). User's explicit call after
-hearing that record: drop it entirely rather than keep it as a supplementary/opt-in step, stick with
-the real `auditor` subagent alone. Tool directory, `CLAUDE.md` §7b, and the "local peer-audit" step
-in the established-process pipeline below are all gone as of this note — don't reference or
-reintroduce it without the user raising it again. Full history (all 5 tracked rows, the review
-writeup, adjustments log) is preserved in git history for this file/directory if ever needed.
-
-Two product decisions also confirmed with user: CW-ID speed follows the configured WPM (fixing an
-apparent legacy bug where it's effectively pinned to a default), and no automatic QRZ lookup fires on
-FSK-ID decode (fill the callsign field only). Full plan (exact legacy citations, phase-by-phase file
-lists, tests, both review rounds' corrections folded in) lives at
-`/home/artien/.claude/plans/abundant-weaving-lark.md` — **read that file first on resume**, this
-section is just status, not a duplicate of the plan content.
-
-Both plan-review rounds found and fixed real protocol-level errors by reading legacy source directly
-(round 1: wrong NR predicate, wrong CW-timing citation, missing TX-encoder silence representation,
-under-specified RX-decoder return-type change; round 2, independently re-verifying round 1's fixes:
-wrong NR/RST auto-fill gate — was using the callsign's gate for both, they're different predicates —
-plus a missing `AnalogFmSstvDecoder.TryNarrowFskScan` consumer-contract note that would have silently
-broken AVT training/header scanning, plus two missing Morse special-cases (`/` and `.`)). Wire
-protocol is now independently confirmed correct in every byte-level detail checked.
-
-Task list has all 6 phases pre-created (`Phase 1` = silence representation + CW Morse generator,
-... `Phase 6` = Options/Transmit UI + e2e) — see current task list, don't recreate. Phase 1 is
-`in_progress`.
-
-**What this is**: the next item off the Must-implement backlog, picked explicitly by the user (not
-autonomously) after the "wire what you can" pass finished everything wireable in the Options window.
-Real, working legacy feature (TX Morse/FSK station ID + RX FSK-callsign decode) with zero
-replacement built in this port.
-
-**Status: TX+RX research phase DONE, no code written yet.** User asked to see legacy's real behavior
-on both sides before any implementation — that research is complete and written up in full in
-`spec/14-roadmap.md`'s "CW-ID / FSK station-ID subsystem" entry (exact line citations for
-`OutputFSKID`/`OutputCWID`/`OutputMMV`/`WriteCWID`/`WriteFSK`/the RX `DecodeFSK` state machine).
-**Read that entry first when resuming** — don't re-derive, it's current and detailed. Headline
-findings, so this file doesn't need to repeat the full research:
-- TX side is 3 independent, combinable mechanisms (FSK callsign packet + optional serial-number
-  sub-packet, CW Morse, sound-file playback), triggered right after the image's last line.
-- RX side is ~60% already built: `NarrowFskHeaderDecoder.cs` already implements the entire shared
-  FSK bit-sync front half (it decodes a *different* packet type today — mode-announce, not station
-  ID — but the low-level machinery is identical); only the station-ID payload continuation is
-  missing, not a from-scratch decoder.
-- This port already has reusable pieces: `VisHeader.cs`'s FSK timing constants + a TX segment-
-  generator pattern, `MacroTextResolver.cs` (covers `%m`/`%D`/`%T`, not yet his-callsign/QTH/RST
-  tokens), `OperatorSettings.Callsign`.
-- Bundled full scope (TX Morse generator + TX/RX FSK-ID codec + NR sub-packet + Identification tab
-  UI) is comparable in size to the QRZ lookup feature (`4f14396`) — needs its own dedicated
-  plan → auditor-plan-review → implement → auditor-code-review arc, not a quick wiring pass.
-
-**Interop-safety guardrail — load-bearing, repeat this in any plan/subagent prompt for this
-feature**: many real users run legacy YONIQ/MMSSTV. The WIRE PROTOCOL (STX/EOT byte values, XOR
-checksum, bit timing, the 6-bit character encoding/ASCII-offset scheme) must stay byte-for-byte
-identical to legacy — that's what lets a legacy station decode our FSK-ID and vice versa. Everything
-else is safe to extend freely: richer macro tokens, auto-filling the QSO log from a decoded FSK-ID,
-UI polish — all "local text in/out," none of it touches the protocol. The one real risk is the
-character set (legacy's 6-bit encoding has no bounds-checking spotted in the decode, so
-out-of-range characters would desync a real legacy receiver) and inventing new packet types (only
-Scanline-Studio-to-Scanline-Studio would understand them, not legacy).
-
-**User has flagged wanting to keep an eye on possibly expanding CW-ID/FSK-ID capability later**
-(e.g. richer macro tokens for CW-ID text, auto QSO-log fill from a decoded callsign) — noted as a
-real interest, not a commitment yet. Fine to design room for later, as long as it stays on the safe
-side of the interop guardrail above; don't let "leave room to expand" become an excuse to invent new
-wire-protocol behavior now.
-
-**Next action on resume**: no plan written yet. Next step is either (a) go straight to scoping an
-implementation plan (research is complete enough to start), or (b) ask the user for scope
-boundaries first (e.g. is sound-file ID in scope for v1, or just FSK+CW; is the NR/RST sub-packet
-wanted). Given this is a real feature-design decision, don't default-pick — ask, matching this
-project's established "big design choices get a plan-review pass" convention (`CLAUDE.md`
-§7/`feedback_audit_ui_design_before_building` memory).
+**Status: feature complete.** Nothing left on this subsystem's plan
+(`/home/artien/.claude/plans/abundant-weaving-lark.md`) unless the user raises new scope (they've
+flagged possible interest in richer macro tokens / auto QSO-log fill later, not committed).
 
 ## Other deferred items (scoped, not started — full citations in the docs named)
 
