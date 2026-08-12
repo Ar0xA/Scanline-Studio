@@ -602,6 +602,7 @@
   "Options.Decode.SenseLevel.High": "High",
   "Options.Decode.SenseLevel.VeryHigh": "Very high",
   "Options.Decode.RxBpf": "RX band-pass filter sharpness",
+  "Options.Decode.RxBpf.Help": "How tightly the receiver band-pass filters incoming audio before demodulation. Normal disables this band-pass filter entirely. Wide is the recommended default. Sharp and Very sharp reject more adjacent-tone interference at the cost of more sensitivity to frequency drift. Takes effect after restarting.",
   "Options.Decode.RxBpf.Normal": "Normal",
   "Options.Decode.RxBpf.Wide": "Wide",
   "Options.Decode.RxBpf.Sharp": "Sharp",
