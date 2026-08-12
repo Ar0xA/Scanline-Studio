@@ -10,10 +10,20 @@ in order: `13a8ca7` Open in Log, `4f14396` QRZ lookup, `e132044` Auto-stop/Auto-
 in `spec/16-gui-wiring-survey.md` (wiring inventory) and `spec/14-roadmap.md` (backlog + research).
 Nothing lost — see git history for this file if older narrative is ever needed.
 
-## Resume here (2026-08-12, ACTIVE) — CW-ID / FSK station-ID subsystem, implementing Phase 1
+## Resume here (2026-08-12, ACTIVE) — CW-ID / FSK station-ID subsystem, Phases 1-2 DONE, starting Phase 3
 
-**Status: plan-review fully DONE (2 rounds, both auditor-verified against legacy source), building
-Phase 1.** v1 scope confirmed with user: FSK+CW+NR/RST, sound-file deferred, `.ini` import deferred.
+**Status: Phases 1-2 complete and committed.** Phase 1 (`26f674f`): silence representation in
+`AnalogFmSstvEncoder.cs` + `CwMorseGenerator.cs`. Phase 2: `FskStationIdEncoder.cs` +
+`FskStationIdWireFormat.cs` (TX FSK-ID packet + NR/RST sub-packet, the protocol-critical wire-exact
+piece) — auditor code-review independently re-derived the exact same golden-vector bytes by hand,
+strong cross-confirmation. 714/714 tests pass. Starting Phase 3 (RX FSK-ID continuation decoder —
+extends `NarrowFskHeaderDecoder.cs`, the other HIGH-interop-risk piece, plus the
+`AnalogFmSstvDecoder.TryNarrowFskScan` consumer-contract change the plan already scoped in detail).
+v1 scope confirmed with user: FSK+CW+NR/RST, sound-file deferred, `.ini` import deferred.
+
+Also note: `tools/peer-audit/` had two real bugs found+fixed via actual use this session (path
+resolution, enclosing-signature search) — see `tools/peer-audit/TRACKING.md`'s Adjustments log, now
+at usage-log row 2 of the 5-row review checkpoint.
 Two product decisions also confirmed with user: CW-ID speed follows the configured WPM (fixing an
 apparent legacy bug where it's effectively pinned to a default), and no automatic QRZ lookup fires on
 FSK-ID decode (fill the callsign field only). Full plan (exact legacy citations, phase-by-phase file
