@@ -1,109 +1,112 @@
 # Project brief (resume point)
 
 Scratch file for resuming after `/clear` — not a spec doc, delete or ignore once stale. Pruned
-2026-08-08, four times on 2026-08-11, and again 2026-08-12 (was ~291 lines) — the "wire what you
-can" Options-dialog pass that filled most of the previous version is DONE and fully captured
-elsewhere: each shipped control has its own detailed commit message (`git log --oneline` shows them
-in order: `13a8ca7` Open in Log, `4f14396` QRZ lookup, `e132044` Auto-stop/Auto-restart,
-`a73b21e` Sense level, `5d7a4cf` Remember-window-position, `33774e6` Audio tab,
-`0d90b58`/`3caee2c`/`cf20a61` Radio/CW-ID/Advanced scoping), and the durable per-control state lives
-in `spec/16-gui-wiring-survey.md` (wiring inventory) and `spec/14-roadmap.md` (backlog + research).
-Nothing lost — see git history for this file if older narrative is ever needed.
+2026-08-08, four times on 2026-08-11, and again 2026-08-12 twice (once after CW-ID/FSK closed, again
+after demod-type + RX BPF closed) — completed subsystems are fully captured elsewhere: each shipped
+control/phase has its own detailed commit message (`git log --oneline`), and durable per-control
+state lives in `spec/16-gui-wiring-survey.md` (wiring inventory) and `spec/14-roadmap.md` (backlog +
+research). Nothing lost — see git history for this file if older narrative is ever needed.
 
-## CW-ID / FSK station-ID subsystem — ALL 6 PHASES DONE, committed and pushed-pending (2026-08-12)
+## CW-ID / FSK station-ID subsystem — DONE, committed (2026-08-12)
 
-All 6 phases complete, each with its own commit and (Phases 2-6) 2-round auditor code review:
-Phase 1 `26f674f` (silence representation), Phase 2 (FSK wire format), Phase 3 `18338d8` (RX
-continuation decoder), Phase 4 `1185d91` (settings + TX/RX pipeline wiring), Phase 5 `bee6c6d` (RX
-consumer/auto-fill), Phase 6 `d6b0d6d` (Options dialog + Transmit-tab UI wiring). Wire protocol
-independently confirmed byte-for-byte legacy-faithful across multiple auditor rounds — see git log
-for each phase's full commit message if the detailed citation trail is ever needed again.
+All 6 phases complete and auditor-reviewed. Wire protocol independently confirmed byte-for-byte
+legacy-faithful. Real-window verified. Nothing left on this subsystem's plan. See git log
+(`26f674f`/`18338d8`/`1185d91`/`bee6c6d`/`d6b0d6d` and Phase 2/6's own commits) for the full citation
+trail if ever needed again.
 
-**Phase 6 close-out (last piece of this feature):**
-- UI wiring: Options dialog's Identification tab (ID method radio group, CW text/frequency/speed,
-  FSK encode/decode checkboxes, per-section + all-sections reset) and the Transmit pane's read-only
-  Identification summary card, both bound to the already-tested settings/encoder layer.
-- 2 auditor code-review rounds: round 1 found one real blocker (Reset-All silently skipped the new
-  Identification section) plus narrower-than-legacy WPM/tone-frequency UI bounds and a missing
-  Transmit-summary test; round 2 independently re-verified every fix against source and closed
-  clean (only minor hardening left: explicit-empty-string persistence for a cleared CW text field,
-  a doc overclaim, a test blind spot — all fixed same session).
-- Full end-to-end test added (`tests/ScanlineStudio.UI.Tests/StationIdEndToEndTests.cs`): REAL
-  `AnalogFmSstvEncoder` TX-encodes CW+FSK+NR/RST, REAL `AnalogFmSstvDecoder` decodes it, events
-  relayed into a real `RxImagePaneViewModel` — proves operator B's `OverrideCallsign`/`DecodedNrRst`
-  auto-fill from a genuine wire round-trip (not fabricated event objects), and that operator A's own
-  self-loopback correctly self-filters the callsign while still applying NR/RST (the one real
-  asymmetry in that method — no self-filter on the NR/RST branch, intentional, asserted explicitly).
-- Real-window (non-headless) verification done: launched the actual app, visually confirmed the
-  Transmit tab's Identification card and the Options dialog's Identification tab (ID method
-  toggle, CW sub-panel visibility, "DE %m"/1000 Hz/28 WPM defaults) all render and bind correctly.
-  Screenshot mishap during this step (see below) — resolved, not still open.
-  All 3 affected test suites green: UI.Tests 237/237, Application.Tests 93/93, Core.Sstv.Tests
-  742/742. Full solution build clean throughout.
+## Demod-type runtime-dispatch subsystem — DONE, committed (2026-08-12)
 
-**Real incident this session, resolved, noted for future screenshot work**: `gnome-screenshot -w`
-("grab a window") captured the ACTIVE window, not a specific one — after a `pyautogui` click that
-(due to a coordinate-space bug, see below) landed on the primary monitor and shifted focus there,
-one capture briefly exposed the user's primary-monitor windows (a Firefox/Mastodon session, an
-unrelated terminal). Screenshot deleted immediately, user notified, and the approach fixed:
-switched to `mss` region-grab bounded to the HDMI-1 rectangle only (`left:3840,top:0,width:2560,
-height:1440`) — captures that geometry regardless of window focus, can never pull in the primary
-monitor. Root cause of the mis-click: `pyautogui.click()` coordinates read off a *window-relative*
-screenshot were used directly as *global* screen coordinates, missing the window's own origin
-offset (window origin + scaled-image-coordinate = correct global click point). User's explicit
-follow-up instruction: **screenshot ONLY the second/secondary monitor (HDMI-1) region going
-forward** — never full-screen, never "active window" mode. No `xdotool`/`ydotool` available in this
-sandbox (no passwordless sudo); the working toolchain is a `pip`-installed `pyautogui` + `mss` venv
-at `/tmp/.../scratchpad/venv` (ephemeral, session-scoped — recreate if needed in a future session,
-don't assume it persists).
+All 4 phases complete and auditor-reviewed (2 plan-review rounds before implementation, per-phase
+code review after): Phase 1 `ec7a989` (PLL/Zero-crossing narrow-mode support), Phase 2 `9d9fccb`
+(`AnalogFmSstvDecoder` runtime dispatch between the 3 already-ported demodulator classes), Phase 3
+`e6c83a9` (settings-layer + `RestartableSstvDecoder` threading), Phase 4 `a689930` (Options dialog UI
+wiring). Real-window verified (toggled to PLL, saved, reopened, confirmed persistence). Full
+`ScanlineStudio.Core.Sstv.Tests` suite green throughout.
 
-**Status: feature complete.** Nothing left on this subsystem's plan
-(`/home/artien/.claude/plans/abundant-weaving-lark.md`) unless the user raises new scope (they've
-flagged possible interest in richer macro tokens / auto QSO-log fill later, not committed).
+## RX BPF (bandpass-filter preset) subsystem — DONE, committed (2026-08-12)
+
+Started as a "just wire the UI" backlog item; direct legacy-source verification (per CLAUDE.md's
+no-assumptions rule) found it needed net-new DSP math first — Narrow/VeryNarrow presets require
+attenuation ≥21dB, which routes legacy's shared filter-designer through its Kaiser-Bessel-window
+branch (`fir.cpp`'s `MakeFilter`/`I0`), previously unported and provably unreachable at this port's
+prior Wide-only default. User authorized full scope (2 rounds of plan-review before implementation,
+matching demod-type's own rigor).
+
+All 4 phases complete, each auditor code-reviewed clean (no blockers in any round):
+- Phase 1 `c8134fb`: `RxBpfPreset` enum (`ScanlineStudio.Abstractions.Sstv`) + Kaiser-window
+  `MakeFilter` port + preset-parameterized `SearchBandpassFilter` (Wide/Narrow/VeryNarrow, plus
+  `syncRestartEnabled`-driven H1 `fcl`, a live bug fix in the prior Wide-only port that had hardcoded
+  1100Hz regardless of sync-restart state). Independently-computed (Python) coefficient fixtures for
+  both Kaiser alpha-threshold arms.
+- Phase 2 `ba72714` (the crux): `AnalogFmSstvDecoder` wiring — `_searchBandpassFilter` nullable, null
+  for `RxBpfPreset.Off` (a true bypass matching legacy's `if(m_bpf)` gate, not a discard-output
+  filter). Round-1 plan-review blocker fixed: the Off-bypass path keeps the existing buffer-trim fill
+  loop intact via a null-coalesce, rather than an early return that would have silently pinned the
+  trim cursor and caused unbounded memory growth — a dedicated regression test
+  (`BufferedSampleCount_StaysBounded_ForLongNeverLockingStream_WithRxBpfOff`) proves the fix, traced
+  to confirm it would have caught the originally-planned buggy shape. Golden-vector regression
+  fixtures (6 real-audio decodes, framed explicitly as regression checks, not legacy-parity claims,
+  since no legacy-RX reference exists at non-Wide presets).
+- Phase 3 `a223116`: settings-layer + `RestartableSstvDecoder` threading, a faithful mechanical
+  mirror of `DemodType`'s own already-proven shape (absent/out-of-range both clamp to Wide,
+  `InnerRxBpfPresetForTests` accessor so a dropped `CreateInner()` argument can't silently revert a
+  user after the ~12h periodic rebuild).
+- Phase 4 `16df5fe`: Options dialog UI wiring. Un-stubbed the pre-existing disabled placeholder radio
+  group (fixed a real bug in the stub itself: hardcoded `IsChecked="True"` on item 0/"Normal", which
+  is a true bypass — real default is Wide). Added the missing help-glyph this row lacked vs. its
+  `SenseLevel`/`DemodType` siblings. Real-window verified: Wide checked by default (not the old
+  stub's Normal), toggled to Sharp/Narrow, saved, reopened, confirmed persistence.
+
+**Status: feature complete.** Full `ScanlineStudio.Core.Sstv.Tests` suite green (806/806) after
+Phase 3; `ScanlineStudio.UI.Tests` (242/242) and `ScanlineStudio.Application.Tests` (93/93) green
+after Phase 4. Nothing left on this subsystem's plan
+(`/home/artien/.claude/plans/stateless-hopping-rain.md`).
+
+**Not yet pushed** — all of the above (CW-ID/FSK, demod-type, RX BPF) committed locally to `master`,
+push not yet requested/confirmed this session.
 
 ## Other deferred items (scoped, not started — full citations in the docs named)
 
-Each of these was investigated this session and needs its own dedicated session (DSP/architecture
-rigor, not ordinary wiring) — see `spec/16-gui-wiring-survey.md`'s per-tab sections and
-`spec/14-roadmap.md`'s "Options dialogs" bullet for full citations on each:
-- **RX BPF** (Decode tab) — Kaiser/Bessel filter math is reusable from `TxOutputBandpassFilter`, but
-  needs per-tap-count sync-anchor-correction re-derivation with golden-vector tests.
-- **Demod type** (Decode tab) — runtime dispatch between 3 already-ported demodulators; biggest/
-  riskiest of the DSP items.
 - **RX buffer** (Decode tab) — needs a whole buffered-line-replay subsystem built first; wiring the
   UI control alone today would be a fake no-op.
 - **Auto-start** (Decode tab) — needs a design pass to find the right internal "disarmed, still
   live" gating point across multiple sync-detection branches.
-- **Advanced tab** — PLL/Zero-crossing tuning is gated on Demod-type above; TX BPF/LPF toggles are a
-  small, bounded change but have real over-the-air spectral consequences; Loopback/calibration
-  wizards are fully unbuilt.
+- **Advanced tab** — PLL/Zero-crossing tuning controls now have a real backend (demod-type subsystem)
+  but the tab's own tuning-parameter UI isn't wired yet; TX BPF/LPF toggles are a small, bounded
+  change but have real over-the-air spectral consequences; Loopback/calibration wizards are fully
+  unbuilt.
 
 Resolved, not open items: RTS-on-RX (obsolete, removed feature, `docs/removed-features.md`); VOX/
-Sound-file ID (bundled into CW-ID/FSK above); JPEG save quality (bundled with the Gallery's
+Sound-file ID (bundled into CW-ID/FSK, done); JPEG save quality (bundled with the Gallery's
 still-stub "Export frame" button, not a standalone Options control — separate small item, not on
-this list).
+this list); RX BPF and Demod type (both done, see above).
 
 ## Current wiring snapshot
 
-`spec/16-gui-wiring-survey.md` (~286 controls tracked): **~147 REAL, ~94 STUB, ~46 FAKE-LIVE,
-~1 PARTIAL**. Densest remaining gaps: Receive tab's Sync&Slant/Input-chain/Signal-quality cards (no
-live audio-chain measurement exists for most of these — real new DSP work); the 5 deferred items
-above; Transmit tab's Queue/TX-log/Recently-sent cards (100% stub, no such features exist); TX image
-editor's canvas-overlay safe-area/callsign/report-plate text (FAKE-LIVE, the most deceptive
-placeholder in the app). Remaining PARTIAL: RxFrameMeta's Note `TextBox` (needs a real backing field
-on the frame/session model).
+`spec/16-gui-wiring-survey.md`: **~149 REAL, ~101 STUB** (plus FAKE-LIVE/PARTIAL, see that doc's own
+summary table for exact current counts — this file doesn't duplicate it live). Densest remaining
+gaps: Receive tab's Sync&Slant/Input-chain/Signal-quality cards (no live audio-chain measurement
+exists for most of these — real new DSP work); the deferred items above; Transmit tab's
+Queue/TX-log/Recently-sent cards (100% stub, no such features exist); TX image editor's
+canvas-overlay safe-area/callsign/report-plate text (FAKE-LIVE, the most deceptive placeholder in
+the app).
 
 ## Established process (proven across many prior batches, reuse it)
 
 research → plan → auditor plan-review (2 rounds for anything touching decode-path/concurrency/
 schema; skip for pure UI-plumbing with no DSP/concurrency risk) → implement → auditor code-review
 (soft cap ~3 rounds — round 1 finds real blockers, round 2 catches an incomplete fix, round 3
-usually closes it, loop in
-the user rather than a round 4) → verify (build + full relevant test suite, real-window
-screenshot/DB-level check if UI-visible) → commit → push. Escalation path if stuck: ask the
-auditor; if the auditor also can't resolve it, log to `spec/14-roadmap.md`'s "Verify later with
-human" section rather than stalling.
+usually closes it, loop in the user rather than a round 4) → verify (build + full relevant test
+suite, real-window screenshot/DB-level check if UI-visible) → commit → push. Escalation path if
+stuck: ask the auditor; if the auditor also can't resolve it, log to `spec/14-roadmap.md`'s "Verify
+later with human" section rather than stalling.
 
-Real-window testing has caught bugs build+tests never would this session (twice, both in the
-window-geometry work: a startup deadlock and a cross-thread UI-property crash) — keep testing the
-actual running app for anything touching lifecycle/threading, not just unit tests.
+Real-window testing keeps catching things build+tests never would — this session (RX BPF Phase 4)
+it caught that the app's own menu bar doesn't render until the window is focused/clicked once after
+launch (a pre-existing WM/rendering quirk, not a code bug, but real-window screenshots taken
+immediately after `dotnet run` will miss it). Screenshot toolchain: no `xdotool`/`ydotool` in this
+sandbox; a `pip`-installed `pyautogui` + `mss` + `pillow` venv in the scratchpad directory works
+(ephemeral, session-scoped — recreate if needed in a future session). Screenshot ONLY the
+secondary/HDMI-1 monitor region (`left:3840,top:0,width:2560,height:1440`), never full-screen, never
+"active window" mode — a real incident during CW-ID/FSK work briefly exposed the user's primary-
+monitor windows via "active window" capture; that mode must never be used again.
