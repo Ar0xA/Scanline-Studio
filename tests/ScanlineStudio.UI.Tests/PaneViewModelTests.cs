@@ -197,6 +197,92 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_CallsignDifferentFromOwn_AutoFillsOverrideCallsign()
+    {
+        var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Null(vm.OverrideCallsign);
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("K1ABC", vm.OverrideCallsign);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_CallsignMatchesOwnExactly_DoesNotAutoFill()
+    {
+        // Main.cpp:3628's strcmp self-filter -- exact, case-sensitive match against the operator's
+        // own callsign must NOT auto-fill "his callsign" with it (e.g. another station repeating the
+        // operator's own callsign back).
+        var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW"));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.OverrideCallsign);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_CallsignDiffersOnlyByCase_StillAutoFills()
+    {
+        // Exact, case-SENSITIVE match (C's strcmp, not a case-insensitive comparison) -- "w1aw"
+        // (lowercase) must NOT be treated as matching the operator's own "W1AW", so this still
+        // auto-fills. A real, if unusual, station-ID decode could plausibly differ only by case since
+        // the wire protocol itself doesn't enforce a single canonical case.
+        var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "w1aw"));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("w1aw", vm.OverrideCallsign);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_CompactNr_FormatsAsZeroPaddedMyRst()
+    {
+        // Main.cpp:3648's sprintf(bf, "595%s", pDem->m_fskNRS) -- compact NR is rendered via the RX
+        // decoder's own "%03u"-equivalent zero-pad before the "595" prefix is applied.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(CompactNr: 12));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("595012", vm.DecodedNrRst);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_NrText_FormatsAsMyRstDirectly()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(NrText: "0012"));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("5950012", vm.DecodedNrRst);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_NoAutomaticQrzLookupIsTriggered()
+    {
+        // User-approved v1 scope boundary (CW-ID/FSK station-ID subsystem plan): auto-fill
+        // OverrideCallsign only, never an automatic network lookup on decode.
+        var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
+        var logbookSession = new FakeLogbookSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("K1ABC", vm.OverrideCallsign);
+        Assert.Equal(0, logbookSession.LookupCallCount);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_UpdatedEvent_SetsProgress_AndLineProgressTextReflectsIt()
     {
         var localization = new FakeLocalizationService();

@@ -73,6 +73,14 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     public event Action<DecodedImageUpdate>? LineDecoded;
     public event Action<SstvModeDefinition>? ModeDetected;
     public event Action<SstvModeDefinition>? DecodeRestarted;
+
+    /// <summary>See <see cref="ISstvDecoder.StationIdDecoded"/> -- forwarded from whichever inner
+    /// instance is current, same subscribe/unsubscribe-on-swap pattern as <see cref="LineDecoded"/>/
+    /// <see cref="ModeDetected"/>/<see cref="DecodeRestarted"/> above (Phase 5 of the CW-ID/FSK
+    /// station-ID subsystem plan -- Phase 4 only wired the enable FLAG through this class;
+    /// forwarding the event itself was explicitly left for this phase, not a gap in Phase 4).</summary>
+    public event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+
     public event Action? RestartOverdue;
     public event Action? RestartCriticallyOverdue;
     public event Action? Restarted;
@@ -381,6 +389,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         decoder.LineDecoded += OnLineDecoded;
         decoder.ModeDetected += OnModeDetected;
         decoder.DecodeRestarted += OnDecodeRestarted;
+        decoder.StationIdDecoded += OnStationIdDecoded;
         return decoder;
     }
 
@@ -389,6 +398,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         decoder.LineDecoded -= OnLineDecoded;
         decoder.ModeDetected -= OnModeDetected;
         decoder.DecodeRestarted -= OnDecodeRestarted;
+        decoder.StationIdDecoded -= OnStationIdDecoded;
     }
 
     private void OnLineDecoded(DecodedImageUpdate update) => LineDecoded?.Invoke(update);
@@ -396,4 +406,6 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private void OnModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
 
     private void OnDecodeRestarted(SstvModeDefinition mode) => DecodeRestarted?.Invoke(mode);
+
+    private void OnStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
 }

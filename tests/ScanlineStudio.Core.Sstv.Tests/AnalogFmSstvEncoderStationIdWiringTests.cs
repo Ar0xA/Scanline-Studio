@@ -56,7 +56,7 @@ public class AnalogFmSstvEncoderStationIdWiringTests
     public async Task EncodeAsync_FskIdEnabled_ImageStillDecodesAndStationIdDecodesWithNormalizedCallsign()
     {
         // Deliberately messy raw callsign (lowercase, padded) to prove the settings-boundary
-        // normalization (AnalogFmSstvEncoder.NormalizeCallsignForStationId, Option.cpp:445-448)
+        // normalization (StationIdCallsignNormalizer.Normalize, Option.cpp:445-448)
         // actually runs on this real path, not just in a unit test of the helper in isolation.
         var mode = SstvModeRegistry.Mn73; // narrow -- also exercises the narrow-mode footer branch
         var image = CreateSolidImage(mode.ImageWidth, mode.ImageHeight);
@@ -82,7 +82,7 @@ public class AnalogFmSstvEncoderStationIdWiringTests
     [Fact]
     public async Task EncodeAsync_CallsignPathologicallyPadded_TruncatesBeforeTrimming_MatchingLegacyOrderExactly()
     {
-        // Auditor-confirmed (round 1): NormalizeCallsignForStationId's order is truncate(16) THEN
+        // Auditor-confirmed (round 1): StationIdCallsignNormalizer.Normalize's order is truncate(16) THEN
         // uppercase THEN trim -- a faithful port of Option.cpp:445-448's StrCopy(n=16) -> jstrupr ->
         // clipsp/SkipSpace order, NOT trim-then-truncate. This is the one input shape that actually
         // distinguishes the two orders: 20 leading spaces + "W1AW" (24 raw chars). Truncate-first

@@ -263,7 +263,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         // re-checked here, so this stays a single source of truth for that gate.
         if (stationId.FskIdEnabled)
         {
-            var callsign = NormalizeCallsignForStationId(stationId.Callsign);
+            var callsign = StationIdCallsignNormalizer.Normalize(stationId.Callsign);
             var nrRstText = CapNrRstTextForStationId(stationId.NrRstText);
             foreach (var segment in FskStationIdEncoder.Generate(callsign, nrRstText))
             {
@@ -283,27 +283,6 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                 yield return segment;
             }
         }
-    }
-
-    // Option.cpp:445-448 (settings-boundary normalization -- CW-ID/FSK station-ID subsystem plan's
-    // round-2 finding: this is a FAITHFUL port of where legacy sets sys.m_Call, not new hardening).
-    // Order matters and is preserved exactly: StrCopy caps at MLCALL=16 chars FIRST, THEN jstrupr
-    // uppercases, THEN clipsp/SkipSpace trims -- not trim-then-cap. A pathological >16-char string
-    // that's mostly leading whitespace truncates away the real callsign entirely under this order;
-    // that matches legacy exactly, it is not "fixed" here. Scoped to the FSK-ID TX wire path only --
-    // OperatorSettings.Callsign itself is left as-typed (used for macros/display/QRZ elsewhere), so
-    // there is exactly one call site for this normalization and no risk of two copies drifting.
-    private static string NormalizeCallsignForStationId(string? raw)
-    {
-        if (string.IsNullOrEmpty(raw))
-        {
-            return string.Empty;
-        }
-
-        var capped = raw.Length > FskStationIdWireFormat.MaxCallsignLength
-            ? raw[..FskStationIdWireFormat.MaxCallsignLength]
-            : raw;
-        return capped.ToUpperInvariant().Trim();
     }
 
     // Settings-boundary length cap for the NR/RST sub-packet's STRING form (the implementation

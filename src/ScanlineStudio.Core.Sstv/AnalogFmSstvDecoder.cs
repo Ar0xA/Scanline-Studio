@@ -3,15 +3,6 @@ using ScanlineStudio.Abstractions.Sstv;
 
 namespace ScanlineStudio.Core.Sstv;
 
-/// <summary>Payload for <see cref="AnalogFmSstvDecoder.StationIdDecoded"/> -- exactly one of
-/// <see cref="Callsign"/>/<see cref="CompactNr"/>/<see cref="NrText"/> is set per event, mirroring
-/// <see cref="FskDecodeResult"/>'s own station-ID fields (see that type's doc comment for why the
-/// compact-numeric and string-form NR/RST are kept separate rather than collapsed).</summary>
-public sealed record FskStationIdDecodedInfo(
-    string? Callsign = null,
-    uint? CompactNr = null,
-    string? NrText = null);
-
 /// <summary>
 /// Generic decoder counterpart to <see cref="AnalogFmSstvEncoder"/>, using a ported
 /// <see cref="HilbertFmDemodulator"/> (see that type's doc comment) run continuously over the

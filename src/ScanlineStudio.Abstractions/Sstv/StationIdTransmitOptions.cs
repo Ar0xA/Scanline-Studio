@@ -14,7 +14,7 @@ namespace ScanlineStudio.Abstractions.Sstv;
 /// applies the legacy-faithful settings-boundary normalization (uppercase/trim/16-char cap on the
 /// callsign, <c>Option.cpp:445-448</c>; a length cap on the NR/RST text) immediately before encoding,
 /// since that normalization is pure wire-format policy with no Application-layer dependency of its
-/// own -- see <c>AnalogFmSstvEncoder.NormalizeCallsignForStationId</c>.</summary>
+/// own -- see <c>ScanlineStudio.Core.Sstv.StationIdCallsignNormalizer</c>.</summary>
 public sealed record StationIdTransmitOptions
 {
     /// <summary>Nothing enabled -- produces byte-identical TX output to every code path that existed

@@ -172,13 +172,28 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     private long? _fileSizeBytes;
 
     /// <summary>Frame-metadata card's "Override callsign" field (spec/09-ui.md, legacy's real
-    /// <c>HisCall</c> equivalent) -- also the input to <see cref="LookupQrzCommand"/>. Plain UI
-    /// state, not backed by <see cref="IReceivedImageBuffer"/> or any session model: no OCR/FSK-
-    /// decoded-callsign source exists yet to seed it from (see this pane's own "Callsign" row,
-    /// which stays a separate, still-literal placeholder).</summary>
+    /// <c>HisCall</c> equivalent) -- also the input to <see cref="LookupQrzCommand"/>. Auto-filled by
+    /// <see cref="OnStationIdDecoded"/> from a decoded FSK station-ID (CW-ID/FSK station-ID subsystem
+    /// Phase 5), but still plain, directly user-editable state otherwise -- not backed by
+    /// <see cref="IReceivedImageBuffer"/> or any session model (no "current QSO" tracker exists in
+    /// this port, matching the auto-fill's own gate simplification, see
+    /// <see cref="OnStationIdDecoded"/>'s doc comment). The remaining, still-unseeded source is
+    /// OCR (this pane's own "Callsign" row stays a separate, still-literal placeholder).</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
     private string? _overrideCallsign;
+
+    /// <summary>Legacy's real <c>MyRST</c> equivalent (<c>Main.cpp:3648</c>,
+    /// <c>sprintf("595%s", pDem-&gt;m_fskNRS)</c>) -- the decoded NR/RST exchange from a station-ID's
+    /// optional sub-packet, auto-filled by <see cref="OnStationIdDecoded"/>. No card row binds this
+    /// yet (the RxFrameMeta card's mockup has no RST field at all, unlike "Override callsign" which
+    /// already had one to wire into) -- real, tested backing state ahead of its own UI exposure,
+    /// same incremental pattern several sibling still-literal rows on this same card already follow
+    /// (Frequency/ModeVis/SnrSlant/OcrConfidence/DroppedLines). Deliberately not named <c>MyRst</c>
+    /// (a literal legacy-field-name port) -- follows <see cref="OverrideCallsign"/>'s own precedent
+    /// of an English, descriptive name instead.</summary>
+    [ObservableProperty]
+    private string? _decodedNrRst;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(NameDisplay))]
@@ -225,6 +240,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _receivedImage.Updated += OnUpdated;
         _receivedImage.Saved += OnSaved;
         sstvSession.ModeDetected += OnModeDetected;
+        sstvSession.StationIdDecoded += OnStationIdDecoded;
 
         _telemetryTimer = new DispatcherTimer(TelemetryPollInterval, DispatcherPriority.Background, (_, _) => PollTelemetry());
         _telemetryTimer.Start();
@@ -467,6 +483,114 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         });
     }
 
+    /// <summary>CW-ID/FSK station-ID subsystem Phase 5: auto-fill wiring for a decoded FSK station-ID
+    /// (<see cref="ISstvSessionService.StationIdDecoded"/>). Fires on the decode thread -- per that
+    /// event's own concurrency contract, this dispatches to the UI thread IMMEDIATELY and does all
+    /// real work (including the async operator-callsign lookup below) only after, never inline here.
+    ///
+    /// <b>Scope simplification vs. legacy, documented not silently dropped</b>
+    /// (<c>Main.cpp:3618-3651</c>): legacy gates the callsign write on
+    /// <c>!SBTX-&gt;Down &amp;&amp; (!SBQSO-&gt;Down || HisCall-&gt;Text.IsEmpty())</c> and the NR/RST
+    /// write on a similar-but-different <c>!SBTX-&gt;Down &amp;&amp; (!SBQSO-&gt;Down || MyRST-len&lt;=3
+    /// || !strcmp(HisCall, decoded))</c>. Neither check is implemented here as runtime logic --
+    /// BOTH conditions are structurally always-true for the ONE call path that matters here --
+    /// <c>!TX-active</c> because a call to <see cref="ISstvSessionService.TransmitAsync"/>/
+    /// <see cref="ISstvSessionService.TuneAsync"/> fully pauses RX capture for its own duration (no
+    /// samples can reach the decoder to raise this event while one is in flight, so the check can
+    /// never observe a "TX active" state from THAT source to gate against), and <c>!QSO-active</c>
+    /// because this port has no "current QSO" tracker at all (confirmed absent -- see the
+    /// implementation plan's RX-side note making the same call), and <c>!QSOActive || X</c> is
+    /// unconditionally true once <c>QSOActive</c> can never be true. <b>Narrower claim than an
+    /// earlier version of this comment made (auditor round-1 finding on Phase 5)</b>:
+    /// <see cref="ISstvSessionService.SetPttLockAsync"/> keys PTT WITHOUT pausing capture at all, so
+    /// this event CAN still fire while that lock is engaged -- "TX-active is impossible" is true only
+    /// for the <see cref="ISstvSessionService.TransmitAsync"/>/<see cref="ISstvSessionService.TuneAsync"/>
+    /// case, not as a blanket "PTT keyed" statement. This is NOT the same simplification for both
+    /// writes -- the underlying formulas genuinely differ (a real round-2 plan-review finding: an
+    /// earlier draft of this plan applied the callsign gate to the NR/RST write too) -- kept as two
+    /// separately-cited paragraphs here for that reason, even though both currently reduce to "no
+    /// gate needed."
+    ///
+    /// Legacy's <c>AddCall</c> (call-history log), <c>qrzcom</c> auto-lookup thread, <c>FindCall</c>,
+    /// <c>HisCallChange(NULL)</c> (`Main.cpp:10835-10840`'s `TempDelay`/log-UI-enable/`UpdateUI` --
+    /// no logbook pane reads from <see cref="OverrideCallsign"/> for this port to update), and
+    /// <c>RxAutoPush</c> (an unrelated auto-sync-restart trigger sharing the same outer
+    /// <c>if (pDem-&gt;m_fskrec)</c> block, lines 3618-3627) are all deliberately NOT ported -- no
+    /// call-history log or "current QSO" concept exists in this port to add to, automatic QRZ lookup
+    /// on decode was an explicit user-approved scope boundary (fill the field only, no surprise
+    /// network activity), and <c>RxAutoPush</c> is an unrelated legacy mechanism out of this phase's
+    /// scope (one-line note, not chased further per this project's ADHD-scoping rule).</summary>
+    private void OnStationIdDecoded(FskStationIdDecodedInfo info)
+    {
+        Dispatcher.UIThread.Post(() => _ = ApplyStationIdDecodedAsync(info));
+    }
+
+    /// <summary>The actual auto-fill logic, split from <see cref="OnStationIdDecoded"/> so that
+    /// method can stay a trivial, guaranteed-non-blocking dispatch. Runs entirely on the UI thread
+    /// (posted there before this is ever called) -- the one <see langword="await"/> below resumes
+    /// there too (Avalonia's dispatcher establishes a UI-thread <c>SynchronizationContext</c>), so
+    /// every <c>[ObservableProperty]</c> touch remains UI-thread-only.</summary>
+    private async Task ApplyStationIdDecodedAsync(FskStationIdDecodedInfo info)
+    {
+        if (info.Callsign is { } decodedCallsign)
+        {
+            string? ownCallsign;
+            try
+            {
+                ownCallsign = await _sstvSession.GetOperatorCallsignAsync().ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                // Best-effort, same reasoning as LoadCaptureDeviceNameAsync -- a failure here must not
+                // crash the decode-event handling chain; the field simply doesn't auto-fill this time.
+                Log.GetOperatorCallsignFailed(_logger, ex);
+                return;
+            }
+
+            // Self-filter (Main.cpp:3628's strcmp): exact, case-sensitive match against the
+            // OPERATOR's own callsign -- NOT the same thing as the structurally-impossible "decoded
+            // my own live TX" case (RX is paused during TX, see this method's own doc comment);
+            // this instead guards against auto-filling "his callsign" with the operator's own when
+            // ANOTHER station's transmission happens to reference/repeat it.
+            if (string.Equals(decodedCallsign, ownCallsign, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            // Main.cpp:3631's strcmp against the CURRENT HisCall field, before writing, is a dedup
+            // check -- no separate check needed here: [ObservableProperty]'s generated setter already
+            // no-ops (skips the field write and PropertyChanged/CanExecuteChanged raises) when the
+            // new value equals the current one, matching legacy's own behavior for free.
+            OverrideCallsign = decodedCallsign;
+        }
+        else if (info.CompactNr is { } compactNr)
+        {
+            // Main.cpp:2537-2538/RX decoder's own compact-form contract: the compact NR is a raw
+            // value here, rendered back to legacy's real on-air text via the same "%03u"-equivalent
+            // zero-pad legacy itself uses before formatting into MyRST (Main.cpp:3648) -- D3 matches
+            // %03u exactly for this value's range (always < CompactNrUpperBound=4096, so never more
+            // than 4 digits either way, same as %03u's own "pad to minimum width, never truncate"
+            // behavior).
+            ApplyDecodedNrRst(compactNr.ToString("D3", CultureInfo.InvariantCulture));
+        }
+        else if (info.NrText is { } nrText)
+        {
+            ApplyDecodedNrRst(nrText);
+        }
+    }
+
+    /// <summary>Main.cpp:3648's <c>sprintf(bf, "595%s", pDem-&gt;m_fskNRS)</c> -- the "595" prefix is
+    /// literal legacy behavior, not a typo for the conventional "599" RST report, verify against
+    /// source again before ever changing it. Called only from the UI thread (see
+    /// <see cref="ApplyStationIdDecodedAsync"/>'s own doc comment). No manual dedup check needed
+    /// (Main.cpp:3649's strcmp against the CURRENT MyRST field) -- same reasoning as
+    /// <see cref="OverrideCallsign"/>'s own write above: the generated <c>[ObservableProperty]</c>
+    /// setter already no-ops on an equal value.</summary>
+    private void ApplyDecodedNrRst(string decodedText)
+    {
+        DecodedNrRst = $"595{decodedText}";
+    }
+
     /// <summary>Auditor round 2 finding: a round-1 version of this staleness guard captured its OWN
     /// counter at THIS method's own entry -- too late. The window that matters starts at
     /// <see cref="IReceivedImageBuffer.SaveAsync"/>'s own invocation (the encode + disk write it
@@ -622,5 +746,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ lookup threw")]
         public static partial void QrzLookupThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the operator's own callsign (for the decoded station-ID self-filter) failed")]
+        public static partial void GetOperatorCallsignFailed(ILogger logger, Exception ex);
     }
 }

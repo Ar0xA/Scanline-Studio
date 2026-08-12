@@ -77,10 +77,59 @@ pipeline wiring) — 2 auditor review rounds, both closed clean, committed:
   fixed. Final state: 735/735 Core.Sstv tests, 87/87 Application tests, both full solution builds
   clean throughout. **Committed.**
 
-Next: Phase 5 (RX consumer / auto-fill wiring — `RxImagePaneViewModel.OverrideCallsign`, two
-different gates for callsign vs NR/RST writes, no automatic QRZ lookup). Note for Phase 5:
-`RestartableSstvDecoder` doesn't forward the `StationIdDecoded` event at all yet (only the enable
-flag was in Phase 4's scope) — that forwarding is Phase 5's job, not a gap in Phase 4.
+**Phase 5 (RX consumer / auto-fill wiring) implemented, not yet committed, auditor round 1 in
+progress (async):**
+- Moved `FskStationIdDecodedInfo` from `ScanlineStudio.Core.Sstv` to `ScanlineStudio.Abstractions.Sstv`
+  (needed so `ISstvDecoder` can declare the event); added `event StationIdDecoded` to
+  `ISstvDecoder`/`RestartableSstvDecoder` (subscribe/unsubscribe-on-swap, matching the existing
+  `LineDecoded`/`ModeDetected`/`DecodeRestarted` pattern) and `ISstvSessionService`/`SstvSessionService`
+  (pure pass-through, no filtering at this layer).
+- New `ISstvSessionService.GetOperatorCallsignAsync()` — lets `RxImagePaneViewModel` read
+  `OperatorSettings.Callsign` for the self-filter without violating the UI-layering rule (`ScanlineStudio.UI`
+  must never reference `ISettingsStore` directly — a real constraint documented on this same
+  ViewModel's own `CanLookupQrz` method).
+- `RxImagePaneViewModel`: new `DecodedNrRst` property (no AXAML row exists for it yet — the
+  RxFrameMeta card's mockup has no RST field, unlike Override Callsign; real tested backing state
+  ahead of UI exposure, same pattern several sibling still-literal rows already follow). New
+  `OnStationIdDecoded`/`ApplyStationIdDecodedAsync`/`ApplyDecodedNrRst`: self-filters the decoded
+  callsign against the operator's own (exact, case-sensitive), auto-fills `OverrideCallsign`, formats
+  compact/string NR-RST as `"595" + text` into `DecodedNrRst`. **Real scope simplification, documented
+  not silently dropped**: legacy's `!TX-active && (!QSO-active || ...)` write gates are omitted as
+  runtime checks entirely — both structurally always-true in this port (RX capture fully pauses
+  during TX; no "current QSO" tracker exists) — and the `strcmp`-before-write dedup checks are
+  omitted too, relying on `[ObservableProperty]`'s generated setters already no-op'ing equal values.
+  `AddCall`/QRZ-auto-lookup-thread/`FindCall`/`RxAutoPush` not ported (no call-history log exists,
+  no-auto-QRZ already user-decided, `RxAutoPush` unrelated) — one-line scope note in the code.
+- 6 new UI.Tests (self-filter positive/negative/case-sensitivity, compact-NR formatting, NR-text
+  formatting, no-QRZ-triggered), 3 new Application.Tests (`StationIdDecoded` pass-through,
+  `GetOperatorCallsignAsync`), 1 new Core.Sstv.Tests (`RestartableSstvDecoder.StationIdDecoded`
+  forwards through the real production wrapper type). 736/736 Core.Sstv, 90/90 Application, 224/224
+  UI.Tests, 28/28 Imaging, 78/78 Logbook — all green, full solution build clean.
+- Local peer-audit run (row 5): template-echo again — this was usage #5, **triggering the review
+  checkpoint**: go/no-go decision made (`tools/peer-audit/TRACKING.md`'s "Review 1"), peer-audit
+  **demoted from the default workflow to ad-hoc/opt-in** (1-for-5 genuinely useful, one real miss).
+  `CLAUDE.md` §7b updated accordingly.
+- **Auditor code-review round 1: NOT EQUIVALENT (1 real blocker), fixed; round 2: EQUIVALENT, ready
+  to commit, no round 3 needed.** Blocker: the self-filter compared the operator's callsign AS
+  STORED against an always-normalized decoded callsign — an operator with a lowercase-stored
+  callsign (`"w1aw"`) would never self-filter against a real decoded `"W1AW"`, defeating the whole
+  point of the check. Fixed by extracting the existing TX-side normalization
+  (`AnalogFmSstvEncoder`'s private helper) into a new shared public
+  `StationIdCallsignNormalizer.Normalize` (Core.Sstv) used by BOTH the TX wire path (Phase 4,
+  unchanged behavior) and `SstvSessionService.GetOperatorCallsignAsync` (normalizes fresh on every
+  read; `OperatorSettings.Callsign` itself stays as-typed in storage). Round 2 independently
+  re-derived the normalization order from `Option.cpp:445-448`/`ComLib.cpp` again (not just diffed)
+  and traced the "decoded callsign is always normalized" premise all the way to the RX decoder's own
+  6-bit alphabet (uppercase-only by construction) — confirmed the fix is legacy-faithful, not just
+  self-consistent. Also fixed: a doc-comment overclaim narrowed ("TX-active is structurally
+  impossible" only holds for a `TransmitAsync`/`TuneAsync` call in flight, not for
+  `SetPttLockAsync`'s PTT-keyed-without-pausing-capture case) and `HisCallChange(NULL)` added to the
+  explicit not-ported list. 4 remaining nits from round 2, all accepted as-is (cosmetic/no-guard-
+  needed, none blocking). 8 new tests (`StationIdCallsignNormalizerTests` x6,
+  `GetOperatorCallsignAsync` normalization x2). 742/742 Core.Sstv, 92/92 Application, 224/224
+  UI.Tests — all green, full solution build clean.
+
+Next: commit Phase 5, then Phase 6 (Options dialog + Transmit-tab UI wiring, final e2e test).
 
 v1 scope confirmed with user: FSK+CW+NR/RST, sound-file deferred, `.ini` import deferred.
 
