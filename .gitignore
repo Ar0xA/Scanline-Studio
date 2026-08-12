@@ -31,6 +31,6 @@ coverage*.info
 .DS_Store
 Thumbs.db
 
-# Python bytecode cache (tools/peer-audit/ and any other Python dev tooling)
+# Python bytecode cache (any Python dev tooling)
 __pycache__/
 *.pyc

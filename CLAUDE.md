@@ -172,18 +172,6 @@ concurrency. **Skip** for mechanical 1:1 translations (delegation has context ov
   logs, and already-fixed code.
 - **File targeting:** name target paths and focus line numbers; never dump whole files.
 
-### 7b. Local peer-audit (ad-hoc/opt-in, demoted from default workflow 2026-08-12)
-
-`tools/peer-audit/peer_audit.py` (local Ollama model, free/fast) is **not** part of the default
-review flow anymore — the 5-use checkpoint review (`tools/peer-audit/TRACKING.md`'s "Review 1")
-found it template-echoed or otherwise produced no independent finding on 4 of 5 tracked rows, and
-once MISSED a real bug the real auditor caught. Keep using the real `auditor` subagent (§7) for
-everything. `peer_audit.py` is still available for an occasional ad-hoc spot-check on a small,
-single-file candidate (its one demonstrated success shape) — log any such use in TRACKING.md the
-same way, for a future re-review if a different/larger local model becomes available.
-
----
-
 ## 8. Session continuity — PROJECT_BRIEF.md
 
 - **Write** `PROJECT_BRIEF.md` when finishing a sub-task, switching subjects, or before a `/clear`: what

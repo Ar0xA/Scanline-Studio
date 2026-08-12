@@ -10,7 +10,7 @@ in order: `13a8ca7` Open in Log, `4f14396` QRZ lookup, `e132044` Auto-stop/Auto-
 in `spec/16-gui-wiring-survey.md` (wiring inventory) and `spec/14-roadmap.md` (backlog + research).
 Nothing lost — see git history for this file if older narrative is ever needed.
 
-## Resume here (2026-08-12, ACTIVE) — CW-ID / FSK station-ID subsystem, Phases 1-4 DONE, starting Phase 5
+## Resume here (2026-08-12, ACTIVE) — CW-ID / FSK station-ID subsystem, Phases 1-5 DONE, starting Phase 6
 
 **Status: Phases 1-4 complete and committed.** Phase 1 (`26f674f`): silence representation in
 `AnalogFmSstvEncoder.cs` + `CwMorseGenerator.cs`. Phase 2: `FskStationIdEncoder.cs` +
@@ -129,16 +129,20 @@ progress (async):**
   `GetOperatorCallsignAsync` normalization x2). 742/742 Core.Sstv, 92/92 Application, 224/224
   UI.Tests — all green, full solution build clean.
 
-Next: commit Phase 5, then Phase 6 (Options dialog + Transmit-tab UI wiring, final e2e test).
+**Phase 5 committed** (`bee6c6d`). Next: Phase 6 (Options dialog + Transmit-tab UI wiring, final e2e
+test — user paused work here; check for direction before starting).
 
 v1 scope confirmed with user: FSK+CW+NR/RST, sound-file deferred, `.ini` import deferred.
 
-Also note: `tools/peer-audit/` contributed real value in Phase 1-2 (caught 2 tool bugs via actual
-use, found genuine issues on Phase 1's code) but has now gone 0-for-2 on Phases 2-3's larger
-candidate files (context-exhausted or template-echo failures) — see
-`tools/peer-audit/TRACKING.md`'s row 3 notes. At row 3 of the 5-row review checkpoint; worth
-deciding at checkpoint whether `NUM_CTX` needs raising or peer-audit's real ceiling is
-small-file-only.
+**`tools/peer-audit/` removed** (2026-08-12, after Phase 5): tried as a local-model complementary
+review step across Phases 1-5, hit its planned 5-use review checkpoint at 1-for-5 genuinely useful
+(one real miss, mostly template-echo failures from `qwen2.5-coder:14b`). User's explicit call after
+hearing that record: drop it entirely rather than keep it as a supplementary/opt-in step, stick with
+the real `auditor` subagent alone. Tool directory, `CLAUDE.md` §7b, and the "local peer-audit" step
+in the established-process pipeline below are all gone as of this note — don't reference or
+reintroduce it without the user raising it again. Full history (all 5 tracked rows, the review
+writeup, adjustments log) is preserved in git history for this file/directory if ever needed.
+
 Two product decisions also confirmed with user: CW-ID speed follows the configured WPM (fixing an
 apparent legacy bug where it's effectively pinned to a default), and no automatic QRZ lookup fires on
 FSK-ID decode (fill the callsign field only). Full plan (exact legacy citations, phase-by-phase file
@@ -240,10 +244,9 @@ on the frame/session model).
 ## Established process (proven across many prior batches, reuse it)
 
 research → plan → auditor plan-review (2 rounds for anything touching decode-path/concurrency/
-schema; skip for pure UI-plumbing with no DSP/concurrency risk) → implement → **local peer-audit**
-(`tools/peer-audit/`, free/fast, log to `tools/peer-audit/TRACKING.md` — added 2026-08-12, see
-CLAUDE.md §7b; review checkpoint at 5 logged uses) → auditor code-review (soft cap ~3 rounds —
-round 1 finds real blockers, round 2 catches an incomplete fix, round 3 usually closes it, loop in
+schema; skip for pure UI-plumbing with no DSP/concurrency risk) → implement → auditor code-review
+(soft cap ~3 rounds — round 1 finds real blockers, round 2 catches an incomplete fix, round 3
+usually closes it, loop in
 the user rather than a round 4) → verify (build + full relevant test suite, real-window
 screenshot/DB-level check if UI-visible) → commit → push. Escalation path if stuck: ask the
 auditor; if the auditor also can't resolve it, log to `spec/14-roadmap.md`'s "Verify later with
