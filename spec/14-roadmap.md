@@ -4611,21 +4611,82 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   confirmed OCR stays low-priority/someday, QRZ lookup is active.
 - [ ] **CW-ID / FSK station-ID subsystem** — real, working legacy feature (TX CW-ID tone + RX
   FSK-callsign-ID packet decode, `sstv.cpp:2465-2551`'s STX `0x2a`, distinct from the already-ported
-  mode-announce STX `0x2d` packets), zero replacement built. **Re-scoped 2026-08-12**: `WriteCWID`
-  (`sstv.cpp:2950-2990+`) is a compact, self-contained Morse encoder (a bit-packed lookup table +
-  dot/dash timing off `sys.m_CWIDSpeed`) — smaller than it sounds, but it's still core TX-encode-path
-  DSP code needing the same golden-vector rigor as any other codec port. `WriteFSK`
-  (`sstv.cpp:2942-2948`) is similarly small. The STATION-ID FSK decode this gates
-  (`m_fskcall`/`m_fskdata`, the case-5..10/16 state machine at `sstv.cpp:2465-2551`) is confirmed
-  NOT the same thing as this port's existing `NarrowFskHeaderDecoder` (that class decodes narrow-MODE
-  header signaling, a different FSK use — SSTV mode announcement, not station callsign ID); zero
-  callsign-FSK decode exists in this port today, confirming the Receive tab's Callsign/OCR row's
-  long-standing "no OCR/FSK-decoded-callsign source" gap has this as its real fix. Bundled scope if
-  built: TX Morse generator + TX/RX FSK-ID codec + the whole Identification tab UI (ID-method radio,
-  CW text/freq/speed fields, sound-file browse, FSK checkbox) — comparable in size to the QRZ lookup
-  feature, needs its own dedicated session (2-round auditor plan-review per CLAUDE.md §7), not
-  bundled into an ordinary wiring pass. Already user-deferred once this session (Identification card
-  work, 2026-08-08); confirm priority explicitly before starting.
+  mode-announce STX `0x2d` packets), zero replacement built. Already user-deferred once this session
+  (Identification card work, 2026-08-08). **Full TX+RX research pass done 2026-08-12** (user asked
+  for legacy behavior on both sides before any implementation) — smaller than the 2026-08-12
+  re-scope note below estimated, because a surprising amount of supporting infrastructure already
+  exists in this port. Full findings:
+
+  **TX side** — three independent, combinable mechanisms, all triggered right after the image's
+  last line (`Main.cpp:7014-7026`, `mp->m_wLine == SSTVSET.m_TL + 1`; the footer tone sent on the
+  line *before* that also changes shape depending on whether FSK-ID is enabled, `Main.cpp:6995-7011`
+  — a real fidelity detail, not guessable from the ID functions alone):
+  - `OutputFSKID` (`Main.cpp:6903-6963`): sends `sys.m_Call` as FSK — guard tone, `STX 0x2a`, each
+    char (offset `-0x20`) XORed into a running checksum, `EOT 0x01`, checksum byte. **Chains a
+    second sub-packet** for a contest-style serial-number/RST report (`Log.m_LogSet.m_FSKNR`-gated),
+    packed as either 2 compact 6-bit bytes (numbers &lt;4096) or a second alphanumeric FSK string —
+    not mentioned in the original backlog line, a real sub-feature.
+  - `OutputCWID` (`Main.cpp:6967-6980`): sends `sys.m_CWIDText` (a separate, user-configured field,
+    not necessarily the callsign) as real Morse via `WriteCWID` (`sstv.cpp:2951-2999`, a compact
+    bit-packed dot/dash lookup table, WPM-derived timing off `sys.m_CWIDSpeed`, tone at
+    `sys.m_CWIDFreq`). Text is run through `MacroText` first (legacy's TX-text macro expander).
+  - `OutputMMV` (`Main.cpp:6847-6899`): plays a recorded `.mmv` file instead of CW — a small
+    semi-headered raw-PCM format (`0x55 0xAA <sampleRateIndex>` header or a bare legacy `SampType`
+    byte) with its own IIR-filtered resampler if the file's rate doesn't match the live rate.
+  - `sys.m_CWID` (0/1/2 = Off/CW/Sound-file) and `sys.m_TXFSKID` (independent checkbox) are **not
+    mutually exclusive** — FSK-ID and CW-or-sound-file-ID can fire on the same transmission.
+
+  **RX side** — the hard part is already ~60% built. `sstv.cpp:2378-2606`'s `DecodeFSK` is ONE
+  shared state machine for both mode-announce (`STX 0x2d`) and station-ID (`STX 0x2a`) packets,
+  diverging only after the sync byte. This port's `NarrowFskHeaderDecoder.cs` already implements
+  the ENTIRE shared front half (guard-tone trigger/debounce/start-bit search/bit-clock sampling/byte
+  assembly — legacy cases 0-4) as a two-round-audited literal port, and its own doc comment already
+  points at the exact gap: case 4 treats `0x2a` as "unimplemented, resets like anything
+  unrecognized" (see `docs/removed-features.md`). Missing: only the **continuation** state machine
+  for `0x2a`'s payload (legacy cases 5-10: variable-length callsign string + checksum, then a
+  chained NR/RST sub-packet mirroring the TX side above) — grafted onto working infrastructure, not
+  built from scratch. The decoded callsign isn't decorative in legacy: it self-filters against your
+  own callsign (ignore your own loopback), then **auto-fills the "his callsign" QSO-log field**
+  (`Main.cpp:3618-3645`) if it differs from what's currently there — a real operator-workflow
+  feature this port's existing Logbook/`QsoLinkWindowViewModel` infrastructure could hook into
+  directly. Confirms the Receive tab's Callsign/OCR row's long-standing "no FSK-decoded-callsign
+  source" gap (`spec/16-gui-wiring-survey.md`) has this as its real fix.
+
+  **Already-reusable infrastructure in this port** (checked directly, not assumed): `VisHeader.cs`
+  already has the exact physical-layer constants station-ID FSK needs
+  (`NarrowGuardDurationMs`/`NarrowBitDurationMs`/`NarrowSpaceFrequencyHz` — confirmed identical to
+  legacy's `FSKGARD`/`FSKINTVAL`/`FSKSPACE` `#define`s, `sstv.h:705-707`, both packet types share the
+  same physical tones), plus a TX-side segment generator for the mode-announce packet that's a solid
+  template for a station-ID TX generator. `MacroTextResolver.cs` is already a real, cited port of
+  `MacroText` — but its own doc comment already flags it only covers `%m`/`%D`/`%T`
+  (my-callsign/date/time), not the his-callsign/name/QTH/RST-exchange tokens (`%c`/`%n`/`%q`/`%r`/
+  `%s`/`%R`/`%N`), since those need a "current QSO" context concept it doesn't have yet — fine for a
+  basic CW-ID (usually just your own call), a real gap for full macro fidelity.
+  `OperatorSettings.Callsign` already covers "my callsign," no new settings plumbing needed there.
+
+  **Interop-safety guardrail, discussed with user 2026-08-12**: many real users run legacy
+  YONIQ/MMSSTV, so the WIRE PROTOCOL (STX/EOT byte values, checksum algorithm, bit timing, the 6-bit
+  character encoding/ASCII-offset scheme) must stay byte-for-byte identical to legacy — that's what
+  lets a legacy station decode our FSK-ID and vice versa. Everything else is safe to extend freely
+  without any legacy-compatibility risk: richer macro tokens for CW-ID text (`MacroTextResolver` just
+  feeds characters into `WriteCWID`, which doesn't care what the text is), auto-filling the QSO log
+  from a decoded FSK-ID (a new consumer of already-decoded data, no protocol touched), a nicer
+  Identification tab UI. The one real risk is the character set: legacy's FSK encoding is a 6-bit
+  scheme tied to a specific ASCII offset (`c - 0x20` on write, `+ 0x20` on read, no bounds-checking
+  spotted in the decode) — sending characters outside legacy's assumed printable range would produce
+  bytes a real legacy station can't decode correctly, and inventing a wholly new packet type would
+  only be understood by other Scanline Studio users, not legacy ones. **User has flagged wanting to
+  keep an eye on possibly expanding CW-ID/FSK-ID capability later** (e.g. richer macro tokens, auto
+  QSO-log fill) — fine to do, as long as it stays on the "local text in/out" side of that boundary,
+  not the wire protocol itself.
+
+  **Still genuinely missing**: CW Morse table + timing generator (new, small, self-contained), the
+  FSK-ID payload state machine on BOTH directions (RX continuation off the existing decoder; TX
+  generator mirroring `VisHeader`'s existing pattern), the `.mmv` sound-file format + resampler (if
+  sound-file ID is wanted), the NR/RST sub-packet, and the whole Identification tab UI. Bundled
+  scope is comparable in size to the QRZ lookup feature built 2026-08-11 — needs its own dedicated
+  session (2-round auditor plan-review per CLAUDE.md §7), not bundled into an ordinary wiring pass.
+  Confirm priority/scope explicitly with the user before starting implementation.
 - [ ] **VOX** (TX tone-burst preamble for a rig's own VOX circuit) — real but niche, this port
   already has real CAT PTT. Low priority per this doc's own earlier framing.
 - [x] ~~RTS-on-RX~~ — **RESOLVED 2026-08-12, moved to `docs/removed-features.md`, not a backlog
