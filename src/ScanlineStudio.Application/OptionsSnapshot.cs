@@ -27,4 +27,5 @@ public sealed record OptionsSnapshot(
     string? QrzLookupUsername,
     string? QrzLookupPassword,
     bool AutoStopEnabled,
-    bool SyncRestartEnabled);
+    bool SyncRestartEnabled,
+    int SenseLevel);

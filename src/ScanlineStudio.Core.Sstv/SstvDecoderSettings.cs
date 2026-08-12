@@ -13,7 +13,15 @@ namespace ScanlineStudio.Core.Sstv;
 /// a settings.json saved before a field existed must not silently disable an on-by-default feature for
 /// every existing install. Treat <see langword="null"/> as "unset -- apply that field's own desired
 /// default" at the one read site (<c>ScanlineStudio.Host.Program</c>'s <c>ISstvDecoder</c> registration),
-/// never re-add a non-null default value here.</summary>
+/// never re-add a non-null default value here.
+///
+/// <see cref="SenseLevel"/> is the one field here that isn't a bool: its desired default when absent
+/// is <c>1</c> (legacy's real ctor default, <c>m_SenseLvl = 1</c>, <c>sstv.cpp:1489</c>) -- but a
+/// PRESENT, out-of-range value (e.g. a hand-edited <c>7</c>) is deliberately mapped to <c>0</c>
+/// instead, matching legacy's own <c>SetSenseLvl</c> switch <c>default:</c> branch
+/// (<c>sstv.cpp:1812-1814</c>) for anything outside 1-3 -- these two fallbacks are intentionally
+/// different values, not a copy-paste of each other. See <c>AnalogFmSstvDecoder.SenseLevelPresets</c>
+/// for the full 4-preset table.</summary>
 public sealed record SstvDecoderSettings
 {
     public const string SectionKey = "SstvDecoder";
@@ -59,4 +67,10 @@ public sealed record SstvDecoderSettings
     /// <c>Mmsstv English.ini</c>/<c>Mmsstv Japanese.ini</c> both say <c>0</c>), and legacy's real
     /// design-time default lives in the binary <c>Main.vlb</c>, unreadable.</summary>
     public bool? AutoSlantEnabled { get; init; }
+
+    /// <summary>Port of legacy's real, user-selectable <c>m_SenseLvl</c> (squelch/sense level,
+    /// <c>Option.dfm</c>'s <c>RGSLvl</c> radio group, 4 presets "Very low".."Very high") -- see this
+    /// record's own class-level doc comment for the absent-vs-out-of-range fallback distinction, and
+    /// <c>AnalogFmSstvDecoder.SenseLevelPresets</c> for the preset table itself.</summary>
+    public int? SenseLevel { get; init; }
 }

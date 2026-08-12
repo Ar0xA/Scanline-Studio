@@ -93,16 +93,41 @@ redundant next to it; removed outright (loc keys deleted too), not left stub. 4 
 naming), 208/208 UI tests still passing. `spec/16-gui-wiring-survey.md` fully updated for this
 entry, QRZ lookup, and Open in Log — no more stale rows/counts anywhere in it as of this commit.
 
+**Options Decode "Sense level" (squelch) wired, closed** — same session, per user's "wire what you
+can... then start on the items that need functionality" instruction. Investigated all 4 remaining
+Decode-tab controls (Sense level, RX BPF, Demod type, RX buffer) directly against `Option.dfm`/
+`sstv.cpp` before picking one: RX BPF and Demod type ARE real legacy Options controls but each needs
+its own larger DSP-scoping pass (RX BPF = a `CalcBPF` FIR-filter-preset port; Demod type = enabling
+runtime dispatch between 3 already-ported-but-not-switchable demodulator classes); RX buffer has no
+identified legacy Options-dialog precedent at all. User picked "small pieces first," so this batch
+covers Sense level only — a real port of legacy's `CSSTVDEM::SetSenseLvl` (`sstv.cpp:1793-1817`)
+4-preset absolute-amplitude sync-threshold table, previously hardcoded to preset 1 (the shipped
+default) only. Auditor plan-review round caught: an out-of-range persisted value (e.g. a hand-edited
+`7`) must fall back to preset 0 (legacy's own `SetSenseLvl` switch `default:`), deliberately
+DIFFERENT from an absent-key value's fallback (preset 1, legacy's ctor default) — both wired and
+tested; two `RestartableSstvDecoder` constructors both needed the new parameter (only one assigns
+fields, easy to miss); field-assignment ordering inside `AnalogFmSstvDecoder`'s ctor mattered (must
+happen before `VisLockStateMachine` construction reads it). Calibration-verified for all 4 presets
+against a real synthesized full-amplitude tone, including preset 3 ("Very high")'s tightest
+margin — clears with real headroom, confirming this port's AGC scale is faithful rather than just
+transcribed. A dedicated wiring test (constructor argument reaches the decoder's internal threshold
+fields) was needed since an amplitude-based behavioral test proved unreliable here (`LevelAgc` is a
+true AGC that normalizes toward a target level regardless of input amplitude once settled). Existing
+loc text was already accurate, no label fix needed this time (unlike Auto-stop/Auto-restart).
+Restart-only, like every other decoder setting — most user-visible instance of that limitation so
+far, since squelch is the control most likely to be adjusted while actively chasing a signal.
+
 **Current wiring totals** (`spec/16-gui-wiring-survey.md`, ~286 controls tracked, fully current as
-of this commit): **~142 REAL, ~99 STUB, ~46 FAKE-LIVE, ~1 PARTIAL**. Densest remaining gaps: Receive
+of this commit): **~143 REAL, ~98 STUB, ~46 FAKE-LIVE, ~1 PARTIAL**. Densest remaining gaps: Receive
 tab's Sync&Slant/Input-chain/Signal-quality cards (SNR/squelch/notch/noise-floor — no live
 audio-chain measurement exists in `Core.Audio`/`Core.Sstv` for most of these, real new DSP work not
-just wiring); Options window's Decode's remaining 5 controls plus Identification/Advanced tabs
-(~53 controls, still stub); Transmit tab's Queue/TX-log/Recently-sent cards (100% stub, no such
-features exist); TX image editor's canvas-overlay safe-area/callsign/report-plate text (FAKE-LIVE —
-reads as real burned-in TX content, arguably the most deceptive placeholder in the app). Remaining
-PARTIAL: RxFrameMeta's Note `TextBox` only (needs a real backing field on the frame/session model —
-Override-callsign's twin issue closed this session via the QRZ lookup wiring).
+just wiring); Options window's Decode's remaining 4 controls (RX BPF/Demod type/RX buffer/Auto-start)
+plus Identification/Advanced tabs (~53 controls, still stub); Transmit tab's Queue/TX-log/
+Recently-sent cards (100% stub, no such features exist); TX image editor's canvas-overlay safe-area/
+callsign/report-plate text (FAKE-LIVE — reads as real burned-in TX content, arguably the most
+deceptive placeholder in the app). Remaining PARTIAL: RxFrameMeta's Note `TextBox` only (needs a real
+backing field on the frame/session model — Override-callsign's twin issue closed via the QRZ lookup
+wiring).
 
 **`spec/14-roadmap.md`'s "Must-implement backlog" is the prioritized list to work from**, not the
 survey directly — the survey tells you WHAT is stub/fake, the backlog tells you what order to
@@ -136,12 +161,18 @@ Escalation path if stuck: ask the auditor; if the auditor also can't resolve it,
 
 **Next action on resume**: user said "wire what you can, check if off, then start on the items that
 need functionality" — the "wire what you can" phase is now done (Open in Log, QRZ lookup,
-Auto-stop/Auto-restart all shipped; survey doc fully current). What's left in Options is no longer
-simple wiring — every remaining stub section needs genuinely NEW backend functionality, not just a
-binding: General (window-geometry persistence, JPEG quality — blocked on PNG-only save path),
-Audio (FIFO/priority/stereo-source hooks), Radio (OmniRig/RTS-on-RX/PTT-lock), Decode (Sense-level/
-RX-BPF/Demod-type/RX-buffer), Identification (100% stub, overlaps CW-ID/FSK below), Advanced (100%
-stub, PLL/filter-tuning internals). Each is its own feature-scoping decision, not more "just wire
-it" — ask the user which section to scope/build next, or offer CW-ID/FSK (`sstv.cpp:2465-2551`'s
-STX `0x2a`, zero replacement built, user-deferred once already) as the alternative next-biggest
-unblocked item.
+Auto-stop/Auto-restart, Sense level all shipped; survey doc fully current). User picked "small
+pieces first" for the remaining Decode-tab controls: **RX BPF** (real legacy control, needs a
+`CalcBPF`-equivalent FIR-filter-preset port — `sstv.cpp:1522-1596`, 3 tap/frequency presets + OFF)
+and **Demod type** (real legacy control, needs enabling runtime dispatch between the 3
+already-ported-but-not-runtime-switchable demodulator classes in `AnalogFmSstvDecoder`'s main
+picture path — the bigger/riskier of the two, per-type sync-anchor-correction differences) are the
+next two Decode candidates, each its own scoping pass; **RX buffer** has no identified legacy
+Options-dialog precedent at all (checked directly) — likely needs correcting/repurposing before it's
+even clear what to build, not a straight port target. Beyond Decode, every other remaining Options
+section needs genuinely NEW backend functionality too: General (window-geometry persistence, JPEG
+quality — blocked on PNG-only save path), Audio (FIFO/priority/stereo-source hooks), Radio (OmniRig/
+RTS-on-RX/PTT-lock), Identification (100% stub, overlaps CW-ID/FSK below), Advanced (100% stub,
+PLL/filter-tuning internals). Ask the user which to scope/build next, or offer CW-ID/FSK
+(`sstv.cpp:2465-2551`'s STX `0x2a`, zero replacement built, user-deferred once already) as the
+alternative next-biggest unblocked item.
