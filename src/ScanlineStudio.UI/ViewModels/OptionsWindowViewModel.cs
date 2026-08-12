@@ -89,6 +89,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _autoSlantEnabled = true;
 
+    /// <summary>Legacy fresh-install default is OFF (unlike every other decoder toggle here) --
+    /// see <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.AutoStopEnabled"/>'s own doc
+    /// comment for the citation.</summary>
+    [ObservableProperty]
+    private bool _autoStopEnabled;
+
+    [ObservableProperty]
+    private bool _syncRestartEnabled = true;
+
     [ObservableProperty]
     private bool _qrzLookupEnabled;
 
@@ -228,6 +237,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         OperatorGrid = snapshot.OperatorGrid;
         AutoSyncEnabled = snapshot.AutoSyncEnabled;
         AutoSlantEnabled = snapshot.AutoSlantEnabled;
+        AutoStopEnabled = snapshot.AutoStopEnabled;
+        SyncRestartEnabled = snapshot.SyncRestartEnabled;
         QrzLookupEnabled = snapshot.QrzLookupEnabled;
         QrzLookupUsername = snapshot.QrzLookupUsername;
         QrzLookupPassword = snapshot.QrzLookupPassword;
@@ -261,6 +272,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             OperatorGrid: OperatorGrid,
             AutoSyncEnabled: AutoSyncEnabled,
             AutoSlantEnabled: AutoSlantEnabled,
+            AutoStopEnabled: AutoStopEnabled,
+            SyncRestartEnabled: SyncRestartEnabled,
             QrzLookupEnabled: QrzLookupEnabled,
             QrzLookupUsername: QrzLookupUsername,
             QrzLookupPassword: QrzLookupPassword);
@@ -344,6 +357,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         var defaults = OptionsSettingsService.Defaults;
         AutoSyncEnabled = defaults.AutoSyncEnabled;
         AutoSlantEnabled = defaults.AutoSlantEnabled;
+        AutoStopEnabled = defaults.AutoStopEnabled;
+        SyncRestartEnabled = defaults.SyncRestartEnabled;
     }
 
     [RelayCommand]

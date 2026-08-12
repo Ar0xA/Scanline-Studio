@@ -51,6 +51,11 @@ public sealed partial class OptionsSettingsService
         // record's own doc comment), so both read sites apply it identically.
         AutoSyncEnabled: new SstvDecoderSettings().AutoSyncEnabled ?? true,
         AutoSlantEnabled: new SstvDecoderSettings().AutoSlantEnabled ?? true,
+        // AutoStopEnabled's desired default is false, unlike every other decoder toggle here --
+        // see SstvDecoderSettings.AutoStopEnabled's own doc comment (legacy's real fresh-install
+        // default, sys.m_AutoStop = 0, Main.cpp:900).
+        AutoStopEnabled: new SstvDecoderSettings().AutoStopEnabled ?? false,
+        SyncRestartEnabled: new SstvDecoderSettings().SyncRestartEnabled ?? true,
         QrzLookupEnabled: new QrzLookupSettings().Enabled ?? false,
         QrzLookupUsername: new QrzLookupSettings().Username,
         QrzLookupPassword: new QrzLookupSettings().Password);
@@ -83,6 +88,8 @@ public sealed partial class OptionsSettingsService
             OperatorGrid: operatorSettings.Grid,
             AutoSyncEnabled: decoder.AutoSyncEnabled ?? true,
             AutoSlantEnabled: decoder.AutoSlantEnabled ?? true,
+            AutoStopEnabled: decoder.AutoStopEnabled ?? false,
+            SyncRestartEnabled: decoder.SyncRestartEnabled ?? true,
             QrzLookupEnabled: qrzLookup.Enabled ?? false,
             QrzLookupUsername: qrzLookup.Username,
             QrzLookupPassword: qrzLookup.Password);
@@ -119,10 +126,18 @@ public sealed partial class OptionsSettingsService
                 OperatorSettingsJsonContext.Default.OperatorSettings)
             .WithSection(
                 SstvDecoderSettings.SectionKey,
-                // AfcEnabled/SyncRestartEnabled/AutoStopEnabled are preserved as-is -- this dialog
-                // doesn't edit them yet (Options.Decode's Auto-stop/Auto-restart checkboxes stay
-                // STUB, see the GUI wiring survey's note on their label/field semantics mismatch).
-                previousDecoder with { AutoSyncEnabled = snapshot.AutoSyncEnabled, AutoSlantEnabled = snapshot.AutoSlantEnabled },
+                // AfcEnabled is preserved as-is -- this dialog has no control for it (legacy's AFC
+                // is always-on with no user-facing toggle of its own, see that field's own doc
+                // comment). AutoStopEnabled/SyncRestartEnabled wired 2026-08-12, after fixing their
+                // own loc text's field/label semantics mismatch (see OptionsWindowView.axaml's own
+                // comment at that row).
+                previousDecoder with
+                {
+                    AutoSyncEnabled = snapshot.AutoSyncEnabled,
+                    AutoSlantEnabled = snapshot.AutoSlantEnabled,
+                    AutoStopEnabled = snapshot.AutoStopEnabled,
+                    SyncRestartEnabled = snapshot.SyncRestartEnabled,
+                },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
             .WithSection(
                 QrzLookupSettings.SectionKey,

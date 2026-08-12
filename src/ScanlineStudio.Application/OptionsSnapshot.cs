@@ -25,4 +25,6 @@ public sealed record OptionsSnapshot(
     bool AutoSlantEnabled,
     bool QrzLookupEnabled,
     string? QrzLookupUsername,
-    string? QrzLookupPassword);
+    string? QrzLookupPassword,
+    bool AutoStopEnabled,
+    bool SyncRestartEnabled);
