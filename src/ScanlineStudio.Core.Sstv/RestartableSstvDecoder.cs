@@ -57,6 +57,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private readonly bool _autoSlantEnabled;
     private readonly int _senseLevel;
     private readonly DemodType _demodType;
+    private readonly RxBpfPreset _rxBpfPreset;
     private readonly long _warningThresholdSamples;
     private readonly long _criticalThresholdSamples;
     private readonly object _gate = new();
@@ -142,15 +143,32 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert)
-        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples, syncRestartEnabled, autoSyncEnabled, autoStopEnabled, autoSlantEnabled, senseLevel, stationIdDecodeEnabled, demodType)
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.RxBpfPresetForTests"/> directly -- same reasoning/shape as
+    /// <see cref="InnerDemodTypeForTests"/> above (RX BPF subsystem Phase 3, mirroring the demod-type
+    /// subsystem's own round-1 finding: without this, a dropped `rxBpfPreset` argument in
+    /// <see cref="CreateInner"/> would silently revert a user to Wide after the periodic restart
+    /// rebuild, with no test able to catch it).</summary>
+    internal RxBpfPreset InnerRxBpfPresetForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.RxBpfPresetForTests;
+            }
+        }
+    }
+
+    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide)
+        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples, syncRestartEnabled, autoSyncEnabled, autoStopEnabled, autoSlantEnabled, senseLevel, stationIdDecodeEnabled, demodType, rxBpfPreset)
     {
     }
 
     /// <summary>Test-only seam for injecting short thresholds instead of the real 12h/13h ones --
     /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
     /// trigger is sample-count-based, not wall-clock-based.</summary>
-    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert)
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide)
     {
         _afcEnabled = afcEnabled;
         _syncRestartEnabled = syncRestartEnabled;
@@ -159,6 +177,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         _autoSlantEnabled = autoSlantEnabled;
         _senseLevel = senseLevel;
         _demodType = demodType;
+        _rxBpfPreset = rxBpfPreset;
         _warningThresholdSamples = warningThresholdSamples;
         _criticalThresholdSamples = criticalThresholdSamples;
         _stationIdDecodeEnabled = stationIdDecodeEnabled;
@@ -403,7 +422,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private AnalogFmSstvDecoder CreateInner()
     {
-        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType)
+        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset)
         {
             StationIdDecodeEnabled = _stationIdDecodeEnabled,
         };

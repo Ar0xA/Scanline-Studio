@@ -167,6 +167,28 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void RxBpfPreset_ConstructorValue_SurvivesAPeriodicSwap()
+    {
+        // RX BPF subsystem Phase 3 -- same reasoning/shape as DemodType_ConstructorValue_SurvivesA
+        // PeriodicSwap above: RxBpfPreset has no public wrapper-level getter either, so the only
+        // non-vacuous way to prove it survives CreateInner's periodic rebuild is to read the LIVE
+        // inner decoder's own value directly. Without this, a dropped `rxBpfPreset` argument in
+        // CreateInner would silently revert a Narrow/VeryNarrow/Off user to Wide after every ~12h
+        // restart, with no test able to catch it. Uses Narrow (not Off) so the assertion can't pass
+        // vacuously against the parameter's own Wide default.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, rxBpfPreset: RxBpfPreset.Narrow);
+        Assert.Equal(RxBpfPreset.Narrow, decoder.InnerRxBpfPresetForTests);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        Assert.Equal(RxBpfPreset.Narrow, decoder.InnerRxBpfPresetForTests);
+    }
+
+    [Fact]
     public void StationIdDecoded_ForwardsFromTheCurrentInner()
     {
         // CW-ID/FSK station-ID subsystem Phase 5 (RestartableSstvDecoder.StationIdDecoded's own doc
