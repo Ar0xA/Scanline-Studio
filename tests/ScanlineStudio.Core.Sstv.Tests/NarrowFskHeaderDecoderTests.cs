@@ -139,18 +139,96 @@ public class NarrowFskHeaderDecoderTests
     }
 
     [Fact]
-    public void CallsignIdStxByte_0x2a_DoesNotLock_ThenAValid0x2dPacketStillLocksRightAfter()
+    public void StationIdCallsign_0x2a_NeverReturnsAModeCode_AndDoesNotLockAMode()
     {
-        // Confirms the mode-5..10 (FSK callsign-ID) carve-out is truly independent: a 0x2a STX byte
-        // is treated identically to any other unrecognized byte (reset, resume scanning), and does
-        // not leave the decoder in a bad state for the next real packet.
-        var decoder = new NarrowFskHeaderDecoder(SampleRate);
+        // Phase 3 (CW-ID/FSK station-ID subsystem): 0x2a is NO LONGER "just like any unrecognized
+        // byte" -- it now starts the station-ID sub-machine (mode 5), a real, stateful path, not a
+        // reset. A well-formed callsign packet correctly COMMITS a callsign (see
+        // NarrowFskHeaderDecoderStationIdTests) but must never produce a ModeCode -- confirms that
+        // side of the FskDecodeResult contract at this level too.
+        var decoder = new NarrowFskHeaderDecoder(SampleRate) { StationIdDecodeEnabled = true };
 
-        var callsignAttempt = FeedPacket(decoder, 0x02, stxByteOverride: 0x2a);
-        Assert.Null(callsignAttempt);
+        var result = FeedStationIdCallsignPacket(decoder, "AB");
+
+        Assert.NotNull(result);
+        Assert.Null(result!.Value.ModeCode);
+        Assert.Equal("AB", result.Value.StationIdCallsign);
+    }
+
+    [Fact]
+    public void StationIdCallsignThenClosingGuardTone_NaturallyResetsToMode0_ThenAValid0x2dPacketLocks()
+    {
+        // Legacy's real recovery mechanism after a callsign-only transmission (no NR sub-packet):
+        // TX's closing guard tone (Main.cpp:6964, FSKSPACE/FSKGARD -- a sustained space-dominant
+        // tone) decodes as a run of all-ZERO bits once mode 7 (waiting for the NR sub-packet) starts
+        // sampling it -- byte value 0 matches none of mode 7's "keep going" conditions (EOT=0x01,
+        // compact-marker=0x02, valid-NR-char>=0x10), so it falls through to the reset branch
+        // (sstv.cpp:2522-2524), naturally returning the decoder to mode 0. There is no artificial
+        // timeout; recovery is emergent from the guard tone's own bit pattern.
+        //
+        // Code-review correction: VisHeader.NarrowGuardDurationMs (100ms) alone dispatches only 5 of
+        // the 6 bits mode 7 needs (100/22 = 4.5, truncated at each 22ms boundary) -- it does NOT, by
+        // itself, complete the zero-byte dispatch that triggers the reset. This test's full recovery
+        // genuinely depends on FeedPacket's OWN guard tone below supplying the 6th bit and completing
+        // the sequence -- this is honest coupling, not a test artifact to eliminate: a real closing
+        // guard tone is immediately followed by either more of itself (as here) or the next
+        // transmission's own leader/guard, so a "fully isolated" 100ms-only test would not represent
+        // anything that happens on real air. Asserting the END-TO-END outcome (the real packet still
+        // locks) is the correct-strength claim; asserting mode 7 has already reset after exactly
+        // 100ms would not be.
+        var decoder = new NarrowFskHeaderDecoder(SampleRate) { StationIdDecodeEnabled = true };
+
+        var callsignResult = FeedStationIdCallsignPacket(decoder, "A");
+        Assert.NotNull(callsignResult);
+        Assert.Equal("A", callsignResult!.Value.StationIdCallsign);
+
+        FeedConstant(decoder, MsToSamples(VisHeader.NarrowGuardDurationMs), 0, Space);
 
         var realPacket = FeedPacket(decoder, 0x05);
         Assert.Equal(0x05, realPacket);
+    }
+
+    /// <summary>Feeds a complete, well-formed station-ID callsign packet (guard + start-bit + STX
+    /// 0x2a + callsign chars, each offset -0x20 and XORed into a running checksum + EOT + correct
+    /// checksum byte) and returns whatever <see cref="FskDecodeResult"/> the final checksum byte's
+    /// dispatch produces, if any. Independently re-derives the wire bytes from
+    /// <paramref name="callsign"/> rather than calling <c>FskStationIdEncoder</c> directly, so this
+    /// doesn't just check the decoder against its own TX-side sibling's implementation.</summary>
+    private static FskDecodeResult? FeedStationIdCallsignPacket(NarrowFskHeaderDecoder decoder, string callsign)
+    {
+        FeedGuardAndStartBit(decoder, guardMs: 100);
+
+        var checksum = 0;
+        var bytes = new List<int> { 0x2a }; // STX
+        foreach (var ch in callsign)
+        {
+            var c = ch - 0x20;
+            checksum ^= c;
+            bytes.Add(c);
+        }
+
+        bytes.Add(0x01); // EOT
+        bytes.Add(checksum);
+
+        FskDecodeResult? result = null;
+        var samplesInBit = MsToSamples(VisHeader.NarrowBitDurationMs);
+        foreach (var value in bytes)
+        {
+            for (var bitIndex = 0; bitIndex < 6; bitIndex++)
+            {
+                var bit = (value >> bitIndex) & 1;
+                for (var i = 0; i < samplesInBit; i++)
+                {
+                    var sample = bit == 1 ? decoder.ProcessSample(Mark, 0) : decoder.ProcessSample(0, Space);
+                    if (sample is not null)
+                    {
+                        result = sample;
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     [Fact]
@@ -203,7 +281,7 @@ public class NarrowFskHeaderDecoderTests
         var decoder = new NarrowFskHeaderDecoder(SampleRate);
         FeedGuardAndStartBit(decoder, guardMs: 100);
 
-        (int ModeCode, int SamplesSinceBitClockOrigin)? locked = null;
+        FskDecodeResult? locked = null;
         var stxByte = VisHeader.NarrowStxByte;
         var modeCodeByte = 0x02;
         var checksum = (modeCodeByte ^ VisHeader.NarrowMarkerByte) & 0xFF;

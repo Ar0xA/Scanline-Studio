@@ -3,6 +3,15 @@ using ScanlineStudio.Abstractions.Sstv;
 
 namespace ScanlineStudio.Core.Sstv;
 
+/// <summary>Payload for <see cref="AnalogFmSstvDecoder.StationIdDecoded"/> -- exactly one of
+/// <see cref="Callsign"/>/<see cref="CompactNr"/>/<see cref="NrText"/> is set per event, mirroring
+/// <see cref="FskDecodeResult"/>'s own station-ID fields (see that type's doc comment for why the
+/// compact-numeric and string-form NR/RST are kept separate rather than collapsed).</summary>
+public sealed record FskStationIdDecodedInfo(
+    string? Callsign = null,
+    uint? CompactNr = null,
+    string? NrText = null);
+
 /// <summary>
 /// Generic decoder counterpart to <see cref="AnalogFmSstvEncoder"/>, using a ported
 /// <see cref="HilbertFmDemodulator"/> (see that type's doc comment) run continuously over the
@@ -496,6 +505,28 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // _syncBypassProcessedUpTo/_visLockProcessedUpTo are.
     private readonly NarrowFskHeaderDecoder _narrowFskDecoder;
     private int _narrowFskProcessedUpTo;
+
+    /// <summary>Delivery channel for a decoded FSK station-ID callsign/NR-RST (legacy STX 0x2a,
+    /// `sstv.cpp:2465-2551`) -- fired from <see cref="TryNarrowFskScan"/>, which runs on whatever
+    /// thread feeds this decoder samples (the DSP/decode pipeline thread, not the UI thread).
+    /// Concurrency contract (CLAUDE.md §4): subscribers are invoked SYNCHRONOUSLY on that thread, with
+    /// no buffering and no marshaling -- a slow or blocking subscriber blocks decode. Any UI-facing
+    /// consumer (Phase 5, not built yet) must dispatch to its own thread itself, immediately, rather
+    /// than doing real work inline here.</summary>
+    public event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+
+    /// <summary>Legacy <c>m_fskdecode</c> equivalent (see <see cref="NarrowFskHeaderDecoder.StationIdDecodeEnabled"/>'s
+    /// own doc comment) -- defaults false, matching legacy's real default. Phase 4 (settings layer)
+    /// wires this to the live user setting; exposed as a property now (not deferred to Phase 4) so
+    /// both places this port constructs a <see cref="NarrowFskHeaderDecoder"/> --
+    /// <see cref="_narrowFskDecoder"/> (the persistent scan) and <see cref="TryDecodeNarrowModeHeader"/>'s
+    /// own fresh per-call instance -- stay consistent by construction rather than needing Phase 4 to
+    /// remember both separately.</summary>
+    public bool StationIdDecodeEnabled
+    {
+        get => _narrowFskDecoder.StationIdDecodeEnabled;
+        set => _narrowFskDecoder.StationIdDecodeEnabled = value;
+    }
 
     // AVT training-sequence lock (sstv.cpp cases 4-7, see AvtTrainingLockStateMachine's own doc
     // comment) -- once TryDecodeVisHeader identifies AVT from its VIS byte, resolution moves into
@@ -2333,7 +2364,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 continue;
             }
 
-            var mode = SstvModeRegistry.FindByNarrowCode(result.Value.ModeCode);
+            // Station-ID (STX 0x2a) result -- see FskDecodeResult's own doc comment. Deliberately
+            // NOT a mode lock: no Commit(), no `return true` (which would abort the caller's scan --
+            // see StationIdDecoded's own doc comment for why that would silently break AVT
+            // training/header scanning). Deliver via the event and keep scanning for more samples up
+            // to `bound`, exactly like the "unregistered mode code" case below already does.
+            if (result.Value.ModeCode is null)
+            {
+                StationIdDecoded?.Invoke(new FskStationIdDecodedInfo(
+                    result.Value.StationIdCallsign, result.Value.StationIdCompactNr, result.Value.StationIdNrText));
+                continue;
+            }
+
+            var mode = SstvModeRegistry.FindByNarrowCode(result.Value.ModeCode.Value);
             if (mode is null)
             {
                 // Unregistered mode code -- legacy resumes scanning rather than giving up
@@ -3265,7 +3308,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // itself (the case-based bit/byte state machine) stays fresh per call, matching legacy's own
         // per-attempt CSSTVDEM member state for that piece; only the two resonators feeding it are
         // shared/persistent.
-        var fskDecoder = new NarrowFskHeaderDecoder(_sampleRate);
+        var fskDecoder = new NarrowFskHeaderDecoder(_sampleRate) { StationIdDecodeEnabled = StationIdDecodeEnabled };
 
         for (var sample = headerStart; sample < availableUpTo; sample++)
         {
@@ -3278,7 +3321,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 continue;
             }
 
-            var mode = SstvModeRegistry.FindByNarrowCode(result.Value.ModeCode);
+            // A station-ID (STX 0x2a) result reaching this specific single-shot, fixed-headerStart
+            // verification is unlikely but not as vanishingly so once Phase 4 wires
+            // StationIdDecodeEnabled=true here too (a minimal callsign packet, ~600ms, fits inside
+            // this method's own ~950ms search ceiling). Unlike the "unregistered mode code" case
+            // below (a genuinely FAILED decode this method's own design deliberately doesn't retry),
+            // a station-ID result isn't a failure -- it's simply not what this method is looking for.
+            // `continue` rather than `return false` (code-review finding): a real mode-announce
+            // header could still legitimately follow later within this method's own remaining bound,
+            // and aborting early would silently lose that chance. This method still does NOT deliver
+            // station-ID events -- that's TryNarrowFskScan's persistent-scan job, not this one's.
+            if (result.Value.ModeCode is null)
+            {
+                continue;
+            }
+
+            var mode = SstvModeRegistry.FindByNarrowCode(result.Value.ModeCode.Value);
             if (mode is null)
             {
                 // Unregistered mode code -- legacy resumes scanning rather than giving up
