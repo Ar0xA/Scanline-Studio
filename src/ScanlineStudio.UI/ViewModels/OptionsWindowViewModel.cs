@@ -145,6 +145,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private int _senseLevel = 1;
 
+    /// <summary>Main-picture FM demodulator algorithm -- see
+    /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.DemodType"/>'s own doc comment for the
+    /// legacy basis and the absent-vs-out-of-range fallback (unlike <see cref="SenseLevel"/>, both
+    /// fallbacks here are the SAME value, <see cref="DemodType.Hilbert"/>, not different ones).
+    /// Backed by 3 <c>IsDemodTypeXSelected</c> computed properties below, same pattern as
+    /// <see cref="IsSenseLevelVeryLowSelected"/>/etc.</summary>
+    [ObservableProperty]
+    private DemodType _demodType = DemodType.Hilbert;
+
     [ObservableProperty]
     private bool _qrzLookupEnabled;
 
@@ -322,6 +331,46 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Backs the Decode tab's 3-way Demod type radio group -- same computed-bool-property
+    /// idiom as <see cref="IsSenseLevelVeryLowSelected"/>/etc above. Item order (0=PLL/1=Zero
+    /// crossing/2=Hilbert) matches <c>Option.dfm</c>'s real <c>RGDemType</c> item order and
+    /// <see cref="DemodType"/>'s own enum values.</summary>
+    public bool IsDemodTypePllSelected
+    {
+        get => DemodType == DemodType.Pll;
+        set
+        {
+            if (value)
+            {
+                DemodType = DemodType.Pll;
+            }
+        }
+    }
+
+    public bool IsDemodTypeZeroCrossingSelected
+    {
+        get => DemodType == DemodType.ZeroCrossing;
+        set
+        {
+            if (value)
+            {
+                DemodType = DemodType.ZeroCrossing;
+            }
+        }
+    }
+
+    public bool IsDemodTypeHilbertSelected
+    {
+        get => DemodType == DemodType.Hilbert;
+        set
+        {
+            if (value)
+            {
+                DemodType = DemodType.Hilbert;
+            }
+        }
+    }
+
     /// <summary>Backs the Identification tab's "ID method" radio group -- same computed-bool idiom
     /// as <see cref="IsSenseLevelVeryLowSelected"/>/etc above. No <c>IsIdMethodSoundFileSelected</c>
     /// counterpart -- see <see cref="CwIdMode"/>'s own doc comment for why that option's `RadioButton`
@@ -478,6 +527,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         // (see SstvDecoderSettings.SenseLevel's own doc comment for why 0, not 1, is the fallback
         // here specifically -- deliberately different from the absent-key default).
         SenseLevel = snapshot.SenseLevel is >= 0 and <= 3 ? snapshot.SenseLevel : 0;
+        // Clamp, not trust -- same reasoning as SenseLevel above, but unlike SenseLevel both
+        // fallbacks (absent AND out-of-range) resolve to the SAME value here (Hilbert), matching
+        // SstvDecoderSettings.DemodType's own doc comment, not SenseLevel's "different fallback"
+        // shape.
+        DemodType = Enum.IsDefined(snapshot.DemodType) ? snapshot.DemodType : DemodType.Hilbert;
         QrzLookupEnabled = snapshot.QrzLookupEnabled;
         QrzLookupUsername = snapshot.QrzLookupUsername;
         QrzLookupPassword = snapshot.QrzLookupPassword;
@@ -523,6 +577,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             AutoStopEnabled: AutoStopEnabled,
             SyncRestartEnabled: SyncRestartEnabled,
             SenseLevel: SenseLevel,
+            DemodType: DemodType,
             QrzLookupEnabled: QrzLookupEnabled,
             QrzLookupUsername: QrzLookupUsername,
             QrzLookupPassword: QrzLookupPassword,
@@ -629,6 +684,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         AutoStopEnabled = defaults.AutoStopEnabled;
         SyncRestartEnabled = defaults.SyncRestartEnabled;
         SenseLevel = defaults.SenseLevel;
+        DemodType = defaults.DemodType;
     }
 
     [RelayCommand]
@@ -716,6 +772,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsSenseLevelLowSelected));
         OnPropertyChanged(nameof(IsSenseLevelHighSelected));
         OnPropertyChanged(nameof(IsSenseLevelVeryHighSelected));
+    }
+
+    partial void OnDemodTypeChanged(DemodType value)
+    {
+        OnPropertyChanged(nameof(IsDemodTypePllSelected));
+        OnPropertyChanged(nameof(IsDemodTypeZeroCrossingSelected));
+        OnPropertyChanged(nameof(IsDemodTypeHilbertSelected));
     }
 
     partial void OnCaptureChannelSourceChanged(AudioChannelSource value)
