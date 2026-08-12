@@ -149,6 +149,27 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 - **Replacement**: none, and none needed — this exists in legacy specifically to work around CP932/Shift-JIS rendering requiring a matching Windows GDI font+charset pair. Scanline Studio's UI uses a fixed cross-platform font stack (`ScanlineStudio.UI`'s design tokens, `Styles/Cards.axaml`) rendered via Skia, which handles Unicode text (including Japanese) correctly without a manual charset/font-pairing step — the underlying problem this feature solves does not exist in this port's architecture.
 - **Impact**: none. No user-facing capability is lost; this is a workaround for a Windows-GDI-specific rendering limitation, not an independent feature. Not added even as a disabled Options-page placeholder (2026-08-06 pass) for this reason — it isn't a "not implemented yet," it's structurally inapplicable.
 
+## Raw-serial RTS-pin PTT keying (`Comm.cpp`'s "RTS on RX" / "PTT lock")
+
+- **Legacy**: `Comm.cpp`'s direct COM-port RTS/DTR-pin PTT toggling (`Comm.cpp:189-219`), gated by two
+  Options-dialog checkboxes: `sys.m_RTSonRX` (`Option.cpp:279/438`, `CBRTS` — "RTS mientras escanea,"
+  RTS on RX during scan) and `sys.m_TxRxLock` (`Option.cpp:278/439`, `PTTLock` — keep the serial port
+  open across TX/RX transitions instead of closing/reopening it each time). Same architectural family
+  as `cradio.cpp`'s hand-written per-rig CAT polling (the first entry in this doc) — direct,
+  application-owned serial-port control, not a request through an external CAT backend.
+- **Replacement**: `IRadioController.SetPttAsync`/`IRadioProtocol.SetPttAsync` — a single,
+  protocol-agnostic PTT command sent through whichever real CAT backend is configured (Hamlib linked
+  in-process, `rigctld`, flrig; see [[spec/03-cat-layer]]). Investigated 2026-08-12 while scoping the
+  Options Radio tab: this port never opens or manages a raw serial port for PTT itself, so there is no
+  "RTS pin" or "keep the port open across TX/RX" concept in this architecture for these two settings
+  to gate — the backend owns its own connection lifecycle entirely.
+- **Impact**: users of any Hamlib/rigctld/flrig-supported rig are unaffected — PTT keying works the
+  same way regardless of whether legacy's own RTS-pin timing quirks would have mattered. No known
+  real-world case is lost: `m_RTSonRX`'s "toggle RTS during an auto-scan" behavior and `m_TxRxLock`'s
+  "avoid the port-reopen delay/glitch on every TX/RX transition" were both workarounds for the raw
+  serial-port ownership model specifically, not independent user-facing features with their own value
+  outside that model.
+
 ## YONIQ-fork external "log connection" (raw IP:port socket)
 
 - **Legacy**: `Option.cpp`'s `GroupBox1`/`CheckBox1`/`Edit1`/`Edit2` (`FormShow`/`CheckBox1Click`/`FormCloseQuery`) — a YONIQ-fork-specific (not stock MMSSTV) toggle connecting `Mmsstv->ClientSocket1` to a user-entered IP:port, persisting `logconect`/`logip`/`logport` to a memo-backed config. No protocol documentation, message format, or companion-application identity exists anywhere in the available legacy source — the socket is opened and left connected, with no visible read/write logic beyond the connect toggle itself.

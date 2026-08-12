@@ -423,11 +423,13 @@ Window-level Save/Cancel/Reset-ALL machinery is REAL throughout (`SaveCommand` p
 | Control | Class | File:line | Note |
 |---|---|---|---|
 | Backend radio buttons (None/rigctld/Hamlib) | REAL | `OptionsWindowView.axaml:194,198,202` | `IsNoneBackendSelected`/`IsRigctldBackendSelected`/`IsHamlibBackendSelected`, all 3 backends genuinely registered in DI. |
-| OmniRig radio button | STUB | `OptionsWindowView.axaml:208-209` | `IsEnabled="False"` — documented as "speculative/not yet designed" 5th backend. |
+| OmniRig radio button | STUB | `OptionsWindowView.axaml:208-209` | `IsEnabled="False"` — documented as "speculative/not yet designed" 5th backend ([[docs/removed-features]]'s "OmniRig ActiveX/COM integration" entry covers this fully). Correctly stays stub, not a gap. |
 | rigctld Host/Port | REAL | `OptionsWindowView.axaml:215,219` | `RigctldHost`/`RigctldPort`, persisted. |
 | Hamlib Model/Serial-port/Baud-rate/PTT-type | REAL | `OptionsWindowView.axaml:227,233,238,244` | All 4 persisted. |
-| RTS-on-RX / PTT-lock checkboxes | STUB | `OptionsWindowView.axaml:254,257` | Both `IsEnabled="False"` — no PTT-during-RX control surface on `IRadioController` yet. Now `IndustryCheckBoxTheme`. |
+| RTS-on-RX / PTT-lock checkboxes | STUB | `OptionsWindowView.axaml:254,257` | `IsEnabled="False"`. **Investigated 2026-08-12, correctly stays stub, not a gap**: both gate legacy's raw-serial RTS-pin PTT keying (`Comm.cpp`), the same "hand-written per-rig protocol code" family CLAUDE.md §2 already excludes from this port. This port's real PTT path (`IRadioController.SetPttAsync`) goes through Hamlib/rigctld/flrig, which own their connection lifecycle entirely — there is no raw-serial-port concept for these two settings to gate here. New [[docs/removed-features]] entry added ("Raw-serial RTS-pin PTT keying"). |
 | Reset section | REAL | `OptionsWindowView.axaml:264` | `ResetRadioToDefaultCommand`. |
+
+**Radio tab fully scoped, nothing new to wire** — every real, applicable control here is already REAL; the 3 remaining STUB controls (OmniRig, RTS-on-RX, PTT-lock) all correctly stay stub (one is a real-but-not-yet-built future backend, two are obsolete raw-serial concepts already superseded by the real CAT-backend PTT path) — confirmed via direct investigation, not left stub by default/oversight.
 
 ### Tx tab
 
