@@ -162,6 +162,10 @@ internal static partial class Program
             // AnalogFmSstvDecoder's own ctor (`senseLevel is >= 0 and <= 3 ? senseLevel : 0`,
             // matching sstv.cpp:1811-1815's SetSenseLvl `default:` arm).
             var demodType = decoderSettings.DemodType is { } dt && Enum.IsDefined(dt) ? dt : DemodType.Hilbert;
+            // Same absent-or-out-of-range clamp shape as demodType above (Wide is legacy's real
+            // compiled-in default, sstv.cpp:1416 -- see SstvDecoderSettings.RxBpfPreset's own doc
+            // comment for why the out-of-range half is a deliberate divergence, not a replicated bug).
+            var rxBpfPreset = decoderSettings.RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : RxBpfPreset.Wide;
             return new RestartableSstvDecoder(
                 afcEnabled: decoderSettings.AfcEnabled ?? true,
                 syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true,
@@ -169,7 +173,8 @@ internal static partial class Program
                 autoStopEnabled: decoderSettings.AutoStopEnabled ?? false, // legacy fresh default is OFF (Main.cpp:900), unlike the other four
                 autoSlantEnabled: decoderSettings.AutoSlantEnabled ?? true,
                 senseLevel: decoderSettings.SenseLevel ?? 1,
-                demodType: demodType);
+                demodType: demodType,
+                rxBpfPreset: rxBpfPreset);
         });
         hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
         hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));

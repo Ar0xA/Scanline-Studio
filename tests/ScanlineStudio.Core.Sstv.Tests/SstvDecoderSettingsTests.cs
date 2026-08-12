@@ -101,4 +101,57 @@ public sealed class SstvDecoderSettingsTests
         var resolved = roundTripped.DemodType is { } dt && Enum.IsDefined(dt) ? dt : DemodType.Hilbert;
         Assert.Equal(DemodType.Hilbert, resolved);
     }
+
+    [Fact]
+    public void RoundTripsThroughItsJsonContext_RxBpfPreset()
+    {
+        var settings = new SstvDecoderSettings { RxBpfPreset = RxBpfPreset.Narrow };
+
+        var json = JsonSerializer.Serialize(settings, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        var roundTripped = JsonSerializer.Deserialize(json, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+
+        Assert.Equal(settings, roundTripped);
+    }
+
+    [Fact]
+    public void MissingRxBpfPresetDeserializesToNull_NotWide()
+    {
+        // Same STJ property-default-loss trap as AfcEnabled/DemodType above -- an existing
+        // settings.json predating this field must deserialize as "unset" (later defaulted to Wide at
+        // the Program.cs read site), not silently materialize a non-null default here.
+        var roundTripped = JsonSerializer.Deserialize("{}", SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+
+        Assert.NotNull(roundTripped);
+        Assert.Null(roundTripped.RxBpfPreset);
+    }
+
+    [Fact]
+    public void DefaultInstance_RxBpfPresetFallsBackToWide_MatchingProgramCsReadSite()
+    {
+        // Same "freshly-defaulted instance" scenario as AfcEnabled/DemodType's own sibling tests above.
+        var settings = new SstvDecoderSettings();
+
+        Assert.Equal(RxBpfPreset.Wide, settings.RxBpfPreset ?? RxBpfPreset.Wide);
+    }
+
+    [Fact]
+    public void OutOfRangeRxBpfPreset_DeserializesAsIs_ReachingProgramCsClampUnvalidated()
+    {
+        // Same discipline as DemodType's own sibling test above -- not a tautology asserting a ternary
+        // this test writes itself, but proof that STJ's source-generated enum converter does NOT
+        // itself reject/clamp an out-of-range integer on deserialize, so Program.cs's Enum.IsDefined
+        // check is the only thing standing between a hand-edited settings.json and an invalid enum
+        // value reaching the decoder constructor.
+        var roundTripped = JsonSerializer.Deserialize("{\"RxBpfPreset\":99}", SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+
+        Assert.NotNull(roundTripped);
+        Assert.NotNull(roundTripped.RxBpfPreset);
+        Assert.False(Enum.IsDefined(roundTripped.RxBpfPreset!.Value));
+        Assert.Equal((RxBpfPreset)99, roundTripped.RxBpfPreset!.Value);
+
+        // Program.cs's exact clamp expression (decoderSettings.RxBpfPreset is { } bpf &&
+        // Enum.IsDefined(bpf) ? bpf : RxBpfPreset.Wide), applied to this real deserialized value.
+        var resolved = roundTripped.RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : RxBpfPreset.Wide;
+        Assert.Equal(RxBpfPreset.Wide, resolved);
+    }
 }
