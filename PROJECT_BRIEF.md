@@ -65,10 +65,48 @@ after Phase 4. Nothing left on this subsystem's plan
 **Not yet pushed** — all of the above (CW-ID/FSK, demod-type, RX BPF) committed locally to `master`,
 push not yet requested/confirmed this session.
 
+## RX buffer subsystem — IN PROGRESS (started 2026-08-13)
+
+Full plan at `/home/artien/.claude/plans/coppery-staging-heron.md` — 2 rounds of plan-review before
+implementation started (round 1 found real blockers: a missing decode-path gating site the port had
+already hardcoded with a now-stale comment, an unscoped prerequisite routine, and a wrong staging-buffer
+data model; round 2 confirmed the revised plan ready). User confirmed full scope (all 5 legacy pieces:
+RAM staging buffer, replay mechanism, decode-path Auto-Sync gating, disk-backed Extended mode, the
+"Correct Slant" search algorithm) — biggest subsystem in this project's history, 9 phases.
+
+- **Phase 1-2 — DONE, committed (`aa67fc5`)**: `RxBufferMode` enum (Off/On/Extended, mirrors
+  `RxBpfPreset`/`DemodType`'s shape) threaded through `SstvDecoderSettings`/`RestartableSstvDecoder`/
+  `AnalogFmSstvDecoder`'s constructor. Deliberately inert at this point — no decode-path logic read it
+  yet. 1 auditor code-review round, clean.
+- **Phase 3 — DONE, committed (`ca873cd`)**: the decode-path gating fix. Two sites in
+  `AnalogFmSstvDecoder` previously assumed `sys.m_UseRxBuff` was always true (`TryAutoSync`'s branch
+  1/branch 2, `Main.cpp:3907`/`:3945`; `TryResolveSyncAnchorCorrection`'s averaging-depth selection,
+  `Main.cpp:3760`) now gate on the real `RxBufferMode` value — a genuine decode-behavior change reachable
+  the moment `Off` is selectable, independent of the still-unbuilt buffer/replay. 3 auditor code-review
+  rounds (round 1: loop-exit bug + missing branch-1 test; round 2: the added test didn't actually
+  isolate branch 1 — structurally preempted by branch 2, caught and documented rather than chased
+  further; round 3: softened an overclaimed "not constructible" comment). New test file
+  `RxBufferModeGatingTests.cs`. Full suite green throughout (814/814 final).
+- **Phase 4 (next)** — staging buffer data structure: a flat, capacity-capped, chronologically-ordered
+  store of two parallel sample streams (demod-frequency + sync-envelope), NOT per-line chunks (this was
+  round-1 plan-review's key correction — legacy's replay re-splits a flat stream using the CURRENT
+  corrected timing, not the capture-time stride).
+- **Phase 5** — wire capture into the per-line loop (inert, zero decode-behavior change, proven via
+  full-suite regression).
+- **Phase 6 (the crux)** — replay mechanism. Plan doc already carries 5 open blockers forward verbatim
+  into this phase's own required 2-round plan-review (uniform-vs-accumulated stride, sample-count-vs-
+  row-count replay bound, origin shear, `_bufferBase` clamp hazard on re-anchor, and an unresolved
+  contradiction over whether replay re-feeds `TryAutoSync`/`AutoStopJob` at all) — do not start Phase 6
+  without running that plan-review first.
+- **Phase 7** — disk-backed Extended mode. **Phase 8** — "Correct Slant" (`KRCS`) one-shot search.
+  **Phase 9** — Options dialog UI wiring (`RGRBuf` stub already exists, wrong default like RX BPF's own
+  stub had).
+
+Not yet pushed, same as CW-ID/FSK/demod-type/RX BPF above.
+
 ## Other deferred items (scoped, not started — full citations in the docs named)
 
-- **RX buffer** (Decode tab) — needs a whole buffered-line-replay subsystem built first; wiring the
-  UI control alone today would be a fake no-op.
+- **RX buffer** — superseded, see the dedicated in-progress section above, not a backlog item anymore.
 - **Auto-start** (Decode tab) — needs a design pass to find the right internal "disarmed, still
   live" gating point across multiple sync-detection branches.
 - **Advanced tab** — PLL/Zero-crossing tuning controls now have a real backend (demod-type subsystem)
