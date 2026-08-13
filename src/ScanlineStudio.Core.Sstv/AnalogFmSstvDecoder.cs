@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 
@@ -136,10 +137,29 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // RX buffer subsystem Phase 2: threaded through the constructor (mirrors _demodType/_rxBpfPreset's
     // own shape). Phase 3 wired it into real decode-path gating -- TryAutoSync's branch 1/2 conditions
     // (Main.cpp:3907/:3945) and TryResolveSyncAnchorCorrection's averaging-depth selection
-    // (Main.cpp:3760) -- see those methods' own doc comments for the citation trail. Phase 4+ (still
-    // unbuilt) adds the staging buffer/replay mechanism itself; this field's read sites will grow then,
-    // not shrink.
+    // (Main.cpp:3760) -- see those methods' own doc comments for the citation trail. Phase 5 (below)
+    // wires the RAM staging buffer itself for RxBufferMode.On specifically -- Extended's disk-backed
+    // capture is still unbuilt (Phase 7), so this field alone does NOT fully determine whether
+    // _rxLineStagingBuffer is non-null; see that field's own doc comment.
     private readonly RxBufferMode _rxBufferMode;
+
+    // RX buffer subsystem Phase 5: null for RxBufferMode.Off AND RxBufferMode.Extended (Extended's own
+    // disk-backed capture is a separate, still-unbuilt mechanism, Phase 7 -- NOT the same as
+    // TryAutoSync/TryResolveSyncAnchorCorrection's own `_rxBufferMode != Off` gating in Phase 3, which
+    // treats On and Extended identically; this field specifically is RAM-mode-only, `== On`).
+    // Constructed once, capacity fixed for this decoder's lifetime (mirrors _searchBandpassFilter's own
+    // null-for-bypass shape). Captured samples currently go nowhere except this buffer -- Phase 6 (not
+    // yet built) is what will ever read them back.
+    private readonly RxLineStagingBuffer? _rxLineStagingBuffer;
+
+    // In-progress accumulator for the CURRENT (not-yet-complete) line, since ApplySlantTracking's own
+    // per-sample loop can pause mid-line across multiple PushSamples calls (bounded by _consumedSamples,
+    // which only advances one line at a time) -- these must be fields, not method-locals, to survive
+    // across those calls. Always allocated (even when _rxLineStagingBuffer is null) to keep the capture
+    // hook itself branch-free except for the one null-check that actually matters; cost is negligible
+    // (empty lists) when capture is off.
+    private readonly List<double> _rxBufferLineDemod = new();
+    private readonly List<double> _rxBufferLineSync = new();
 
     // Band-1 S2 fix (pre-Phase-2 audit): the absolute sample index _rawSamples[0]/_demodulatedFrequencies[0]/
     // _agcSamples[0]/_agcCurMaxSamples[0]/_bandpassFilteredSamples[0] currently correspond to -- 0
@@ -696,6 +716,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             ? null
             : new SearchBandpassFilter(sampleRate, rxBpfPreset, syncRestartEnabled);
         _rxBufferMode = rxBufferMode;
+        // RX buffer subsystem Phase 5: RAM-mode capture only (`== On`, not `!= Off`) -- Extended's own
+        // disk-backed staging is a separate, still-unbuilt mechanism (Phase 7). Constructed against
+        // `sampleRate`, this class's own NOMINAL sample-rate parameter (never a slant/AFC-corrected
+        // rate) -- see RxLineStagingBuffer's own constructor doc comment for why that distinction
+        // matters for its capacity formula.
+        _rxLineStagingBuffer = rxBufferMode == RxBufferMode.On ? new RxLineStagingBuffer(sampleRate) : null;
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _syncBypass1900Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
@@ -2148,12 +2174,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 // for Auto Slant (matching legacy's own per-line m_KSB recompute-on-slant-change,
                 // Main.cpp:4015/:5900-5903). lineEndSampleExclusive is this line's own extent, used
                 // only by the (currently unreachable at every real mode) line-end guard.
+                //
+                // RX buffer subsystem Phase 5 finding: `RxBufferMode.Extended` disables peak-picking
+                // for EVERY mode/channel, not just Scottie DX. Legacy's own `GetPictureLevel`/
+                // `GetPictureLevelDiff` (Main.cpp:4058-4084, this port's own ReadPeakPicked/its diff
+                // sibling) both gate the KSB peek-ahead comparison on `sys.m_UseRxBuff != 2`: under
+                // Extended, `d = GetPixelLevel(ip)` unconditionally (bare, no peek), for every one of
+                // their real call sites in the live per-line draw dispatch (Main.cpp:4230/:4251/:4267/
+                // :4280/:4330/:4385/:4420/:4437/:4459/:4470/:4481) -- NOT only a replay-path detail.
+                // The RX buffer plan's own "out of scope, C++ pointer-arithmetic safety detail" framing
+                // for this was WRONG (round-1 code-review finding on this phase): it's a real,
+                // observable pixel-level decode divergence, reachable today since RxBufferMode.Extended
+                // has been selectable since Phase 2/3. Folds cleanly into the SAME `neverPeakPicks`
+                // mechanism Scottie DX's own existing exclusion already uses (PixelSampleReader's own
+                // `_neverPeakPicks` field, already unit-tested in isolation) -- OR'd together, not a
+                // separate code path.
                 var reader = new PixelSampleReader(
                     index => DemodulatedFrequencyAt(Math.Clamp(index, _bufferBase, TotalSamplesReceived - 1)),
                     SstvModeRegistry.GetKsbSamples(mode, effectiveSampleRate),
                     nextLineStartSample,
                     mode.LuminanceMinHz,
-                    SstvModeRegistry.NeverPeakPicks(mode));
+                    SstvModeRegistry.NeverPeakPicks(mode) || _rxBufferMode == RxBufferMode.Extended);
 
                 lineDecoder.DecodeLine(mode, effectiveSampleRate, _consumedSamples, _nextLine, reader, pixels);
                 _idealLineStartSample += _effectiveSamplesPerLine;
@@ -4115,6 +4156,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// Same reasoning as <see cref="DemodTypeForTests"/>/<see cref="RxBpfPresetForTests"/> above.</summary>
     internal RxBufferMode RxBufferModeForTests => _rxBufferMode;
 
+    /// <summary>Test-only visibility into the RX buffer subsystem's own RAM staging buffer -- null
+    /// unless <see cref="RxBufferMode.On"/> was selected (see <see cref="_rxLineStagingBuffer"/>'s own
+    /// doc comment for why <see cref="RxBufferMode.Extended"/> does NOT also produce a non-null value
+    /// here). Production code has no need to read this back yet (Phase 6, not yet built, is the first
+    /// production reader).</summary>
+    internal RxLineStagingBuffer? RxLineStagingBufferForTests => _rxLineStagingBuffer;
+
     /// <summary>Test-only visibility into the Auto-Slant sync-envelope detector -- the one AFC
     /// retunes (ultracode audit finding #1). Null until <see cref="InitializeSlant"/> runs for a
     /// non-AVT mode.</summary>
@@ -4386,8 +4434,25 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _slantLineEnvelopeSeeded = false;
         _slantLinePeakPosition = 0;
 
+        // RX buffer subsystem Phase 5: fresh-lock reset, mirrors legacy's own `dp->m_wStgLine = 0`
+        // (Main.cpp:4958) -- unconditional, before the AVT early-return below, matching every other
+        // per-line-accounting reset on this method's own first few lines. Any partial in-progress line
+        // from a just-abandoned prior reception is discarded, not carried into the new lock.
+        _rxLineStagingBuffer?.Clear();
+        _rxBufferLineDemod.Clear();
+        _rxBufferLineSync.Clear();
+
         if (mode == SstvModeRegistry.Avt)
         {
+            // AVT is not captured -- ApplySlantTracking (this class's own capture hook, see its doc
+            // comment) no-ops entirely for AVT via the _slantTracker-null check below, matching every
+            // other Auto-Slant-adjacent feature's own established AVT exclusion in this port (Auto
+            // Sync, Auto Slant, manual ReSync all already exclude AVT the same way). A real, documented
+            // scope gap, not silently dropped: legacy's own capture is NOT AVT-gated (it happens in the
+            // general per-line draw loop, Main.cpp:4996-5013, before any Auto-Slant-family dispatch) --
+            // this port's AVT-exclusion-by-construction is narrower than legacy's real capture scope.
+            // Revisit if/when a concrete AVT-replay use case appears; not chased further here per this
+            // project's own scope discipline.
             _syncEnvelopeDetector = null;
             _slantTracker = null;
             return;
@@ -4431,6 +4496,52 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // 1900) -- the exact same d12/d19 values already computed once per sample ahead of the
             // switch(m_SyncMode) dispatch (sstv.cpp:1841-1853), not a separately-scaled reading.
             var envelope = _syncEnvelopeDetector!.ProcessSample(AgcSampleAt(_slantProcessedUpTo));
+
+            // RX buffer subsystem Phase 5: capture hook. Mirrors legacy's own per-sample write into
+            // m_StgBuf/m_StgB12 (Main.cpp:4996-5013) -- demod-stream half from DemodulatedFrequencyAt
+            // (this port's m_Buf equivalent, already AFC-corrected by the time this line reaches here,
+            // see RxLineStagingBuffer's own doc comment on why that's the legacy-correct capture
+            // point), sync-stream half from `envelope` just computed above (this port's m_StgB12
+            // equivalent -- reused directly, NOT a second SyncEnvelopeDetector call, which would
+            // double-process a streaming filter that must see each sample exactly once).
+            //
+            // Round-1 code-review correction: an earlier version of this comment claimed
+            // DemodulatedFrequencyAt(_slantProcessedUpTo) is always a pure cache read because
+            // `DecodeLine` (via PixelSampleReader) has already computed every index in this line --
+            // WRONG. PixelSampleReader.ReadBare/ReadPeakPicked only ever read at PIXEL-START indices
+            // (spaced `KsbSamples`-ish apart), not every sample -- DecodeLine leaves a real gap of
+            // uncomputed indices at the tail of most lines. The actual guarantee this loop relies on is
+            // `ApplyAfcCorrections(nextLineStartSample)` (called earlier in TryProcessBuffer's own
+            // per-line loop, before DecodeLine), whose own loop DOES call DemodulatedFrequencyAt for
+            // EVERY index up to its bound -- but only when (a) `_afcTracker is not null` (false when
+            // this decoder is constructed with `afcEnabled: false`, a real user setting) AND (b)
+            // `nextLineStartSample &lt;= _afcBoundSample` (can fail on the trailing lines of an image
+            // after an Auto-Slant commit lengthens the per-line stride). Outside those two conditions,
+            // THIS loop can be the first toucher of a line's tail samples -- still safe in the sense
+            // that DemodulatedFrequencyAt's own strict-monotonic-first-touch contract is preserved (no
+            // double-computation, no corrupted streaming-filter state). Round-3 code-review correction:
+            // an earlier version of this comment additionally claimed the first-touch timing could
+            // change `useLocked` (this line's own bandpass-filter selection) -- WRONG. This SAME loop
+            // already calls `AgcSampleAt(_slantProcessedUpTo)` one line above (feeding `envelope`),
+            // which settles `BandpassFilteredSampleAt`/`useLocked` for that exact index UNCONDITIONALLY,
+            // in every RxBufferMode -- so by the time this hook's own DemodulatedFrequencyAt call runs,
+            // `useLocked` for this sample is already fixed, regardless of whether capture is on. The
+            // real, narrower residual risk is `isNarrow` (`DemodulatedFrequencyAt`'s own
+            // `thisIndex >= _bandpassLockedFromSample` check): constant for the whole of an ordinary
+            // image, but a mid-image restart landing on a NARROW mode could in principle put this loop's
+            // own first-touch on the wrong side of that check versus a run where capture is off and
+            // touches those same indices later, after the restart's own re-anchor. Untested (this port's
+            // own narrow-mode H3/HBPFN gap already puts that combination outside today's fixture
+            // coverage) -- flagged, not fixed, here.
+            //
+            // Buffered per-sample in _rxBufferLineDemod/_rxBufferLineSync (fields, not locals -- this
+            // loop can pause mid-line across PushSamples calls) and flushed to _rxLineStagingBuffer as
+            // one atomic line once this line completes, below.
+            if (_rxLineStagingBuffer is not null)
+            {
+                _rxBufferLineDemod.Add(DemodulatedFrequencyAt(_slantProcessedUpTo));
+                _rxBufferLineSync.Add(envelope);
+            }
 
             // Auto Sync's own (m_SyncMax-m_SyncMin)>5000 gate needs both a running max AND min per
             // line (Main.cpp:4193/4196/4200-4201) -- legacy seeds BOTH from the line's first sample
@@ -4573,6 +4684,21 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                         // already confirmed was the right call regardless.
                     }
                 }
+            }
+
+            // RX buffer subsystem Phase 5: flush this now-completed line to the staging buffer, one
+            // atomic TryAppendLine call per line (matching legacy's own per-line, not per-sample,
+            // buffer-full admission test). Runs regardless of which branch above fired (suppressed,
+            // history-only, or a real ProcessLine commit) -- legacy's own capture (Main.cpp:4996-5013)
+            // happens unconditionally in the general per-line draw loop too, before any Auto-Slant-
+            // family branching. A rejected (buffer-full) append is silently dropped, matching
+            // RxLineStagingBuffer's own documented "capture simply stops" behavior -- nothing here
+            // needs to react to the return value.
+            if (_rxLineStagingBuffer is not null)
+            {
+                _rxLineStagingBuffer.TryAppendLine(CollectionsMarshal.AsSpan(_rxBufferLineDemod), CollectionsMarshal.AsSpan(_rxBufferLineSync));
+                _rxBufferLineDemod.Clear();
+                _rxBufferLineSync.Clear();
             }
 
             _slantIdealSamplesSoFarInLine -= completedLineSamples; // carry remainder against the OLD samples-per-line -- keeps line boundaries from drifting
