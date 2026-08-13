@@ -372,6 +372,39 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
 
     private SyncEnvelopeDetector? _syncEnvelopeDetector;
     private SlantTracker? _slantTracker;
+    private int? _lastReplayOriginForTests; // RX buffer subsystem Phase 6c -- set inside PerformReplay, test-only
+    // RX buffer subsystem Phase 6c round-2 code-review fix (round-3 correction: this is a RUNNING
+    // OFFSET, not a fixed anchor -- see below): the value such that `_consumedSamples -
+    // _rxBufferAnchorSample == (a raw-sample-equivalent count of everything staged in
+    // _rxLineStagingBuffer, plus whatever's been consumed live but not yet flushed there)`. Set
+    // initially to _consumedSamples's own value at the moment the buffer is Clear()ed (InitializeSlant),
+    // matching "local index 0 corresponds to THIS raw sample" at that instant -- but that identity only
+    // holds as long as every unit _consumedSamples advances by is EITHER eventually staged OR explicitly
+    // compensated for here. DrainPendingSkip's own per-sample skip loop advances this field by 1 per
+    // skipped sample, keeping the invariant true across a manual-ReSync-driven skip. Round-4 code review
+    // correction: PerformReplay's own forward cursor jump does NOT advance this field additively anymore
+    // (an earlier, round-3 version of this fix did) -- round-4's own two-pass trace found the additive
+    // fix kept this COUNT invariant true while leaving the staging buffer PHYSICALLY discontinuous (the
+    // jumped samples are never staged, but the flat buffer has no gap marker), so a SECOND replay pass
+    // would read straight across the splice as if it were continuous audio. PerformReplay now truncates
+    // the staging buffer at its own jump instead (see that method's own doc comment), which makes a
+    // direct re-anchor (`_rxBufferAnchorSample = _consumedSamples`) the correct operation there, not an
+    // additive one -- the buffer is empty again, so "local index 0" genuinely IS "this raw sample" once
+    // more, the same identity InitializeSlant establishes at a fresh lock. Deliberately NOT derived from
+    // _consumedSamples/_rxBufferLineDemod.Count/stagedSampleCount at read time, which round-1 code
+    // review found silently decouples from the true anchor once TryAppendLine starts rejecting lines at
+    // capacity (ApplySlantTracking still clears the per-line capture accumulators on a rejected append --
+    // see that method's own capture-flush hook).
+    private int _rxBufferAnchorSample;
+    // RX buffer subsystem Phase 6c round-4 fix, companion to _rxBufferAnchorSample: the TRANSMISSION-LINE
+    // index (not bitmap row -- multiply by RowsPerTransmissionLine at use, matching _nextLine's own
+    // reconciliation convention) of the image row that staged index 0 currently corresponds to. Zero
+    // from a fresh lock (InitializeSlant, which Clear()s the buffer at the image's own first line), and
+    // re-based by PerformReplay every time it truncates the staging buffer at its own forward cursor
+    // jump. Without this, PerformReplay's own row loop -- which otherwise hard-assumes staged index 0 is
+    // always image row 0, true only for an untruncated buffer -- would stamp mid-image content into rows
+    // 0..N on every replay pass after the first truncation.
+    private int _rxBufferBaseTransmissionLine;
     private int _slantProcessedUpTo;
     private double _effectiveSamplesPerLine;
     private double _syncSegmentOffsetSamples;
@@ -1694,6 +1727,39 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         return (int)syncPeakOffsetSamples;
     }
 
+    // RX buffer subsystem Phase 6c: a second, deliberately-duplicated copy of
+    // ComputeSyncPeakOffsetSamples's own pre-sync-segment-offset loop -- same reasoning as that
+    // method's own doc comment for why it doesn't share code with TryResolveSyncAnchorCorrection
+    // (small, read-only, already-audited; touching it carries more risk than a few duplicated lines).
+    // Two real differences from ComputeSyncPeakOffsetSamples, both required by
+    // ReplayOriginCalculator.ComputeOrigin's own documented contract: (1) takes the CORRECTED rate as
+    // a parameter, not this decoder's own nominal `_sampleRate` -- legacy's own `SSTVSET.m_OFP` is
+    // recomputed by `CSSTVSET::SetSampFreq()` (sstv.cpp:655-965's per-mode switch, every arm literally
+    // `m_OFP = X_ms * m_SampFreq / 1000.0`) using whatever `m_SampFreq` SetSampFreq was just called
+    // with -- for a replay pass that's the JUST-CORRECTED rate (Main.cpp:5586's SetSampFreq() call,
+    // immediately after a slant commit), never the nominal device rate `ComputeSyncPeakOffsetSamples`
+    // uses for its own, different call site (the VIS-lock anchor, computed before any slant correction
+    // exists to apply -- see ReplayOriginCalculator.ComputeOrigin's own `sampleRate` parameter doc
+    // comment). (2) returns the UNTRUNCATED double, not `(int)`-cast here -- ReplayOriginCalculator.
+    // AdjustPosition's own truncation-order requirement (its own doc comment) needs the full-precision
+    // value, truncating only once it's combined with the histogram argmax bin, not before.
+    private static double ComputeUntruncatedSyncPeakOffsetSamples(SstvModeDefinition mode, double sampleRate)
+    {
+        var targetToneHz = mode.NarrowModeCode is not null ? 1900.0 : 1200.0;
+        var preSyncSegmentOffsetMs = 0.0;
+        foreach (var segment in mode.LineSegments)
+        {
+            if (segment is SyncSegment syncSegment && syncSegment.FrequencyHz == targetToneHz)
+            {
+                break;
+            }
+
+            preSyncSegmentOffsetMs += segment.DurationMs;
+        }
+
+        return (preSyncSegmentOffsetMs + SstvModeRegistry.GetSyncPeakOffsetMs(mode)) / 1000.0 * sampleRate;
+    }
+
     // Legacy's m_Skip drain (sstv.cpp:2271-2274): while m_Skip > 0 it decrements once per INCOMING
     // sample and drops that sample, so a skip larger than one audio callback's worth of samples
     // inherently spans several callbacks. This port advances the READ cursor instead of dropping
@@ -1746,6 +1812,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             _consumedSamples++;
             _idealLineStartSample += 1.0;
             _slantProcessedUpTo = _consumedSamples;
+            _rxBufferAnchorSample++; // RX buffer subsystem Phase 6c round-3 fix -- see this field's own doc comment: a skipped sample advances _consumedSamples without ever being staged, so the anchor must advance too or PerformReplay's own resumeDest overshoots by the skip amount
+
+            // Round-5 code-review known, deferred gap (same defect CLASS PerformReplay's own jump had
+            // before its round-4 truncation fix, in a sibling path): this additive-only anchor
+            // adjustment keeps the sample-COUNT invariant correct, but -- like the pre-round-4 replay
+            // jump -- leaves RxLineStagingBuffer's own flat, contiguous list with a mid-buffer HOLE (the
+            // skipped samples are never staged), which a later replay pass would read straight across.
+            // NOT fixed here: unlike the replay jump (which lands exactly on a destination-row boundary,
+            // making a clean truncation trivial), a manual-ReSync-driven skip can land mid-row, so the
+            // SAME truncate-and-rebase fix doesn't drop in cleanly. Currently unreachable in practice
+            // (Auto-Sync's own branch-1 trigger requires RxBufferMode != Off, but any skip that also
+            // sets _slantCorrectionsDisabledForRestOfImage -- see ApplySyncCorrection -- disables the
+            // Auto-Slant correction branch for the rest of the image, and replay has no production
+            // caller at all yet) -- but a manual "re-apply corrected rate" UI trigger, if Phase 6d or a
+            // later phase adds one, would make this reachable. Must be resolved (or the same reachability
+            // argument re-verified) before any manual redraw trigger ships, not silently assumed safe.
             _pendingSkipSamples--;
         }
     }
@@ -4167,6 +4249,30 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// production reader).</summary>
     internal RxLineStagingBuffer? RxLineStagingBufferForTests => _rxLineStagingBuffer;
 
+    /// <summary>Test-only visibility into the output-row cursor (<see cref="_nextLine"/>, in BITMAP
+    /// ROWS -- 2x transmission-line count for paired-channel modes, see <see cref="PerformReplay"/>'s
+    /// own reconciliation doc comment). RX buffer subsystem Phase 6c: lets a test verify
+    /// <see cref="PerformReplay"/>'s own reconciliation independently of trusting its internals.</summary>
+    internal int NextLineForTests => _nextLine;
+
+    /// <summary>Test-only visibility into the signed replay origin <see cref="PerformReplay"/> most
+    /// recently computed (<see cref="ReplayOriginCalculator.ComputeOrigin"/>'s own return value) -- null
+    /// until the first replay pass runs. RX buffer subsystem Phase 6c.</summary>
+    internal int? LastReplayOriginForTests => _lastReplayOriginForTests;
+
+    /// <summary>Test-only visibility into <see cref="_rxBufferAnchorSample"/> -- RX buffer subsystem
+    /// Phase 6c round-4: lets a test confirm the invariant that field's own doc comment states
+    /// (<c>_consumedSamples - _rxBufferAnchorSample == staged + in-flight</c>) directly, e.g. that it
+    /// equals <see cref="ConsumedSamplesForTests"/> immediately after a <see cref="PerformReplay"/>
+    /// truncation (staged + in-flight == 0 right then).</summary>
+    internal int RxBufferAnchorSampleForTests => _rxBufferAnchorSample;
+
+    /// <summary>Test-only visibility into <see cref="_rxBufferBaseTransmissionLine"/> -- RX buffer
+    /// subsystem Phase 6c round-4: lets a test confirm it tracks <see cref="NextLineForTests"/> (divided
+    /// by <c>RowsPerTransmissionLine</c>) after a <see cref="PerformReplay"/> truncation, the invariant
+    /// that keeps a SECOND replay pass's own row loop stamping pixels into the correct image rows.</summary>
+    internal int RxBufferBaseTransmissionLineForTests => _rxBufferBaseTransmissionLine;
+
     /// <summary>Test-only visibility into the Auto-Slant sync-envelope detector -- the one AFC
     /// retunes (ultracode audit finding #1). Null until <see cref="InitializeSlant"/> runs for a
     /// non-AVT mode.</summary>
@@ -4445,6 +4551,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _rxLineStagingBuffer?.Clear();
         _rxBufferLineDemod.Clear();
         _rxBufferLineSync.Clear();
+        _rxBufferAnchorSample = _consumedSamples; // RX buffer subsystem Phase 6c round-2 fix -- see this field's own doc comment
+        _rxBufferBaseTransmissionLine = 0; // RX buffer subsystem Phase 6c round-4 fix -- fresh lock: staged index 0 IS image row 0 again
 
         if (mode == SstvModeRegistry.Avt)
         {
@@ -4747,6 +4855,347 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _slantLinePeakPosition = 0;
         return true;
     }
+
+    /// <summary>RX buffer subsystem Phase 6c -- the replay engine itself. Port of
+    /// `UpdateSampFreq`/`RedrawSSTV`'s own reset-then-rebuild-then-redraw shape (`Main.cpp:5586-5629`):
+    /// given 6a's origin (<see cref="ReplayOriginCalculator.ComputeOrigin"/>) + the current corrected
+    /// stride (<see cref="_effectiveSamplesPerLine"/>) + 6b's reusable core
+    /// (<see cref="ProcessSlantTrackingSample"/>), walks the flat staged stream one FULLY-staged
+    /// transmission line at a time, redraws each row from the staged buffer, and fires
+    /// <see cref="LineDecoded"/> per redrawn row -- retroactively re-decoding the entire image received
+    /// so far at the corrected rate, matching legacy's own `RedrawSampFreq` semantics (see
+    /// <see cref="SlantTracker"/>'s own updated class doc comment: this is what finally makes that
+    /// comment's "applies going forward only" caveat obsolete).
+    ///
+    /// <b>Precondition, callable today only via <see cref="PerformReplayForTests"/></b>: RX buffer
+    /// subsystem Phase 6d (not yet built) is responsible for deciding WHEN this may safely run. 6d owns
+    /// the reentrancy question (this must never be called synchronously from inside
+    /// <see cref="ApplySlantTracking"/>'s own call stack -- see the plan's own deferred-request design).
+    ///
+    /// <b>Round-2 code-review redesign: the live per-line slant-tracking accumulator is reset once, at
+    /// the top, and NEVER restored.</b> An earlier version of this method saved a snapshot of
+    /// (<see cref="_slantIdealSamplesSoFarInLine"/>, <see cref="_slantLineEnvelopeSeeded"/>,
+    /// <see cref="_slantLineMaxEnvelope"/>/<see cref="_slantLineMinEnvelope"/>/
+    /// <see cref="_slantLinePeakPosition"/>, <see cref="_lastLineSyncPeakPosition"/>,
+    /// <see cref="_suppressNextSlantProcessLine"/>) before replay's own walk and restored it afterward,
+    /// reasoning that the live decode's own in-flight line measurement needed to survive untouched.
+    /// That reasoning no longer applies now that the skip-forward re-anchor below (see this method's
+    /// own "sample-cursor re-anchor" paragraph) ALWAYS moves <see cref="_consumedSamples"/> to a brand
+    /// new destination-coordinate line boundary once this method returns -- the pre-replay snapshot
+    /// would describe a line the live decode is no longer measuring towards. Reset to a clean slate
+    /// once (so replay's own walk isn't biased by whatever partial live measurement preceded it,
+    /// including resolving the auditor's own 6b round-1 off-scope note: <c>_suppressNextSlantProcessLine</c>
+    /// is reset to <see langword="false"/> here, so a stale live-side skip-suppression flag can never
+    /// silently eat replay's own first line) and then simply let it be -- live decode's own subsequent
+    /// calls continue accumulating from wherever replay's own walk naturally left it, exactly the way
+    /// it already continues across ordinary line boundaries during ordinary live decode.
+    ///
+    /// Deliberately does NOT reset/restore <see cref="_slantTracker"/>'s own internal state or the
+    /// Auto-Sync detection-window fields <see cref="ResetAutoSyncDetectionState"/> resets -- those are
+    /// exactly the state legacy's own `InitAutoStop`-then-suppressed-refeed REBUILDS (not loses) on
+    /// every replay pass; the whole point is that they end up reflecting replay's own rebuild and keep
+    /// serving live decode from there on, matching `ResetAutoSyncDetectionState`'s own doc comment.
+    ///
+    /// <b>Round-2 code-review redesign: the Auto-Sync/Auto-Slant re-feed is now ONE continuous
+    /// per-sample walk over the whole valid staged range, decoupled from the per-ROW pixel-drawing
+    /// loop.</b> An earlier version fed each pixel row's own staged span separately, which (round-2
+    /// finding) introduced a systematic offset, up to `origin` samples, between the sync-tracking
+    /// accumulator's own internal line-boundary detection and the pixel-row boundaries whenever `origin`
+    /// is positive (reachable: the whole Scottie family's own `AdjustSyncPos` wrap,
+    /// `ReplayOriginCalculator.cs:66-69`, forces a positive origin by construction) -- every replayed
+    /// row's own partial re-feed (clamped to what's staged) would under-feed the accumulator relative to
+    /// a full line, shifting where IT thinks each "line" completes away from where the pixel rows
+    /// actually are. A single continuous walk matches <see cref="ApplySlantTracking"/>'s own live
+    /// per-sample loop shape exactly (one walk, letting <see cref="ProcessSlantTrackingSample"/>'s own
+    /// internal accumulator discover line boundaries on its own terms) and sidesteps the issue entirely.
+    ///
+    /// <b>Round-1/round-2 code-review fix: the live sample cursor
+    /// (<see cref="_consumedSamples"/>/<see cref="_idealLineStartSample"/>/<see cref="_slantProcessedUpTo"/>),
+    /// not just <see cref="_nextLine"/>, is re-anchored after the replay loop.</b> Round-1's own first
+    /// attempt at this fix (setting `_idealLineStartSample = _consumedSamples`) was itself wrong --
+    /// round-2 code review found `_consumedSamples` is BY INVARIANT always within 0.5 samples of
+    /// `_idealLineStartSample` already (they're re-synced every line, see <see cref="TryProcessBuffer"/>),
+    /// so that assignment was a sub-sample no-op that left the real defect -- a permanent
+    /// `origin`-derived phase offset applied to EVERY row decoded for the rest of the reception, not
+    /// just the first one -- completely unfixed. The real fix: compute where the LIVE cursor actually
+    /// sits in DESTINATION-coordinate terms (`resumeDest = origin + (_consumedSamples -
+    /// <see cref="_rxBufferAnchorSample"/>)` -- see that field's own doc comment for why the anchor must
+    /// be tracked explicitly, not derived from the staged sample count, which can silently lag once the
+    /// staging buffer fills), find which row that falls in (`resumeLine`), and jump the live cursor
+    /// FORWARD to that row's own clean destination-coordinate start -- mirroring
+    /// <see cref="DrainPendingSkip"/>'s own established precedent of moving
+    /// `_consumedSamples`/`_idealLineStartSample`/`_slantProcessedUpTo` together for an explicit,
+    /// non-incremental cursor jump. The accepted cost, matching this project's own precedent for this
+    /// CLASS of divergence (see `ApplySlantTracking`'s own "ultracode audit finding #10" boundary-jump
+    /// handling: this port has no equivalent of legacy's retroactive whole-image re-decode from raw
+    /// audio): row `resumeLine` itself is never drawn by this call (not by the replay loop above, which
+    /// stopped before it because it wasn't fully staged yet, and not by this jump, which skips past its
+    /// raw samples entirely) -- a single, bounded, visible gap, not a growing one.
+    ///
+    /// <b>Round-4 code-review blocker fix: the jump also TRUNCATES the staging buffer</b> (see this
+    /// method's own tail, and <see cref="_rxBufferBaseTransmissionLine"/>'s own doc comment) -- the
+    /// jumped-past raw samples are never staged, and a flat, gap-unaware buffer left untruncated would
+    /// let a SECOND replay pass read straight across that hole as if it were continuous audio, silently
+    /// misaligning every row drawn after it (round-4's own two-pass trace caught this; round-3's
+    /// additive-only anchor fix kept the sample COUNT bookkeeping correct but not the buffer's own
+    /// physical contiguity). The cost stated in the paragraph above is therefore per-PASS, not
+    /// per-reception: each replay pass can only retroactively correct rows staged SINCE the previous
+    /// pass, not the whole reception from the start -- a real, bounded, and now-documented divergence
+    /// from legacy's own whole-buffer re-decode (`UpdateSampFreq`, `Main.cpp:5603-5612`).
+    ///
+    /// <b>Known, deferred limitation, found and logged (not silently dropped) while implementing this
+    /// round's own two-pass test</b>: <see cref="RobotScanlineDecoder"/> (and, unverified, possibly
+    /// other <see cref="IScanlineDecoder"/> implementations with cross-line instance state) caches the
+    /// PREVIOUS line's other chroma channel across `DecodeLine` calls, matching legacy's own
+    /// `m_D36[2][320]` cross-line state. This method's own "sacrifice one row per pass, and sometimes
+    /// re-decode an already-decoded row" design (see above) does not currently keep that cache
+    /// synchronized the way an unbroken legacy decode would -- a sacrificed row's own missing chroma
+    /// contribution, and a redrawn row's own re-run of the R-Y/B-Y alternation, can desynchronize it,
+    /// producing real (not merely cosmetic) cross-row color bleed for Robot-family modes specifically
+    /// under a multi-pass replay scenario. Confirmed via a real reproduction (not theoretical) while
+    /// building `ReplayEngineTests.cs`'s own two-pass regression test -- see that test's own doc comment
+    /// for the reproduction and why it now runs against a stateless decoder (R24) instead. Real, separate
+    /// follow-up work (likely: either never sacrifice/redraw a row for a stateful-decoder-family mode, or
+    /// reset that decoder's own cross-line cache at a truncation boundary) -- out of scope for this round,
+    /// not yet fixed.</summary>
+    private void PerformReplay()
+    {
+        if (_rxLineStagingBuffer is null || _mode is null || _slantTracker is null || _lineDecoder is null || _pixels is null)
+        {
+            return; // not in a state replay applies to (AVT/pre-lock/RxBufferMode.Off|Extended -- matches ApplySlantTracking's own guard)
+        }
+
+        var mode = _mode;
+        var lineDecoder = _lineDecoder;
+        var pixels = _pixels;
+        var stagingBuffer = _rxLineStagingBuffer;
+        var stagedSampleCount = stagingBuffer.Count;
+        if (stagedSampleCount == 0)
+        {
+            return; // nothing staged yet
+        }
+
+        // Reset-then-rebuild, immediately before every replay pass (Main.cpp:5600ish's InitAutoStop
+        // call via UpdateSampFreq, before the replay loop) -- both Auto Sync's own detection window and
+        // Auto Slant's own baseline, matching legacy exactly (see ResetAutoSyncDetectionState's and
+        // SlantTracker.ResetBaseline's own doc comments).
+        ResetAutoSyncDetectionState();
+        _slantTracker.ResetBaseline();
+
+        // Clean slate for replay's own per-sample walk -- see this method's own doc comment for why
+        // this is a one-time reset, never restored. _slantIdealSamplesSoFarInLine is NOT included here
+        // (unlike an earlier version of this method) -- it needs to be seeded relative to `origin`, not
+        // zeroed, computed further below once `origin` is known.
+        _slantLineEnvelopeSeeded = false;
+        _slantLineMaxEnvelope = double.NegativeInfinity;
+        _slantLineMinEnvelope = double.PositiveInfinity;
+        _slantLinePeakPosition = 0;
+        _lastLineSyncPeakPosition = null;
+        _suppressNextSlantProcessLine = false;
+
+        var correctedLineWidthSamples = _effectiveSamplesPerLine; // the CURRENT, just-corrected stride -- the ONE uniform stride this whole pass applies, matching ReplayOriginCalculator.ComputeOrigin's own `correctedLineWidthSamples` contract
+        var effectiveSampleRate = correctedLineWidthSamples / (mode.LineDurationMs / 1000.0);
+        var ofpSamples = ComputeUntruncatedSyncPeakOffsetSamples(mode, effectiveSampleRate);
+
+        var foldedLineCount = Math.Min(stagingBuffer.LineCount, 32); // Main.cpp:5504's own 32-line fold cap
+        var foldedSampleCount = stagingBuffer.SampleCountThroughLine(foldedLineCount);
+
+        var hilbertGroupDelayCorrection = _demodType == DemodType.Hilbert ? _demodulator.HalfTap / 4 : 0;
+
+        var origin = ReplayOriginCalculator.ComputeOrigin(
+            stagingBuffer.SyncEnvelopeAt,
+            foldedSampleCount,
+            correctedLineWidthSamples,
+            // Round-5 code-review fix: legacy's own `wStgLineCount` parameter (AdjustPosition's
+            // Martin-M2/SC2-60 `wStgLineCount < 20` branch) is `dp->m_wStgLine`, a CUMULATIVE count
+            // never reset mid-reception (Main.cpp:5451-5456) -- `stagingBuffer.LineCount` alone is only
+            // the count SINCE the last truncation (this method's own jump, see its doc comment), which
+            // silently reverts to the `wStgLineCount < 20` branch's 0.30ms constant on every pass after
+            // the first, ~4.4 samples of origin error at 44100Hz. Adding the running
+            // _rxBufferBaseTransmissionLine offset restores the cumulative count (both are
+            // RowsPerTransmissionLine == 1 families -- Martin/SC2 are never paired-channel modes -- so
+            // the units already match with no conversion needed).
+            _rxBufferBaseTransmissionLine + stagingBuffer.LineCount,
+            ofpSamples,
+            mode,
+            _demodType,
+            hilbertGroupDelayCorrection,
+            effectiveSampleRate);
+        _lastReplayOriginForTests = origin;
+
+        // Auto-Sync/Auto-Slant re-feed: ONE continuous per-sample walk over the whole valid staged
+        // range, suppressed (isReplay: true) -- matches legacy's own per-sample AutoStopJob re-feed
+        // during replay (Main.cpp:4189-4202, m_ASDis=1-bracketed) and, per round-1 code review, its
+        // `if(n<0) continue` (Main.cpp:4146) skipping AutoStopJob too for samples mapping before row 0
+        // -- `Math.Max(0, -origin)` is that same skip, expressed directly in staged-index terms (a
+        // negative destination coordinate n=origin+i means i<-origin). Runs through the FULL staged
+        // extent regardless of pixel-row/ImageHeight bounds, matching legacy's own lack of
+        // ImageHeight-awareness in AutoStopJob (round-1 code review, point 6). See this method's own
+        // doc comment for why this is decoupled from the pixel-drawing loop below, not partitioned per
+        // row the way an earlier version of this method did.
+        var feedFrom = Math.Max(0, -origin);
+
+        // Round-3 code-review blocker fix: seed the accumulator to the FIRST fed sample's own phase
+        // within a line, not zero. Legacy's replay walk derives its line boundary from `fmod(n, m_TW)`
+        // on the DESTINATION coordinate `n` directly (Main.cpp:4147), which is locked to the
+        // destination grid (`n ≡ 0 mod TW`) regardless of `origin`'s value. This port's accumulator
+        // instead COUNTS fed samples from zero -- if the first fed sample's own destination coordinate
+        // (`firstFedDest`) isn't itself a multiple of the stride (true whenever `origin > 0`, since the
+        // walk then starts at destination `origin`, not `0`), a bare zero seed puts every replayed
+        // line's own measured boundary out of phase with the pixel-row grid by `origin mod stride` --
+        // silently biasing every re-fed sync position by a constant amount for the whole pass.
+        var firstFedDest = (double)Math.Max(origin, 0);
+        _slantIdealSamplesSoFarInLine = firstFedDest - Math.Floor(firstFedDest / correctedLineWidthSamples) * correctedLineWidthSamples;
+
+        for (var i = feedFrom; i < stagedSampleCount; i++)
+        {
+            ProcessSlantTrackingSample(stagingBuffer.SyncEnvelopeAt(i), isReplay: true);
+        }
+
+        // Round-3 plan-review pin: the transmission-line bound is `(origin + stagedSampleCount) /
+        // correctedStride`, matching legacy's real `m_rBase = origin + wStgLine*m_WD`
+        // (Main.cpp:5602+:5612) -- origin is SIGNED and ADDED, not a separate skew subtracted
+        // elsewhere. Only FULLY-staged transmission lines are ever replayed (never a line whose own
+        // end extends past stagedSampleCount).
+        var fullyStagedTransmissionLines = (int)((origin + stagedSampleCount) / correctedLineWidthSamples);
+        var roundedSampleRate = (int)Math.Round(effectiveSampleRate); // round-1 code-review nit: one rounding, reused for both GetKsbSamples and DecodeLine (previously GetKsbSamples got the unrounded double, a gratuitous live/replay divergence)
+
+        for (var transmissionLineIndex = 0; transmissionLineIndex < fullyStagedTransmissionLines; transmissionLineIndex++)
+        {
+            // Round-1 code-review correction: legacy's own row membership is `y = int(n/m_TW)`
+            // (Main.cpp:4148) -- for integer sample index n, the set of n's with `int(n/TW)==y` is
+            // `[ceil(y*TW), ceil((y+1)*TW))`, NOT `[floor(y*TW), floor((y+1)*TW))`. A bare `(int)`
+            // cast truncates toward zero (floor, for non-negative values) and silently drops the
+            // LAST sample of every row whenever `correctedLineWidthSamples` has a nonzero fractional
+            // part.
+            var lineStartDest = (int)Math.Ceiling(transmissionLineIndex * correctedLineWidthSamples);
+            var lineEndDestExclusive = (int)Math.Ceiling((transmissionLineIndex + 1) * correctedLineWidthSamples);
+            var lineStartStaged = lineStartDest - origin;
+
+            // Round-4 code-review fix: staged index 0 is NOT always image row 0 -- a prior replay pass
+            // may have truncated the staging buffer at its own forward cursor jump (see this method's
+            // own tail), in which case staged index 0 corresponds to whatever transmission line
+            // _rxBufferBaseTransmissionLine records. Zero for a fresh lock (InitializeSlant), so this is
+            // a no-op there.
+            var bitmapRow = (_rxBufferBaseTransmissionLine + transmissionLineIndex) * lineDecoder.RowsPerTransmissionLine;
+            if (lineStartStaged < 0 || bitmapRow >= mode.ImageHeight)
+            {
+                // This line's own start predates the staged buffer (positive origin -- see this
+                // method's own doc comment; a small, documented divergence: legacy's per-sample loop
+                // can partially draw such a line, this port's per-row `DecodeLine` cannot) or is past
+                // the end of the image (more got staged/corrected than the image actually needs) -- no
+                // pixel redraw, no LineDecoded. The bookkeeping re-feed above already covered this
+                // line's own samples regardless.
+                continue;
+            }
+
+            // Peek-past-staged-extent, defined not inherited (RX buffer plan's own flagged risk):
+            // legacy's GetPictureLevel peek at the final staged line reads past the staged extent
+            // into uninitialized memory -- undefined behavior legacy happens to get away with. This
+            // port instead relies on PixelSampleReader.ReadPeakPicked's own existing
+            // floor-at-luminanceMinHz logic against this line's own theoretical end -- provably never
+            // past the staged buffer's real extent given the fully-staged-lines-only loop bound above.
+            var reader = new PixelSampleReader(
+                index => stagingBuffer.DemodulatedAt(index - origin),
+                SstvModeRegistry.GetKsbSamples(mode, roundedSampleRate),
+                lineEndDestExclusive,
+                mode.LuminanceMinHz,
+                SstvModeRegistry.NeverPeakPicks(mode) || _rxBufferMode == RxBufferMode.Extended);
+
+            lineDecoder.DecodeLine(mode, roundedSampleRate, lineStartDest, bitmapRow, reader, pixels);
+            LineDecoded?.Invoke(new DecodedImageUpdate(bitmapRow, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
+        }
+
+        // Sample-cursor re-anchor -- see this method's own doc comment for the full derivation and why
+        // round-1's first attempt at this (setting _idealLineStartSample = _consumedSamples, a
+        // sub-sample no-op) didn't actually fix anything. resumeDest is the LIVE cursor's own current
+        // position, expressed in the SAME destination-coordinate space `origin`/the replay loop above
+        // use -- NOT origin+stagedSampleCount, which only reflects how far STAGING has gotten (it can
+        // lag the live cursor by up to one not-yet-flushed line's worth of samples).
+        var resumeDest = origin + (_consumedSamples - _rxBufferAnchorSample);
+        var resumeLine = (int)Math.Floor(resumeDest / correctedLineWidthSamples);
+        var nextRowDestStart = (int)Math.Ceiling((resumeLine + 1) * correctedLineWidthSamples);
+        var jumpSamples = nextRowDestStart - resumeDest;
+
+        _idealLineStartSample = _consumedSamples + jumpSamples;
+        _consumedSamples = (int)Math.Round(_idealLineStartSample);
+        // DrainPendingSkip's own established precedent: never let ApplySlantTracking's normal per-sample
+        // catch-up loop re-walk the skipped span (it would feed those raw samples through the LIVE,
+        // non-suppressed path a second time, reopening exactly the kind of double-count this port's
+        // other cursor-jump call sites already guard against).
+        _slantProcessedUpTo = _consumedSamples;
+        // Round-4 code-review self-caught bug (found via the two-pass test's own diagnostic output, not
+        // by auditor review -- verified by tracing a real gap2=-10 failure back to its cause): `origin`/
+        // `resumeDest`/`resumeLine` are ALL computed relative to the CURRENT (possibly-truncated)
+        // staging buffer's own LOCAL index 0 -- see ReplayOriginCalculator.ComputeOrigin's own contract,
+        // which is phase-agnostic and knows nothing about image row numbering. `resumeLine + 1` is
+        // therefore a LOCAL transmission-line count, not an absolute image row. The row-drawing loop
+        // above already converts local -> absolute correctly (`bitmapRow = (_rxBufferBaseTransmissionLine
+        // + transmissionLineIndex) * RPTL`) -- this reconciliation must apply the SAME conversion, using
+        // the OLD (pre-this-pass) base, captured before it's overwritten below.
+        var previousBaseTransmissionLine = _rxBufferBaseTransmissionLine;
+        var resumeRowTransmissionLine = previousBaseTransmissionLine + Math.Max(0, resumeLine + 1);
+        _nextLine = resumeRowTransmissionLine * lineDecoder.RowsPerTransmissionLine;
+
+        // Round-3 code-review blocker fix: re-seed the accumulator with the CORRECT leftover phase at
+        // the new destination-coordinate boundary the cursor just jumped to, not left at wherever
+        // replay's own continuous walk (above) happened to end. `nextRowDestStart` is a `Math.Ceiling`
+        // result, so this residue is always in [0, 1) -- the same order of magnitude as the ordinary
+        // per-line fractional carry MUST-4 already preserves elsewhere in this class, not a new kind of
+        // imprecision. Leaving the walk's own end-state here instead (an earlier version of this fix
+        // did) put the NEXT live-decoded line's own boundary out of phase by up to a full stride, since
+        // the walk's own sample count essentially never lands exactly on this jump's own chosen boundary
+        // once a real stride correction has occurred -- exactly the case replay exists for.
+        _slantIdealSamplesSoFarInLine = nextRowDestStart - ((resumeLine + 1) * correctedLineWidthSamples);
+        _slantLineEnvelopeSeeded = false;
+        _slantLineMaxEnvelope = double.NegativeInfinity;
+        _slantLineMinEnvelope = double.PositiveInfinity;
+        _slantLinePeakPosition = 0;
+
+        // Round-4 code-review BLOCKER fix, superseding round-3's `_rxBufferAnchorSample += jumpSamples`:
+        // that fix kept the COUNT invariant (_consumedSamples - _rxBufferAnchorSample == staged +
+        // in-flight) true across the jump, but the jump ALSO leaves the staged stream PHYSICALLY
+        // discontinuous -- `jumpSamples` raw samples (always >= 1) are consumed and never staged, while
+        // RxLineStagingBuffer is a single flat, contiguous list with no gap marker. A SECOND replay pass
+        // (which Phase 6d will trigger routinely, once per Auto-Slant commit -- not a rare scenario)
+        // would read straight across that splice as if it were continuous audio, misaligning every row
+        // drawn after it by up to a full line -- confirmed by round-4's own two-pass trace, a genuinely
+        // new defect beyond the count-invariant one round-3 fixed.
+        //
+        // Truncating the staging buffer here is the fix: the cursor jump lands exactly on
+        // `nextRowDestStart`, a destination-ROW boundary, so the buffer restarts both gap-free AND
+        // row-aligned -- ReplayOriginCalculator.ComputeOrigin's own fold is phase-agnostic (origin is
+        // defined relative to staged index 0, whatever raw sample that happens to be), so nothing there
+        // needs to change. The in-flight per-line capture accumulators (_rxBufferLineDemod/
+        // _rxBufferLineSync) must be cleared too -- left alone, they hold PRE-jump samples that
+        // ApplySlantTracking's own capture-flush hook would otherwise splice onto POST-jump ones and
+        // flush as a single over-long "line", corrupting _lineBoundaries as well as the sample stream
+        // itself. _rxBufferAnchorSample is DIRECTLY re-anchored (not incremented) because the buffer is
+        // empty again -- "local index 0 is this raw sample" is true once more, the exact same identity
+        // InitializeSlant establishes at a fresh lock. _rxBufferBaseTransmissionLine records WHERE in the
+        // image that fresh "index 0" now sits, so the row loop above stays correct on every future pass
+        // (see that field's own doc comment).
+        //
+        // Accepted cost, and a real divergence from legacy (which re-decodes its WHOLE buffer on every
+        // UpdateSampFreq, Main.cpp:5603-5612): each replay pass can only re-correct rows staged since the
+        // PREVIOUS pass, not the whole reception. Bounded and visible (a documented scope limit), unlike
+        // the silent cross-splice misalignment it replaces. A replay pass triggered before ANY new line
+        // has staged since the last truncation hits this method's own `stagedSampleCount == 0` early
+        // return -- correctly a complete no-op (no bookkeeping reset, no re-anchor), since the cursor is
+        // already row-aligned from the previous pass and `origin` is undefined against an empty buffer.
+        stagingBuffer.Clear();
+        _rxBufferLineDemod.Clear();
+        _rxBufferLineSync.Clear();
+        _rxBufferAnchorSample = _consumedSamples;
+        _rxBufferBaseTransmissionLine = resumeRowTransmissionLine;
+    }
+
+    /// <summary>Test-only entry point for <see cref="PerformReplay"/> -- RX buffer subsystem Phase 6d
+    /// (the deferred-trigger plumbing that decides WHEN this runs automatically) is not yet built, so
+    /// this is the only way to exercise the replay engine today. Mirrors the established
+    /// <c>InitializeAfcForTests</c> precedent (a thin pass-through wrapper around an otherwise-private
+    /// method).</summary>
+    internal void PerformReplayForTests() => PerformReplay();
 
     /// <summary>Averages the (already fully demodulated) frequency stream over [startSample,
     /// endSample), skipping a settling margin at the start for the demodulator's own transient

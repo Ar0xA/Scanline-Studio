@@ -26,14 +26,17 @@ namespace ScanlineStudio.Core.Sstv;
 /// line of that image. An earlier version of this comment called that guard "trivially satisfied,"
 /// which was true only before manual ReSync existed.
 ///
-/// Scope note on what "applying" the correction means here: legacy retroactively re-decodes the
-/// *entire* image received so far at the corrected rate once a correction commits
-/// (<c>RedrawSampFreq</c> replaying a staging buffer). This port instead applies a committed
-/// correction going forward only (see <c>AnalogFmSstvDecoder</c>) -- for a genuinely drifting clock
-/// the correction stays valid for the remainder of the transmission either way, so this is a real,
-/// bounded scoping choice (the handful of already-decoded lines before the first lock aren't
-/// retroactively fixed), not a silently-accepted approximation of the correction math itself, which
-/// is ported exactly.
+/// Scope note on what "applying" the correction means here, UPDATED by RX buffer subsystem Phase 6c
+/// (this paragraph previously said this port applies a committed correction going forward only --
+/// no longer true): legacy retroactively re-decodes the *entire* image received so far at the
+/// corrected rate once a correction commits (<c>RedrawSampFreq</c> replaying a staging buffer,
+/// <c>Main.cpp:5586-5629</c>). This port now does the same, when <c>RxBufferMode.On</c> is
+/// selected -- <c>AnalogFmSstvDecoder.PerformReplay</c> retroactively redraws every already-decoded
+/// row from <c>RxLineStagingBuffer</c>'s staged history using the corrected origin/stride, reusing
+/// this class's own <see cref="ProcessLineSuppressed"/>/<see cref="ResetBaseline"/> for the re-feed.
+/// Under <c>RxBufferMode.Off</c> (no staging buffer exists) this port still only applies a
+/// committed correction going forward, exactly as this paragraph originally described -- a real,
+/// bounded, mode-dependent scoping choice now, not a blanket one.
 /// </summary>
 internal sealed class SlantTracker
 {
