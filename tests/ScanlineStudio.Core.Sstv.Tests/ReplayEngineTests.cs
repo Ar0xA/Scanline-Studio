@@ -617,6 +617,51 @@ public class ReplayEngineTests
         Assert.Equal(baseAfterReSync, decoder.RxBufferBaseTransmissionLineForTests);
     }
 
+    [Fact]
+    public void RxBufferModeOn_DecodesMeasurablyBetterThanOff_UnderARealClockMismatch()
+    {
+        // Whole-subsystem review finding (2026-08-13): every OTHER test in this project verifies LOCAL
+        // correctness of one RX buffer subsystem piece at a time (cursor bookkeeping stays consistent,
+        // triggers fire/don't fire correctly, etc.) -- none of them had ever verified the actual POINT
+        // of the whole feature: does a real drifting-clock reception decode BETTER with
+        // RxBufferMode.On (capture + automatic replay, Phases 4-6) than with it Off? This test closes
+        // that specific gap directly, end to end, through the real production automatic-trigger path
+        // (no PerformReplayForTests, no suppression).
+        //
+        // MP73 (YCbCrLinePairedScanlineDecoder), not a Robot-family mode: deliberately sidesteps the
+        // separate, already-known, already-deferred RobotScanlineDecoder cross-line chroma-cache finding
+        // (see PerformReplay's own doc comment) -- this test isolates "does replay actually help" from
+        // that unrelated, already-tracked defect. Also exercises the paired-channel
+        // (RowsPerTransmissionLine == 2) path end-to-end, which the whole-subsystem review separately
+        // noted had less end-to-end coverage than the sequential-channel modes.
+        var mode = SstvModeRegistry.Mp73;
+        var sourceImage = CreateRowIdentityTestImage(mode.ImageWidth, mode.ImageHeight); // a smooth gradient would hide the misalignment On is supposed to fix -- see this file's own earlier note on this
+
+        const int declaredSampleRate = 11025;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.01); // severe, reliably-converging mismatch (SlantTests.cs's own established characterization)
+        var samples = Encode(mode, sourceImage, trueSampleRate);
+
+        var onDecoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On);
+        var offDecoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.Off);
+
+        IImageSource? onImage = null;
+        IImageSource? offImage = null;
+        onDecoder.LineDecoded += u => onImage = u.Image;
+        offDecoder.LineDecoded += u => offImage = u.Image;
+
+        onDecoder.PushSamples(samples);
+        offDecoder.PushSamples(samples);
+
+        Assert.NotNull(onImage);
+        Assert.NotNull(offImage);
+        Assert.True(onDecoder.RxBufferBaseTransmissionLineForTests > 0, "Test setup problem: automatic replay never actually fired for the On decoder -- this test would prove nothing about the feature it's named for.");
+
+        var onDelta = ComputeAveragePerChannelDelta(sourceImage, onImage!);
+        var offDelta = ComputeAveragePerChannelDelta(sourceImage, offImage!);
+
+        Assert.True(onDelta < offDelta, $"Expected RxBufferMode.On (delta {onDelta:F2}) to decode measurably better than Off (delta {offDelta:F2}) under a real clock mismatch -- if this fails, the RX buffer subsystem's own core value proposition isn't actually holding end to end, even though every individual piece tests correct in isolation.");
+    }
+
     private static float[] Encode(SstvModeDefinition mode, IImageSource sourceImage, int sampleRate)
     {
         var encoder = new AnalogFmSstvEncoder(sampleRate);
