@@ -161,6 +161,65 @@ public class RxLineStagingBufferTests
     }
 
     [Fact]
+    public void LineCount_TracksSuccessfulAppendsOnly()
+    {
+        // RX buffer subsystem Phase 6a round-1 code-review addition: this port's own per-line staged
+        // sample count is NOT a legacy-style constant (unlike legacy's own fixed m_WD) -- LineCount
+        // must be tracked directly, not derivable via division against any single stride.
+        var buffer = new RxLineStagingBuffer(1000); // CapacitySamples = 282,700
+
+        Assert.Equal(0, buffer.LineCount);
+        buffer.TryAppendLine([1.0, 2.0], [3.0, 4.0]);
+        Assert.Equal(1, buffer.LineCount);
+        buffer.TryAppendLine([5.0], [6.0]);
+        Assert.Equal(2, buffer.LineCount);
+    }
+
+    [Fact]
+    public void LineCount_DoesNotAdvance_OnARejectedAppend()
+    {
+        var buffer = new RxLineStagingBuffer(1000);
+        var tooBig = new double[buffer.CapacitySamples];
+        var accepted = buffer.TryAppendLine(tooBig, tooBig); // exact-fill, rejected per this class's own strict-less-than boundary
+
+        Assert.False(accepted);
+        Assert.Equal(0, buffer.LineCount);
+    }
+
+    [Fact]
+    public void SampleCountThroughLine_ReflectsVaryingPerLineWidths()
+    {
+        // This is the whole point of tracking line boundaries explicitly instead of deriving a line
+        // count via division against a single stride -- these three lines are NOT the same width,
+        // exactly the real-world case (fractional-carry rounding, mid-reception Auto-Slant commits)
+        // that made a stride-based derivation wrong for this port specifically.
+        var buffer = new RxLineStagingBuffer(1000);
+        buffer.TryAppendLine([1.0, 2.0, 3.0], [0.0, 0.0, 0.0]); // 3 samples
+        buffer.TryAppendLine([4.0, 5.0], [0.0, 0.0]); // 2 samples
+        buffer.TryAppendLine([6.0, 7.0, 8.0, 9.0], [0.0, 0.0, 0.0, 0.0]); // 4 samples
+
+        Assert.Equal(3, buffer.LineCount);
+        Assert.Equal(0, buffer.SampleCountThroughLine(0));
+        Assert.Equal(3, buffer.SampleCountThroughLine(1));
+        Assert.Equal(5, buffer.SampleCountThroughLine(2));
+        Assert.Equal(9, buffer.SampleCountThroughLine(3));
+        Assert.Equal(9, buffer.SampleCountThroughLine(100)); // clamped to LineCount, matches full Count
+        Assert.Equal(buffer.Count, buffer.SampleCountThroughLine(buffer.LineCount));
+    }
+
+    [Fact]
+    public void LineCount_And_SampleCountThroughLine_ResetByClear()
+    {
+        var buffer = new RxLineStagingBuffer(1000);
+        buffer.TryAppendLine([1.0, 2.0], [3.0, 4.0]);
+
+        buffer.Clear();
+
+        Assert.Equal(0, buffer.LineCount);
+        Assert.Equal(0, buffer.SampleCountThroughLine(5));
+    }
+
+    [Fact]
     public void Clear_ResetsCountToZero_ButNotCapacity()
     {
         var buffer = new RxLineStagingBuffer(11025);
