@@ -8,6 +8,167 @@ Ties together every other document — each phase below is delivered by working 
 
 Order is chosen so that at the end of every phase there is a **runnable, demoable** program, never a long stretch of code that doesn't build into something observable. This also front-loads the highest cross-platform risk (audio, DSP) rather than saving it for last, since [[05-audio-engine]] is the area most likely to reveal that an architectural assumption needs revisiting.
 
+## Path to 0.9 beta / road to 1.0 — priority tiers (2026-08-13)
+
+Supersedes ad-hoc prioritization scattered across "Must-implement backlog," "Explicitly deferred
+beyond v1," "Release gates," "Open items requiring a decision," and "Phase 4+ backlog" below —
+those sections are kept in place (banners added at each, nothing deleted) for their research/
+citation detail, but **this section is the priority list to work from**, not those.
+
+Goal: get the core loop (receive a picture, send a picture, edit a picture before sending) to
+actually, honestly work end-to-end, ship that as 0.9 beta, then expand outward — bugs, features,
+stub-replacement, in that order. Deprioritization here can be aggressive and long-horizon on
+purpose (user's own framing: "if some features get put on 'this will only be looked at in 3.4,
+then so be it'") — Tier 3 is not a soft "someday soon," it's parked with no implied revisit date.
+
+Built from a dedicated Opus investigation (2026-08-13, source-traced not doc-trusted) into whether
+receive/send/edit actually work today, cross-referenced against `spec/14-roadmap.md`'s own backlog
+and `PROJECT_BRIEF.md`, then a full auditor completeness pass on the reorganization itself (same
+date, GO-conditional, findings folded in below) to make sure nothing tracked got lost in the
+regrouping.
+
+### Tier 0 — must fix before calling anything "0.9 beta"
+
+The core loop was verified end-to-end (audio in → decode → save/gallery is real; image → encode →
+PTT-keyed TX is real; crop + draggable macro-resolved text overlay + Apply → Transmit is real). The
+only things wrong with it are controls that lie about it, plus one real image-quality bug:
+
+- **Robot 36/72 replay chroma-bleed** — `AnalogFmSstvDecoder.PerformReplay` (doc comment
+  ~`AnalogFmSstvDecoder.cs:5118-5145`). `RobotScanlineDecoder`'s cross-line chroma cache doesn't
+  survive a replay-sacrificed/redrawn row; reachable on **any** default-settings Robot 36/72
+  reception with real clock drift since Phase 6d made replay fire automatically — one of the
+  most-used modes on air, at stock settings, producing genuinely wrong pixels. Recommended fix:
+  skip the row-sacrifice specifically for stateful scanline decoders (Robot family), not a global
+  `RxBufferMode` default flip — bounded, doesn't blunt the other 42 modes' benefit. Unmeasured how
+  visible it actually is on real audio; worth a quick real-decode check before scoping the fix.
+- **7 fake-live/dead controls inside the core loop** (`TxImageEditorPaneView.axaml:46-72,119-126,
+  139-166,252-267` — tool strip, dead Transmit/Tune/Preview/Halt row + progress bar, 6 unbound
+  adjustment sliders, decorative callsign/report-plate overlay; `MainWindow.axaml:178-179,436-440` —
+  Mode card "Locked" toggle, 5 dead Incoming-frame buttons):
+  TX editor's dead Transmit/Tune/Preview/Halt button row + progress bar (real Transmit lives in the
+  left column); the 9-icon tool strip (Move/Crop/Scale/Rotate/Text/Box/Line/Mask/Pick — "Crop"/
+  "Text" actively mislead since the real controls are the always-on canvas drag + separate "Add
+  text" button); 6 unbound Brightness/Contrast/Saturation/Gamma/Sharpen/Denoise sliders; the
+  decorative safe-area/callsign/report-plate canvas overlay (not load-bearing — a real overlay path
+  already exists via "Add text," so this is a delete/rebind, not a build); Receive's 5 dead
+  Incoming-frame buttons (Save Frame/Abort/Re-decode/Copy to TX/Log QSO — "Save Frame" is worst,
+  since auto-save already happened silently and a click-with-no-effect reads as data loss); Receive
+  Mode card's "Locked" toggle (no mode-lock feature exists at all).
+- **Auto-start shown hardcoded-On** — `OptionsWindowView.axaml:377` (the feature doesn't exist at
+  all). Unlike the RX-buffer default below, this one is NOT superseded by anything — its Tier-2 item
+  is a scoping pass for a feature that may not land before 0.9b, while the dialog keeps lying in the
+  meantime. Genuinely dependency-free one-line fix, unconditional Tier 0.
+- **RX buffer shown hardcoded-Off** — `OptionsWindowView.axaml:365` (real runtime default is **On**,
+  `SstvDecoderSettings.cs:112`, confirmed materially active since Phase 6d). Superseded by Tier 2's
+  RX-buffer Phase 9 (replaces the whole stub) — only worth a standalone one-line fix here if Phase 9
+  slips past 0.9 beta.
+
+### Tier 1 — cheap trust fix before a *public* beta (not a Tier-0 blocker)
+
+~40 more FAKE-LIVE controls outside the core loop per `spec/16-gui-wiring-survey.md` (status-bar
+SNR, Signal-quality SNR-plot/histogram/tone readouts, Input-chain Squelch/BPF/Notch/Noise-floor/
+Level meters, Frame-metadata Freq/Mode-VIS/SNR-Slant/OCR/Dropped-lines, Gallery per-entry SNR/freq/
+grid-dist). Action = grey out or remove, **not build** — these are diagnostics about the loop, not
+the loop itself.
+
+**Precondition, don't skip**: `spec/16-gui-wiring-survey.md` is itself stale as of this writing —
+it predates CW-ID/FSK, demod-type, RX BPF, and the RX-buffer subsystem, and its own line ~187
+justifies the Frame-metadata Callsign row staying FAKE-LIVE with "no FSK-decoded-callsign source
+exists yet," which is no longer true (`FskStationIdDecodedInfo` → `RxImagePaneViewModel` shipped
+2026-08-12). Its summary counts (`~132 REAL` inline vs. `PROJECT_BRIEF.md`'s `~149 REAL`) also
+disagree with each other. Refresh that survey first, then grey out whatever's still genuinely
+unbacked — don't grey out something now cheaply wireable.
+
+Overlap note: Receive tab's Input-chain/Signal-quality rows appear here (grey out short-term) AND
+in Tier 2 (build real measurement long-term) — deliberate two-step, not a duplicate/contradiction.
+
+### Tier 2 — road to 1.0 (real gaps, correct to ship 0.9 beta without)
+
+- RX buffer Phases 7-9 (disk-backed Extended mode, "Correct Slant" one-shot search, Options UI —
+  `PROJECT_BRIEF.md`; Phases 1-6 done). Migrated from PROJECT_BRIEF (still duplicated there until
+  its next prune): Auto-Slant's convergence characteristic changed
+  materially at Phase 6d (`SlantTracker.ResetBaseline()` now actually runs in production) with
+  nothing measuring whether that's better or worse, and `SlantTests.cs`'s "bitmask permanently
+  latches" doc comment is now stale for the default path; a bounded one-line
+  `_suppressNextSlantProcessLine` bookkeeping loss when a manual-ReSync suppression and an automatic
+  replay land in the same per-line iteration; `DrainPendingSkip`'s own staging-buffer-discontinuity
+  gap (currently unreachable, but **documented as must-resolve before any future manual-redraw UI
+  trigger** — a real precondition on a not-yet-built feature, not just a nice-to-have).
+- Advanced tab: PLL/Zero-crossing tuning-parameter UI (backend already real, demod-type subsystem),
+  TX BPF/LPF toggle (the filter already applies unconditionally — this is a bypass switch only, not
+  core), Loopback/calibration wizards (fully unbuilt).
+- Auto-start (Decode tab) — real legacy behavior, needs its own scoping pass: no single choke point
+  exists today (`AnalogFmSstvDecoder` has no "disarmed, still live" state), legacy's trigger is
+  inline across multiple sync-detection branches.
+- Options dialog placeholders (~50 items: RadioSettingsDialog/MacroKeyEditor/ColorSettingsDialog/
+  LanguageSettingsDialog) — genuinely blocked on a per-section split + scoping pass, several
+  sections overlap with already-shipped work (waterfall palette, CW-ID/FSK) so building this as one
+  lump risks duplication.
+- QRZ.com callsign lookup — real legacy feature (`qrzcom.cpp`), UI slot exists (Gallery
+  Frame-metadata "Lookup QRZ" button + Grid/dist/QRZ readout, currently STUB/FAKE-LIVE). Design
+  decision still open: where Name/QTH land (no "current session His Call" concept exists yet).
+- CW-ID/FSK residuals (subsystem itself shipped 2026-08-12, these are real leftovers, not "done"):
+  NR/RST sub-packet has real backend settings but zero Options UI (`OptionsWindowView.axaml:
+  413-417`); `MacroTextResolver` still only covers `%m`/`%D`/`%T`, not his-callsign/name/QTH/RST
+  tokens (`%c`/`%n`/`%q`/`%r`/`%s`/`%R`/`%N`) since those need a "current QSO" context concept that
+  doesn't exist; the FSK-decoded-callsign auto-fill is half-built (`RxImagePaneViewModel.cs:564`
+  writes to `OverrideCallsign`, but no logbook pane reads it yet, per that file's own :516 note).
+  VOX and Sound-file ID (`.mmv` playback) are explicitly **not built** — `OptionsWindowView.axaml:
+  469-473` (VOX disabled), `AnalogFmSstvEncoder.cs:274-277` ("out of v1 scope," silently transmits
+  nothing today, matching legacy's own unconfigured-sound-file behavior — a benign no-op, not a
+  lie, but not done either). Correction: an earlier `PROJECT_BRIEF.md` note claiming these were
+  "bundled into CW-ID/FSK, done" was wrong, verified against source 2026-08-13.
+- Logbook deltas explicitly carved out of the shipped Logbook pane (`QsoRecord.cs:12-13`): QSL
+  sent/received flags, duplicate-QSO detection (by callsign/band), delete-a-QSO, Gallery "Log
+  entry"/"Open in log" cross-pane wiring.
+- JPEG save quality — bundled with the Gallery's still-stub "Export frame" button, not standalone.
+- Transmit tab Queue/TX-log/Recently-sent — 100% stub, no such feature exists yet.
+- Receive tab Sync&Slant/Input-chain/Signal-quality cards — real new DSP work (no live audio-chain
+  measurement exists for most of these), long-term counterpart to Tier 1's short-term grey-out.
+- `.ini` legacy settings importer + migration chain (`[[12-settings]]`) — a stated CLAUDE.md §2
+  backward-compatibility commitment ("`.ini` settings still import cleanly"), not yet built (no
+  `IniImport`/`LegacyIni` anywhere in `src/`).
+- Localization completion — remaining unlocalized views + community-translation workflow.
+- `TemplateCatProtocol` fallback (`[[03-cat-layer]]`) — still a real planned deliverable (it's the
+  named example in CLAUDE.md §4's binary-is-bytes rule), zero occurrences in `src/` yet.
+- Offline callsign/country lookup (`[[08-logging]]`) — distinct from QRZ.com's online lookup
+  (`QrzCallsignLookup`, Tier 2 item above); blocked on the Clublog `cty.dat` API-key human action
+  (separate axis below), but the lookup feature itself belongs here, not just its blocker.
+
+### Tier 3 — parked, no near-term plan (existing "Explicitly deferred beyond v1" list + additions)
+
+Perspective correction/webcam capture, full Hamlib extended command-set coverage, plugin sandboxing
+beyond same-process isolation, legacy `.MDT` log import, the full QSL/template designer (`.mtm`
+import), SSTV repeater/beacon mode, contest logging (fully out of scope, not just deferred), OCR
+(no legacy precedent — verified zero OCR anywhere in `yoniq-old/`). Adding, same tier: **Phase 5
+plugin system** entire (`IPlugin`/`PluginHost`/`IImageFilter` — none exist in `src/` yet); waterfall's
+3 deferred sub-items (interactive notch-filter marker — no notch DSP block exists to back it;
+dedicated signal-strength meter; legacy debug "digital scope" tool); **flrig client backend** and
+**OmniRig-as-client** (`[[03-cat-layer]]`'s "maybe later, not committed" note — worth adding only if
+real post-launch user demand shows up, not a design-now item).
+
+Explicitly re-flagged per the user's own framing: no implied "revisit soon," fine to land whenever
+someone actually asks for one of these, not before.
+
+### Separate axis — release gate and human-only actions (not code work an agent can complete alone)
+
+- **The actual release blocker for any tagged release**: full `[[13-testing]]` manual hardware
+  checklist (real rig CAT session, real audio device round-trip, real third-party `rigctld`
+  interop) passing on at least one Windows, one Linux, and one macOS machine — only Linux has ever
+  actually been run. **Open decision, not yet made**: can 0.9 beta ship Linux-validated-only
+  (clearly labeled) with the full 3-platform pass required before 1.0 instead, or does even the
+  beta need it? Needs a user call, not an agent guess.
+- Clublog `cty.dat` callsign-prefix/country dataset license — no fee, but redistribution requires a
+  human to email Clublog's helpdesk and obtain an individual API key before bundling (blocks
+  Phase 4 logging dataset work).
+- Chilkat/FastReport license status — needs confirming whether either actually backs a real legacy
+  feature by running the legacy binary directly (not verifiable from source alone); currently
+  assumed unused/orphaned from a source-only search.
+- `.mtm`/`PARALIST.BIN` binary format reverse-engineering pass (prerequisite for the Tier-3
+  template designer, not itself gating anything sooner).
+- `Terms.txt` freeware-clause interpretation confirmation with upstream author (JE3HHT) — only
+  relevant if the project ever moves toward commercial distribution, not a development blocker.
+
 ## Phase 0 — Walking skeleton
 
 - [[01-architecture]]: solution scaffold, DI host, nullable+warnings-as-errors, empty Avalonia window boots on Windows/Linux/macOS.
@@ -4022,6 +4183,11 @@ Full build log, real bugs caught along the way (a settings-schema layering bug, 
 
 ## Phase 4 — Making the program usable: settings, options, dialogs, logbook
 
+> **Its still-open bullets are folded into "Path to 0.9 beta / road to 1.0" above** (Options
+> dialogs, `.ini` importer, localization → Tier 2; `TemplateCatProtocol` fallback, offline
+> callsign/country lookup → Tier 2; flrig/OmniRig-as-client → Tier 3). This section stays as the
+> fuller design rationale.
+
 **Re-scoped 2026-08-05 (direct user decision)**: Phase 4's organizing theme is now "the program is
 actually usable day to day," not just "CAT protocols + image tooling." Two changes from the original
 plan: rigctld **server mode** is dropped outright (see [[04-rigctld]]'s "Purpose"/"Server mode" sections
@@ -4056,6 +4222,10 @@ dialogs, settings migration, localization completion) moved into Phase 4 above.
 path a future `ITemplateItem` extension would use).
 
 ## Phase 4+ backlog — legacy YONIQ/QSSTV feature inventory (2026-08-05)
+
+> **Candidate pool, not a priority list** — see "Path to 0.9 beta / road to 1.0" above for what
+> actually to work from. This inventory is raw research material this list draws on, not itself
+> ranked.
 
 Four parallel research passes (logbook/QSO, TX macros + CW-ID, waterfall/color, RX/TX
 quality-of-life), each verifying claims directly against `yoniq-old/YONIQ-main/` source
@@ -4437,6 +4607,12 @@ gaps found while doing this pass, not previously tracked anywhere:
 
 ## Must-implement backlog — legacy parity gaps, NOT deferred/removed-with-replacement (2026-08-08)
 
+> **Superseded as a priority list by "Path to 0.9 beta / road to 1.0" above** — kept here for its
+> research/citation detail. Several items below were stale as of 2026-08-13 (fixed inline: RX BPF
+> and Demod-type shipped 2026-08-12, so their sub-paragraphs below no longer reflect reality; the
+> H1-cutoff "logged not fixed" note was itself fixed; CW-ID/FSK's checkbox was unchecked despite
+> shipping 2026-08-12).
+
 User request: "what are we still missing from legacy that we MUST implement" — distinct from the
 mock2 GUI-blocking backend-primitive work above (SlantPpm/telemetry/Gallery-metadata/device-name/
 Tone-map, all shipped this session). This list is durable specifically so it survives a `/clear` —
@@ -4500,7 +4676,18 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   yet as of this note.
   **Update 2026-08-12**: user authorized proceeding through this backlog "small pieces first,"
   no further per-item confirmation needed. Decode tab: Auto-Sync/Auto-Slant/Auto-stop/Auto-restart/
-  Sense level all shipped (see `PROJECT_BRIEF.md` for detail). Remaining Decode controls scoped:
+  Sense level all shipped (see `PROJECT_BRIEF.md` for detail).
+
+  > **Correction, 2026-08-13**: the three paragraphs below (RX BPF, Demod type, RX buffer) are
+  > STALE research, kept only for their scoping reasoning. **All three shipped**: RX BPF
+  > (2026-08-12, Kaiser-window `MakeFilter` + preset-parameterized filter, incl. the H1-cutoff fix
+  > the "Also found, logged not fixed" note below flags — that's fixed too, not open), Demod type
+  > (2026-08-12, runtime dispatch across all 3 demodulators), RX buffer (Phases 1-6 of 9,
+  > 2026-08-13 — the "buffered-line-replay mechanism this port doesn't have" comment cited below no
+  > longer exists in `AnalogFmSstvDecoder.cs`; replay is real and wired. Phases 7-9 remain, tracked
+  > in Tier 2 above). Auto-start below is still genuinely open, also tracked in Tier 2.
+
+  Remaining Decode controls scoped (historical, see correction above):
   **RX BPF** — real legacy control (`Option.dfm`'s `RGRxBPF`), but bigger than a wiring task:
   legacy's `m_bpf` gate (`sstv.cpp:1826-1833`) is the pre-AGC filter feeding EVERY downstream stage
   (sync detection, demod, AVT), not a peripheral one; `SearchBandpassFilter.cs` already documents
@@ -4609,10 +4796,15 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   the QRZ item above under one "OCR/QRZ lookup" line; split out because QRZ lookup is a real,
   scoped legacy port and OCR is a wholly invented feature with no legacy precedent to port — user
   confirmed OCR stays low-priority/someday, QRZ lookup is active.
-- [ ] **CW-ID / FSK station-ID subsystem** — real, working legacy feature (TX CW-ID tone + RX
-  FSK-callsign-ID packet decode, `sstv.cpp:2465-2551`'s STX `0x2a`, distinct from the already-ported
-  mode-announce STX `0x2d` packets), zero replacement built. Already user-deferred once this session
-  (Identification card work, 2026-08-08). **Full TX+RX research pass done 2026-08-12** (user asked
+- [x] **CW-ID / FSK station-ID subsystem** — **shipped 2026-08-12** (6 phases, `PROJECT_BRIEF.md`).
+  Real residuals (NR/RST Options UI, `MacroTextResolver` token gaps, half-built callsign auto-fill,
+  VOX/Sound-file ID not built) tracked in Tier 2 above, corrected 2026-08-13 — an earlier
+  `PROJECT_BRIEF.md` note wrongly claimed VOX/Sound-file ID were "bundled in, done." Original
+  research kept below for citation detail — at the time it was written, this was a real, working
+  legacy feature (TX CW-ID tone + RX FSK-callsign-ID packet decode, `sstv.cpp:2465-2551`'s STX
+  `0x2a`, distinct from the already-ported mode-announce STX `0x2d` packets) with zero replacement
+  built. Already user-deferred once this session (Identification card work, 2026-08-08).
+  **Full TX+RX research pass done 2026-08-12** (user asked
   for legacy behavior on both sides before any implementation) — smaller than the 2026-08-12
   re-scope note below estimated, because a surprising amount of supporting infrastructure already
   exists in this port. Full findings:
@@ -4680,7 +4872,9 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   QSO-log fill) — fine to do, as long as it stays on the "local text in/out" side of that boundary,
   not the wire protocol itself.
 
-  **Still genuinely missing**: CW Morse table + timing generator (new, small, self-contained), the
+  **Still genuinely missing** (stale as a live list — all of this shipped 2026-08-12 except the
+  `.mmv` sound-file format/resampler and the Identification tab UI's NR/RST section, both tracked
+  in Tier 2 above): CW Morse table + timing generator (new, small, self-contained), the
   FSK-ID payload state machine on BOTH directions (RX continuation off the existing decoder; TX
   generator mirroring `VisHeader`'s existing pattern), the `.mmv` sound-file format + resampler (if
   sound-file ID is wanted), the NR/RST sub-packet, and the whole Identification tab UI. Bundled
@@ -4733,6 +4927,11 @@ verb for it.
 
 ## Explicitly deferred beyond v1
 
+> **Folded into Tier 3 of "Path to 0.9 beta / road to 1.0" above**, which also adds the Phase 5
+> plugin system and waterfall's 3 deferred sub-items (notch-filter marker, signal-strength meter,
+> debug scope) to this same "parked, no near-term plan" bucket. This list stays as the citation
+> detail for the original 8.
+
 - Perspective correction / webcam capture ([[07-image-pipeline]]).
 - Full Hamlib extended command-set coverage beyond frequency/mode/PTT ([[04-rigctld]]).
 - Plugin sandboxing beyond same-process isolation ([[11-plugin-system]]).
@@ -4753,9 +4952,18 @@ is still in its normal plan-review flow, nothing routed here yet.
 
 ## Release gates
 
+> **Restated on the "separate axis" of "Path to 0.9 beta / road to 1.0" above**, with the open
+> question of whether 0.9 beta itself needs the full 3-platform pass or can ship Linux-validated-
+> only — not yet decided, don't assume either answer.
+
 Before any tagged release: full [[13-testing]] manual hardware checklist (real rig CAT session, real audio device round-trip, real third-party `rigctld` interop) passes on at least one Windows, one Linux, and one macOS machine, in addition to the automated CI matrix being green.
 
 ## Open items requiring a decision before the relevant phase starts
+
+> The 4 human-only actions below (Clublog key, Chilkat/FastReport license, `.mtm` reverse-
+> engineering, `Terms.txt` confirmation) are also listed on the "separate axis" of "Path to 0.9
+> beta / road to 1.0" above, alongside the 3-platform release-gate decision — same items, kept here
+> too for their fuller context.
 
 - ~~Project license~~ — **decided**: LGPL-3.0-or-later, matching upstream. See [LICENSES.md](../LICENSES.md). The remaining open sub-item is confirming the `Terms.txt` freeware-clause interpretation with the upstream author (JE3HHT) if the project ever moves toward commercial distribution — not a blocker for development.
 - [[08-logging]]: source and license-audit the callsign-prefix/country dataset before bundling (Phase 4) — `ARRL.DX` is already ruled out, see [LICENSES.md](../LICENSES.md). **Pre-audited 2026-08-02**: Clublog's `cty.dat` has no fee, but redistribution requires a human to email Clublog's helpdesk describing the proposed use and obtain an individual API key before the data can be downloaded/bundled — not a simple open-license drop-in. See [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note. Remaining before Phase 4: someone actually emails Clublog and gets the key (not agent-doable), then the real bundled-asset row gets added to LICENSES.md.
