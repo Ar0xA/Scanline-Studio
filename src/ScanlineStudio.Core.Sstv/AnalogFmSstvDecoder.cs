@@ -133,12 +133,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // so it can't itself answer "which preset was selected") -- exists solely for RxBpfPresetForTests,
     // mirroring _demodType/DemodTypeForTests' own shape below.
     private readonly RxBpfPreset _rxBpfPreset;
-    // RX buffer subsystem Phase 2: threaded through the constructor now (mirrors _demodType/
-    // _rxBpfPreset's own shape) but not yet READ by any decode-path logic -- Phase 3 adds the
-    // TryAutoSync/SyncSSTV-averaging-depth gating that actually consumes this; Phase 4+ adds the
-    // staging buffer itself. A constructor-injected value with no behavioral effect yet, deliberately,
-    // so Phase 3's gating fix can be tested against a real selectable value instead of landing inert
-    // (round-2 auditor-confirmed phase ordering -- see the RX buffer plan's own Phase 2/3 split).
+    // RX buffer subsystem Phase 2: threaded through the constructor (mirrors _demodType/_rxBpfPreset's
+    // own shape). Phase 3 wired it into real decode-path gating -- TryAutoSync's branch 1/2 conditions
+    // (Main.cpp:3907/:3945) and TryResolveSyncAnchorCorrection's averaging-depth selection
+    // (Main.cpp:3760) -- see those methods' own doc comments for the citation trail. Phase 4+ (still
+    // unbuilt) adds the staging buffer/replay mechanism itself; this field's read sites will grow then,
+    // not shrink.
     private readonly RxBufferMode _rxBufferMode;
 
     // Band-1 S2 fix (pre-Phase-2 audit): the absolute sample index _rawSamples[0]/_demodulatedFrequencies[0]/
@@ -669,10 +669,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// reasoning/limitation as every other parameter here.</param>
     /// <param name="rxBufferMode">RX buffer mode, mirrors legacy's real <c>sys.m_UseRxBuff</c>
     /// (`sstv.cpp:1626-1644`'s <c>OpenCloseRxBuff</c>). Legacy's real compiled-in default is
-    /// <see cref="RxBufferMode.On"/> (`Main.cpp:899`, `sys.m_UseRxBuff=1`). RX buffer subsystem
-    /// Phase 2: threaded through and stored, not yet read by any decode-path logic (see
-    /// <see cref="_rxBufferMode"/>'s own doc comment). Restart-only, same reasoning/limitation as
-    /// every other parameter here.</param>
+    /// <see cref="RxBufferMode.On"/> (`Main.cpp:899`, `sys.m_UseRxBuff=1`). Gates real decode-path
+    /// behavior -- see <see cref="_rxBufferMode"/>'s own doc comment for the current read sites.
+    /// Restart-only, same reasoning/limitation as every other parameter here.</param>
     public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On)
     {
         _sampleRate = sampleRate;
@@ -1317,9 +1316,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // call: legacy resets and then immediately REPLAYS every buffered line back through
     // DrawSSTV -> AutoStopJob (Main.cpp:5603-5612, with m_ASDis=1 at :5601 suppressing triggers only
     // during that replay, cleared at :5627) -- so legacy's net Auto Sync state is rebuilt, not lost.
-    // This port has no replay mechanism, so reset-without-rebuild would be strictly further from
-    // legacy's real net effect than leaving the state alone, which is exactly what the empirical
-    // untriggerable-feature finding above independently confirmed was the right call.
+    // This port has no replay mechanism YET (RX buffer subsystem Phase 6, not built as of this
+    // comment), so reset-without-rebuild would be strictly further from legacy's real net effect than
+    // leaving the state alone, which is exactly what the empirical untriggerable-feature finding above
+    // independently confirmed was the right call. UNCHANGED PENDING PHASE 6's OWN REPLAY-SHAPE
+    // DECISION for RxBufferMode.On/Extended -- Phase 6 has not yet decided whether replay re-feeds this
+    // method (and TryAutoSync/AutoStopJob generally) the way legacy's own replay does; if it does, this
+    // reasoning still holds (rebuilt via replay, not lost); if Phase 6 instead chooses a pure
+    // pixel-re-render with no auto-sync re-feed, this conclusion no longer applies and this comment
+    // must be revisited then, not assumed to still hold. For RxBufferMode.Off specifically, this is
+    // ALREADY provably exact, not merely a least-bad approximation: legacy's own `UpdateSampFreq` gates
+    // its entire InitAutoStop-then-replay block on `(dp->m_StgBuf != NULL) || WaveStg.IsOpen()`
+    // (Main.cpp:5597), which is false whenever sys.m_UseRxBuff==0 -- so under Off, legacy performs NO
+    // reset and NO replay either, meaning this port's no-reset-here behavior already matches legacy
+    // exactly for Off, independent of whatever Phase 6 eventually decides for the other two modes.
     private void ResetAutoSyncDetectionState()
     {
         Array.Clear(_autoSyncPositionHistory);
@@ -1419,10 +1429,44 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // multiplier, porting Main.cpp:3910/:3917's `(KRSA->Checked ? 5 : 2)*m_Mult` exactly) -- an earlier
     // version of this port hardcoded `5 * m_Mult` unconditionally, correct only while no Auto Slant
     // toggle existed to ever make the `2` side reachable (auditor plan-review finding before
-    // _autoSlantEnabled was added). `!m_ASDis` is similarly omitted from every condition below: verified `m_ASDis` is
-    // set to 1 only while replaying the legacy RX staging buffer after a sample-rate/slant
-    // recalculation (UpdateSampFreq/RedrawSSTV, Main.cpp:5601-5864) -- a buffered-line-replay mechanism
-    // this port doesn't have, so it is provably always false here.
+    // _autoSlantEnabled was added).
+    //
+    // `!m_ASDis` is still omitted from every condition below -- `m_ASDis` is set to 1 only while
+    // replaying the legacy RX staging buffer after a sample-rate/slant recalculation (UpdateSampFreq/
+    // RedrawSSTV, Main.cpp:5601-5864), a buffered-line-replay mechanism this port doesn't have YET
+    // (RX buffer subsystem Phase 6, not built as of this comment) -- provably always false here until
+    // then. When Phase 6 lands, this omission must be revisited alongside whatever replay-shape
+    // decision that phase makes (see the RX buffer plan's own Phase 6 blocker list) -- do not assume
+    // it stays correct without re-checking.
+    //
+    // RX buffer subsystem Phase 3: `sys.m_UseRxBuff` gates branch 1 and branch 2 independently of
+    // `m_ASDis`/replay -- reachable the moment RxBufferMode.Off is selectable, with NO buffer or
+    // replay code involved at all. Branch 1's full legacy condition (Main.cpp:3907) has a trailing
+    // `&& sys.m_UseRxBuff` term separate from every other condition -- ported below as
+    // `_rxBufferMode != RxBufferMode.Off` (not `== RxBufferMode.On` -- Extended counts as "buffer
+    // present" for this purpose too). Branch 2's condition (Main.cpp:3945) is
+    // `(m_AutoSyncCount || !sys.m_UseRxBuff)` -- ported below as
+    // `(_slantCorrectionsDisabledForRestOfImage || _rxBufferMode == RxBufferMode.Off)`. (The nested
+    // `if(m_AutoSyncCount || !sys.m_UseRxBuff)` INSIDE branch 1's own body at Main.cpp:3911 is
+    // tautologically false given branch 1's outer gate above -- both disjuncts are already forced
+    // false by the time it's reached -- so it always takes the `else` arm, `df = m_AutoStopPos -
+    // m_AutoSyncPos`, which is exactly what this port's `Math.Abs(currentPosition - reference)` below
+    // already implements; nothing to change there.)
+    //
+    // Round-2/3 auditor finding: branch 1's own `_rxBufferMode != RxBufferMode.Off` term below is NOT
+    // covered by any test that fails if it's reverted -- an earlier test attempt was found, on review,
+    // to actually be exercising the CLUSTER threshold (CountAutoSyncCluster, 14*mult once >=16
+    // observations exist) staying satisfied, not branch 1's own threshold failing; branch 1 was never
+    // even being EVALUATED in that scenario. Round 3 corrected an overclaim in the round-2 fix's own
+    // comment ("not constructible"): branch 2's own step test is actually STRICTER than branch 1's
+    // (<=15 vs <=25 for this mode/rate), only its magnitude test is looser (>=15 vs >=25) -- so there
+    // IS an on-paper window, sustained drift in (15,25] samples/line, where branch 2's step test fails
+    // every line while branch 1's own pair could still pass if the remaining preconditions (n in [2,4),
+    // a stable reference, cooldown==0) happen to line up on a real signal -- not yet confirmed to occur.
+    // This term is verified today by direct source correspondence against Main.cpp:3907 only (confirmed
+    // independently across three auditor code-review rounds), not by a dedicated failing-on-revert test
+    // -- see RxBufferModeGatingTests.cs's own TryAutoSync_Branch2_UnlocksOnASmallSplice_
+    // ExtendedMatchesOnNotOff test for the fuller reasoning trail and the unconfirmed candidate window.
     //
     // The (m_SyncMax-m_SyncMin)>5000 signal-strength test and this port's own _pendingSkipSamples guard
     // live INSIDE each Auto Sync trigger branch, NOT in the outer `_autoSyncObservationCount >= 8` gate
@@ -1467,6 +1511,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 if (_autoSyncEnabled && signalStrongEnough && _pendingSkipSamples == 0
                     && n >= 2 && _autoSyncReferencePosition is { } reference
                     && !_slantCorrectionsDisabledForRestOfImage
+                    && _rxBufferMode != RxBufferMode.Off // Main.cpp:3907's trailing `&& sys.m_UseRxBuff` -- not `== On`, Extended counts too
                     && Math.Abs(currentPosition - previousPosition) <= branch1Threshold
                     && Math.Abs(currentPosition - reference) >= branch1Threshold)
                 {
@@ -1504,7 +1549,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             // reference -- a different comparison target than branch 1's own (b)).
             if (_autoSyncEnabled && signalStrongEnough && _pendingSkipSamples == 0
                 && _autoSyncCooldown == 0 && _autoSyncReferencePosition is not null
-                && _slantCorrectionsDisabledForRestOfImage
+                && (_slantCorrectionsDisabledForRestOfImage || _rxBufferMode == RxBufferMode.Off) // Main.cpp:3945's `(m_AutoSyncCount || !sys.m_UseRxBuff)`
                 && Math.Abs(currentPosition - previousPosition) <= _autoSyncDiff
                 && Math.Abs(currentPosition) >= _autoSyncDiff)
             {
@@ -3265,12 +3310,30 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         var pageWidthSamples = (int)lineWidthSamples;
 
         // e=3 vs e=4: legacy's real condition (Main.cpp:3760) is `m_SyncAccuracy && sys.m_UseRxBuff
-        // && SSTVSET.m_TW >= SSTVSET.m_SampFreq` -- both settings default ON (Main.cpp:730/899, no
-        // UI/config knob this port has an equivalent of yet), so this reduces to exactly
-        // LineDurationMs >= 1000.0 -- a one-line exact port, not a simplification, verified against
-        // source during plan-review. Reachable for Scottie DX/PD240/MP140/MP175/MN140 -- not either
-        // golden-vector fixture, but a real divergence for those modes if skipped.
-        var lineCount = mode.LineDurationMs >= 1000.0 ? 3 : 4;
+        // && SSTVSET.m_TW >= SSTVSET.m_SampFreq`, three independent terms.
+        //
+        // RX buffer subsystem Phase 3: `sys.m_UseRxBuff` is now real in this port (RxBufferMode), so
+        // `_rxBufferMode != RxBufferMode.Off` (not `== On` -- Extended counts too, same reasoning as
+        // TryAutoSync's own branch 1/2 gating) is ported below as a genuine condition, not folded away.
+        //
+        // `m_SyncAccuracy` is STILL hardcoded truthy -- round-2 auditor finding: this is a real,
+        // separate, persisted, user-settable 3-way legacy option (Main.cpp:1861's `SyncAccuracy` ini
+        // key, menu handlers Main.cpp:13412/:13415/:13418, UI Main.cpp:11969), NOT merely "no UI/
+        // config knob" as an earlier version of this comment claimed -- this port has no equivalent
+        // toggle and treats it as always nonzero (truthy), same as before this phase. `Main.cpp:3760`
+        // only tests `m_SyncAccuracy`'s truthiness (`&&`), so its two nonzero values (1/2) are
+        // indistinguishable there regardless.
+        //
+        // Round-3 correction (an earlier version of this comment had the divergence direction
+        // backwards): under RxBufferMode.Off this port now correctly yields e=4 -- matching legacy at
+        // EVERY m_SyncAccuracy value, since `sys.m_UseRxBuff` alone being false already forces legacy's
+        // whole `&&`-chain false regardless of m_SyncAccuracy. There is NO remaining divergence when
+        // Off is selected. The one still-open divergence is the opposite case:
+        // RxBufferMode != Off (this port takes the m_TW>=m_SampFreq branch) while legacy's real
+        // m_SyncAccuracy happens to be 0 (legacy forces e=4 regardless) -- reachable for Scottie DX/
+        // PD240/MP140/MP175/MN140 whenever a real user has SyncAccuracy set to its "Low"/0 option, not
+        // either golden-vector fixture. Same gap as before this phase, not introduced by it.
+        var lineCount = mode.LineDurationMs >= 1000.0 && _rxBufferMode != RxBufferMode.Off ? 3 : 4;
         var neededSamples = lineCount * pageWidthSamples;
 
         if (TotalSamplesReceived - _consumedSamples < neededSamples)
@@ -4047,9 +4110,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     internal RxBpfPreset RxBpfPresetForTests => _rxBpfPreset;
 
     /// <summary>Test-only visibility into the RX buffer mode this instance was actually constructed
-    /// with -- production code has no need to read this back yet (Phase 2: no decode-path logic
-    /// consumes <see cref="_rxBufferMode"/> today). Same reasoning as <see cref="DemodTypeForTests"/>/
-    /// <see cref="RxBpfPresetForTests"/> above.</summary>
+    /// with -- production code has no need to read this back (nothing external needs to know the mode;
+    /// <see cref="_rxBufferMode"/> is read internally by TryAutoSync/TryResolveSyncAnchorCorrection).
+    /// Same reasoning as <see cref="DemodTypeForTests"/>/<see cref="RxBpfPresetForTests"/> above.</summary>
     internal RxBufferMode RxBufferModeForTests => _rxBufferMode;
 
     /// <summary>Test-only visibility into the Auto-Slant sync-envelope detector -- the one AFC

@@ -17,12 +17,10 @@ namespace ScanlineStudio.Abstractions.Sstv;
 /// capability": legacy's source ALSO independently gates decode-path Auto-Sync/sync-search-averaging
 /// behavior on this value even when no replay ever happens (`Main.cpp:3907`/`:3760`) -- every gating
 /// site distinguishes <see cref="Off"/> from "not <see cref="Off"/>" (i.e. <see cref="On"/> OR
-/// <see cref="Extended"/>), never <see cref="On"/> specifically. <b>Not yet wired in this port</b> --
-/// this enum is threaded through the settings layer and every constructor (RX buffer subsystem
-/// Phase 1-2) but no decode-path logic reads it yet; <c>AnalogFmSstvDecoder</c>'s own
-/// <c>TryAutoSync</c>/sync-search-averaging doc comments still describe today's pre-Phase-3
-/// behavior, not a contradiction to resolve -- Phase 3 is what makes this value real and updates
-/// those comments to match.
+/// <see cref="Extended"/>), never <see cref="On"/> specifically -- wired live in this port
+/// (<c>AnalogFmSstvDecoder</c>'s <c>TryAutoSync</c>/<c>TryResolveSyncAnchorCorrection</c>, RX buffer
+/// subsystem Phase 3). The staging buffer and replay mechanism themselves (Phase 4+) are still
+/// unbuilt -- only these two decode-path gating effects are real today.
 ///
 /// Lives here (not <c>ScanlineStudio.Core.Sstv</c>) so <c>ScanlineStudio.Application</c>'s
 /// <c>OptionsSnapshot</c> and <c>ScanlineStudio.UI</c>'s <c>OptionsWindowViewModel</c> can both
