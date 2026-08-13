@@ -166,6 +166,10 @@ internal static partial class Program
             // compiled-in default, sstv.cpp:1416 -- see SstvDecoderSettings.RxBpfPreset's own doc
             // comment for why the out-of-range half is a deliberate divergence, not a replicated bug).
             var rxBpfPreset = decoderSettings.RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : RxBpfPreset.Wide;
+            // Same absent-or-out-of-range clamp shape as demodType/rxBpfPreset above (On is legacy's
+            // real compiled-in default, Main.cpp:899 -- see SstvDecoderSettings.RxBufferMode's own doc
+            // comment).
+            var rxBufferMode = decoderSettings.RxBufferMode is { } rxb && Enum.IsDefined(rxb) ? rxb : RxBufferMode.On;
             return new RestartableSstvDecoder(
                 afcEnabled: decoderSettings.AfcEnabled ?? true,
                 syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true,
@@ -174,7 +178,8 @@ internal static partial class Program
                 autoSlantEnabled: decoderSettings.AutoSlantEnabled ?? true,
                 senseLevel: decoderSettings.SenseLevel ?? 1,
                 demodType: demodType,
-                rxBpfPreset: rxBpfPreset);
+                rxBpfPreset: rxBpfPreset,
+                rxBufferMode: rxBufferMode);
         });
         hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
         hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));
