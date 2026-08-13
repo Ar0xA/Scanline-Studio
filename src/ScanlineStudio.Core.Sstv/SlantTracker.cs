@@ -92,7 +92,26 @@ internal sealed class SlantTracker
     /// mode's sync segment is expected to start (already wrapped to the representation closest to
     /// zero — see <c>AnalogFmSstvDecoder</c>). Returns a corrected samples-per-line value once a
     /// drift correction commits, else null.</summary>
-    public double? ProcessLine(double relativePositionSamples)
+    public double? ProcessLine(double relativePositionSamples) => ProcessLineCore(relativePositionSamples, suppressCommit: false);
+
+    /// <summary>RX buffer subsystem Phase 6b -- the third code path round-1 plan-review found missing:
+    /// legacy's own suppressed-replay re-feed (`Main.cpp:3989-4017`, `m_ASDis=1` bracketed) runs the
+    /// SAME fit/baseline/average/bitmask-latching logic <see cref="ProcessLine"/> does -- only the
+    /// FINAL `SSTVSET.m_SampFreq` write (`:4011-4017`) is gated on `!m_ASDis`, everything upstream of
+    /// it, including the bitmask latches at `:4006-4010`, is NOT. Neither of this class's other two
+    /// public methods matches that shape: <see cref="ProcessLine"/> commits too much (would advance
+    /// <see cref="_currentSampleRate"/>/<see cref="_nominalSamplesPerLine"/> and call
+    /// <see cref="Reset"/>, corrupting the very history a replay pass is supposed to be rebuilding, not
+    /// mutating going-forward state); <see cref="ProcessLineHistoryOnly"/> skips the fit/baseline/
+    /// average/bitmask entirely (that method's own real purpose, the `m_AutoSyncCount`-disabled-for-
+    /// rest-of-image case, is a DIFFERENT legacy gate than replay suppression). Discards the
+    /// would-be-corrected rate rather than returning it (unlike <see cref="ProcessLine"/>) --
+    /// deliberately: nothing should ever act on this quantity during a suppressed pass, and exposing it
+    /// would invite a future caller to "notice" and apply it, exactly what legacy's own `m_ASDis`
+    /// exists to prevent.</summary>
+    public void ProcessLineSuppressed(double relativePositionSamples) => ProcessLineCore(relativePositionSamples, suppressCommit: true);
+
+    private double? ProcessLineCore(double relativePositionSamples, bool suppressCommit)
     {
         // Main.cpp:3964-3966: unconditional history shift + push, every call.
         Array.Copy(_history, 1, _history, 0, HistorySize - 1);
@@ -126,7 +145,7 @@ internal sealed class SlantTracker
                 }
                 else if (_linesSinceBaseline >= 3)
                 {
-                    result = TryComputeCorrection(fittedPosition);
+                    result = TryComputeCorrection(fittedPosition, suppressCommit);
                 }
             }
         }
@@ -180,8 +199,13 @@ internal sealed class SlantTracker
         return (l * tt - t * tl) / (FitPoints * tt - t * t);
     }
 
-    /// <summary>Main.cpp:3994-4017 -- the drift calculation and staged threshold ladder.</summary>
-    private double? TryComputeCorrection(double fittedPosition)
+    /// <summary>Main.cpp:3994-4017 -- the drift calculation and staged threshold ladder.
+    /// <paramref name="suppressCommit"/> (RX buffer subsystem Phase 6b) mirrors legacy's own
+    /// `if(!m_ASDis){ SSTVSET.m_SampFreq = ...; }` (`Main.cpp:4011-4017`) exactly: the bitmask
+    /// latching below (`:4006-4010`) is NOT gated by it (matches legacy -- those bits latch during a
+    /// suppressed replay pass too) -- only the trailing `_currentSampleRate`/`_nominalSamplesPerLine`
+    /// write and <see cref="Reset"/> call are skipped when <see langword="true"/>.</summary>
+    private double? TryComputeCorrection(double fittedPosition, bool suppressCommit)
     {
         var d = (_baselinePosition - fittedPosition) * _currentSampleRate / _nominalSamplesPerLine / _linesSinceBaseline;
         var candidateSampleRate = _correctionAverage.Add(_currentSampleRate - d);
@@ -229,6 +253,15 @@ internal sealed class SlantTracker
         var clampedRate = Math.Min(candidateSampleRate, _sampleRate * 1100.0 / 1060.0); // Main.cpp:4012-4014 -- clamp uses the FIXED rate, not the evolving one (matches legacy's bare `SampFreq` there)
         var correctedRate = NormalSampleRate(clampedRate, 50); // Main.cpp:4015
 
+        // RX buffer subsystem Phase 6b: legacy's own `if(!m_ASDis){...}` gate (Main.cpp:4011) wraps
+        // exactly this block (the SetSampFreq-consistency comment below and the InitAutoStop-after-
+        // commit reset it describes) -- a suppressed replay pass computes everything above (the
+        // bitmask latches included) but must not advance state here.
+        if (suppressCommit)
+        {
+            return correctedRate;
+        }
+
         // Main.cpp:5586's SSTVSET.SetSampFreq() recomputing m_TW from the just-corrected m_SampFreq,
         // called immediately after every commit (RedrawSampFreq/UpdateSampFreq) -- keeps the next
         // correction's drift formula self-consistent instead of dividing by a stale denominator.
@@ -245,6 +278,13 @@ internal sealed class SlantTracker
 
         return correctedRate;
     }
+
+    /// <summary>RX buffer subsystem Phase 6b -- public exposure of <see cref="Reset"/> for a replay
+    /// pass to call before it starts (mirroring legacy's own `InitAutoStop`-before-every-replay shape,
+    /// `Main.cpp:5600`/`:5679`/`:5741`, immediately before `m_ASDis=1`) -- a thin, deliberately
+    /// non-duplicated wrapper around the SAME method <see cref="TryComputeCorrection"/> already calls
+    /// after every commit, so the two call sites can never drift apart on which fields get cleared.</summary>
+    internal void ResetBaseline() => Reset();
 
     /// <summary>Resets all per-baseline state to legacy's <c>InitAutoStop</c> defaults
     /// (`Main.cpp:3801-3810`), called immediately after every correction commits (see
@@ -278,6 +318,12 @@ internal sealed class SlantTracker
     /// directly observe the jitter gate's pass/fail outcome (ultracode audit finding #7) without
     /// waiting the further 3 lines a resulting correction would need.</summary>
     internal bool HasBaselineForTests => _hasBaseline;
+
+    /// <summary>Test-only visibility into the confidence-tier latch bits (Main.cpp's <c>m_ASBitMask</c>)
+    /// -- RX buffer subsystem Phase 6b: lets a test confirm <see cref="ProcessLineSuppressed"/> latches
+    /// these the same way a real commit does (Main.cpp:4006-4010, outside the `!m_ASDis` gate), not
+    /// just that it withholds the final rate write.</summary>
+    internal int BitMaskForTests => _bitMask;
 
     /// <summary>Test-only visibility into how many lines have been recorded via <see cref="ProcessLine"/>
     /// or <see cref="ProcessLineHistoryOnly"/> combined -- lets a test confirm history recording
