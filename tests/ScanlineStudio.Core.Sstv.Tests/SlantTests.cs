@@ -191,6 +191,88 @@ public class SlantTests
     }
 
     [Fact]
+    public void SlantTracker_ProcessLineSuppressed_NeverCommitsARateChange_ButBaselineAndBitmaskSurvive()
+    {
+        // RX buffer subsystem Phase 6b: legacy's own suppressed-replay re-feed (Main.cpp:3989-4017,
+        // m_ASDis=1) runs the fit/baseline/average/bitmask logic but never writes SSTVSET.m_SampFreq.
+        // Open-loop (never fed back), unlike SlantTracker_ConsistentDrift's closed-loop technique --
+        // ProcessLineSuppressed's return value is discarded by design, so there is no corrected rate to
+        // feed back even if this test wanted to. Since nothing ever commits, the per-line divergence
+        // (trueSamplesPerLine - nominalSamplesPerLine, a small CONSTANT here) stays well under the
+        // jitter gate the whole run, so a baseline reliably establishes on schedule (line 5) and is
+        // reachable for the correction ladder from line 8 onward.
+        const double nominalSamplesPerLine = SampleRate * 0.15;
+        const double trueSamplesPerLine = nominalSamplesPerLine * 1.01;
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+
+        var trueCumulative = 0.0;
+        var assumedCumulative = 0.0;
+        for (var line = 0; line < 300; line++)
+        {
+            trueCumulative += trueSamplesPerLine;
+            assumedCumulative += nominalSamplesPerLine;
+            tracker.ProcessLineSuppressed(trueCumulative - assumedCumulative);
+        }
+
+        Assert.Equal(300, tracker.TotalLinesObservedForTests);
+        Assert.True(tracker.HasBaselineForTests, "Baseline was never established -- ProcessLineSuppressed should still run the fit/baseline logic, just not the final commit.");
+        Assert.Equal(0.0, tracker.DriftPpm); // the one thing that must NEVER move: no commit ever writes _currentSampleRate.
+        // Round-1 code-review addition: the confidence-tier latch bits (Main.cpp:4006-4010) are the
+        // single most legacy-specific behavior `!m_ASDis` withholds nothing from -- they must still
+        // latch during a suppressed pass, even though the final rate write never happens. 300 lines of
+        // sustained 1% drift (~441Hz-equivalent d, comfortably past every one of the seven
+        // _limitsHz thresholds, the tightest of which is ~0.3Hz) and comfortably past every line-count
+        // threshold in the ladder (the largest, _thresholdLinePositions[3]=220, is well under 300)
+        // means at least one bit must have latched by the end -- proving the bitmask block genuinely
+        // ran, not just the average/fit steps above it.
+        Assert.NotEqual(0, tracker.BitMaskForTests);
+    }
+
+    [Fact]
+    public void SlantTracker_ProcessLineSuppressed_UnlikeProcessLineHistoryOnly_StillEstablishesABaseline()
+    {
+        // Direct differentiator from the sibling ProcessLineHistoryOnly test above (which asserts
+        // HasBaselineForTests stays FALSE for that method) -- proves the two suppression shapes are
+        // genuinely different code paths, not accidentally the same one under a new name. Uses a
+        // perfectly stable (zero-drift) position sequence specifically because
+        // SlantTracker_NoDrift_NeverReportsACorrection already established that ProcessLine itself
+        // never COMMITS on this exact input -- so any baseline observed here is attributable only to
+        // ProcessLineSuppressed's own fit/baseline step, not a side effect of a would-be commit this
+        // input can't produce anyway.
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine: SampleRate * 0.15, thresholdLinePositions: [64, 128, 160, 220]);
+
+        for (var line = 0; line < 10; line++)
+        {
+            tracker.ProcessLineSuppressed(0.0);
+        }
+
+        Assert.True(tracker.HasBaselineForTests);
+    }
+
+    [Fact]
+    public void SlantTracker_ResetBaseline_ClearsStateTheSameWayAPostCommitResetDoes()
+    {
+        // RX buffer subsystem Phase 6b: ResetBaseline is a thin public wrapper around the exact same
+        // private Reset() TryComputeCorrection already calls after every real commit -- this pins that
+        // it's reachable and has the documented effect, not that it's a NEW reset shape.
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine: SampleRate * 0.15, thresholdLinePositions: [64, 128, 160, 220]);
+
+        for (var line = 0; line < 10; line++)
+        {
+            tracker.ProcessLine(0.0);
+        }
+
+        Assert.True(tracker.HasBaselineForTests, "Test setup problem: baseline never established before ResetBaseline was even called.");
+        Assert.Equal(10, tracker.TotalLinesObservedForTests);
+
+        tracker.ResetBaseline();
+
+        Assert.False(tracker.HasBaselineForTests);
+        Assert.Equal(0, tracker.TotalLinesObservedForTests);
+        Assert.All(tracker.HistoryForTests, v => Assert.Equal(0.0, v));
+    }
+
+    [Fact]
     public void GetSyncSegmentOffsetMs_Robot36_SyncIsAtLineStart()
     {
         Assert.Equal(0.0, SstvModeRegistry.GetSyncSegmentOffsetMs(SstvModeRegistry.Robot36));
