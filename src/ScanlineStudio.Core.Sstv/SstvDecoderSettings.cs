@@ -105,4 +105,19 @@ public sealed record SstvDecoderSettings
     /// behavior worth preserving. This port's clamp-to-Wide sidesteps it entirely, same reasoning as
     /// <see cref="DemodType"/>'s own clamp-not-replicate-the-bug decision above.</summary>
     public RxBpfPreset? RxBpfPreset { get; init; }
+
+    /// <summary>Port of legacy's real, user-selectable <c>sys.m_UseRxBuff</c> (RX buffer mode,
+    /// `Option.dfm`'s <c>RGRBuf</c> radio group, `sstv.cpp:1626-1644`'s <c>OpenCloseRxBuff</c>) --
+    /// same <see cref="DemodType"/>/<see cref="RxBpfPreset"/> shape, matching (not different) fallback
+    /// values: absent means "apply <see cref="Sstv.RxBufferMode.On"/>" (legacy's real compiled-in
+    /// default, `Main.cpp:899`, `sys.m_UseRxBuff=1`), and a PRESENT-but-out-of-range value ALSO clamps
+    /// to <see cref="Sstv.RxBufferMode.On"/> -- legacy itself has no validation here (an out-of-range
+    /// <c>UseRxBuff</c> reaches most gating sites as a plain nonzero-or-not C-style int test, but
+    /// `sstv.cpp:1630`'s <c>OpenCloseRxBuff</c> tests `== 1` specifically -- so an out-of-range legacy
+    /// value is internally INCONSISTENT, not just unvalidated: it reads as "buffer present" at the
+    /// nonzero-test sites while allocating no RAM buffer at all, `default:`-falling to
+    /// <c>FreeRxBuff()</c>. Not a behavior worth preserving; this port's clamp-to-On sidesteps the
+    /// inconsistency entirely, same reasoning as <see cref="RxBpfPreset"/>'s own documented `CalcBPF`
+    /// bug and clamp-not-replicate decision.</summary>
+    public RxBufferMode? RxBufferMode { get; init; }
 }
