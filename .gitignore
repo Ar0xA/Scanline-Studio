@@ -12,6 +12,11 @@ hamlib/
 # Local Claude Code settings — machine/session-specific, not shared project config.
 .claude/settings.local.json
 
+# Claude Code project instructions and session-resume scratch file — kept local, not tracked
+# (removed from all prior history 2026-08-13, see backup-pre-history-rewrite-20260813 on origin).
+CLAUDE.md
+PROJECT_BRIEF.md
+
 # .NET build output
 bin/
 obj/
