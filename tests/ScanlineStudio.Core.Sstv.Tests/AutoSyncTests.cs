@@ -208,7 +208,16 @@ public class AutoSyncTests
         const int declaredSampleRate = 11025;
         const int trueSampleRate = (int)(declaredSampleRate * 1.01);
         var samples = EncodeRealTransmissionAtRate(mode, trueSampleRate, out _);
-        var decoder = new AnalogFmSstvDecoder(declaredSampleRate);
+        // RX buffer subsystem Phase 6d: explicit RxBufferMode.Off, not the bare (RxBufferMode.On
+        // default) constructor an earlier version of this test used. This test is about ManualReSync's
+        // own AutoSyncObservationCount reset, not RX buffer/replay -- but the default constructor's
+        // RxBufferMode.On is no longer inert now that Phase 6d wires automatic replay to it: this
+        // scenario's own real 1% clock mismatch reliably commits an Auto-Slant correction within the
+        // first several lines, and PerformReplay's own reset-then-rebuild (on the first replay pass of
+        // an image) resets AutoSyncObservationCountForTests right back toward 0 -- exactly the counter
+        // this test's own setup assertion checks -- before this test ever gets to read it. Off keeps
+        // this test's own scope narrow and unaffected by a feature it isn't testing.
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.Off);
 
         const int chunkSize = 256;
         var offset = 0;
