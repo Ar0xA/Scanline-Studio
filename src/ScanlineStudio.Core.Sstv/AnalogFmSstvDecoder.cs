@@ -5115,8 +5115,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// from legacy's own whole-buffer re-decode (`UpdateSampFreq`, `Main.cpp:5603-5612`).
     ///
     /// <b>Known, deferred limitation, found and logged (not silently dropped) while implementing this
-    /// round's own two-pass test</b>: <see cref="RobotScanlineDecoder"/> (and, unverified, possibly
-    /// other <see cref="IScanlineDecoder"/> implementations with cross-line instance state) caches the
+    /// round's own two-pass test</b>: <see cref="RobotScanlineDecoder"/> (confirmed the only
+    /// <see cref="IScanlineDecoder"/> implementation with cross-line instance state, per the whole-
+    /// subsystem review's own sweep of all five -- <see cref="YCbCrSequentialScanlineDecoder"/>,
+    /// <see cref="YCbCrLinePairedScanlineDecoder"/>, <see cref="RgbSequentialScanlineDecoder"/>, and
+    /// <see cref="MonoAveragedPairedScanlineDecoder"/> all allocate fresh per-call state) caches the
     /// PREVIOUS line's other chroma channel across `DecodeLine` calls, matching legacy's own
     /// `m_D36[2][320]` cross-line state. This method's own "sacrifice one row per pass, and sometimes
     /// re-decode an already-decoded row" design (see above) does not currently keep that cache
@@ -5125,10 +5128,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// producing real (not merely cosmetic) cross-row color bleed for Robot-family modes specifically
     /// under a multi-pass replay scenario. Confirmed via a real reproduction (not theoretical) while
     /// building `ReplayEngineTests.cs`'s own two-pass regression test -- see that test's own doc comment
-    /// for the reproduction and why it now runs against a stateless decoder (R24) instead. Real, separate
-    /// follow-up work (likely: either never sacrifice/redraw a row for a stateful-decoder-family mode, or
-    /// reset that decoder's own cross-line cache at a truncation boundary) -- out of scope for this round,
-    /// not yet fixed.</summary>
+    /// for the reproduction and why it now runs against a stateless decoder (R24) instead.
+    ///
+    /// <b>Reachability escalation, RX buffer subsystem Phase 6d, re-confirmed by the whole-subsystem
+    /// review (2026-08-13)</b>: this limitation was originally deferred under the premise "replay has
+    /// no production caller yet" (true at Phase 6c). Phase 6d made replay fire AUTOMATICALLY by
+    /// default (`RxBufferMode.On` is this decoder's own default constructor parameter, matching
+    /// legacy's own compiled-in default, `Main.cpp:899`) -- so this is no longer a theoretical,
+    /// test-only concern: any Robot36/Robot72 reception with real clock drift, decoded with default
+    /// settings, now reaches this path automatically. Explicitly re-confirmed as an accepted, still-
+    /// deferred limitation (not silently carried forward unexamined) -- real, separate follow-up work,
+    /// tracked in `PROJECT_BRIEF.md`'s own RX buffer subsystem section. Candidate fixes, unchanged from
+    /// the original finding: either never sacrifice/redraw a row for a stateful-decoder-family mode, or
+    /// reset that decoder's own cross-line cache at a truncation boundary.</summary>
     private void PerformReplay()
     {
         if (_rxLineStagingBuffer is null || _mode is null || _slantTracker is null || _lineDecoder is null || _pixels is null)
