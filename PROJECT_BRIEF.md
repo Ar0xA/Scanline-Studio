@@ -107,11 +107,89 @@ RAM staging buffer, replay mechanism, decode-path Auto-Sync gating, disk-backed 
   `PixelSampleReader`'s existing `neverPeakPicks` flag (previously Scottie-DX-only). Full suite green
   throughout (839/839 final, zero regressions at every round — the "capture changes nothing observable"
   guarantee held end to end).
-- **Phase 6 (next, the crux)** — replay mechanism. Plan doc already carries 5 open blockers forward
-  verbatim into this phase's own required 2-round plan-review (uniform-vs-accumulated stride,
-  sample-count-vs-row-count replay bound, origin shear, `_bufferBase` clamp hazard on re-anchor, and an
-  unresolved contradiction over whether replay re-feeds `TryAutoSync`/`AutoStopJob` at all) — do not
-  start Phase 6 without running that plan-review first. **Not yet started.**
+- **Phase 6 (the crux) — DONE, all sub-phases (6a-6d) committed.** Replay mechanism. 3 rounds of Phase-6-specific plan-review
+  (on top of the general 2 rounds) resolved: flat-stream staging model, uniform-vs-accumulated stride,
+  `_nextLine`-vs-`m_AY` unit mismatch (row-doubling for paired-channel modes), `_bufferBase` clamp
+  hazard (closed for data reads; `_nextLine` propagation handled separately), reentrancy (deferred-
+  request pattern, `_reSyncRequested`-shaped), and the Auto-Slant suppressed-replay shape (needed a
+  third `SlantTracker` method, not either existing one). Broken into sub-phases 6a-6d:
+  - **6a — DONE, committed (`334cd80`)**: `ReplayOriginCalculator` (43-mode `AdjustSyncPos` port +
+    histogram-fold origin derivation) + `RxLineStagingBuffer` per-line boundary tracking
+    (`LineCount`/`SampleCountThroughLine`). 1 auditor round found a real per-line-stride-uniformity
+    bug (this port's staged lines aren't uniform-width like legacy's, unlike legacy's real
+    `m_WD`) — fixed by resolving fold bounds from real per-line boundaries, not a division.
+  - **6b — DONE, committed (`0869f16`)**: extracted `ApplySlantTracking`'s data-source-agnostic core
+    into `ProcessSlantTrackingSample(envelope, isReplay)` (RX-buffer capture hooks stay live-only,
+    outside the core); threaded `isReplay` through `TryAutoSync` (legacy's `!m_ASDis`, ported onto
+    exactly the 3 trigger conditions — branch 1, Auto Stop, branch 2 — bookkeeping stays
+    unconditional); added `SlantTracker.ProcessLineSuppressed`/`ResetBaseline` (legacy's
+    `m_ASDis`-suppressed re-feed: same fit/baseline/bitmask logic, withholds only the final rate
+    write). Mechanical extraction verified zero-regression (isReplay is always false on the only
+    current call site) — 862/862 full suite green throughout. 1 auditor round: EQUIVALENT/GO, nits
+    (wrong line citation, thin bitmask test coverage) fixed inline before commit.
+  - **6c — DONE, committed (`ff4f93f`)**: the replay engine (`AnalogFmSstvDecoder.PerformReplay`),
+    exercised only via a test-only `PerformReplayForTests()` wrapper (Phase 6d, the automatic trigger,
+    is what makes it reachable from production). **The heaviest-weight round of this whole session** —
+    5 auditor rounds (this project's normal soft cap is 3; continued past it with explicit user
+    sign-off each time, given genuine DSP-coordinate-phase complexity, not scope creep). Round 1: a
+    positive-origin crash (Scottie-family modes) + a row-misalignment bug. Round 2: the misalignment
+    "fix" was actually a sub-sample no-op (`_consumedSamples`/`_idealLineStartSample` are already
+    within 0.5 samples by invariant) + a NEW phase-offset bug in the sync-bookkeeping re-feed loop.
+    Round 3: both of THOSE fixed correctly, but a deeper defect surfaced — the forward cursor-jump
+    (which sacrifices one row so bookkeeping realigns) left the staging buffer physically discontinuous
+    across repeated replay passes. Asked the auditor to propose the exact fix (truncate the buffer at
+    the jump + a new `_rxBufferBaseTransmissionLine` field tracking the truncation point) rather than
+    design it myself, per this project's own "ask the auditor to propose the fix after repeated rounds"
+    convention. Round 4: implementing that fix, self-caught a FURTHER bug the auditor's own proposal
+    missed (the `_nextLine` reconciliation used a LOCAL buffer-relative index without converting to
+    absolute image-row terms — caught via a real `gap2=-10` test failure, not by inspection) — fixed,
+    plus discovered and explicitly deferred (not silently dropped) a real, separate finding:
+    `RobotScanlineDecoder`'s cross-line chroma cache doesn't survive a sacrificed/redrawn replay row
+    (confirmed via reproduction; the regression test now runs against a stateless decoder, R24,
+    instead). Round 5: **GO**, plus one more real (if minor) fix applied before commit — `ComputeOrigin`'s
+    `stagedLineCount` parameter needs the running base offset added too (same local/absolute bug class,
+    third instance) — and `DrainPendingSkip`'s own analogous staging-buffer-discontinuity gap documented
+    as a known, deferred item (currently unreachable, must be resolved before any future manual-redraw
+    UI trigger). Full suite green throughout every round (869/869 final).
+  - **6d — DONE, committed (`965e4df`)**: automatic trigger plumbing (`_pendingReplayRequested`, set at
+    a commit branch + a once-per-image latch, both inside `TryProcessBuffer`'s own per-line loop) — the
+    piece that finally makes 6c's replay engine reachable from a real decode, not just
+    `PerformReplayForTests()`. 3 audit rounds + a dedicated deep-dive fork: initial wiring drained at
+    the top of `PushSamples` (mirroring `_reSyncRequested`), which broke chunk-size determinism
+    (`PerformReplay` is destructive — a caller-chunk-boundary drain point made the DECODED IMAGE a
+    function of how `PushSamples` calls were sliced); a deep-dive moved the drain to a decode-position-
+    deterministic point instead, and separately fixed a second bug (Auto-Sync/Auto-Stop permanently
+    starved after a 2nd replay pass — legacy rebuilds against the FULL running line count on every
+    pass, this port's own truncate-on-jump divergence means a later pass can't). Round 1 (auditor)
+    found two real blockers once wired: the once-per-image latch could fire across a staging-buffer
+    hole left by a manual ReSync (closed by gating on `!_slantCorrectionsDisabledForRestOfImage`); and
+    the latch's own literal-legacy unconditional trigger now guarantees a small visible defect (a
+    sacrificed row) in every default decode — **escalated to the user as a product decision** (not
+    resolved unilaterally), who chose to narrow the latch to require an actual committed correction
+    first. Round 2 found one of the new automatic-trigger tests vacuous (suppressed the exact thing it
+    was supposed to prove); round 3: **GO**, closed. Full suite green throughout (872/872 final).
+  Full plan at `/home/artien/.claude/plans/coppery-staging-heron.md`.
+
+  **Whole-subsystem review (Phases 1-6 together), GO on round 1 (2026-08-13)** — integration holds
+  together end to end, no new silently-wrong cross-phase composition found. Confirmed via a NEW
+  end-to-end test (`RxBufferModeOn_DecodesMeasurablyBetterThanOff_UnderARealClockMismatch`,
+  `ReplayEngineTests.cs`) that the subsystem's own core value proposition actually holds: a real
+  drifting-clock reception genuinely decodes better with `RxBufferMode.On` than `Off` — every other
+  test up to this point verified LOCAL correctness of one piece at a time, none had verified this
+  GLOBAL outcome. Follow-up items from the review, triaged:
+  - **Addressed**: `RobotScanlineDecoder`'s cross-line chroma cache (known since Phase 6c) — the review
+    found its REACHABILITY escalated from "test-only" to "any default-settings Robot-family reception
+    with real clock drift" once Phase 6d made replay automatic. Re-confirmed as an accepted, still-
+    deferred limitation (not silently carried forward) — `PerformReplay`'s own doc comment now states
+    the escalation explicitly. Real fix (candidates: skip replay's row-sacrifice for stateful-decoder
+    modes, or reset the decoder's own cross-line cache at a truncation boundary) still not built.
+  - **Not yet addressed, tracked**: Auto-Slant's convergence characteristic changed materially at
+    Phase 6d (`SlantTracker.ResetBaseline()` now actually runs in production on every replay pass,
+    unlike before 6d when it had no caller) — more legacy-faithful, but `SlantTests.cs`'s own "bitmask
+    permanently latches" doc comment is now stale for the default (`RxBufferMode.On`) path, and nothing
+    measures whether this changed convergence behavior for the better or worse. A one-line
+    `_suppressNextSlantProcessLine` bookkeeping loss when a manual-ReSync suppression and an automatic
+    replay land in the same per-line iteration (bounded to one line, not chased further).
 - **Phase 7** — disk-backed Extended mode. **Phase 8** — "Correct Slant" (`KRCS`) one-shot search.
   **Phase 9** — Options dialog UI wiring (`RGRBuf` stub already exists, wrong default like RX BPF's own
   stub had).
