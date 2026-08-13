@@ -5,9 +5,11 @@ using ScanlineStudio.Core.Imaging;
 namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
-/// RX buffer subsystem Phase 6c -- tests for <c>AnalogFmSstvDecoder.PerformReplay</c> (exercised via
-/// <c>PerformReplayForTests</c>, since Phase 6d, the automatic deferred-trigger wiring, is not yet
-/// built -- this phase's replay engine is not reachable from any production code path yet).
+/// RX buffer subsystem Phase 6c -- tests for <c>AnalogFmSstvDecoder.PerformReplay</c>, exercised via
+/// <c>PerformReplayForTests</c> (a controlled, single-call entry point) with automatic replay
+/// suppressed (<c>SuppressAutomaticReplayForTests</c>) unless a test explicitly wants the reverse.
+/// Phase 6d's own automatic-trigger tests (does the commit trigger fire, does the once-per-image latch
+/// fire and respect its own gates) live in the "automatic trigger" region near the bottom of this file.
 /// </summary>
 public class ReplayEngineTests
 {
@@ -48,17 +50,20 @@ public class ReplayEngineTests
         decoder.LineDecoded += _ => liveLineCount++;
 
         // Push only enough for a handful of lines, not the whole image -- replay should still be able
-        // to redraw whatever's been staged so far.
+        // to redraw whatever's been staged so far. Round-1 code-review fix: 12, not 20 -- once Phase 6d
+        // wired the automatic once-per-image latch (fires unconditionally once 16 transmission lines
+        // decode), staying below that threshold keeps this test's own manual PerformReplayForTests()
+        // call the ONLY replay pass that runs, matching what the test actually wants to exercise.
         const int chunkSize = 256;
         var offset = 0;
-        while (offset < samples.Length && liveLineCount < 20)
+        while (offset < samples.Length && liveLineCount < 12)
         {
             var length = Math.Min(chunkSize, samples.Length - offset);
             decoder.PushSamples(samples.AsMemory(offset, length));
             offset += length;
         }
 
-        Assert.True(liveLineCount >= 20, "Test setup problem: never decoded 20 lines live before attempting replay.");
+        Assert.True(liveLineCount >= 12, "Test setup problem: never decoded 12 lines live before attempting replay.");
         Assert.True(decoder.RxLineStagingBufferForTests!.LineCount > 0, "Test setup problem: nothing staged yet.");
 
         var replayLineCount = 0;
@@ -194,7 +199,17 @@ public class ReplayEngineTests
         const int trueSampleRate = (int)(declaredSampleRate * 1.0005);
         var samples = Encode(mode, sourceImage, trueSampleRate);
 
-        var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On);
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On)
+        {
+            // Round-1 code-review fix: this test drives exactly two replay passes, at moments IT
+            // controls, and asserts precise row-continuity/pixel-content invariants across each -- an
+            // automatic replay pass (RX buffer subsystem Phase 6d) firing unpredictably during the same
+            // PushSamples calls (via the once-per-image latch or a real Auto-Slant commit, both
+            // reachable under this test's own real 500ppm mismatch) would interleave a THIRD,
+            // uncontrolled pass and corrupt this test's own bookkeeping. Suppressed here so
+            // PerformReplayForTests() remains the only thing that ever calls PerformReplay.
+            SuppressAutomaticReplayForTests = true,
+        };
         var replaying = false;
         var lastRowDuringReplay = -1;
         int? firstRowAfterReplay = null;
@@ -449,6 +464,157 @@ public class ReplayEngineTests
         // Round-3 code-review nit: AdjustPosition's Scottie wrap only guarantees n >= 0 (argmax==(int)ofp
         // gives exactly 0), not n > 0 -- >= 0 is the real, non-flaky guarantee this test can assert.
         Assert.True(decoder.LastReplayOriginForTests >= 0, $"Test setup problem: origin was {decoder.LastReplayOriginForTests}, negative -- this test doesn't actually exercise the Scottie-wrap path it's named for.");
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // RX buffer subsystem Phase 6d -- automatic trigger tests. Every test above this point suppresses
+    // the automatic path (SuppressAutomaticReplayForTests) or predates Phase 6d entirely; per the
+    // auditor's own round-1 finding, NOTHING previously exercised the automatic commit trigger or the
+    // once-per-image latch actually firing on their own. These tests deliberately do NOT suppress it.
+    // ------------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void PerformReplay_AutomaticCommitTrigger_FiresWithNoManualCallAnywhere()
+    {
+        // Proves the automatic commit trigger (ProcessSlantTrackingSample's own commit branch) actually
+        // fires PerformReplay, with NO PerformReplayForTests() call anywhere in this test.
+        // _rxBufferBaseTransmissionLine only ever becomes nonzero inside PerformReplay's own tail (the
+        // truncation) -- observing it move off 0 is proof positive that PerformReplay actually ran,
+        // without needing to track row sequences by hand.
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(230, 230, 230));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = 44100;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.0005);
+        var samples = Encode(mode, sourceImage, trueSampleRate);
+
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On);
+        decoder.PushSamples(samples);
+
+        Assert.True(decoder.RxBufferBaseTransmissionLineForTests > 0, "The automatic commit trigger never fired a replay pass -- _rxBufferBaseTransmissionLine should have moved off 0.");
+    }
+
+    [Fact]
+    public void PerformReplay_AutomaticOnceLatch_NeverFiresWithoutARealCorrection()
+    {
+        // Round-2 code-review regression test for the explicit user decision (2026-08-13) narrowing the
+        // once-per-image latch: it must NOT fire (and PerformReplay must never truncate the staging
+        // buffer) when no Auto-Slant correction has ever committed this image, even past the
+        // 16-transmission-line threshold. A clean (matched-rate) signal never commits a correction, and
+        // Robot36's own 240 lines are comfortably past 16 -- _rxBufferBaseTransmissionLine must stay 0
+        // for the WHOLE image.
+        var mode = SstvModeRegistry.Robot36;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        var samples = Encode(mode, sourceImage, SampleRate);
+
+        var decoder = new AnalogFmSstvDecoder(SampleRate, rxBufferMode: RxBufferMode.On);
+        decoder.PushSamples(samples);
+
+        Assert.Equal(0, decoder.RxBufferBaseTransmissionLineForTests);
+    }
+
+    [Fact]
+    public void PerformReplay_AutomaticOnceLatch_NeverFiresAcrossAManualReSyncHole()
+    {
+        // Round-2 code-review regression test for the auditor's own round-1 blocker: a manual ReSync
+        // (or an Auto-Sync trigger) leaves a mid-buffer HOLE in RxLineStagingBuffer (DrainPendingSkip's
+        // own skipped samples advance the live cursor without ever being staged) and sets
+        // _slantCorrectionsDisabledForRestOfImage -- the once-per-image latch must respect that flag
+        // too, or it would fire replay straight across the hole. Uses a real clock mismatch so a
+        // correction commits FIRST (satisfying the OTHER gate this round added,
+        // _anyCorrectionCommittedThisImage) -- proving this is genuinely the ReSync-hole gate holding
+        // the latch back, not just the "no commit yet" gate from the sibling test above.
+        //
+        // Round-2 code-review correction (real bug in the test, not the production code): an earlier
+        // version of this test set SuppressAutomaticReplayForTests = true, which made the FINAL
+        // assertion (_rxBufferBaseTransmissionLine == 0) unconditionally true regardless of whether the
+        // latch's own new gate worked at all -- the suppression isolated this test from the very thing
+        // it exists to prove. Automatic replay now runs UNSUPPRESSED for this whole test; the discriminator
+        // is instead "the base stops changing once the hole exists," not "the base never changes at all"
+        // (the commit trigger legitimately replays at least once, BEFORE the ReSync, which is expected
+        // and asserted below, not suppressed).
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(230, 230, 230));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        // A severe (1%, not the sibling tests' own 500ppm) mismatch is used here specifically because
+        // this test needs a commit to land well BEFORE line 16 -- SlantTests.cs's own established
+        // characterization of this magnitude ("converges quickly") is exactly what a tight setup window
+        // needs; 500ppm was measured (round-2 code review) to not reliably commit before line 16 for
+        // this mode/rate.
+        const int declaredSampleRate = 44100;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.01);
+        var samples = Encode(mode, sourceImage, trueSampleRate);
+
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On);
+
+        const int chunkSize = 256;
+        var offset = 0;
+
+        // Round-2 code-review correction: count TRANSMISSION LINES via NextLineForTests, not
+        // LineDecoded events -- with automatic replay unsuppressed, LineDecoded fires once per REDRAWN
+        // row too, which would inflate a plain event-count well past the real decode position. Robot36
+        // has RowsPerTransmissionLine == 1, so this division is a no-op for THIS mode specifically, but
+        // stated explicitly since the sibling tests' own event-counting convention would silently give
+        // the wrong number here.
+        int TransmissionLinesDecoded() => decoder.NextLineForTests; // RowsPerTransmissionLine == 1 for Robot36
+
+        // Wait for a real commit (satisfies _anyCorrectionCommittedThisImage) AND a sync offset clearly
+        // outside PerformReSync's own 5-sample deadband (Main.cpp:14006) -- the automatic commit
+        // trigger's own replay pass re-centers the sync position, so requesting a ReSync immediately
+        // after the FIRST commit alone is unreliable (round-2 code review: measured RequestReSync()
+        // silently no-op under the deadband in that narrower window). Both well before line 16.
+        while (offset < samples.Length
+            && (decoder.SlantTrackerForTests?.DriftPpm is null or 0.0
+                || decoder.SyncOffsetSamples is not int syncOffset || Math.Abs(syncOffset) < 5))
+        {
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            offset += length;
+        }
+
+        Assert.True(decoder.SlantTrackerForTests?.DriftPpm is not (null or 0.0), "Test setup problem: never observed a committed correction.");
+        Assert.True(decoder.SyncOffsetSamples is int finalOffset && Math.Abs(finalOffset) >= 5, "Test setup problem: sync offset never cleared PerformReSync's own deadband -- the ReSync below would silently no-op.");
+        Assert.True(TransmissionLinesDecoded() < 16, "Test setup problem: already past the once-per-image latch's own threshold before the manual ReSync below -- this test needs the hole to exist BEFORE the latch could otherwise fire.");
+        // The commit trigger legitimately replays at least once already, before any ReSync -- proves the
+        // hole the ReSync is about to punch lands in a NON-EMPTY staged buffer, i.e. a real interior gap,
+        // not an edge case against an empty one.
+        Assert.True(decoder.RxBufferBaseTransmissionLineForTests > 0, "Test setup problem: the automatic commit trigger never replayed before the ReSync -- the hole below wouldn't land in a real interior gap.");
+
+        // Round-3 code-review hardening: snapshot BEFORE RequestReSync(), not after the priming push --
+        // ApplySyncCorrection (the ReSync's own shared tail) writes none of the RxBuffer-side fields, so
+        // this value is identical either way in the common case, but capturing it here closes a
+        // theoretical timing hole the auditor flagged: if the priming push below happened to cross the
+        // 16-line latch threshold itself, capturing the snapshot AFTER that push could already reflect a
+        // (reverted-gate) latch firing, silently making the test vacuous again. Captured here, that
+        // can't happen -- the value used below is fixed before the ReSync (and its priming push) even run.
+        var baseAfterReSync = decoder.RxBufferBaseTransmissionLineForTests;
+
+        decoder.RequestReSync();
+        // One more push to let the deferred ReSync actually apply (PerformReSync drains at the top of
+        // the NEXT PushSamples call).
+        var primeLength = Math.Min(chunkSize, samples.Length - offset);
+        decoder.PushSamples(samples.AsMemory(offset, primeLength));
+        offset += primeLength;
+        Assert.True(decoder.SlantCorrectionsDisabledForRestOfImageForTests, "Test setup problem: RequestReSync() never actually applied (deadband?) -- the hole this test targets was never created.");
+
+        // Decode well past the 16-transmission-line latch threshold.
+        while (offset < samples.Length && TransmissionLinesDecoded() < 40)
+        {
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            offset += length;
+        }
+
+        Assert.True(TransmissionLinesDecoded() >= 40, "Test setup problem: never decoded past the latch threshold after the ReSync.");
+        Assert.True(decoder.SlantCorrectionsDisabledForRestOfImageForTests, "The disabled-for-rest-of-image flag should never clear mid-image -- see ApplySyncCorrection/ResetReSyncState's own scope.");
+        // The real discriminator: the base must not have moved AGAIN since the ReSync -- proving the
+        // once-per-image latch never fired across the hole. (It's allowed to be nonzero -- that's the
+        // pre-ReSync commit-triggered pass captured above -- just unchanged since then.)
+        Assert.Equal(baseAfterReSync, decoder.RxBufferBaseTransmissionLineForTests);
     }
 
     private static float[] Encode(SstvModeDefinition mode, IImageSource sourceImage, int sampleRate)
