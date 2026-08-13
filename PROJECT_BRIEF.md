@@ -87,17 +87,31 @@ RAM staging buffer, replay mechanism, decode-path Auto-Sync gating, disk-backed 
   isolate branch 1 — structurally preempted by branch 2, caught and documented rather than chased
   further; round 3: softened an overclaimed "not constructible" comment). New test file
   `RxBufferModeGatingTests.cs`. Full suite green throughout (814/814 final).
-- **Phase 4 (next)** — staging buffer data structure: a flat, capacity-capped, chronologically-ordered
-  store of two parallel sample streams (demod-frequency + sync-envelope), NOT per-line chunks (this was
+- **Phase 4 — DONE, committed (`36f276b`)**: `RxLineStagingBuffer`, a flat, capacity-capped,
+  chronologically-ordered store of two parallel `double` sample streams, NOT per-line chunks (this was
   round-1 plan-review's key correction — legacy's replay re-splits a flat stream using the CURRENT
-  corrected timing, not the capture-time stride).
-- **Phase 5** — wire capture into the per-line loop (inert, zero decode-behavior change, proven via
-  full-suite regression).
-- **Phase 6 (the crux)** — replay mechanism. Plan doc already carries 5 open blockers forward verbatim
-  into this phase's own required 2-round plan-review (uniform-vs-accumulated stride, sample-count-vs-
-  row-count replay bound, origin shear, `_bufferBase` clamp hazard on re-anchor, and an unresolved
-  contradiction over whether replay re-feeds `TryAutoSync`/`AutoStopJob` at all) — do not start Phase 6
-  without running that plan-review first.
+  corrected timing, not the capture-time stride). 2 auditor code-review rounds — round 1 found a real
+  admission-boundary off-by-one (legacy's `<` rejects an exact-fill line, an earlier version accepted
+  it) AND a wrong "legacy integer-overflow bug" doc-comment claim (legacy's own `SampFreq` is `double`,
+  not `int` — no such legacy bug exists; the port's own `(long)` cast is still needed, but only for a
+  real C#-side reason). Isolated, no decoder wiring — 15 new tests, zero coupling to decode internals.
+- **Phase 5 — DONE, committed (`b77bd10`)**: wired capture into `ApplySlantTracking`'s own per-sample
+  loop (not "after it returns" as originally planned — `envelope` is a local, discarded immediately,
+  had to be tapped at computation time). Gated on `RxBufferMode.On` specifically (`Extended`'s own
+  disk-backed capture is Phase 7, still unbuilt). 3 auditor code-review rounds. **Found and fixed a
+  real blocker along the way, not just a wiring bug**: this phase's own plan item "resolve the
+  `GetPictureLevel`/`GetPictureLevelDiff` pixel-lookahead question" had been pre-judged out of scope
+  with wrong reasoning ("C++ pointer-arithmetic safety detail") — legacy actually disables peak-picking
+  for every mode under `RxBufferMode.Extended`, in the LIVE decode path, a real currently-reachable
+  pixel-level divergence since `Extended` has been selectable since Phase 3. Fixed by folding into
+  `PixelSampleReader`'s existing `neverPeakPicks` flag (previously Scottie-DX-only). Full suite green
+  throughout (839/839 final, zero regressions at every round — the "capture changes nothing observable"
+  guarantee held end to end).
+- **Phase 6 (next, the crux)** — replay mechanism. Plan doc already carries 5 open blockers forward
+  verbatim into this phase's own required 2-round plan-review (uniform-vs-accumulated stride,
+  sample-count-vs-row-count replay bound, origin shear, `_bufferBase` clamp hazard on re-anchor, and an
+  unresolved contradiction over whether replay re-feeds `TryAutoSync`/`AutoStopJob` at all) — do not
+  start Phase 6 without running that plan-review first. **Not yet started.**
 - **Phase 7** — disk-backed Extended mode. **Phase 8** — "Correct Slant" (`KRCS`) one-shot search.
   **Phase 9** — Options dialog UI wiring (`RGRBuf` stub already exists, wrong default like RX BPF's own
   stub had).
