@@ -133,6 +133,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // so it can't itself answer "which preset was selected") -- exists solely for RxBpfPresetForTests,
     // mirroring _demodType/DemodTypeForTests' own shape below.
     private readonly RxBpfPreset _rxBpfPreset;
+    // RX buffer subsystem Phase 2: threaded through the constructor now (mirrors _demodType/
+    // _rxBpfPreset's own shape) but not yet READ by any decode-path logic -- Phase 3 adds the
+    // TryAutoSync/SyncSSTV-averaging-depth gating that actually consumes this; Phase 4+ adds the
+    // staging buffer itself. A constructor-injected value with no behavioral effect yet, deliberately,
+    // so Phase 3's gating fix can be tested against a real selectable value instead of landing inert
+    // (round-2 auditor-confirmed phase ordering -- see the RX buffer plan's own Phase 2/3 split).
+    private readonly RxBufferMode _rxBufferMode;
 
     // Band-1 S2 fix (pre-Phase-2 audit): the absolute sample index _rawSamples[0]/_demodulatedFrequencies[0]/
     // _agcSamples[0]/_agcCurMaxSamples[0]/_bandpassFilteredSamples[0] currently correspond to -- 0
@@ -660,7 +667,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// `m_bpf=1`), matching this port's own pre-existing hardcoded behavior before the RX BPF
     /// runtime-dispatch subsystem made the other three live alternatives. Restart-only, same
     /// reasoning/limitation as every other parameter here.</param>
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide)
+    /// <param name="rxBufferMode">RX buffer mode, mirrors legacy's real <c>sys.m_UseRxBuff</c>
+    /// (`sstv.cpp:1626-1644`'s <c>OpenCloseRxBuff</c>). Legacy's real compiled-in default is
+    /// <see cref="RxBufferMode.On"/> (`Main.cpp:899`, `sys.m_UseRxBuff=1`). RX buffer subsystem
+    /// Phase 2: threaded through and stored, not yet read by any decode-path logic (see
+    /// <see cref="_rxBufferMode"/>'s own doc comment). Restart-only, same reasoning/limitation as
+    /// every other parameter here.</param>
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On)
     {
         _sampleRate = sampleRate;
         _afcEnabled = afcEnabled;
@@ -683,6 +696,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _searchBandpassFilter = rxBpfPreset == RxBpfPreset.Off
             ? null
             : new SearchBandpassFilter(sampleRate, rxBpfPreset, syncRestartEnabled);
+        _rxBufferMode = rxBufferMode;
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _syncBypass1900Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
@@ -4031,6 +4045,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// itself can't answer this, since it's null for <see cref="RxBpfPreset.Off"/>). Same reasoning as
     /// <see cref="DemodTypeForTests"/> above.</summary>
     internal RxBpfPreset RxBpfPresetForTests => _rxBpfPreset;
+
+    /// <summary>Test-only visibility into the RX buffer mode this instance was actually constructed
+    /// with -- production code has no need to read this back yet (Phase 2: no decode-path logic
+    /// consumes <see cref="_rxBufferMode"/> today). Same reasoning as <see cref="DemodTypeForTests"/>/
+    /// <see cref="RxBpfPresetForTests"/> above.</summary>
+    internal RxBufferMode RxBufferModeForTests => _rxBufferMode;
 
     /// <summary>Test-only visibility into the Auto-Slant sync-envelope detector -- the one AFC
     /// retunes (ultracode audit finding #1). Null until <see cref="InitializeSlant"/> runs for a

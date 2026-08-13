@@ -189,6 +189,24 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void RxBufferMode_ConstructorValue_SurvivesAPeriodicSwap()
+    {
+        // RX buffer subsystem Phase 2 -- same reasoning/shape as DemodType/RxBpfPreset's own sibling
+        // tests above. Uses Extended (not Off) so the assertion can't pass vacuously against the
+        // parameter's own On default.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, rxBufferMode: RxBufferMode.Extended);
+        Assert.Equal(RxBufferMode.Extended, decoder.InnerRxBufferModeForTests);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        Assert.Equal(RxBufferMode.Extended, decoder.InnerRxBufferModeForTests);
+    }
+
+    [Fact]
     public void StationIdDecoded_ForwardsFromTheCurrentInner()
     {
         // CW-ID/FSK station-ID subsystem Phase 5 (RestartableSstvDecoder.StationIdDecoded's own doc
