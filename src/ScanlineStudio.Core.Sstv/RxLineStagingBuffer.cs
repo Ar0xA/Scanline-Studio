@@ -71,6 +71,23 @@ internal sealed class RxLineStagingBuffer
     private readonly List<double> _demodulated;
     private readonly List<double> _syncEnvelope;
 
+    // RX buffer subsystem Phase 6a round-1 code-review finding: this port's own captured line width
+    // is NOT a legacy-style constant. Legacy's own `m_WD` is fixed for a whole reception
+    // (`sstv.cpp:594`'s `SetMode` only), so legacy can always recover `m_wStgLine` as
+    // `stagedSampleCount / m_WD`. This port's own Phase 5 capture hook stages
+    // `_effectiveSamplesPerLine`-worth of samples per line, which VARIES (+-1 from the fractional-carry
+    // line-boundary accumulator, and shifts outright on every Auto-Slant commit) -- deriving a line
+    // count via division against ANY single stride would silently miscount once a real reception
+    // accumulates enough lines. Tracking the true per-line boundary explicitly, one entry per
+    // successful TryAppendLine call, is the only correct fix -- not a stride assumption.
+    private readonly List<int> _lineBoundaries;
+
+    /// <summary>Total number of successfully staged LINES (not samples) -- mirrors legacy's own
+    /// <c>dp-&gt;m_wStgLine</c> exactly, tracked directly rather than derived from a stride this port's
+    /// own per-line sample count doesn't hold constant (see this class's own field-level doc comment
+    /// on <c>_lineBoundaries</c>).</summary>
+    public int LineCount => _lineBoundaries.Count;
+
     public RxLineStagingBuffer(int sampleRate)
     {
         if (sampleRate <= 0)
@@ -99,6 +116,7 @@ internal sealed class RxLineStagingBuffer
         CapacitySamples = (int)((long)257 * 1100 * sampleRate / 1000);
         _demodulated = new List<double>();
         _syncEnvelope = new List<double>();
+        _lineBoundaries = new List<int>();
     }
 
     /// <summary>Total sample budget this buffer was constructed with -- mirrors legacy's
@@ -139,7 +157,24 @@ internal sealed class RxLineStagingBuffer
 
         AppendTo(_demodulated, demodulated);
         AppendTo(_syncEnvelope, syncEnvelope);
+        _lineBoundaries.Add(_demodulated.Count);
         return true;
+    }
+
+    /// <summary>The exact staged-sample count spanned by the first <c>min(lineCount, </c>
+    /// <see cref="LineCount"/><c>)</c> staged lines -- e.g. for
+    /// <see cref="ReplayOriginCalculator.ComputeOrigin"/>'s own 32-line histogram-fold bound
+    /// (`Main.cpp:5504`'s `i &lt; 32`), the caller passes <c>Math.Min(LineCount, 32)</c> here to get the
+    /// exact sample count that spans, rather than assuming any per-line stride. <paramref name="lineCount"/>
+    /// of 0 returns 0; a value <c>&gt;= LineCount</c> returns the full <see cref="Count"/>.</summary>
+    public int SampleCountThroughLine(int lineCount)
+    {
+        if (lineCount <= 0 || _lineBoundaries.Count == 0)
+        {
+            return 0;
+        }
+
+        return _lineBoundaries[Math.Min(lineCount, _lineBoundaries.Count) - 1];
     }
 
     // CollectionsMarshal.SetCount + AsSpan avoids an intermediate `double[]` allocation per line
@@ -171,5 +206,6 @@ internal sealed class RxLineStagingBuffer
     {
         _demodulated.Clear();
         _syncEnvelope.Clear();
+        _lineBoundaries.Clear();
     }
 }
