@@ -422,6 +422,48 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     private bool _suppressNextSlantProcessLine;
     private bool _slantCorrectionsDisabledForRestOfImage; // port of m_AutoSyncCount's gate on AutoStopJob's correction branch
 
+    // RX buffer subsystem Phase 6d: deferred replay trigger. Plain (not volatile/Interlocked, unlike
+    // _reSyncRequested) -- both set sites and the drain site all run on the same thread, inside the
+    // same PushSamples call stack; there is no cross-thread producer here the way RequestReSync's own
+    // external caller is. Set (never acted on synchronously -- see PerformReplay's own reentrancy
+    // doc note) inside ProcessSlantTrackingSample's own commit branch and at the once-per-image
+    // _replayOnceLatchFired trigger, both inside TryProcessBuffer's own per-line loop.
+    //
+    // Round-1 code-review correction (real bug, not a nit): an earlier version of this field drained at
+    // the top of PushSamples, mirroring _reSyncRequested's own point -- WRONG for this specific flag.
+    // That point is a CALLER-CHUNK boundary, not a decode position; _reSyncRequested is set by an
+    // external UI thread, so chunk-dependent timing is inherent and harmless there. This flag is set by
+    // decode itself, and PerformReplay is DESTRUCTIVE (its cursor jump discards >=1 raw sample and
+    // sacrifices a row, and it truncates the staging buffer) -- draining it at a chunk boundary made the
+    // DECODED IMAGE a function of how the caller sliced its PushSamples calls (caught by
+    // SstvRoundTripTests.DecodedImage_IsPixelIdentical_WhetherSamplesArriveInOneChunkOrMany: a caller
+    // pushing a whole transmission in one call never drained it at all, since no second PushSamples
+    // call ever arrived). Now drained inside TryProcessBuffer's own per-line loop, immediately after
+    // ApplySlantTracking() -- see that call site's own doc comment for the full reasoning and the
+    // reentrancy argument (still valid: ApplySlantTracking's own per-sample call stack has fully
+    // unwound by that point in the same iteration that raised the request).
+    private bool _pendingReplayRequested;
+
+    // RX buffer subsystem Phase 6d: port of legacy's m_SyncAccuracyN one-shot-per-image bitmask
+    // (Main.cpp:3530-3562) -- this port only ever implements the FIRST of its two bits (the
+    // m_SyncAccuracy==2-gated second trigger is not ported, see the RX buffer plan's own note: that
+    // toggle itself remains unported, Phase 3's own already-established gap), so a single bool suffices
+    // where legacy needs two. Reset at every fresh lock (InitializeSlant) -- fires at most once per
+    // image, matching legacy's own `!(m_SyncAccuracyN & 1)` guard.
+    private bool _replayOnceLatchFired;
+
+    // RX buffer subsystem Phase 6d round-2: explicit user decision (2026-08-13) narrowing the
+    // once-per-image latch to require this -- see that trigger's own doc comment. Legacy's own
+    // `ReSyncSSTV` re-derives the horizontal origin unconditionally, with NO visible cost either way
+    // (its replay never loses a row -- Main.cpp:5602-5612 re-decodes the WHOLE buffer, nothing is ever
+    // truncated). Round-1 code review found this port's own PerformReplay -- which DOES sacrifice one
+    // row per pass, by design, see that method's own doc comment -- makes the SAME unconditional trigger
+    // a guaranteed visible defect (a small black stripe) in EVERY default decode once wired to fire
+    // automatically, even when no correction was ever needed. This flag gates the latch so that cost is
+    // only paid when a correction has actually committed -- i.e. when replay is actually fixing
+    // something. Reset at every fresh lock (InitializeSlant).
+    private bool _anyCorrectionCommittedThisImage;
+
     // Auto Sync (legacy's sys.m_AutoSync, an automatic trigger for the exact same skip-and-suppress
     // action manual ReSync applies -- see TryAutoSync/ApplySyncCorrection's own doc comments for the
     // full design and the two rounds of plan-readiness review this went through) detection state, port
@@ -1393,14 +1435,26 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         Array.Clear(_autoSyncPositionHistory);
         _autoSyncObservationCount = 0;
         _autoSyncReferencePosition = null;
-        _autoSyncBaseMult = (int)(_effectiveSamplesPerLine / 320.0); // Main.cpp:3860's m_Mult, from the CURRENT (slant-corrected) line width
-        _autoSyncDiff = Math.Min(_autoSyncBaseMult * 3, (int)(45.0 * _sampleRate / 11025.0)); // Main.cpp:3861-3862 -- cap uses the NOMINAL declared rate, not the corrected one
+        RecomputeAutoSyncThresholds();
         // m_AutoStopCnt = 0 (Main.cpp:3804) -- mirrors the fresh-lock InitAutoStop call only, not the
         // second one UpdateSampFreq makes after every sample-rate/slant commit (Main.cpp:5597-5627),
         // same already-accepted reasoning as this method's own doc comment above: legacy rebuilds state
         // via a buffered-line replay after that second call, this port has no replay mechanism, so not
         // resetting there is closer to legacy's real net effect than resetting-without-rebuilding.
         _autoStopCnt = 0;
+    }
+
+    // RX buffer subsystem Phase 6d code-review fix: Main.cpp:3860-3862's m_Mult/m_AutoSyncDiff half of
+    // InitAutoStop, split out from ResetAutoSyncDetectionState so PerformReplay's own second-and-later
+    // passes can re-derive both against a just-corrected _effectiveSamplesPerLine WITHOUT also
+    // destroying the observation history/counter those passes cannot fully rebuild -- see PerformReplay's
+    // own call site for the full reasoning (a real regression this split fixes, first surfaced by
+    // AutoSyncTests.ManualReSync_ResetsAutoSyncObservationCount_ButNotViaAutoSyncItself once Phase 6d
+    // made replay fire automatically).
+    private void RecomputeAutoSyncThresholds()
+    {
+        _autoSyncBaseMult = (int)(_effectiveSamplesPerLine / 320.0); // Main.cpp:3860's m_Mult, from the CURRENT (slant-corrected) line width
+        _autoSyncDiff = Math.Min(_autoSyncBaseMult * 3, (int)(45.0 * _sampleRate / 11025.0)); // Main.cpp:3861-3862 -- cap uses the NOMINAL declared rate, not the corrected one
     }
 
     // Port of legacy's m_AutoStopPos (Main.cpp:3887-3889) -- the CENTERED, ONE-SIDED-wrapped raw
@@ -2289,10 +2343,90 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 LineDecoded?.Invoke(new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
                 _nextLine += lineDecoder.RowsPerTransmissionLine;
 
+                // RX buffer subsystem Phase 6d: the once-per-image replay latch -- port of legacy's
+                // `!(m_SyncAccuracyN & 1) && (m_AY>=16)` (Main.cpp:3530-3562), originally ported as a
+                // literal unconditional trigger (Phase 6's own round-1 plan-review found that narrowing
+                // it to "only alongside a real commit" was based on a wrong premise, since legacy's own
+                // ReSyncSSTV origin re-derivation runs unconditionally, WITH NO VISIBLE COST -- legacy's
+                // own replay never loses a row). `_nextLine` counts BITMAP ROWS; legacy's `m_AY` counts
+                // TRANSMISSION lines -- divide before comparing against the literal `16`, or this fires
+                // at 8 transmission lines instead of 16 for paired-channel modes (round-2 plan-review
+                // finding). `mode != Avt` matches legacy's own outer gate (`pDem->m_Sync && m_SyncAccuracy
+                // && !m_ReqSampChg && (mode != AVT)`) -- AVT already reaches PerformReplay's own no-op
+                // guard (_slantTracker is null there) regardless, but gating here too avoids wastefully
+                // latching for a mode that can never replay.
+                //
+                // RX buffer subsystem Phase 6d round-2, two ADDITIONAL gates, both real fixes found once
+                // this trigger was actually wired up and run (not caught by any earlier plan-review):
+                //
+                // `_anyCorrectionCommittedThisImage` -- explicit user decision (2026-08-13), a real,
+                // documented divergence from the literal-unconditional trigger above. This port's OWN
+                // PerformReplay -- unlike legacy's -- sacrifices one row per pass by design (see that
+                // method's own doc comment), so the unconditional trigger, once actually firing on every
+                // default decode, guarantees a small visible defect (a black stripe) in EVERY image, even
+                // when no correction was ever needed. Gating on "has a correction actually committed this
+                // image" restores legacy's own real "no cost when idle" property, in this port's own way.
+                //
+                // `!_slantCorrectionsDisabledForRestOfImage` -- closes a real staging-buffer-integrity
+                // hole, not a stylistic gate: ApplySyncCorrection (the shared tail both manual ReSync and
+                // an Auto-Sync trigger use) sets this flag AND leaves a mid-buffer HOLE in
+                // RxLineStagingBuffer (DrainPendingSkip's own skipped samples advance _consumedSamples/
+                // _rxBufferAnchorSample without ever being staged -- see that method's own doc comment).
+                // The commit trigger above is already naturally unreachable once this flag is set (it
+                // lives inside ProcessSlantTrackingSample's own `else` arm, which requires
+                // `!_slantCorrectionsDisabledForRestOfImage`) -- but THIS latch has no such structural
+                // protection on its own, and round-1 code review found it's the only remaining path that
+                // could fire replay across that hole, corrupting every row after it.
+                if (!_replayOnceLatchFired && _rxLineStagingBuffer is not null && mode != SstvModeRegistry.Avt
+                    && !_slantCorrectionsDisabledForRestOfImage && _anyCorrectionCommittedThisImage
+                    && _nextLine / lineDecoder.RowsPerTransmissionLine >= 16)
+                {
+                    _replayOnceLatchFired = true;
+                    _pendingReplayRequested = true;
+                }
+
                 // Now that this line is fully decoded and _consumedSamples reflects it, let slant
                 // tracking catch up through exactly this line's raw samples -- never further ahead,
                 // and never for a line that hasn't been decoded yet.
                 ApplySlantTracking();
+
+                // RX buffer subsystem Phase 6d round-1 code-review fix: drain the deferred replay
+                // request HERE, at a DECODED-LINE boundary, not at the top of the next PushSamples
+                // call (an earlier version of this drain lived there, mirroring _reSyncRequested's own
+                // established point). Both set sites -- the once-per-image latch a few lines up, and
+                // ProcessSlantTrackingSample's own commit branch inside the ApplySlantTracking() call
+                // immediately above -- run inside this same loop iteration, so a request is always
+                // consumed in the iteration that raised it and can never survive to a caller-visible
+                // boundary.
+                //
+                // WHY NOT the top of PushSamples: that is a CALLER-CHUNK boundary, not a decode
+                // position. _reSyncRequested is set by an external UI thread, so chunk-dependent timing
+                // is inherent to it there. _pendingReplayRequested is set by decode itself -- and
+                // PerformReplay is DESTRUCTIVE (its cursor jump discards >=1 raw sample and sacrifices a
+                // row, and it truncates the staging buffer, see its own doc comment), so draining it at
+                // a chunk boundary makes the DECODED IMAGE a function of how the caller sliced its
+                // PushSamples calls. Confirmed as a real bug, not a theoretical one: a caller that pushes
+                // a whole transmission in one call never drained it at the old point at all (no second
+                // PushSamples call ever arrived), while a chunked caller did -- exactly what
+                // SstvRoundTripTests.DecodedImage_IsPixelIdentical_WhetherSamplesArriveInOneChunkOrMany
+                // caught. This point also pins ReplayOriginCalculator.ComputeOrigin's own inputs (staged
+                // LineCount/SampleCountThroughLine, both bounded by _consumedSamples here), which would
+                // otherwise vary with chunk size once a single chunk exceeds one line's worth of samples.
+                //
+                // Reentrancy is still respected: ApplySlantTracking()'s own per-sample call stack has
+                // fully unwound by this statement, exactly as it had at the old drain point -- see
+                // _pendingReplayRequested's own doc comment. Cleared-without-replaying when Auto Stop has
+                // just fired (checked below, at :2360 in this same iteration): that block is about to
+                // abandon this image, so redrawing its rows is pointless and PerformReplay would run
+                // against state EndOfImage is about to discard.
+                if (_pendingReplayRequested)
+                {
+                    _pendingReplayRequested = false;
+                    if (!_autoStopTriggered && !SuppressAutomaticReplayForTests)
+                    {
+                        PerformReplay();
+                    }
+                }
 
                 // Auto Stop's own trigger (TryAutoSync, port of Main.cpp:3933-3937's `RxAutoPush(TRUE)`)
                 // may have fired synchronously inside the ApplySlantTracking() call just above -- applied
@@ -4362,6 +4496,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// <c>m_AutoSyncDis</c>).</summary>
     internal int AutoSyncCooldownForTests => _autoSyncCooldown;
 
+    /// <summary>Test-only visibility into <see cref="_slantCorrectionsDisabledForRestOfImage"/> (port
+    /// of <c>m_AutoSyncCount</c>'s own gate) -- RX buffer subsystem Phase 6d round-2: lets a test
+    /// directly confirm a manual ReSync/Auto-Sync trigger actually set this flag, without depending on
+    /// indirect symptoms.</summary>
+    internal bool SlantCorrectionsDisabledForRestOfImageForTests => _slantCorrectionsDisabledForRestOfImage;
+
     /// <summary>Test-only: <see cref="ComputeAutoSyncPosition"/>'s own real return value from the last
     /// time <see cref="TryAutoSync"/> ran -- see <see cref="_lastComputedAutoSyncPositionForTests"/>'s
     /// own doc comment for why this is captured internally rather than recomputed from outside.</summary>
@@ -4553,6 +4693,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _rxBufferLineSync.Clear();
         _rxBufferAnchorSample = _consumedSamples; // RX buffer subsystem Phase 6c round-2 fix -- see this field's own doc comment
         _rxBufferBaseTransmissionLine = 0; // RX buffer subsystem Phase 6c round-4 fix -- fresh lock: staged index 0 IS image row 0 again
+        _replayOnceLatchFired = false; // RX buffer subsystem Phase 6d -- fresh lock, the once-per-image latch re-arms
+        _pendingReplayRequested = false; // RX buffer subsystem Phase 6d -- a stale request from an abandoned prior image must not replay against the NEW one's staging buffer
+        _anyCorrectionCommittedThisImage = false; // RX buffer subsystem Phase 6d round-2 -- fresh lock, fresh image, no commit has happened yet
 
         if (mode == SstvModeRegistry.Avt)
         {
@@ -4821,6 +4964,29 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                 {
                     _effectiveSamplesPerLine = _mode!.LineDurationMs / 1000.0 * correctedSampleRate.Value;
 
+                    // RX buffer subsystem Phase 6d: legacy's own trigger for RedrawSampFreq's replay
+                    // pass is exactly this event (Main.cpp:4016's m_ReqSampChg=1, set right after
+                    // SSTVSET.m_SampFreq is reassigned, drained one timer tick later at Main.cpp:3670-
+                    // 3680 -- this port's own deferred-request precedent, see _pendingReplayRequested's
+                    // own doc comment for why synchronous is unsafe here). Gated on _rxLineStagingBuffer
+                    // being non-null (RxBufferMode.On) -- matches legacy's own UpdateSampFreq gate
+                    // (`(dp->m_StgBuf != NULL) || WaveStg.IsOpen()`, Main.cpp:5597). No separate isReplay
+                    // guard is needed here: this branch is only ever reached when isReplay is false (the
+                    // enclosing if/else routes isReplay:true to ProcessLineSuppressed instead, a few
+                    // lines up) -- so a replay pass's own suppressed re-feed can never reach this line
+                    // and request another replay of itself.
+                    if (_rxLineStagingBuffer is not null)
+                    {
+                        _pendingReplayRequested = true;
+                        // RX buffer subsystem Phase 6d round-2: explicit user decision (2026-08-13) to
+                        // NARROW the once-per-image latch below to require at least one real commit --
+                        // see that trigger's own doc comment for the full reasoning (a guaranteed
+                        // visible cost, once wired to fire by default on every decode, that the
+                        // ORIGINAL Phase 6 plan-review's literal-legacy-fidelity framing didn't
+                        // anticipate). This flag records that a commit has happened.
+                        _anyCorrectionCommittedThisImage = true;
+                    }
+
                     // Deliberately does NOT reset Auto Sync's own detection state here -- an
                     // earlier draft of this port called ResetAutoSyncDetectionState() on every
                     // commit "for consistency" with SlantTracker.Reset()'s own already-shipped
@@ -4867,10 +5033,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// <see cref="SlantTracker"/>'s own updated class doc comment: this is what finally makes that
     /// comment's "applies going forward only" caveat obsolete).
     ///
-    /// <b>Precondition, callable today only via <see cref="PerformReplayForTests"/></b>: RX buffer
-    /// subsystem Phase 6d (not yet built) is responsible for deciding WHEN this may safely run. 6d owns
-    /// the reentrancy question (this must never be called synchronously from inside
-    /// <see cref="ApplySlantTracking"/>'s own call stack -- see the plan's own deferred-request design).
+    /// <b>Reachability, RX buffer subsystem Phase 6d</b>: called from exactly one place --
+    /// <see cref="TryProcessBuffer"/>'s own per-line loop, immediately after each line's own
+    /// <see cref="ApplySlantTracking"/> call, draining <c>_pendingReplayRequested</c> at a
+    /// DECODED-LINE boundary (round-1 code-review fix: NOT the top of <see cref="PushSamples"/>, a
+    /// caller-chunk boundary -- see that field's own doc comment for the real bug this correction
+    /// fixes). Never called synchronously from inside <see cref="ApplySlantTracking"/>'s own
+    /// per-sample call stack -- see <c>_pendingReplayRequested</c>'s own doc comment for the
+    /// reentrancy hazard that deferred-request shape exists to avoid. <see cref="PerformReplayForTests"/>
+    /// remains available for direct, single-call exercising in tests.
     ///
     /// <b>Round-2 code-review redesign: the live per-line slant-tracking accumulator is reset once, at
     /// the top, and NEVER restored.</b> An earlier version of this method saved a snapshot of
@@ -4979,7 +5150,33 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         // call via UpdateSampFreq, before the replay loop) -- both Auto Sync's own detection window and
         // Auto Slant's own baseline, matching legacy exactly (see ResetAutoSyncDetectionState's and
         // SlantTracker.ResetBaseline's own doc comments).
-        ResetAutoSyncDetectionState();
+        //
+        // Round-1 code-review fix (real regression, not a nit): legacy's own InitAutoStop-then-replay
+        // shape (Main.cpp:5600-5612) always rebuilds Auto Sync's own observation counter/history to the
+        // FULL running staged-line count, because legacy's staging buffer is NEVER truncated
+        // (`m_wStgLine` is cumulative from lock). This port's own 6c truncate-on-jump divergence (see
+        // this method's own tail) means every pass AFTER THE FIRST can only re-feed lines staged SINCE
+        // the previous pass -- resetting the full observation window on every pass, when only a handful
+        // of lines exist to refill it, permanently starves TryAutoSync's own `_autoSyncObservationCount
+        // >= 8` gate and Auto Stop's own `_autoStopCnt >= 8` gate for the rest of the image (both
+        // effectively disabled by Auto Slant once corrections recur every few lines -- exactly the
+        // sustained-drift scenario replay exists to help with). Only the FIRST pass of an image (staged
+        // index 0 still IS image row 0, i.e. _rxBufferBaseTransmissionLine == 0 -- no truncation has
+        // happened yet) gets the full reset; every subsequent pass only re-derives the mult/diff
+        // thresholds against the just-corrected stride, leaving the observation history/counters to
+        // keep accumulating across passes instead of restarting from zero. A real, documented divergence
+        // from legacy (which has no truncation to create this problem in the first place), first
+        // surfaced by AutoSyncTests.ManualReSync_ResetsAutoSyncObservationCount_ButNotViaAutoSyncItself
+        // once Phase 6d made replay fire automatically.
+        if (_rxBufferBaseTransmissionLine == 0)
+        {
+            ResetAutoSyncDetectionState();
+        }
+        else
+        {
+            RecomputeAutoSyncThresholds();
+        }
+
         _slantTracker.ResetBaseline();
 
         // Clean slate for replay's own per-sample walk -- see this method's own doc comment for why
@@ -5190,12 +5387,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         _rxBufferBaseTransmissionLine = resumeRowTransmissionLine;
     }
 
-    /// <summary>Test-only entry point for <see cref="PerformReplay"/> -- RX buffer subsystem Phase 6d
-    /// (the deferred-trigger plumbing that decides WHEN this runs automatically) is not yet built, so
-    /// this is the only way to exercise the replay engine today. Mirrors the established
-    /// <c>InitializeAfcForTests</c> precedent (a thin pass-through wrapper around an otherwise-private
-    /// method).</summary>
+    /// <summary>Test-only entry point for <see cref="PerformReplay"/> -- lets a test drive a single
+    /// replay pass directly and deterministically, without depending on the automatic triggers'
+    /// (RX buffer subsystem Phase 6d) own timing. Mirrors the established <c>InitializeAfcForTests</c>
+    /// precedent (a thin pass-through wrapper around an otherwise-private method).</summary>
     internal void PerformReplayForTests() => PerformReplay();
+
+    /// <summary>Test-only: when <see langword="true"/>, <see cref="TryProcessBuffer"/>'s own automatic
+    /// replay drain (RX buffer subsystem Phase 6d) becomes a no-op (the pending flag is still cleared,
+    /// so it never accumulates across pushes -- only the <see cref="PerformReplay"/> call itself is
+    /// skipped). For a test that wants to drive replay ONLY via <see cref="PerformReplayForTests"/>, at
+    /// controlled moments, without an automatic trigger firing unpredictably during the same
+    /// <see cref="PushSamples"/> calls and corrupting the test's own row-count/pixel-content
+    /// bookkeeping.</summary>
+    internal bool SuppressAutomaticReplayForTests { get; set; }
 
     /// <summary>Averages the (already fully demodulated) frequency stream over [startSample,
     /// endSample), skipping a settling margin at the start for the demodulator's own transient

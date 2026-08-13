@@ -6,11 +6,22 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
 /// RX buffer subsystem Phase 5 -- decoder wiring for <see cref="RxLineStagingBuffer"/> capture. This
-/// phase must produce a decoder that behaves IDENTICALLY to before for every existing fixture (capture
-/// is a pure side channel, nothing reads it back yet -- RX buffer subsystem Phase 6, not yet built) --
-/// the full existing suite passing unchanged is that guarantee; the tests here add the missing positive
-/// assertion that capture actually happens, plus the negative ones (Off/Extended don't capture yet, AVT
-/// isn't captured, output is unaffected either way).
+/// phase originally produced a decoder that behaves IDENTICALLY to before for every existing fixture
+/// (capture is a pure side channel, nothing reads it back yet -- RX buffer subsystem Phase 6, not yet
+/// built at the time) -- the full existing suite passing unchanged was that guarantee; the tests here
+/// add the missing positive assertion that capture actually happens, plus the negative ones (Off/
+/// Extended don't capture yet, AVT isn't captured, output is unaffected either way).
+///
+/// <b>RX buffer subsystem Phase 6d update: "output is unaffected" is no longer true for
+/// <see cref="RxBufferMode.On"/> by default</b> -- Phase 6d wires <c>AnalogFmSstvDecoder.PerformReplay</c>
+/// to fire AUTOMATICALLY during real decode (an Auto-Slant commit, or a once-per-image latch), and
+/// replay retroactively REDRAWS already-decoded rows -- a real, intended behavior change, not a
+/// regression. The byte-identical assertions below now use
+/// <see cref="AnalogFmSstvDecoder.SuppressAutomaticReplayForTests"/> to isolate and re-verify the
+/// ORIGINAL Phase 5 guarantee this file's own name promises -- capture BY ITSELF (with replay
+/// suppressed) is still a pure side channel -- which remains true and worth its own regression
+/// coverage; it does NOT (and no longer can) claim anything about <see cref="RxBufferMode.On"/>'s real,
+/// default, replay-enabled behavior, which is exercised elsewhere (`ReplayEngineTests.cs`).
 /// </summary>
 public class RxBufferCaptureTests
 {
@@ -158,7 +169,11 @@ public class RxBufferCaptureTests
 
     private static void AssertByteIdenticalDecode(SstvModeDefinition mode, float[] samples, bool afcEnabled, Action<SstvModeDefinition>? onModeDetected = null)
     {
-        var onDecoder = new AnalogFmSstvDecoder(11025, afcEnabled: afcEnabled, rxBufferMode: RxBufferMode.On);
+        // RX buffer subsystem Phase 6d: SuppressAutomaticReplayForTests isolates the ORIGINAL Phase 5
+        // guarantee this test exists to check (capture alone, with no replay ever firing, changes
+        // nothing observable) from Phase 6d's own real, intended behavior change (RxBufferMode.On's
+        // real default DOES retroactively redraw rows) -- see this class's own updated doc comment.
+        var onDecoder = new AnalogFmSstvDecoder(11025, afcEnabled: afcEnabled, rxBufferMode: RxBufferMode.On) { SuppressAutomaticReplayForTests = true };
         var offDecoder = new AnalogFmSstvDecoder(11025, afcEnabled: afcEnabled, rxBufferMode: RxBufferMode.Off);
         if (onModeDetected is not null)
         {
