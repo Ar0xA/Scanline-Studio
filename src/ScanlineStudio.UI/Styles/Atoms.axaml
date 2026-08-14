@@ -759,6 +759,17 @@
         <Setter Property="LineHeight" Value="16.5" />
         <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted62}" />
     </Style>
+    <!-- 2026-08-14, mockups/colors/SSTV-Color-Scheme.md §3: "Every frequency, S-meter, SNR,
+         line-count, timer and callsign-of-sender readout is a read-only data field: sunken
+         #E4E4E4, not white, not the card face." One style change here reaches every row-value
+         across the whole app (hundreds of consumers) without touching any view file, since they
+         all share this one class. Skipping the spec's own "1px inset shadow" detail (no Avalonia
+         equivalent without a second Border layer per call site — out of scope for a style-only
+         pass) and the mono-readout's own implied border (this atom's tight MinHeight=16.5 rows
+         have no room for a full bordered-field look without also touching every IndustryRow's own
+         padding, a bigger layout change than "every value gets tinted" — background + light inset
+         padding is the contained version of the same rule). TextBlock.Padding is a real Avalonia
+         11 property, not a TemplatedControl-only one. -->
     <Style Selector="TextBlock.IndustryRowValue">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="11" />
@@ -768,6 +779,8 @@
         <!-- -.02em * 11px = -0.22 device px. -->
         <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
         <Setter Property="HorizontalAlignment" Value="Right" />
+        <Setter Property="Background" Value="{StaticResource IndustryDataField}" />
+        <Setter Property="Padding" Value="4,0,4,0" />
     </Style>
 
     <!-- 4. Kicker text -->
