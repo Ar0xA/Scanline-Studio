@@ -83,7 +83,16 @@ not to be one:
   RX-buffer Phase 9 (replaces the whole stub) — only worth a standalone one-line fix here if Phase 9
   slips past 0.9 beta.
 
-### Tier 1 — cheap trust fix before a *public* beta (not a Tier-0 blocker)
+### Tier 1 — cheap trust fix before a *public* beta (not a Tier-0 blocker) — **DONE, 2026-08-14**
+
+Absorbed into the Tier-0 UI-honesty sweep rather than done as its own separate pass — the actual
+bar applied ("no fake-live items, mock/disabled is fine") was universal, not scoped to "inside the
+core loop only," so the B1-B4 sweep + combined-review fixes already covered every item named below.
+Verified directly against current `en.json` before writing this note (not assumed): status-bar SNR,
+Signal-quality Min/Max, Input-chain Squelch, Frame-metadata Frequency, and Gallery's per-entry SNR
+suffix are all now genuine placeholders (`"—"`), not fake literals. `spec/16-gui-wiring-survey.md`'s
+own staleness precondition (below) was independently resolved by its own 2026-08-14 refresh, done
+earlier the same day as the Tier-0 sweep.
 
 ~40 more FAKE-LIVE controls outside the core loop per `spec/16-gui-wiring-survey.md` (status-bar
 SNR, Signal-quality SNR-plot/histogram/tone readouts, Input-chain Squelch/BPF/Notch/Noise-floor/
