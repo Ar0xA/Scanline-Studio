@@ -170,10 +170,12 @@
 
                     <ScrollViewer HorizontalScrollBarVisibility="Auto"
                                   VerticalScrollBarVisibility="Auto">
-                        <!-- Panel wrapper exists only so the safe-area/plate overlays below can use
-                             ordinary Margin/HorizontalAlignment/VerticalAlignment positioning; those are
-                             no-ops directly inside a Canvas. The Panel sizes to the Canvas's own bound
-                             WorkingCopyWidth/Height since the Canvas is the only size-driving child. -->
+                        <!-- Panel wrapper exists only so the safe-area guide below can use ordinary
+                             Margin/HorizontalAlignment/VerticalAlignment positioning; that's a no-op
+                             directly inside a Canvas. The Panel sizes to the Canvas's own bound
+                             WorkingCopyWidth/Height since the Canvas is the only size-driving child.
+                             (Used to also host the plate text overlays, removed 2026-08-14 — see the
+                             guide's own comment below.) -->
                         <Panel>
                         <Canvas x:Name="EditorCanvas"
                                 Width="{Binding WorkingCopyWidth}"
@@ -331,8 +333,11 @@
                                 <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.SourceValue}" />
                             </Grid></Border>
                             <Grid ColumnDefinitions="*,*" ColumnSpacing="4" Margin="0,2,0,0">
-                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.FillAll}" />
-                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.ClearFields}" />
+                                <!-- Combined-batch auditor review, 2026-08-14: neither had a Command;
+                                     fully clickable in the same card the 7 fake insert-field chips
+                                     were just disabled in. -->
+                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.FillAll}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.ClearFields}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                             </Grid>
                         </StackPanel>
                     </HeaderedContentControl>
@@ -367,64 +372,19 @@
                          grid-template-columns:1fr 1fr (Receive tab's Recently-sent thumbnail card
                          reused the same IndustryThumbnail/IndustryHatchPanel composition at
                          Columns=3 — same atoms, different column count per mock2's own layout). -->
+                    <!-- Combined-batch auditor review, 2026-08-14: no template-storage feature exists
+                         at all (3 fabricated template cards + 2 dead buttons) — same fake-populated-
+                         list pattern as the Receive tab's Session-frames card, same fix: one honest
+                         empty state, buttons disabled + tooltipped. -->
                     <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.TemplatesHeader}" />
                         </HeaderedContentControl.Header>
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                            <UniformGrid Columns="2">
-                                <Border Classes="IndustryThumbnail" Margin="0,0,5,5">
-                                    <DockPanel LastChildFill="True">
-                                        <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
-                                            <StackPanel>
-                                                <TextBlock Classes="IndustryThumbnailCall" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.Template1Name}" />
-                                                <TextBlock Classes="IndustryThumbnailMeta" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.Template1Fields}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Panel>
-                                            <Border Classes="IndustryHatchPanel" MinHeight="55" />
-                                            <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
-                                                <TextBlock Text="{loc:Translate Panes.TxImageEditor.Template1Mode}" />
-                                            </Border>
-                                        </Panel>
-                                    </DockPanel>
-                                </Border>
-                                <Border Classes="IndustryThumbnail" Margin="0,0,0,5">
-                                    <DockPanel LastChildFill="True">
-                                        <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
-                                            <StackPanel>
-                                                <TextBlock Classes="IndustryThumbnailCall" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.Template2Name}" />
-                                                <TextBlock Classes="IndustryThumbnailMeta" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.Template2Fields}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Panel>
-                                            <Border Classes="IndustryHatchPanel" MinHeight="55" />
-                                            <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
-                                                <TextBlock Text="{loc:Translate Panes.TxImageEditor.Template2Mode}" />
-                                            </Border>
-                                        </Panel>
-                                    </DockPanel>
-                                </Border>
-                                <Border Classes="IndustryThumbnail" Margin="0,0,5,0">
-                                    <DockPanel LastChildFill="True">
-                                        <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
-                                            <StackPanel>
-                                                <TextBlock Classes="IndustryThumbnailCall" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.Template3Name}" />
-                                                <TextBlock Classes="IndustryThumbnailMeta" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.Template3Fields}" />
-                                            </StackPanel>
-                                        </Border>
-                                        <Panel>
-                                            <Border Classes="IndustryHatchPanel" MinHeight="55" />
-                                            <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
-                                                <TextBlock Text="{loc:Translate Panes.TxImageEditor.Template3Mode}" />
-                                            </Border>
-                                        </Panel>
-                                    </DockPanel>
-                                </Border>
-                            </UniformGrid>
+                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesYet}" />
                             <Grid ColumnDefinitions="*,*" ColumnSpacing="4">
-                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.FillAndSend}" />
-                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" />
+                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.FillAndSend}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                             </Grid>
                         </StackPanel>
                     </HeaderedContentControl>

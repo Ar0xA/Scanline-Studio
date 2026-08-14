@@ -41,7 +41,7 @@
                      literals (0.9 beta bar: no fake-live items, mock/disabled is fine). -->
                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.AutoPicksLabel}" />
-                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.AutoPicksValue}" />
                 </Grid></Border>
                 <!-- Order matches mock2: seg -> Auto picks -> 4x4 quick-mode grid -> select ->
                      Selected/Duration/... rows (design-fidelity-agent-caught fix: the ComboBox
@@ -83,19 +83,19 @@
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.DurationLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.DurationValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.GeometryLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.GeometryValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VoxToneLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.VoxToneValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VisHeaderLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.VisHeaderValue}" />
                     </Grid></Border>
                 </StackPanel>
                 <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.FavoritesLabel}" />
@@ -229,7 +229,7 @@
                          dropped it). -->
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.TuneDriveLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.TuneDriveValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMap}" />
@@ -237,15 +237,15 @@
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.TxClock}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.TxClockValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudio}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudioValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBw}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBwValue}" />
                     </Grid></Border>
                 </StackPanel>
                 <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.Telemetry.MeterCaption}" />
@@ -325,42 +325,42 @@
                 <StackPanel Classes="Industry IndustryRows">
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.VisCode}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.VisCodeValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.FskId}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.FskIdValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.CwId}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.CwIdValue}" />
                     </Grid></Border>
                 </StackPanel>
                 <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxOutgoing.BurnedCaption}" />
                 <StackPanel Classes="Industry IndustryRows">
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.Callsign}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.CallsignValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.ToStation}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.ToStationValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.GridBeam}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.GridBeamValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.Report}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.ReportValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.FreqMode}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.FreqModeValue}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.DateUtc}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.DateUtcValue}" />
                     </Grid></Border>
                 </StackPanel>
             </StackPanel>

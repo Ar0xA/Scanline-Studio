@@ -607,6 +607,18 @@
          Bare Style rules below — top-level children of Styles, not resources.
          ═══════════════════════════════════════════════════════════════════════════════ -->
 
+    <!-- 0.9-beta UI-honesty pass fix, 2026-08-14: Avalonia's ToolTip.ShowOnDisabled defaults to
+         false, so every "hover a disabled control to see why" tooltip in this app
+         (Options.NotImplemented.Help, applied to ~100+ controls across Options and the 0.9-beta
+         sweep) was silently non-functional — flagged as a likely latent bug in
+         mockups/guidance/PHASE1-ATOM-DESIGN.md long before this pass scaled the pattern, confirmed
+         here by the combined-batch auditor review. `:is(Control)` (not a bare `Control` type
+         selector, which only matches controls of literally that exact type, not derived types) so
+         this applies globally regardless of the disabled control's concrete type. -->
+    <Style Selector=":is(Control)">
+        <Setter Property="ToolTip.ShowOnDisabled" Value="True" />
+    </Style>
+
     <!-- 1. Group box -->
     <Style Selector="HeaderedContentControl.blueprint /template/ Canvas#PART_CornerTL,
                       HeaderedContentControl.blueprint /template/ Canvas#PART_CornerTR,
