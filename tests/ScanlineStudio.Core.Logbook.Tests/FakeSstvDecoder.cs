@@ -24,6 +24,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     {
     }
 
+    public void RequestCorrectSlant()
+    {
+    }
+
     public double? SlantPpm => null;
 
     public int? SyncOffsetSamples => null;

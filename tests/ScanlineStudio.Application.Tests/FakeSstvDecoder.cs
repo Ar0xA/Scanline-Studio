@@ -54,6 +54,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
         LastForcedMode = mode;
     }
 
+    public int RequestCorrectSlantCallCount { get; private set; }
+
+    public void RequestCorrectSlant() => RequestCorrectSlantCallCount++;
+
     public double? SlantPpm { get; set; }
 
     public int? SyncOffsetSamples { get; set; }

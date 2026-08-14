@@ -85,6 +85,33 @@ public interface ISstvDecoder
     /// this call.</summary>
     void ForceMode(SstvModeDefinition mode);
 
+    /// <summary>Requests a one-time "Correct Slant" search — the port of legacy's real manual
+    /// "Correct Slant" toolbar action (<c>CorrectSlant</c>/<c>KRCS</c>, `Main.cpp:5264-5426`): a
+    /// 5-iteration search over the currently staged reception that finds a corrected sample rate and
+    /// redraws the image, distinct from Auto Slant's continuous per-line tracking (which runs
+    /// automatically and needs no request). Safe to call from any thread; the request is deferred and
+    /// applied on whichever thread next calls <see cref="PushSamples"/>.
+    ///
+    /// <b>Scoped to an active reception only</b> — unlike <see cref="RequestReSync"/>, which legacy
+    /// itself supports post-reception, this port's search reads the live staging buffer, which is
+    /// only reachable from inside an in-progress decode's own per-line loop. A request made between
+    /// receptions (or that outlives the current one) is a documented no-op, not queued for the next
+    /// lock — a real, accepted scope gap relative to legacy, not an oversight. A no-op if RX buffer
+    /// capture is disabled, if the current mode has no staging buffer (AVT), if fewer than 16 lines
+    /// have been staged, if the search doesn't find a genuinely different rate, if a request lands on
+    /// a decoded line where Auto Stop just abandoned this reception, or (unlike legacy, whose search
+    /// has no such gate) if a manual ReSync or Auto-Sync correction has already run earlier in this
+    /// same image — this port's replay is destructive, and a ReSync/Auto-Sync correction leaves a
+    /// mid-buffer hole a search or replay across it would corrupt, so Correct Slant is deliberately
+    /// dead for the rest of that image once one occurs (auditor code-review finding, Phase 8c: worth
+    /// knowing before a UI surfaces this as a button that can otherwise look like it silently failed).
+    /// Also a no-op if the request lands between decoded lines faster than they're produced — a
+    /// request can be silently superseded/dropped if it arrives in the narrow window between this
+    /// port's own read-and-clear of the pending flag, the same fire-and-forget, best-effort contract
+    /// <see cref="RequestReSync"/> already has. Deliberately fire-and-forget (no return value) — the
+    /// actual application is asynchronous relative to this call.</summary>
+    void RequestCorrectSlant();
+
     /// <summary>Current Auto Slant sample-clock drift, in parts-per-million relative to the declared
     /// (nominal) sample rate -- the same quantity and formula as legacy's own "Sync &amp; slant"
     /// readout (<c>TMmsstv::DrawSlantInfo</c>, `Main.cpp:5535-5544`:
