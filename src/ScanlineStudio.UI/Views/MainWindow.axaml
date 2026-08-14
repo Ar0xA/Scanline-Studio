@@ -1327,11 +1327,13 @@
              own cards and the status bar below already use — this duplicates that surface (matches
              LAYOUT-SPEC's own mockup, which shows slant/SNR on both bands, not a mistake). SNR has
              no backing property but is an honest "—" placeholder (assets/locale/en.json), same
-             convention as the status bar's own SnrValue below. 2026-08-14: the detected-mode chip's
-             .active (green) is now conditional on a mode actually being detected — it was
-             unconditionally green even while showing the "—" empty state, which read as fake-live
-             once .active started carrying real color meaning (mockups/colors/SSTV-Color-Scheme.md
-             §6). AutosaveOn was a plain affirmative "AUTOSAVE ON" claim with zero backing property
+             convention as the status bar's own SnrValue below. 2026-08-14: the detected-mode chip
+             is now the real LED+lozenge atom (spec §6) — green LED, NEUTRAL lozenge (checklist
+             "only TX-active and TX-inhibited lozenges are tinted" — this is the app's only real
+             "decode locked" state, previously tinted, which tripped that rule). LED is conditional
+             on a mode actually being detected — it was unconditionally green even while showing
+             the "—" empty state, which read as fake-live once color started carrying real meaning.
+             AutosaveOn was a plain affirmative "AUTOSAVE ON" claim with zero backing property
              (confirmed against spec/16-gui-wiring-survey.md) — genuinely fake-live, not the same
              case as SNR's honest dash, despite this comment previously claiming otherwise. Given the
              Disabled+tooltip treatment already used for other unimplemented stubs in this file
@@ -1341,9 +1343,11 @@
             <Border Classes="Industry IndustryMini" BorderThickness="1">
                 <TextBlock Text="{loc:Translate MainWindow.TabStrip.AutoDetect}" />
             </Border>
-            <Border Classes="Industry IndustryMini" BorderThickness="1"
-                    Classes.active="{Binding RxImage.DetectedMode, Converter={x:Static ObjectConverters.IsNotNull}}">
-                <TextBlock Text="{Binding RxImage.DetectedModeDisplay}" />
+            <Border Classes="Industry IndustryStatus">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding RxImage.DetectedMode, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding RxImage.DetectedModeDisplay}" VerticalAlignment="Center" />
+                </StackPanel>
             </Border>
             <Border Classes="Industry IndustryMini" BorderThickness="1">
                 <TextBlock Text="{Binding RxImage.AutoCorrectDisplay}" />
@@ -1396,7 +1400,11 @@
              same colors, just relocated off the deleted old-design files. -->
         <Border Grid.Row="3" Height="25" Classes="Industry" Background="{StaticResource IndustryBg}"
                 BorderBrush="{StaticResource IndustryDivider}" BorderThickness="0,1,0,0">
-            <DockPanel Margin="8,4,8,4">
+            <!-- Margin 8,3,8,3 (was 8,4,8,4, 2026-08-14): the new LED+lozenge status chips below
+                 are the spec's real 19px (§6), 2px taller than the existing 17px IndustryMini
+                 chips — loosened here to fit them without clipping; the 17px chips just sit
+                 vertically centered in the now-slightly-taller row. -->
+            <DockPanel Margin="8,3,8,3">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RxHistory.FramesTodayDisplay}" />
@@ -1406,13 +1414,26 @@
                     </Border>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="3">
-                    <Border Classes="Industry IndustryMini" Classes.active="{Binding RadioStatus.IsReceiving}" BorderThickness="1">
-                        <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" />
+                    <!-- LED+lozenge (spec §6): the app's only real "receiving" indicator plays the
+                         primary-RX-banner role despite being a small status-bar chip, so it keeps
+                         the green tint (user decision, 2026-08-14) with an LED added. -->
+                    <Border Classes="Industry IndustryStatus" Classes.healthyTint="{Binding RadioStatus.IsReceiving}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding RadioStatus.IsReceiving}" VerticalAlignment="Center" />
+                            <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" VerticalAlignment="Center" />
+                        </StackPanel>
                     </Border>
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <Rectangle Classes="Industry IndustryLed" Classes.alert="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
-                        <TextBlock Classes="Industry IndustryReadoutSmall" Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxInhibit.Help}" VerticalAlignment="Center" />
-                    </StackPanel>
+                    <!-- LED+lozenge (spec §6): amber "TX inhibited" row, not the red "fault" row —
+                         user decision, 2026-08-14, matches the chip's own label and its real
+                         binding (last TX error / SWR cutoff reads as "inhibited", not "device
+                         fault"). Was a bare Rectangle+TextBlock pair with no lozenge chrome at all. -->
+                    <Border Classes="Industry IndustryStatus" Classes.attentionTint="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}"
+                            ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxInhibit.Help}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Rectangle Classes="Industry IndustryLed" Classes.attention="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
+                            <TextBlock Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RadioStatus.FrequencyDisplay}" />
                     </Border>
