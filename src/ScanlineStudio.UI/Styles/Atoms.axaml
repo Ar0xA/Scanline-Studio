@@ -632,7 +632,11 @@
         <Setter Property="FontSize" Value="9.5" />
         <Setter Property="LetterSpacing" Value="1.33" />
         <!-- .14em * 9.5px = 1.33 device px (LAYOUT-SPEC §6 pitfall 8). -->
-        <Setter Property="Foreground" Value="{StaticResource IndustryAccent700}" />
+        <!-- 2026-08-14: was IndustryAccent700 (blue) — mockups/colors/SSTV-Color-Scheme.md §2.1
+             explicitly assigns "group titles" to LabelBrush (grey), not a hue. Blue is reserved
+             for selection specifically (spec §1 rule 1: "a hue never does two jobs"); a group-box
+             title isn't a selection claim. -->
+        <Setter Property="Foreground" Value="{StaticResource IndustryLabel}" />
     </Style>
 
     <!-- 2. .mini chips — 3 forms. Every instance carries Classes="Industry IndustryMini" on the
@@ -655,12 +659,21 @@
         <Setter Property="FontWeight" Value="Medium" />
         <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
     </Style>
+    <!-- 2026-08-14: recolored blue -> green. Only real consumer is the status bar's "Rx" pill
+         (MainWindow.axaml, bound to RadioStatus.IsReceiving) — a STATUS indicator ("receiving"),
+         not a selection, per mockups/colors/SSTV-Color-Scheme.md §6's own named example ("the
+         primary RX banner ... uses the green tint triad" — one of the few status lozenges that IS
+         tinted, unlike most which stay neutral). Confirmed no other call site uses
+         Classes.active on Border.IndustryMini (this class is distinct from
+         ToggleButton/RadioButton.IndustryMini:checked below, which stay blue — those are genuine
+         selection/latching-toggle states, e.g. a future AGC/NR/Notch toggle, and are unaffected by
+         this change). -->
     <Style Selector="Border.IndustryMini.active">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="Background" Value="{StaticResource IndustryHealthyTint}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryHealthyTintBorder}" />
     </Style>
     <Style Selector="Border.IndustryMini.active TextBlock">
-        <Setter Property="Foreground" Value="{StaticResource IndustryBg}" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryHealthyTintText}" />
     </Style>
     <Style Selector="Border.IndustryMini.accentOutline">
         <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
@@ -763,7 +776,10 @@
         <Setter Property="FontSize" Value="10" />
         <Setter Property="LetterSpacing" Value="1.4" />
         <!-- .14em * 10px = 1.4 device px. -->
-        <Setter Property="Foreground" Value="{StaticResource IndustryAccent700}" />
+        <!-- 2026-08-14: was IndustryAccent700 (blue) — user decision, matching group-box titles
+             above (same "secondary label" role per the color spec's §2.1 neutrals table; keeping
+             one blue and one grey for the same semantic role would read as mismatched). -->
+        <Setter Property="Foreground" Value="{StaticResource IndustryLabel}" />
     </Style>
     <Style Selector="TextBlock.IndustryKicker.wide">
         <Setter Property="LetterSpacing" Value="1.6" />
@@ -1360,26 +1376,33 @@
         <Setter Property="Cursor" Value="Help" />
     </Style>
 
-    <!-- Status-bar LED indicator (Phase 7): ported 1:1 from the old design's Ellipse.led/.active/
-         .alert (Cards.axaml) - gray/off by default, a call site toggles Classes.active (green) or
-         Classes.alert (red) from real view-model state. Kept as its own literal red rather than
-         reusing IndustryDanger above - the old design used two different reds for the LED vs. the
-         TX-toggle/error-text color, and this preserves that distinction instead of silently
-         unifying them. Only real consumer: MainWindow's status-bar TX-inhibit indicator. -->
-    <Style Selector="Ellipse.IndustryLed">
+    <!-- Status-bar LED indicator: recolored + reshaped 2026-08-14 for
+         mockups/colors/SSTV-Color-Scheme.md §6 ("8x8px, 1px border one step darker than its fill,
+         SQUARE"). Was Ellipse (round) — an Ellipse element can never render as a square regardless
+         of style properties, so the element type itself changes to Rectangle (also brings the LED
+         in line with this app's own "square corners everywhere" rule, spec/09-ui.md, which the
+         round LED was already violating independent of the new color spec). Colors: standby
+         #C8C8C8/#6E6E6E (was gray/off #B9B9B9/#6E6E6E, close but not exact); healthy/active
+         #2E9E44/#256F33 (spec §2.2 Healthy, was a near-but-not-exact #2FA02F/#1F6E1F); alert now
+         reuses the new IndustryTxLed/IndustryDangerSolidBorder tokens (#D42A2A/#8C1F1F, spec's own
+         "do not unify the TX-LED red with the button-danger red" rule — this LED's "alert" class is
+         a fault indicator per spec §6's fault row, which ALSO specifies the brighter #D42A2A, not
+         the base #B42A2A). Only real consumer: MainWindow's status-bar TX-inhibit indicator
+         (updated from Ellipse to Rectangle at its call site in the same pass). -->
+    <Style Selector="Rectangle.IndustryLed">
         <Setter Property="Width" Value="8" />
         <Setter Property="Height" Value="8" />
         <Setter Property="Stroke" Value="#FF6E6E6E" />
         <Setter Property="StrokeThickness" Value="1" />
-        <Setter Property="Fill" Value="#FFB9B9B9" />
+        <Setter Property="Fill" Value="#FFC8C8C8" />
     </Style>
-    <Style Selector="Ellipse.IndustryLed.active">
-        <Setter Property="Fill" Value="#FF2FA02F" />
-        <Setter Property="Stroke" Value="#FF1F6E1F" />
+    <Style Selector="Rectangle.IndustryLed.active">
+        <Setter Property="Fill" Value="{StaticResource IndustryHealthy}" />
+        <Setter Property="Stroke" Value="{StaticResource IndustryHealthySolidBorder}" />
     </Style>
-    <Style Selector="Ellipse.IndustryLed.alert">
-        <Setter Property="Fill" Value="#FFD03030" />
-        <Setter Property="Stroke" Value="#FF8F2626" />
+    <Style Selector="Rectangle.IndustryLed.alert">
+        <Setter Property="Fill" Value="{StaticResource IndustryTxLed}" />
+        <Setter Property="Stroke" Value="{StaticResource IndustryDangerSolidBorder}" />
     </Style>
 
     <!-- Small muted readout label (Phase 7): ported 1:1 from the old design's TextBlock.readoutSmall
