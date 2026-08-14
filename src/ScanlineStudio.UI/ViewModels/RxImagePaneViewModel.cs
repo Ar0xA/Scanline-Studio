@@ -190,7 +190,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// on the same card -- same value, same "—" empty-state convention as <see cref="NameDisplay"/>/
     /// <see cref="QthDisplay"/>, added so the card's top "Callsign" row shows the real FSK-decoded
     /// value instead of a hardcoded literal.</summary>
-    public string CallsignDisplay => OverrideCallsign ?? "—";
+    public string CallsignDisplay => string.IsNullOrWhiteSpace(OverrideCallsign) ? "—" : OverrideCallsign;
 
     /// <summary>Legacy's real <c>MyRST</c> equivalent (<c>Main.cpp:3648</c>,
     /// <c>sprintf("595%s", pDem-&gt;m_fskNRS)</c>) -- the decoded NR/RST exchange from a station-ID's
@@ -225,9 +225,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
     /// <summary>"Grid / dist · QRZ" row's real half -- distance needs the operator's own grid
     /// square plus a haversine calculation, out of scope for this pass (not requested); the
-    /// distance side keeps the pane's existing "--" placeholder text (that specific "--" -- not
-    /// this property's own "—" fallback -- matches the row's pre-existing literal
-    /// GridDistanceValue's own wording, kept as-is for the half that's still unwired).</summary>
+    /// distance side keeps its own pre-existing "--" placeholder text (that specific ASCII "--"
+    /// -- not this property's own em-dash "—" fallback -- predates the 0.9-beta UI-honesty pass
+    /// and is kept as-is for the half that's still unwired, not touched by that pass).</summary>
     public string GridDisplay => $"{LookupGrid ?? "—"} / --";
 
     [ObservableProperty]
