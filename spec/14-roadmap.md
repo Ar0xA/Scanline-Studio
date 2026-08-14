@@ -27,7 +27,19 @@ and `PROJECT_BRIEF.md`, then a full auditor completeness pass on the reorganizat
 date, GO-conditional, findings folded in below) to make sure nothing tracked got lost in the
 regrouping.
 
-### Tier 0 — must fix before calling anything "0.9 beta"
+### Tier 0 — must fix before calling anything "0.9 beta" — **DONE, 2026-08-14**
+
+All items below closed. DSP item investigated across 2 rounds of auditor plan-review plus direct
+empirical measurement, closed as not-a-bug (see its own entry). UI-honesty items landed via 4
+parallel worktree-isolated sweeps (one per file), each individually diff-reviewed, then the
+combined batch went through 2 rounds of real auditor code-review (not just self-review) per
+CLAUDE.md §7's own rule — round 1 found 3 real blockers (a broken test, non-functional
+`ToolTip.ShowOnDisabled` app-wide, 6 dead controls left next to fixed ones) plus 2 cards the
+original task list had wrongly left out under the user's own "no fake-live items" bar (TX Queue/
+Recently-sent/Saved-templates fake item lists); round 2 found one item (TX Log's 2 fake stat
+values) that got named in round 1 but missed in the fix pass. Both rounds' findings fixed, full
+solution build + 242/242 `ScanlineStudio.UI.Tests` green throughout. Not yet pushed to
+`origin/master`.
 
 The core loop was verified end-to-end (audio in → decode → save/gallery is real; image → encode →
 PTT-keyed TX is real; crop + draggable macro-resolved text overlay + Apply → Transmit is real). The
