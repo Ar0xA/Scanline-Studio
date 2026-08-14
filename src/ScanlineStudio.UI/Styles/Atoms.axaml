@@ -917,53 +917,68 @@
          Button.accent-conflict trick ChromeOverrides.axaml already proves for the OLD design's own
          primary button; these selectors are Classes-scoped (opt-in) already, so no item-0
          collision risk. -->
+    <!-- 2026-08-14, mockups/colors/SSTV-Color-Scheme.md §4: "Primary | solid #0F62A8 | Maximum
+         one per pane" — Background/BorderBrush already correct via the IndustryAccent token
+         change (Phase A); hover/press specifically are spec-literal one-off values ("Primary hover
+         #1472C0, border unchanged; press #0B4C83") that don't match the base or any tint token, so
+         inlined per this file's own established convention for one-off interaction colors (see the
+         Danger button's own comment below) — press happens to equal IndustrySelectSolidBorder, but
+         named for what it verifiably IS per the spec (a press state), not reused speculatively. -->
     <Style Selector="Button.IndustryBtnPrimary /template/ ContentPresenter">
         <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
         <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
         <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
     </Style>
     <Style Selector="Button.IndustryBtnPrimary:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent600}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent600}" />
+        <Setter Property="Background" Value="#FF1472C0" />
     </Style>
     <Style Selector="Button.IndustryBtnPrimary:pressed /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent700}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent700}" />
+        <Setter Property="Background" Value="{StaticResource IndustrySelectSolidBorder}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustrySelectSolidBorder}" />
     </Style>
     <Style Selector="Button.IndustryBtnPrimary:disabled">
         <Setter Property="Opacity" Value="0.45" />
     </Style>
+    <!-- 2026-08-14, spec §4: "Standard | face #E9E9E9, border #A0A0A0 | The default. Browse,
+         Calibrate, Save Frame, Clear, Copy." Was Background="Transparent" with a translucent
+         darken-on-hover — the spec wants a real grey FACE at rest and a blue-tinted hover/press,
+         not a transparent-until-interacted-with button. This is the button class with the most
+         real consumers in the app (Browse/Calibrate/Save-frame-class actions everywhere), so this
+         is a genuinely visible change, not a token swap. -->
     <Style Selector="Button.IndustryBtnSecondary /template/ ContentPresenter">
-        <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="Background" Value="{StaticResource IndustryControlFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
         <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryText}" />
     </Style>
     <Style Selector="Button.IndustryBtnSecondary:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="#121D1F20" />
+        <Setter Property="Background" Value="{StaticResource IndustryHoverFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryHoverBorder}" />
     </Style>
     <Style Selector="Button.IndustryBtnSecondary:pressed /template/ ContentPresenter">
-        <Setter Property="Background" Value="#241D1F20" />
+        <Setter Property="Background" Value="{StaticResource IndustryPressFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryPressBorder}" />
     </Style>
     <Style Selector="Button.IndustryBtnSecondary:disabled">
         <Setter Property="Opacity" Value="0.45" />
     </Style>
 
-    <!-- Danger/destructive variant (Phase 7): ported 1:1 from the old design's Button.halt
-         (Cards.axaml) - a tinted/outlined red, not a solid fill (visually distinct from
-         IndustryTxToggle's own solid-fill red below; the old design used two different red
-         treatments for these two controls and this keeps that distinction rather than
-         conflating them). Literal hex, not new tokens - this exact tint pair has no other
-         consumer, matching this file's own convention of inlining one-off hover-mix colors
-         (e.g. IndustryBtnSecondary's own #121D1F20 above) rather than minting a token for a
-         single call site. Only real consumer: TX Editor's "Stop Transmit" button. -->
+    <!-- Danger/destructive variant: recolored 2026-08-14 to spec §4 ("Destructive | solid #B42A2A
+         | white text 600 | HALT TX, Abort, Delete. Always red, every context") — was a tinted/
+         outlined pink button (ported from the old design's Button.halt, Cards.axaml), which the
+         new spec explicitly does not want: destructive actions get the SAME solid-fill treatment
+         as primary, just red instead of blue, so they read with equal weight/urgency, not softer.
+         IndustryTxToggle below is a SEPARATE control (the transmit toggle itself, not a plain
+         button) and is handled on its own in the next pass — not touched here. -->
     <Style Selector="Button.IndustryBtnDanger /template/ ContentPresenter">
-        <Setter Property="Background" Value="#FFF5D6D6" />
-        <Setter Property="BorderBrush" Value="#FFB33A3A" />
-        <Setter Property="TextBlock.Foreground" Value="#FF6B0F0F" />
+        <Setter Property="Background" Value="{StaticResource IndustryDanger}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDangerSolidBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDangerForeground}" />
     </Style>
     <Style Selector="Button.IndustryBtnDanger:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="#FFF0C2C2" />
-        <Setter Property="BorderBrush" Value="#FF8F2626" />
+        <Setter Property="Background" Value="#FFC93333" />
+    </Style>
+    <Style Selector="Button.IndustryBtnDanger:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryDangerSolidBorder}" />
     </Style>
     <Style Selector="Button.IndustryBtnDanger:disabled">
         <Setter Property="Opacity" Value="0.45" />
@@ -989,9 +1004,11 @@
         <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
         <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
     </Style>
+    <!-- 2026-08-14: was IndustryAccent600 (tuned for the old #5980A6 base, mismatched now) — same
+         spec-literal hover value as Button.IndustryBtnPrimary above. -->
     <Style Selector="ToggleButton.IndustryBtnPrimary:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent600}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent600}" />
+        <Setter Property="Background" Value="#FF1472C0" />
+        <Setter Property="BorderBrush" Value="#FF1472C0" />
     </Style>
     <Style Selector="ToggleButton.IndustryBtnPrimary:disabled">
         <Setter Property="Opacity" Value="0.45" />
