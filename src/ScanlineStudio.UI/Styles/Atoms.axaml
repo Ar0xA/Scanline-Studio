@@ -974,8 +974,16 @@
         <Setter Property="Background" Value="{StaticResource IndustrySelectSolidBorder}" />
         <Setter Property="BorderBrush" Value="{StaticResource IndustrySelectSolidBorder}" />
     </Style>
-    <Style Selector="Button.IndustryBtnPrimary:disabled">
-        <Setter Property="Opacity" Value="0.45" />
+    <!-- 2026-08-14, spec §4 checklist 331: "A disabled primary loses its fill — color means
+         available." Was Opacity 0.45 (a faded blue), not the spec's literal disabled-face table
+         row (#EDEDED / #C6C6C6 / #9A9A9A) — the "any class" in that row's own name means Standard
+         and Primary both swap to this same grey, not just fade. Danger/StopTransmit is the one
+         exception (§7 fixed exception 1, "HALT TX ... solid red in every state, including
+         disabled") — deliberately NOT given this treatment below. -->
+    <Style Selector="Button.IndustryBtnPrimary:disabled /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
     </Style>
     <!-- 2026-08-14, spec §4: "Standard | face #E9E9E9, border #A0A0A0 | The default. Browse,
          Calibrate, Save Frame, Clear, Copy." Was Background="Transparent" with a translucent
@@ -996,8 +1004,12 @@
         <Setter Property="Background" Value="{StaticResource IndustryPressFace}" />
         <Setter Property="BorderBrush" Value="{StaticResource IndustryPressBorder}" />
     </Style>
-    <Style Selector="Button.IndustryBtnSecondary:disabled">
-        <Setter Property="Opacity" Value="0.45" />
+    <!-- 2026-08-14, spec §4 checklist 331 — same fill-loss fix as Primary above, "any class"
+         in the disabled table row's own name includes Standard. -->
+    <Style Selector="Button.IndustryBtnSecondary:disabled /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
     </Style>
 
     <!-- Danger/destructive variant: recolored 2026-08-14 to spec §4 ("Destructive | solid #B42A2A
@@ -1018,9 +1030,14 @@
     <Style Selector="Button.IndustryBtnDanger:pressed /template/ ContentPresenter">
         <Setter Property="Background" Value="{StaticResource IndustryDangerSolidBorder}" />
     </Style>
-    <Style Selector="Button.IndustryBtnDanger:disabled">
-        <Setter Property="Opacity" Value="0.45" />
-    </Style>
+    <!-- 2026-08-14: intentionally NO disabled styling here (was Opacity 0.45) — spec §7 fixed
+         exception 1: "HALT TX is solid red in every state, including idle, hover and disabled.
+         It is the only action allowed to be red while nothing is wrong." This class's one real
+         consumer (TxControlsPaneView's StopTransmit) IS that action — it must stay full-strength
+         solid red even when IsEnabled=False, not fade, so an operator can always find the button
+         that kills an active transmission at a glance. Primary/Secondary above get the opposite
+         "loses its fill" treatment; Danger deliberately does not. -->
+
 
     <!-- Phase 2 addendum: ToggleButton is a separate type from Button in Avalonia (not a subtype —
          confirmed by this codebase's own pre-existing Cards.axaml, which already styles
@@ -1048,8 +1065,11 @@
         <Setter Property="Background" Value="#FF1472C0" />
         <Setter Property="BorderBrush" Value="#FF1472C0" />
     </Style>
-    <Style Selector="ToggleButton.IndustryBtnPrimary:disabled">
-        <Setter Property="Opacity" Value="0.45" />
+    <!-- 2026-08-14: same fill-loss fix as Button.IndustryBtnPrimary above (spec §4 checklist 331). -->
+    <Style Selector="ToggleButton.IndustryBtnPrimary:disabled /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
     </Style>
 
     <!-- TX transmit toggle (Phase 7): ported 1:1 from the old design's ScanlineStudioTxToggleButtonTheme
