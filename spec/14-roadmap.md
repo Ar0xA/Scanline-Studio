@@ -113,9 +113,12 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
 
 ### Tier 2 — road to 1.0 (real gaps, correct to ship 0.9 beta without)
 
-- RX buffer Phases 7-9 (disk-backed Extended mode, "Correct Slant" one-shot search, Options UI —
-  `PROJECT_BRIEF.md`; Phases 1-6 done). Migrated from PROJECT_BRIEF (still duplicated there until
-  its next prune): Auto-Slant's convergence characteristic changed
+- RX buffer Phases 8-9 (**Phase 7 — disk-backed Extended mode — DONE, 2026-08-14**, 5 sub-pieces,
+  each through auditor code-review, plus 2 full rounds of mandatory plan-review before
+  implementation started; full history `PROJECT_BRIEF.md` + `/home/artien/.claude/plans/
+  wise-riding-hearth.md`). Remaining: "Correct Slant" one-shot search (Phase 8), Options UI wiring
+  (Phase 9 — also closes the Tier-0 "RX buffer shown hardcoded-Off" stub above). Migrated from
+  PROJECT_BRIEF (still duplicated there until its next prune): Auto-Slant's convergence characteristic changed
   materially at Phase 6d (`SlantTracker.ResetBaseline()` now actually runs in production) with
   nothing measuring whether that's better or worse, and `SlantTests.cs`'s "bitmask permanently
   latches" doc comment is now stale for the default path; a bounded one-line
@@ -4725,14 +4728,16 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   no further per-item confirmation needed. Decode tab: Auto-Sync/Auto-Slant/Auto-stop/Auto-restart/
   Sense level all shipped (see `PROJECT_BRIEF.md` for detail).
 
-  > **Correction, 2026-08-13**: the three paragraphs below (RX BPF, Demod type, RX buffer) are
-  > STALE research, kept only for their scoping reasoning. **All three shipped**: RX BPF
-  > (2026-08-12, Kaiser-window `MakeFilter` + preset-parameterized filter, incl. the H1-cutoff fix
-  > the "Also found, logged not fixed" note below flags — that's fixed too, not open), Demod type
-  > (2026-08-12, runtime dispatch across all 3 demodulators), RX buffer (Phases 1-6 of 9,
-  > 2026-08-13 — the "buffered-line-replay mechanism this port doesn't have" comment cited below no
-  > longer exists in `AnalogFmSstvDecoder.cs`; replay is real and wired. Phases 7-9 remain, tracked
-  > in Tier 2 above). Auto-start below is still genuinely open, also tracked in Tier 2.
+  > **Correction, 2026-08-13, updated 2026-08-14**: the three paragraphs below (RX BPF, Demod type,
+  > RX buffer) are STALE research, kept only for their scoping reasoning. **All three shipped**: RX
+  > BPF (2026-08-12, Kaiser-window `MakeFilter` + preset-parameterized filter, incl. the H1-cutoff
+  > fix the "Also found, logged not fixed" note below flags — that's fixed too, not open), Demod
+  > type (2026-08-12, runtime dispatch across all 3 demodulators), RX buffer (Phases 1-7 of 9,
+  > 2026-08-13/14 — the "buffered-line-replay mechanism this port doesn't have" comment cited below
+  > no longer exists in `AnalogFmSstvDecoder.cs`; replay is real and wired, and as of Phase 7
+  > (2026-08-14) `RxBufferMode.Extended`'s disk-backed variant is real too, including its own
+  > replay path, not just a stub. Phases 8-9 remain, tracked in Tier 2 above). Auto-start below is
+  > still genuinely open, also tracked in Tier 2.
 
   Remaining Decode controls scoped (historical, see correction above):
   **RX BPF** — real legacy control (`Option.dfm`'s `RGRxBPF`), but bigger than a wiring task:
