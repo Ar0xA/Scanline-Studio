@@ -423,6 +423,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // Manual ReSync (legacy's KRFSClick/m_Skip, Main.cpp:14004-14020 -- NOT ReSyncSSTV) state. See
     // RequestReSync/PerformReSync/DrainPendingSkip and ApplySlantTracking's own capture point.
     private volatile bool _reSyncRequested;
+
+    // RX buffer subsystem Phase 8c: RequestCorrectSlant's own deferred-request field. Volatile, like
+    // _reSyncRequested above (not plain, like _pendingReplayRequested below) -- RequestCorrectSlant is
+    // an EXTERNAL caller's request (mirrors RequestReSync's own any-thread contract), not a decode-
+    // internal signal the way _pendingReplayRequested is. Drained inside TryProcessBuffer's per-line
+    // loop, at the SAME statement position _pendingReplayRequested already drains at (immediately
+    // after ApplySlantTracking()) -- NOT at the top of PushSamples, for the identical reason
+    // _pendingReplayRequested's own doc comment already gives for its own drain point: TryCorrectSlant
+    // reads the staging buffer, and PerformReplay is destructive, so draining at a caller-chunk
+    // boundary would make the decoded image a function of how the caller sliced its PushSamples calls.
+    private volatile bool _correctSlantRequested;
     private int _pendingSkipSamples; // port-equivalent of legacy's own m_Skip field
     private double? _lastLineSyncPeakPosition; // port-equivalent of m_SyncRPos (see ApplySlantTracking's capture point for why one field also stands in for m_SyncPos at this port's granularity)
     private bool _suppressNextSlantProcessLine;
@@ -1215,6 +1226,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// thread -- consumed at the top of the next <see cref="PushSamples"/> call, on whichever thread
     /// actually calls that (matching this class's own established single-caller-thread contract).</summary>
     public void RequestReSync() => _reSyncRequested = true;
+
+    /// <summary>See <see cref="ISstvDecoder.RequestCorrectSlant"/>. A single volatile write, safe from
+    /// any thread -- consumed inside <see cref="TryProcessBuffer"/>'s own per-line loop on whichever
+    /// thread next calls <see cref="PushSamples"/>, NOT at the top of that call (see
+    /// <see cref="_correctSlantRequested"/>'s own doc comment for why).</summary>
+    public void RequestCorrectSlant() => _correctSlantRequested = true;
 
     /// <summary>See <see cref="ISstvDecoder.ForceMode"/>. A single atomic exchange, safe from any
     /// thread -- consumed at the top of the next <see cref="PushSamples"/> call, on whichever thread
@@ -2431,6 +2448,41 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 // just fired (checked below, at :2360 in this same iteration): that block is about to
                 // abandon this image, so redrawing its rows is pointless and PerformReplay would run
                 // against state EndOfImage is about to discard.
+                //
+                // RX buffer subsystem Phase 8c: the manual "Correct Slant" request is drained HERE, at
+                // the SAME statement position, and BEFORE the automatic _pendingReplayRequested block
+                // below -- both for the identical caller-chunk-boundary reasoning above, and so a real
+                // commit can subsume/clear _pendingReplayRequested before that block ever checks it
+                // (round-2 plan-review finding: both flags can legitimately be set for the same decoded
+                // line -- an automatic tracker commit landing on the same line as a manual Correct-Slant
+                // convergence -- and running PerformReplay() twice for one line would sacrifice two rows
+                // and jump the cursor twice instead of once). `!_slantCorrectionsDisabledForRestOfImage`
+                // mirrors the once-per-image latch's own defense-in-depth gate a few lines up (:2392) --
+                // that flag marks a real mid-buffer hole left by DrainPendingSkip's skipped samples, and
+                // RequestCorrectSlant is a NEW externally-reachable path into PerformReplay that has no
+                // other structural protection against firing across that hole. Not gated by
+                // SuppressAutomaticReplayForTests -- that flag exists specifically to isolate the
+                // AUTOMATIC tracker's own replay behavior for testing; gating the manual path with it
+                // would make it impossible to test Correct Slant's own replay in isolation.
+                if (_correctSlantRequested)
+                {
+                    _correctSlantRequested = false;
+                    if (!_autoStopTriggered && !_slantCorrectionsDisabledForRestOfImage && TryCorrectSlant())
+                    {
+                        PerformReplay();
+                        _pendingReplayRequested = false; // subsume: this replay already covers what a same-line automatic trigger wanted
+
+                        // Deliberately NOT setting _anyCorrectionCommittedThisImage here (auditor
+                        // code-review finding, Phase 8c: flagged as undocumented, not wrong) -- that
+                        // flag exists solely to arm the once-per-image origin-re-derivation latch a few
+                        // lines up (:2409-2415), whose whole purpose is triggering ONE MORE replay pass
+                        // once 16 lines have decoded. This manual commit's own PerformReplay() call
+                        // immediately above already re-derived the origin at the corrected rate -- arming
+                        // the latch here would only cost a second, unnecessary sacrificed row later in
+                        // this same image for no benefit.
+                    }
+                }
+
                 if (_pendingReplayRequested)
                 {
                     _pendingReplayRequested = false;
@@ -4456,6 +4508,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <summary>Test-only visibility into the current (possibly Auto-Slant-corrected) samples-per-line.</summary>
     internal double EffectiveSamplesPerLineForTests => _effectiveSamplesPerLine;
 
+    /// <summary>Test-only visibility into <see cref="_correctSlantRequested"/> -- lets a test prove
+    /// the stale-request clear at a fresh lock (<see cref="InitializeSlant"/>) actually ran, rather
+    /// than inferring it indirectly from "no replay happened" (which the entry gate's own
+    /// cumulative-line-count check would also produce for an unrelated reason on a fresh lock, making
+    /// that inference vacuous -- auditor code-review finding, Phase 8c round 1).</summary>
+    internal bool CorrectSlantRequestedForTests => _correctSlantRequested;
+
     /// <summary>Test-only visibility into the current decode read cursor -- manual ReSync
     /// (<see cref="RequestReSync"/>) is the first feature that shifts this outside the normal per-line
     /// loop's own advancement, so tests need to observe it directly.</summary>
@@ -4710,6 +4769,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _rxBufferBaseTransmissionLine = 0; // RX buffer subsystem Phase 6c round-4 fix -- fresh lock: staged index 0 IS image row 0 again
         _replayOnceLatchFired = false; // RX buffer subsystem Phase 6d -- fresh lock, the once-per-image latch re-arms
         _pendingReplayRequested = false; // RX buffer subsystem Phase 6d -- a stale request from an abandoned prior image must not replay against the NEW one's staging buffer
+        _correctSlantRequested = false; // RX buffer subsystem Phase 8c -- same reasoning as _pendingReplayRequested above: a stale manual request from an abandoned prior image must not search against the NEW one's staging buffer
         _anyCorrectionCommittedThisImage = false; // RX buffer subsystem Phase 6d round-2 -- fresh lock, fresh image, no commit has happened yet
 
         if (mode == SstvModeRegistry.Avt)
@@ -5711,6 +5771,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         }
 
         _effectiveSamplesPerLine = candidateLineWidthSamples;
+
+        // Auditor code-review finding, Phase 8c round 1: without this, _slantTracker's own evolving
+        // _currentSampleRate/_nominalSamplesPerLine stay at their pre-manual values, so the NEXT
+        // automatic Auto-Slant commit computes its drift delta against a stale baseline and silently
+        // reverts this correction -- see AdoptCorrectedRate's own doc comment for the full legacy
+        // citation (Main.cpp:3994-3997 reads the SAME SSTVSET.m_SampFreq/m_TW this search's own
+        // SetSampFreq()-equivalent writes). Non-null for every mode this method can ever commit for
+        // (the entry gate above already rejects AVT, the only mode InitializeSlant leaves this null
+        // for) -- the `?.` is defensive, not an expected-null path.
+        _slantTracker?.AdoptCorrectedRate(candidateSampleRate);
+
         return true;
     }
 

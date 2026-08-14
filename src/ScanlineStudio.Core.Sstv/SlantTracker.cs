@@ -268,18 +268,39 @@ internal sealed class SlantTracker
         // Main.cpp:5586's SSTVSET.SetSampFreq() recomputing m_TW from the just-corrected m_SampFreq,
         // called immediately after every commit (RedrawSampFreq/UpdateSampFreq) -- keeps the next
         // correction's drift formula self-consistent instead of dividing by a stale denominator.
-        _currentSampleRate = correctedRate;
-        _nominalSamplesPerLine = _lineDurationMs / 1000.0 * correctedRate;
-
-        // ultracode audit finding #9: legacy's UpdateSampFreq calls InitAutoStop (Main.cpp:3801-3810)
-        // immediately after every commit, fully reinitializing baseline/history/average/bitmask
-        // before the next correction is computed. An earlier version of this method left all of that
-        // stale, so a second correction was computed against a biased pre-correction baseline and a
-        // moving average still mixing pre/post-correction-rate samples -- and the bitmask latched
-        // permanently instead of re-arming, blocking a second large drift from ever being corrected.
-        Reset();
+        // ultracode audit finding #9: legacy's UpdateSampFreq also calls InitAutoStop
+        // (Main.cpp:3801-3810) immediately after every commit, fully reinitializing baseline/
+        // history/average/bitmask before the next correction is computed -- both together, factored
+        // into AdoptCorrectedRate below so this call site and RX buffer subsystem Phase 8's own
+        // manual-commit call site (AnalogFmSstvDecoder.TryCorrectSlant) can never drift apart on
+        // which fields a "the rate is now X" commit actually updates.
+        AdoptCorrectedRate(correctedRate);
 
         return correctedRate;
+    }
+
+    /// <summary>RX buffer subsystem Phase 8c: lets an EXTERNAL commit (the one-shot Correct Slant
+    /// search, <see cref="AnalogFmSstvDecoder.TryCorrectSlant"/>) adopt its own corrected rate into
+    /// this tracker's evolving state, exactly as if this class's own <see cref="TryComputeCorrection"/>
+    /// had committed it. Without this, a manual correction would only ever update
+    /// <c>_effectiveSamplesPerLine</c> (the live decode stride) while this tracker's own
+    /// <see cref="_currentSampleRate"/>/<see cref="_nominalSamplesPerLine"/> stayed at their PRE-manual
+    /// values -- the next automatic Auto-Slant commit would then compute its drift delta against that
+    /// stale baseline and silently revert the manual correction (auditor code-review finding, Phase
+    /// 8c round 1: legacy's own `Main.cpp:3994-3997` Auto-Slant drift math reads
+    /// <c>SSTVSET.m_SampFreq</c>/<c>m_TW</c> -- the SAME variables <c>CorrectSlant</c>'s own
+    /// <c>SetSampFreq()</c> call writes, so in legacy a manual correction is genuinely visible to and
+    /// compounded by the automatic tracker; this port's two separate state holders -- this class's own
+    /// fields, and <c>AnalogFmSstvDecoder._effectiveSamplesPerLine</c> -- must be kept in sync at every
+    /// commit, manual or automatic, not just the automatic ones). Also fixes <see cref="DriftPpm"/>
+    /// (and therefore <c>ISstvDecoder.SlantPpm</c>) never reflecting a manual-only correction, matching
+    /// legacy's own <c>DrawSlantInfo</c> (`Main.cpp:5537`), which reads the same shared
+    /// <c>m_SampFreq</c> regardless of which mechanism last corrected it.</summary>
+    internal void AdoptCorrectedRate(double correctedSampleRate)
+    {
+        _currentSampleRate = correctedSampleRate;
+        _nominalSamplesPerLine = _lineDurationMs / 1000.0 * correctedSampleRate;
+        Reset();
     }
 
     /// <summary>RX buffer subsystem Phase 6b -- public exposure of <see cref="Reset"/> for a replay

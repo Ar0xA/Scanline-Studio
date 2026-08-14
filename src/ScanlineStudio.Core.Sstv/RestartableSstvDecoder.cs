@@ -196,6 +196,24 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.RxBufferBaseTransmissionLineForTests"/> directly -- RX buffer
+    /// subsystem Phase 8c, lets a wrapper-level test prove a replay pass actually ran (this field only
+    /// ever moves off 0 inside <c>PerformReplay</c>'s own tail) with the same proof-positive precision
+    /// the direct <see cref="AnalogFmSstvDecoder"/> tests use, instead of inferring it from a weaker
+    /// public-surface signal like a raw <c>LineDecoded</c> event count. Same reasoning/shape as
+    /// <see cref="InnerRxLineStagingBufferForTests"/> above.</summary>
+    internal int InnerRxBufferBaseTransmissionLineForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.RxBufferBaseTransmissionLineForTests;
+            }
+        }
+    }
+
     public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On)
         : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples, syncRestartEnabled, autoSyncEnabled, autoStopEnabled, autoSlantEnabled, senseLevel, stationIdDecodeEnabled, demodType, rxBpfPreset, rxBufferMode)
     {
@@ -302,6 +320,21 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
 
         current.RequestReSync();
+    }
+
+    /// <summary>Forwards to whichever inner instance is current. A request racing a restart is
+    /// silently dropped if the swap wins (the fresh inner has no in-progress reception to search yet,
+    /// matching legacy's own reception-start reset) -- same fire-and-forget contract
+    /// <see cref="ISstvDecoder.RequestCorrectSlant"/> already documents.</summary>
+    public void RequestCorrectSlant()
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            current = _inner;
+        }
+
+        current.RequestCorrectSlant();
     }
 
     /// <summary>Forwards to whichever inner instance is current. A request racing a restart is

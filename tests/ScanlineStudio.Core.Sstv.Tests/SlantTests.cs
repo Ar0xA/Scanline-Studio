@@ -124,6 +124,69 @@ public class SlantTests
         Assert.Equal(expectedCorrectedRate, lastResult!.Value, tolerance: expectedCorrectedRate * 0.002);
     }
 
+    [Fact]
+    public void SlantTracker_AdoptCorrectedRate_FirstNaturalCorrectionUsesTheAdoptedBaseline()
+    {
+        // RX buffer subsystem Phase 8c -- unit-level replacement for a real-audio integration test an
+        // earlier version of this batch tried and auditor code-review (round 2) found was actually
+        // vacuous. A FIRST version of this replacement itself turned out to be vacuous too, caught by
+        // hand-verification (stubbing AdoptCorrectedRate to a complete no-op and confirming the test
+        // still passed) before it was ever sent for review: it reused the sibling test's own
+        // CLOSED-LOOP technique (feeding the tracker's own reported output back into the next line's
+        // assumed rate), which self-corrects toward the true external steady-state drift REGARDLESS of
+        // the tracker's own internal starting state -- exactly like a PI controller's integrator: a
+        // wrong initial value changes the transient path, never the point it converges to. A
+        // closed-loop simulation therefore cannot discriminate ANYTHING AdoptCorrectedRate does or
+        // doesn't update, no matter how many corrections it runs through.
+        //
+        // This version is deliberately OPEN-LOOP: a fixed per-line drift, never adjusted by the
+        // tracker's own output, so the bias from whatever AdoptCorrectedRate did or didn't set has no
+        // feedback path to erase itself. It checks the FIRST natural correction directly against a
+        // value hand-derived from TryComputeCorrection's own formula (SlantTracker.cs), independently
+        // computing the adopted nominal-samples-per-line from first principles rather than reading it
+        // back from the tracker (a bug in AdoptCorrectedRate's own _nominalSamplesPerLine write would
+        // make this expected value diverge from what a broken implementation actually returns). Also
+        // hand-verified the other direction: reverting AdoptCorrectedRate's own two field writes (one
+        // at a time) both made THIS test fail.
+        const double nominalSamplesPerLine = SampleRate * 0.15; // 6615 samples/line at 44100Hz
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+
+        const double adoptedRate = SampleRate * 1.02; // a rate the tracker's own convergence never proposed
+        tracker.AdoptCorrectedRate(adoptedRate);
+
+        var adoptedNominalSamplesPerLine = nominalSamplesPerLine / SampleRate * adoptedRate;
+
+        // A perfectly linear open-loop drift: GetSqerrPos's least-squares fit reproduces a perfectly
+        // linear sequence exactly, so the fitted position at any point is just perLineDrift*lineNumber
+        // -- no fit-noise to account for. 20 samples/line stays comfortably under the jitter gate's
+        // own limit (8*mult=160 at this nominal width) while still clearing the correction ladder's
+        // lowest threshold (_limitsHz[0]=25*rate/11025=100Hz at 44100Hz) on the very first opportunity.
+        const double perLineDrift = 20.0;
+        double? firstResult = null;
+        for (var line = 1; line <= 8 && firstResult is null; line++)
+        {
+            firstResult = tracker.ProcessLine(perLineDrift * line);
+        }
+
+        Assert.NotNull(firstResult);
+
+        // Hand-traced against ProcessLineCore/TryComputeCorrection's own logic: baseline captures at
+        // _totalLinesObserved==5 (fittedPosition = perLineDrift*5, the most-recent value in a perfect
+        // linear fit); _linesSinceBaseline first reaches its own >=3 gate on the very next fit after
+        // that, at _totalLinesObserved==8 (perLineDrift*8), giving linesSinceBaseline==3 at the moment
+        // of use.
+        const double baselineLine = 5;
+        const double correctionLine = 8;
+        const int linesSinceBaseline = 3;
+        var baselinePosition = perLineDrift * baselineLine;
+        var fittedPosition = perLineDrift * correctionLine;
+        var expectedD = (baselinePosition - fittedPosition) * adoptedRate / adoptedNominalSamplesPerLine / linesSinceBaseline;
+        var expectedRawCandidate = adoptedRate - expectedD; // MovingAverage.Add's first call (freshly Reset()) returns its own single input unchanged, no averaging dilution
+        var expectedCorrectedRate = Math.Floor(expectedRawCandidate * 50.0 + 0.5) / 50.0; // NormalSampleRate(_, 50) -- SlantTracker's own private helper, not clamped (well under the 1100/1060 ceiling)
+
+        Assert.Equal(expectedCorrectedRate, firstResult!.Value, tolerance: 0.001);
+    }
+
     [Theory]
     [InlineData("robot-36", 64, 128, 160, 240 - 36)] // default group, Robot36.ImageHeight=240
     [InlineData("mn73", 48, 64, 72, 110)] // override group A

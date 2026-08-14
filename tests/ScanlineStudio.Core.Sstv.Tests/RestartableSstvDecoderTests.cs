@@ -301,6 +301,62 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public async Task RequestCorrectSlant_ForwardsToTheCurrentInner_AndFiresARealReplay()
+    {
+        // RX buffer subsystem Phase 8c: proves RequestCorrectSlant() reaches the real inner
+        // AnalogFmSstvDecoder through the wrapper, not just that the wrapper method compiles. Uses the
+        // new InnerRxBufferBaseTransmissionLineForTests passthrough (added after auditor code-review
+        // round 1 flagged the original LineDecoded-count discriminator as weaker than it needed to be
+        // -- it would also pass if the decoder restarted mid-run and decoded extra lines with no
+        // replay at all) for the SAME proof-positive precision the direct AnalogFmSstvDecoder tests
+        // use: that field only ever moves off 0 inside PerformReplay's own tail.
+        //
+        // autoSlantEnabled: false (same technique as AutoSlantEnabledFalse_ActuallyPropagates... above)
+        // means the CONTINUOUS automatic tracker never commits on its own, so any replay observed here
+        // can only be this manual request's own doing. Same ~453ppm mismatch at the wrapper's fixed
+        // 11025 rate that test's own positive control already established as reliable.
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(230, 230, 230));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = RestartableSstvDecoder.ProductionSampleRate;
+        const double trueSampleRate = declaredSampleRate * 1.0005;
+
+        var encoder = new AnalogFmSstvEncoder((int)trueSampleRate);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var sampleArray = samples.ToArray();
+
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue, autoSlantEnabled: false, rxBufferMode: RxBufferMode.On);
+        var decodedLineCount = 0;
+        decoder.LineDecoded += _ => decodedLineCount++;
+
+        const int chunkSize = 256;
+        var offset = 0;
+        var requested = false;
+        while (offset < sampleArray.Length)
+        {
+            var length = Math.Min(chunkSize, sampleArray.Length - offset);
+            decoder.PushSamples(sampleArray.AsMemory(offset, length));
+            offset += length;
+
+            if (!requested && decodedLineCount >= 16)
+            {
+                decoder.RequestCorrectSlant();
+                requested = true;
+            }
+        }
+
+        Assert.True(requested, "Test setup problem: never decoded 16 lines to request against.");
+        Assert.True(decoder.InnerRxBufferBaseTransmissionLineForTests > 0, "PerformReplay never ran on the live inner decoder -- RequestCorrectSlant() may not have reached it.");
+    }
+
+    [Fact]
     public void ForceMode_ForwardsTelemetryPropertiesToTheCurrentInner()
     {
         var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue);
