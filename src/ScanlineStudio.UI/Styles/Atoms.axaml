@@ -1046,13 +1046,21 @@
          requires BOTH classes (code-review risk fix, same reasoning as item 7's buttons above) —
          TextBox/ComboBox/NumericUpDown are all item-0b collision-table selectors, so a call site
          missing Industry renders fully unstyled instead of a silent old/new hybrid. -->
+    <!-- 2026-08-14, spec §3: "Editable | white #FFF | border #A0A0A0 | White always and only means
+         you can type here." Was Background=IndustrySurface (the same grey as everything else) —
+         no visual distinction existed between editable and non-editable controls, which is the
+         spec's own single most important field rule ("the rule an operator learns in five seconds
+         and then relies on forever"). Real consumers: every genuinely-editable TextBox/ComboBox/
+         NumericUpDown in the app (Override-callsign, CW text, operator settings, stepper values,
+         etc.) — NOT the read-only TextBlock.IndustryRowValue rows fixed separately above, which
+         were never this class to begin with. -->
     <Style Selector="TextBox.Industry.IndustryInput, ComboBox.Industry.IndustryInput, NumericUpDown.Industry.IndustryInput">
         <Setter Property="Height" Value="24" />
         <Setter Property="MinHeight" Value="24" />
         <Setter Property="Padding" Value="{StaticResource IndustryStepperValuePadding}" />
         <Setter Property="FontSize" Value="11" />
-        <Setter Property="Background" Value="{StaticResource IndustrySurface}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="Background" Value="{StaticResource IndustryEditField}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
