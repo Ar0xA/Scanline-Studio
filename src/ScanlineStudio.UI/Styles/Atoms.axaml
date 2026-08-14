@@ -838,14 +838,21 @@
          color), not a full ControlTemplate replacement, since Fluent's own indicator-sizing logic
          already does the exact percent computation this needs (item 6's Grid.IndustryMeter atom
          is for STATIC/display-only fill%, a genuinely different case). -->
+    <!-- 2026-08-14: track is white on a #A0A0A0 border per mockups/colors/SSTV-Color-Scheme.md
+         §5 ("Progress and meters: track white #FFFFFF on #A0A0A0"), was flat IndustryNeutral300
+         grey with no border. BorderThickness stays 0 on the ProgressBar element itself — the
+         design-fidelity round-2 fix above found Fluent's own templated border shrinks the visible
+         fill height, and that risk is unrelated to which color the border would have been, so an
+         explicit border isn't reintroduced here; Border.IndustryMeterTrack below (a real Border,
+         not a templated Fluent edge) gets the full white+bordered treatment since it carries no
+         such risk. Fill stays IndustryAccent (blue) — already spec-correct at rest; the
+         caution/limit amber/red threshold-switch named in the same spec line is deferred
+         (explicit product decision, not done here). -->
     <Style Selector="ProgressBar.Industry">
         <Setter Property="Height" Value="6" />
         <Setter Property="MinHeight" Value="6" />
-        <Setter Property="Background" Value="{StaticResource IndustryNeutral300}" />
+        <Setter Property="Background" Value="{StaticResource IndustryEditField}" />
         <Setter Property="BorderThickness" Value="0" />
-        <!-- design-fidelity-caught fix (round 2): without this, Fluent's own default
-             BorderBrush/BorderThickness on ProgressBar left a stray 1px #A0A0A0 line around the
-             track, not an Industry design-system color, and shrank the visible fill height. -->
         <Setter Property="CornerRadius" Value="0" />
     </Style>
     <Style Selector="ProgressBar.Industry /template/ Border#PART_Indicator">
@@ -862,7 +869,9 @@
         <Setter Property="Height" Value="4" />
     </Style>
     <Style Selector="Border.IndustryMeterTrack">
-        <Setter Property="Background" Value="{StaticResource IndustryNeutral300}" />
+        <Setter Property="Background" Value="{StaticResource IndustryEditField}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
+        <Setter Property="BorderThickness" Value="1" />
     </Style>
     <Style Selector="Border.IndustryMeterFill">
         <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
