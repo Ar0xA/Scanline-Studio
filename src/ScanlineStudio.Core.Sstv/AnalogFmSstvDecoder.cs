@@ -137,31 +137,26 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // RX buffer subsystem Phase 2: threaded through the constructor (mirrors _demodType/_rxBpfPreset's
     // own shape). Phase 3 wired it into real decode-path gating -- TryAutoSync's branch 1/2 conditions
     // (Main.cpp:3907/:3945) and TryResolveSyncAnchorCorrection's averaging-depth selection
-    // (Main.cpp:3760) -- see those methods' own doc comments for the citation trail. Phase 5 (below)
-    // wires the RAM staging buffer itself for RxBufferMode.On specifically -- Extended's disk-backed
-    // capture is still unbuilt (Phase 7), so this field alone does NOT fully determine whether
-    // _rxLineStagingBuffer is non-null; see that field's own doc comment.
+    // (Main.cpp:3760) -- see those methods' own doc comments for the citation trail. Phase 5/7 (below)
+    // wires the staging buffer itself -- RAM for RxBufferMode.On, disk-backed for
+    // RxBufferMode.Extended -- so `_rxLineStagingBuffer is not null` below IS exactly `_rxBufferMode
+    // != Off` (unlike this class's OTHER `_rxBufferMode != Off` gates, e.g. TryAutoSync, which check
+    // the mode directly since they need to fire the same way for both On and Extended regardless of
+    // which storage backend is live).
     private readonly RxBufferMode _rxBufferMode;
 
-    // RX buffer subsystem Phase 5: null for RxBufferMode.Off AND RxBufferMode.Extended (Extended's own
-    // disk-backed capture is a separate, still-unbuilt mechanism, Phase 7 -- NOT the same as
-    // TryAutoSync/TryResolveSyncAnchorCorrection's own `_rxBufferMode != Off` gating in Phase 3, which
-    // treats On and Extended identically; this field specifically is RAM-mode-only, `== On`).
-    // Constructed once, capacity fixed for this decoder's lifetime (mirrors _searchBandpassFilter's own
-    // null-for-bypass shape). RX buffer subsystem Phase 7: field type is the interface, not the
-    // concrete RAM class, so this WILL be able to hold either RxLineStagingBuffer (RxBufferMode.On)
-    // or the disk-backed RxDiskLineStagingBuffer (RxBufferMode.Extended) once a later Phase 7
-    // sub-piece wires the disk implementation in -- the constructor assignment below is still
-    // RAM-only/On-only in THIS sub-piece (interface extraction, zero behavior change). Captured
-    // samples feed PerformReplay (Phase 6).
-    //
-    // CA1859 suppressed: this sub-piece (interface extraction) only wires the RAM concrete type in
-    // yet, so the analyzer sees a single-implementation field and suggests narrowing it back --
-    // genuinely temporary, resolved by the very next sub-piece (RxDiskLineStagingBuffer wiring),
-    // which makes the interface typing real rather than premature.
-#pragma warning disable CA1859
+    // RX buffer subsystem Phase 5/7: null for RxBufferMode.Off ONLY (NOT the same distinction as
+    // TryAutoSync/TryResolveSyncAnchorCorrection's own `_rxBufferMode != Off` gating in Phase 3 --
+    // that gating treats On and Extended identically for decode-path behavior; THIS field is about
+    // which STORAGE BACKEND is live). Non-null for both On (RxLineStagingBuffer, RAM) and Extended
+    // (RxDiskLineStagingBuffer, disk-backed, wired in this sub-piece of Phase 7) -- see the
+    // constructor assignment below. Constructed once, fixed for this decoder's lifetime (mirrors
+    // _searchBandpassFilter's own null-for-bypass shape). Captured samples feed PerformReplay
+    // (Phase 6) -- giving Extended a non-null buffer here also turns replay ON for Extended, via the
+    // existing `_rxLineStagingBuffer is not null` gates elsewhere in this class: legacy-correct
+    // (`Main.cpp:5597`: `(dp->m_StgBuf != NULL) || WaveStg.IsOpen()`), a real and intended
+    // consequence of this sub-piece, not an accident.
     private readonly IRxLineStagingBuffer? _rxLineStagingBuffer;
-#pragma warning restore CA1859
 
     // In-progress accumulator for the CURRENT (not-yet-complete) line, since ApplySlantTracking's own
     // per-sample loop can pause mid-line across multiple PushSamples calls (bounded by _consumedSamples,
@@ -802,13 +797,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             ? null
             : new SearchBandpassFilter(sampleRate, rxBpfPreset, syncRestartEnabled);
         _rxBufferMode = rxBufferMode;
-        // RX buffer subsystem Phase 5: RAM-mode capture only (`== On`, not `!= Off`) -- Extended's own
-        // disk-backed staging (Extended) is wired in a later sub-piece of Phase 7 -- this sub-piece is
-        // the interface extraction only, RAM-path behavior unchanged. Constructed against
-        // `sampleRate`, this class's own NOMINAL sample-rate parameter (never a slant/AFC-corrected
-        // rate) -- see RxLineStagingBuffer's own constructor doc comment for why that distinction
-        // matters for its capacity formula.
-        _rxLineStagingBuffer = rxBufferMode == RxBufferMode.On ? new RxLineStagingBuffer(sampleRate) : null;
+        // RX buffer subsystem Phase 7 (decoder-wiring sub-piece): On gets the RAM implementation,
+        // constructed against `sampleRate` (this class's own NOMINAL sample-rate parameter, never a
+        // slant/AFC-corrected rate -- see RxLineStagingBuffer's own constructor doc comment for why
+        // that distinction matters for its capacity formula); Extended gets the disk-backed
+        // implementation (no sample-rate-derived capacity -- unbounded by design, see
+        // RxDiskLineStagingBuffer's own doc comment); Off gets null, unchanged.
+        _rxLineStagingBuffer = rxBufferMode switch
+        {
+            RxBufferMode.On => new RxLineStagingBuffer(sampleRate),
+            RxBufferMode.Extended => new RxDiskLineStagingBuffer(),
+            _ => null,
+        };
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
         _syncBypass1200Detector = new SyncEnvelopeDetector(sampleRate, 1200.0);
         _syncBypass1900Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
@@ -4388,15 +4388,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// Same reasoning as <see cref="DemodTypeForTests"/>/<see cref="RxBpfPresetForTests"/> above.</summary>
     internal RxBufferMode RxBufferModeForTests => _rxBufferMode;
 
-    /// <summary>Test-only visibility into the RX buffer subsystem's own staging buffer -- non-null
-    /// only for <see cref="RxBufferMode.On"/> today (<see cref="RxLineStagingBuffer"/>, RAM); null for
-    /// both <see cref="RxBufferMode.Off"/> AND <see cref="RxBufferMode.Extended"/> (see
-    /// <see cref="_rxLineStagingBuffer"/>'s own doc comment -- Extended's disk-backed implementation
-    /// is wired in a later RX buffer subsystem Phase 7 sub-piece, not this one). Declared type is the
-    /// interface (Phase 7's interface-extraction sub-piece) -- every real call site in the shipped
-    /// Phase 3-6 tests only ever touches <c>Count</c>/<c>LineCount</c> against this property, both
-    /// interface members, so this keeps compiling unchanged (verified before the type change, not
-    /// assumed).</summary>
+    /// <summary>Test-only visibility into the RX buffer subsystem's own staging buffer -- null only
+    /// for <see cref="RxBufferMode.Off"/>; non-null for <see cref="RxBufferMode.On"/>
+    /// (<see cref="RxLineStagingBuffer"/>, RAM) and, as of this Phase 7 sub-piece,
+    /// <see cref="RxBufferMode.Extended"/> too (<c>RxDiskLineStagingBuffer</c>, disk-backed -- see
+    /// <see cref="_rxLineStagingBuffer"/>'s own doc comment). Declared type is the interface (an
+    /// earlier Phase 7 sub-piece's own extraction) -- every real call site in the shipped Phase 3-6
+    /// tests only ever touches <c>Count</c>/<c>LineCount</c> against this property, both interface
+    /// members, so this kept compiling unchanged through that extraction.</summary>
     internal IRxLineStagingBuffer? RxLineStagingBufferForTests => _rxLineStagingBuffer;
 
     /// <summary>Test-only visibility into the output-row cursor (<see cref="_nextLine"/>, in BITMAP
@@ -4985,7 +4984,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
                     // SSTVSET.m_SampFreq is reassigned, drained one timer tick later at Main.cpp:3670-
                     // 3680 -- this port's own deferred-request precedent, see _pendingReplayRequested's
                     // own doc comment for why synchronous is unsafe here). Gated on _rxLineStagingBuffer
-                    // being non-null (RxBufferMode.On) -- matches legacy's own UpdateSampFreq gate
+                    // being non-null (RxBufferMode.On or, as of Phase 7's decoder-wiring sub-piece,
+                    // Extended too -- code-review fix, this comment previously said "On" only) --
+                    // matches legacy's own UpdateSampFreq gate
                     // (`(dp->m_StgBuf != NULL) || WaveStg.IsOpen()`, Main.cpp:5597). No separate isReplay
                     // guard is needed here: this branch is only ever reached when isReplay is false (the
                     // enclosing if/else routes isReplay:true to ProcessLineSuppressed instead, a few
@@ -5169,7 +5170,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     {
         if (_rxLineStagingBuffer is null || _mode is null || _slantTracker is null || _lineDecoder is null || _pixels is null)
         {
-            return; // not in a state replay applies to (AVT/pre-lock/RxBufferMode.Off|Extended -- matches ApplySlantTracking's own guard)
+            return; // not in a state replay applies to (AVT/pre-lock/RxBufferMode.Off -- matches ApplySlantTracking's own guard; code-review fix: Extended DOES replay as of Phase 7's decoder-wiring sub-piece, via this same is-null gate)
         }
 
         var mode = _mode;
