@@ -177,11 +177,20 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// Phase 5), but still plain, directly user-editable state otherwise -- not backed by
     /// <see cref="IReceivedImageBuffer"/> or any session model (no "current QSO" tracker exists in
     /// this port, matching the auto-fill's own gate simplification, see
-    /// <see cref="OnStationIdDecoded"/>'s doc comment). The remaining, still-unseeded source is
-    /// OCR (this pane's own "Callsign" row stays a separate, still-literal placeholder).</summary>
+    /// <see cref="OnStationIdDecoded"/>'s doc comment). Also feeds the read-only "Callsign" row's
+    /// <see cref="CallsignDisplay"/> (0.9-beta UI-honesty pass) -- the remaining, still-unseeded
+    /// source is OCR, which that row no longer claims to be (label trimmed from "Callsign · OCR" to
+    /// plain "Callsign" since it now shows the real FSK-decoded value, not an OCR result).</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
+    [NotifyPropertyChangedFor(nameof(CallsignDisplay))]
     private string? _overrideCallsign;
+
+    /// <summary>Read-only counterpart to the editable <see cref="OverrideCallsign"/> TextBox below it
+    /// on the same card -- same value, same "—" empty-state convention as <see cref="NameDisplay"/>/
+    /// <see cref="QthDisplay"/>, added so the card's top "Callsign" row shows the real FSK-decoded
+    /// value instead of a hardcoded literal.</summary>
+    public string CallsignDisplay => OverrideCallsign ?? "—";
 
     /// <summary>Legacy's real <c>MyRST</c> equivalent (<c>Main.cpp:3648</c>,
     /// <c>sprintf("595%s", pDem-&gt;m_fskNRS)</c>) -- the decoded NR/RST exchange from a station-ID's
