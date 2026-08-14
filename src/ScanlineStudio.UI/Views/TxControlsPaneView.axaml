@@ -37,10 +37,11 @@
                 </Grid>
                 <!-- Visual scaffolding only below this point (spec/14-roadmap.md backlog): "Auto
                      picks" caption, quick-mode pill grid, Duration/Geometry/VOX-tone rows have no
-                     real data source. -->
+                     real data source; values shown as neutral "—" placeholders, not fake-live
+                     literals (0.9 beta bar: no fake-live items, mock/disabled is fine). -->
                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.AutoPicksLabel}" />
-                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.AutoPicksValue}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                 </Grid></Border>
                 <!-- Order matches mock2: seg -> Auto picks -> 4x4 quick-mode grid -> select ->
                      Selected/Duration/... rows (design-fidelity-agent-caught fix: the ComboBox
@@ -82,19 +83,19 @@
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.DurationLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.DurationValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.GeometryLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.GeometryValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VoxToneLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.VoxToneValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VisHeaderLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.VisHeaderValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                 </StackPanel>
                 <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.FavoritesLabel}" />
@@ -215,8 +216,9 @@
                 </WrapPanel>
 
                 <!-- Tone map is real (static per-mode SstvModeDefinition.LuminanceMinHz/MaxHz
-                     lookup, ToneMapText below). TX clock/Monitor audio/Occupied BW below it are
-                     still visual scaffolding only: none of these are exposed anywhere in
+                     lookup, ToneMapText below). Tune drive/TX clock/Monitor audio/Occupied BW below
+                     it are still visual scaffolding only, shown as neutral "—" placeholders (0.9
+                     beta bar: no fake-live items): none of these are exposed anywhere in
                      ScanlineStudio.Core.Audio today (spec/14-roadmap.md backlog); Occupied BW
                      specifically was researched and deliberately deferred, not just not yet done,
                      see ~/.claude/plans/wandering-glowing-otter.md. ALC/Power/SWR values themselves
@@ -227,7 +229,7 @@
                          dropped it). -->
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.TuneDriveLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.TuneDriveValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMap}" />
@@ -235,15 +237,15 @@
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.TxClock}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.TxClockValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudio}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudioValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBw}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBwValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                 </StackPanel>
                 <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.Telemetry.MeterCaption}" />
@@ -309,7 +311,11 @@
 
         <!-- Outgoing metadata: visual scaffolding only; blocked on the same missing operator-
              profile setting as Identification, plus a "to station"/report/QSO-context concept
-             that doesn't exist yet (spec/14-roadmap.md backlog). -->
+             that doesn't exist yet (spec/14-roadmap.md backlog). All value rows show a neutral
+             "—" placeholder rather than fake-live literals (0.9 beta bar: no fake-live items).
+             Do NOT confuse this card with the separate real Identification card above
+             (FskIdDisplay/CwIdDisplay/TailDisplay); that one is wired to the CW-ID/FSK
+             subsystem and is left untouched. -->
         <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
             <HeaderedContentControl.Header>
                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxOutgoing.CardHeader}" />
@@ -319,42 +325,42 @@
                 <StackPanel Classes="Industry IndustryRows">
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.VisCode}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.VisCodeValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.FskId}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxId.FskIdValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.CwId}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.CwIdValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                 </StackPanel>
                 <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxOutgoing.BurnedCaption}" />
                 <StackPanel Classes="Industry IndustryRows">
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.Callsign}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.CallsignValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.ToStation}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.ToStationValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.GridBeam}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.GridBeamValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.Report}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.ReportValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.FreqMode}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.FreqModeValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.DateUtc}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.DateUtcValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="—" />
                     </Grid></Border>
                 </StackPanel>
             </StackPanel>
