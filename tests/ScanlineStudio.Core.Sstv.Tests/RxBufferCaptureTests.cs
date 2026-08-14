@@ -61,17 +61,17 @@ public class RxBufferCaptureTests
         Assert.InRange(decoder.RxLineStagingBufferForTests.Count, expectedApprox - oneLine, expectedApprox + oneLine);
     }
 
-    [Theory]
-    [InlineData(RxBufferMode.Off)]
-    [InlineData(RxBufferMode.Extended)]
-    public void RxBufferMode_OffAndExtended_DoNotCaptureYet(RxBufferMode mode)
+    [Fact]
+    public void RxBufferMode_Off_DoesNotCapture()
     {
-        // Extended's own disk-backed capture is a separate, still-unbuilt mechanism (RX buffer
-        // subsystem Phase 7) -- this phase wires RAM-mode (On) capture only, so Extended must NOT
-        // silently start capturing into a RAM buffer as a side effect of this phase landing.
+        // Split from a combined Off/Extended test (RX buffer subsystem Phase 7, decoder-wiring
+        // sub-piece): Extended now genuinely captures (see RxBufferMode_Extended_ActuallyCapturesSamplesDuringARealDecode
+        // below) -- the old combined test's "Extended doesn't capture yet" half was this phase's own
+        // intended target, not a regression to keep pinning. Off's own "never captures" guarantee is
+        // unaffected by this phase and still real, kept here on its own.
         var sstvMode = SstvModeRegistry.Robot36;
         var samples = EncodeRealTransmission(sstvMode);
-        var decoder = new AnalogFmSstvDecoder(11025, rxBufferMode: mode);
+        var decoder = new AnalogFmSstvDecoder(11025, rxBufferMode: RxBufferMode.Off);
 
         var lineCount = 0;
         decoder.LineDecoded += _ => lineCount++;
@@ -84,6 +84,50 @@ public class RxBufferCaptureTests
 
         Assert.True(lineCount >= 10, "Never decoded enough lines -- test setup problem.");
         Assert.Null(decoder.RxLineStagingBufferForTests);
+    }
+
+    [Fact]
+    public void RxBufferMode_Extended_ActuallyCapturesSamplesDuringARealDecode()
+    {
+        // Mirrors RxBufferMode_On_ActuallyCapturesSamplesDuringARealDecode above -- RX buffer
+        // subsystem Phase 7's decoder-wiring sub-piece gives Extended a real disk-backed buffer
+        // (RxDiskLineStagingBuffer), previously null (see the now-split-out
+        // RxBufferMode_Off_DoesNotCapture, which used to also cover Extended as "doesn't capture yet").
+        // Not `using` -- AnalogFmSstvDecoder isn't IDisposable yet (a later Phase 7 sub-piece wires
+        // that up). Code-review correction: this test's scratch files do NOT merely "leak until GC" --
+        // RxDiskLineStagingBuffer has no finalizer and no FileOptions.DeleteOnClose (see that class's
+        // own doc comment); files are deleted ONLY in Dispose(), so without it they leak permanently
+        // for the life of the temp directory, same as every other RxBufferMode.Extended-constructing
+        // test in this file today (this is the first sub-piece where any of them actually creates real
+        // temp files, since the buffer was null before this wiring landed).
+        var decoder = new AnalogFmSstvDecoder(11025, rxBufferMode: RxBufferMode.Extended);
+        var mode = SstvModeRegistry.Robot36;
+        var samples = EncodeRealTransmission(mode);
+
+        var lineCount = 0;
+        decoder.LineDecoded += _ => lineCount++;
+        const int chunkSize = 256;
+        for (var offset = 0; offset < samples.Length && lineCount < 10; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+        }
+
+        Assert.True(lineCount >= 10, "Never decoded enough lines -- test setup problem.");
+        Assert.NotNull(decoder.RxLineStagingBufferForTests);
+        Assert.True(decoder.RxLineStagingBufferForTests!.Count > 0, "Expected the staging buffer to have captured samples after 10 decoded lines.");
+        Assert.False(decoder.RxLineStagingBufferForTests.HasWriteFailed);
+
+        // Code-review finding: Count/HasWriteFailed alone would still pass with a completely broken
+        // write/consumer pipeline -- Count increments on ENQUEUE (RxDiskLineStagingBuffer.TryAppendLine),
+        // not once bytes actually reach disk, and HasWriteFailed only latches asynchronously. A real
+        // read forces EnsureSnapshot -> DrainToCurrentPoint -> ReadSnapshot, proving genuine end-to-end
+        // disk capture through the wired decoder, not just that the constructor picked the right type.
+        Assert.True(double.IsFinite(decoder.RxLineStagingBufferForTests.SyncEnvelopeAt(0)));
+
+        var oneLine = mode.LineDurationMs / 1000.0 * 11025;
+        var expectedApprox = lineCount * oneLine;
+        Assert.InRange(decoder.RxLineStagingBufferForTests.Count, expectedApprox - oneLine, expectedApprox + oneLine);
     }
 
     [Fact]
