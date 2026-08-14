@@ -105,10 +105,13 @@
                             </Border>
                         </StackPanel>
                         <!-- CAT link: real, one-way binding (confirmed one-way, not two-way, per
-                             design doc §2's own correction). accentOutline when linked, plain
-                             .mini otherwise. -->
+                             design doc §2's own correction). Connectivity is a health status, not
+                             a selection, so it reuses the same green healthy-tint (.active) as the
+                             status bar's Rx pill (mockups/colors/SSTV-Color-Scheme.md §1's blue-is-
+                             selection-only rule), not the old blue accentOutline. Plain .mini
+                             otherwise. -->
                         <Border Grid.Row="1" Grid.Column="1" Classes="Industry IndustryMini" BorderThickness="1"
-                                Classes.accentOutline="{Binding CatLinked}"
+                                Classes.active="{Binding CatLinked}"
                                 HorizontalAlignment="Right" VerticalAlignment="Center">
                             <Panel>
                                 <TextBlock Text="{loc:Translate RadioStatus.CatLinked}" IsVisible="{Binding CatLinked}" />

@@ -679,12 +679,6 @@
     <Style Selector="Border.IndustryMini.active TextBlock">
         <Setter Property="Foreground" Value="{StaticResource IndustryHealthyTintText}" />
     </Style>
-    <Style Selector="Border.IndustryMini.accentOutline">
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
-    </Style>
-    <Style Selector="Border.IndustryMini.accentOutline TextBlock">
-        <Setter Property="Foreground" Value="{StaticResource IndustryAccent700}" />
-    </Style>
     <!-- Interaction states, item 18: hover = text-7% mix (NOT IndustryAccent100 — .mini is
          structurally like .btn-secondary/.seg-opt, not the stepper's borderless accent glyphs;
          IndustryAccent100 also breaks the active variant's readability), disabled = 45% opacity. -->
