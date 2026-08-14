@@ -110,6 +110,9 @@
             <Color x:Key="IndustryLabelColor">#454545</Color>
             <Color x:Key="IndustryMutedTextColor">#8A8A8A</Color>
             <Color x:Key="IndustryDisabledTextColor">#9A9A9A</Color>
+            <!-- §6 status lozenge neutral text — distinct from every other neutral above (not
+                 TextBrush #101010, not LabelBrush #454545, not MutedTextBrush #8A8A8A). -->
+            <Color x:Key="IndustryStatusTextColor">#3A3A3A</Color>
             <!-- §2.2 hue tint triads (Select uses IndustryAccentColor above as its base — spec's
                  "blue" IS the app's one accent now, not a separate hue). -->
             <Color x:Key="IndustrySelectSolidBorderColor">#0B4C83</Color>
@@ -170,6 +173,7 @@
             <SolidColorBrush x:Key="IndustryLabel" Color="{StaticResource IndustryLabelColor}" />
             <SolidColorBrush x:Key="IndustryMutedText" Color="{StaticResource IndustryMutedTextColor}" />
             <SolidColorBrush x:Key="IndustryDisabledText" Color="{StaticResource IndustryDisabledTextColor}" />
+            <SolidColorBrush x:Key="IndustryStatusText" Color="{StaticResource IndustryStatusTextColor}" />
 
             <SolidColorBrush x:Key="IndustrySelectSolidBorder" Color="{StaticResource IndustrySelectSolidBorderColor}" />
             <SolidColorBrush x:Key="IndustrySelectTint" Color="{StaticResource IndustrySelectTintColor}" />

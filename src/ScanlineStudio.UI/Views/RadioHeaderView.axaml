@@ -105,18 +105,19 @@
                             </Border>
                         </StackPanel>
                         <!-- CAT link: real, one-way binding (confirmed one-way, not two-way, per
-                             design doc §2's own correction). Connectivity is a health status, not
-                             a selection, so it reuses the same green healthy-tint (.active) as the
-                             status bar's Rx pill (mockups/colors/SSTV-Color-Scheme.md §1's blue-is-
-                             selection-only rule), not the old blue accentOutline. Plain .mini
-                             otherwise. -->
-                        <Border Grid.Row="1" Grid.Column="1" Classes="Industry IndustryMini" BorderThickness="1"
-                                Classes.active="{Binding CatLinked}"
+                             design doc §2's own correction). 2026-08-14: now the real LED+lozenge
+                             atom (spec §6) — auditor-caught correction of this session's earlier
+                             tint fix: §9.3 names this exact chip and wants it a NEUTRAL lozenge
+                             with a green LED, tint is reserved for the Rx pill alone. -->
+                        <Border Grid.Row="1" Grid.Column="1" Classes="Industry IndustryStatus"
                                 HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <Panel>
-                                <TextBlock Text="{loc:Translate RadioStatus.CatLinked}" IsVisible="{Binding CatLinked}" />
-                                <TextBlock Text="{loc:Translate RadioStatus.CatNotLinked}" IsVisible="{Binding !CatLinked}" />
-                            </Panel>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding CatLinked}" VerticalAlignment="Center" />
+                                <Panel>
+                                    <TextBlock Text="{loc:Translate RadioStatus.CatLinked}" IsVisible="{Binding CatLinked}" />
+                                    <TextBlock Text="{loc:Translate RadioStatus.CatNotLinked}" IsVisible="{Binding !CatLinked}" />
+                                </Panel>
+                            </StackPanel>
                         </Border>
 
                         <!-- STUB (spec/16-gui-wiring-survey.md:346): no step/RIT concept exists on
