@@ -31,44 +31,51 @@
         </HeaderedContentControl.Header>
         <Grid RowDefinitions="Auto,*">
 
-            <!-- Merged tool strip: decorative Move/Crop/Scale/.../Pick (real RadioButton group,
-                 IndustryMiniRadioTheme — the old design already made this a genuine exclusive-
-                 select group, GroupName="EditorTool", not inert chips, so the re-skin preserves
-                 that) + Undo/Redo/Fit/100%/Snap-grid/Safe-area/dimensions (mini chips/toggles, no
-                 real per-tool behavior yet) on the left, real wired PreserveAspect/AddText/Apply/
-                 Cancel on the right — ALL in one WrapPanel (not a fixed non-wrapping
-                 StackPanel/Grid), matching the old design's own stated intent ("collapsed from 2
-                 rows into 1 to match mock2's single tool-strip row") while fixing a real
-                 containment risk that intent introduces: mock2's row assumes a 1920px-wide design
-                 canvas, this column is far narrower at runtime, so a non-wrapping row would clip;
-                 WrapPanel degrades to extra lines instead (containment over an exact 1-line match,
-                 this project's #1 priority). -->
+            <!-- Merged tool strip: Move/Crop/Scale/.../Pick RadioButton group, IndustryMiniRadioTheme
+                 (GroupName="EditorTool"). Only "Move" reflects real behavior (the default/only tool
+                 state), so it's the sole enabled+checked radio; the other 8 imply tool-switching
+                 that doesn't exist (Crop/Text are especially misleading since a REAL always-on crop
+                 rectangle and a separate real "Add text" button already exist elsewhere in this
+                 file) — disabled with the app's standard NotImplemented tooltip rather than removed,
+                 since removing Move's siblings would leave an orphan single radio with no group
+                 context. Undo/Redo/Fit/100%/Snap-grid/Safe-area/dimensions: Undo/Redo/Fit/100% and
+                 Snap-grid have no Command/binding, disabled+tooltipped; Safe-area's ToggleButton
+                 isn't wired to the canvas guide below (that guide is unconditionally visible), so
+                 it's disabled too but keeps IsChecked="True" to match the guide's always-on state.
+                 Dimensions chip is a plain (non-interactive) label, left as-is. Real wired
+                 PreserveAspect/AddText/Apply/Cancel on the right — ALL in one WrapPanel (not a fixed
+                 non-wrapping StackPanel/Grid), matching the old design's own stated intent
+                 ("collapsed from 2 rows into 1 to match mock2's single tool-strip row") while fixing
+                 a real containment risk that intent introduces: mock2's row assumes a 1920px-wide
+                 design canvas, this column is far narrower at runtime, so a non-wrapping row would
+                 clip; WrapPanel degrades to extra lines instead (containment over an exact 1-line
+                 match, this project's #1 priority). -->
             <WrapPanel Grid.Row="0" Margin="0,0,0,6">
                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsChecked="True" Margin="0,0,4,4"
                              Content="{loc:Translate Panes.TxImageEditor.ToolMove}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolCrop}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolScale}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolRotate}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolText}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolBox}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolLine}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolMask}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolPick}" />
+                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
+                             Content="{loc:Translate Panes.TxImageEditor.ToolCrop}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
+                             Content="{loc:Translate Panes.TxImageEditor.ToolScale}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
+                             Content="{loc:Translate Panes.TxImageEditor.ToolRotate}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
+                             Content="{loc:Translate Panes.TxImageEditor.ToolText}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
+                             Content="{loc:Translate Panes.TxImageEditor.ToolBox}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
+                             Content="{loc:Translate Panes.TxImageEditor.ToolLine}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
+                             Content="{loc:Translate Panes.TxImageEditor.ToolMask}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
+                             Content="{loc:Translate Panes.TxImageEditor.ToolPick}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <Border Width="1" Height="16" Margin="0,0,4,4" Background="{StaticResource IndustryDivider}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
-                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" />
-                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="True" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" />
+                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Undo}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="True" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{loc:Translate Panes.TxImageEditor.DimensionsChip}" /></Border>
 
                 <!-- Real, wired: aspect toggle + add-text + apply/cancel. PreserveAspect has no
@@ -106,63 +113,48 @@
                      to the real pointer-handler logic below. -->
                 <DockPanel Grid.Column="0" LastChildFill="True">
 
-                    <!-- Bottom action bar: decorative duplicate of the real Transmit/Halt controls in
-                         TxControlsPaneView's left column (locked decision #8, plan) - no Command this
-                         pass. Halt uses IndustryBtnSecondary (not a dedicated danger/red style): no
-                         Industry danger-button variant exists yet, and since this bar is decorative
-                         scaffolding (no Command), inventing one here would be a drive-by atom
-                         addition beyond this pass's re-skin scope — the real Stop-TX button (with its
-                         own real red styling) already lives in TxControlsPaneView's left column. -->
-                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
-                                Spacing="{StaticResource IndustrySpacingTight}"
-                                Margin="0,6,0,0">
-                        <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnPrimary" Content="{loc:Translate Panes.TxImageEditor.TransmitAction}" />
-                        <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Content="{loc:Translate Panes.TxImageEditor.TuneAction}" />
-                        <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Content="{loc:Translate Panes.TxImageEditor.PreviewAudio}" />
-                        <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Content="{loc:Translate Panes.TxImageEditor.HaltAction}" />
-                        <ProgressBar Classes="Industry" Value="0" Minimum="0" Maximum="100" Width="140" Height="6"
-                                     VerticalAlignment="Center" Margin="6,0,0,0" />
-                        <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center"
-                                   Text="{loc:Translate Panes.TxImageEditor.StateIdle}" />
-                    </StackPanel>
+                    <!-- Bottom action bar removed: it was a decorative duplicate of the real
+                         Transmit/Halt controls in TxControlsPaneView's left column (locked decision
+                         #8, plan), with no Command wired at all — a confirmed duplicate of real UI
+                         elsewhere, removed outright rather than left as a disabled ghost (matches
+                         this project's own precedent for confirmed-duplicate stub UI). -->
 
                     <!-- Adjustments row: literal Value=, no binding this pass. 3-per-row x 2 rows
                          (UniformGrid Columns=3, auto-flows 6 children into 2 rows), matching mock2's
-                         own grid-template-columns:repeat(3,1fr) intent; each cell is a real,
-                         interactive Slider (preserving the old design's own upgrade from mock2's
-                         static .trk bar — a real Slider is more usable even unbound, same
-                         preserve-behavior precedent as elsewhere in this port), IndustrySliderTheme
-                         h6 variant + Label/Value flanking it, same 3-cell composition as the Output
-                         card's real Drive slider (TxControlsPaneView.axaml). -->
+                         own grid-template-columns:repeat(3,1fr) intent; each Slider is disabled +
+                         NotImplemented-tooltipped (0.9-beta bar: dragging it currently did nothing
+                         but looked live) — IndustrySliderTheme h6 variant + Label/Value flanking it,
+                         same 3-cell composition as the Output card's real Drive slider
+                         (TxControlsPaneView.axaml). -->
                     <UniformGrid DockPanel.Dock="Bottom" Columns="3" Margin="0,6,0,0">
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,10,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Brightness}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Value="0" Minimum="-50" Maximum="50" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="-50" Maximum="50" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.BrightnessValue}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,10,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Contrast}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Value="0" Minimum="-50" Maximum="50" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="-50" Maximum="50" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ContrastValue}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Saturation}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Value="0" Minimum="-50" Maximum="50" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="-50" Maximum="50" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.SaturationValue}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,10,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Gamma}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Value="0" Minimum="-100" Maximum="100" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="-100" Maximum="100" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.GammaValue}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,10,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Sharpen}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Value="0" Minimum="0" Maximum="100" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="0" Maximum="100" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.SharpenValue}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Denoise}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Value="0" Minimum="0" Maximum="100" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="0" Maximum="100" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.DenoiseValue}" />
                         </Grid>
                     </UniformGrid>
@@ -235,36 +227,21 @@
 
                         </Canvas>
 
-                        <!-- Literal preview overlays matching mock2's burned-into-the-picture metadata
-                             layout (safe-area guide, callsign plate top-left, caption plate bottom-right);
-                             not real data, since no MyCallsign/CaptionLine binding exists.
-                             IsHitTestVisible="False" on all three so the real crop/overlay pointer
-                             handlers on the Canvas above are unaffected. Safe-area guide is a
-                             Rectangle (not a Border, which has no dash support in Avalonia) with
-                             StrokeDashArray, matching mock2's own "1px dashed" guide exactly rather
-                             than settling for a solid-line concession. Plates are composed inline
-                             (accent-bordered box over an image, IndustryBg fill) rather than reusing
-                             IndustryMini: mock2's plate border is accent-colored, not the standard
-                             IndustryMini divider border, so it isn't a real match for that atom. -->
+                        <!-- Safe-area guide: a visual crop-boundary indicator only (dashed rectangle),
+                             not fake content — kept. The mock2-derived callsign/caption "plate" text
+                             overlays that used to sit here (Panes.TxImageEditor.PlateCallsign/
+                             PlateCaption, literal "DL2QSK" / "EA7KDT · RSV 595 · 14.230 USB") were
+                             removed: they read as callsign/report text burned into the outgoing
+                             image, but no MyCallsign/CaptionLine binding ever existed — the real
+                             overlay-text path is the "Add text" button + OverlayElements above, which
+                             this did not affect. IsHitTestVisible="False" so the real crop/overlay
+                             pointer handlers on the Canvas above are unaffected. Rectangle (not a
+                             Border, which has no dash support in Avalonia) with StrokeDashArray,
+                             matching mock2's own "1px dashed" guide exactly rather than settling for
+                             a solid-line concession. -->
                         <Rectangle IsHitTestVisible="False" Margin="14"
                                    Stroke="{StaticResource IndustryAccent}" Opacity="0.55"
                                    StrokeThickness="1" StrokeDashArray="4,2" />
-                        <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12" Padding="8,3"
-                                BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
-                                Background="{StaticResource IndustryBg}" Opacity="0.92"
-                                IsHitTestVisible="False">
-                            <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="14" LetterSpacing="0.84"
-                                       Foreground="{StaticResource IndustryText}"
-                                       Text="{loc:Translate Panes.TxImageEditor.PlateCallsign}" />
-                        </Border>
-                        <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="12" Padding="7,2"
-                                BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
-                                Background="{StaticResource IndustryBg}" Opacity="0.92"
-                                IsHitTestVisible="False">
-                            <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="11"
-                                       Foreground="{StaticResource IndustryText}"
-                                       Text="{loc:Translate Panes.TxImageEditor.PlateCaption}" />
-                        </Border>
                         </Panel>
                     </ScrollViewer>
 
@@ -318,36 +295,38 @@
                          GRID/MY NAME/DATE/UTC, sourced from OperatorSettings + system clock via
                          MacroTextResolver) get a Command; HIS CALL/HIS GRID/FREQ/MODE/HIS RSV/DIST/BEAM
                          need a "current QSO" form concept this port doesn't have yet
-                         (spec/14-roadmap.md's TX-macro/CW-ID backlog entry), so they're left as
-                         literal, non-functional scaffolding, unchanged from before. Clicking a wired
-                         chip appends its token to the selected overlay element's raw Text (no
-                         caret-position tracking; append is simplest and matches what "insert" means
-                         for the other chips' future no-selection-yet state too). -->
+                         (spec/14-roadmap.md's TX-macro/CW-ID backlog entry). 0.9-beta pass: these 7
+                         were previously left fully clickable with no Command (a fake-live gap the
+                         wiring survey's "correctly-STUB" label didn't actually reflect) — now
+                         disabled + NotImplemented-tooltipped like every other non-functional control.
+                         Clicking a wired chip appends its token to the selected overlay element's raw
+                         Text (no caret-position tracking; append is simplest and matches what
+                         "insert" means for the other chips' future no-selection-yet state too). -->
                     <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" />
                         </HeaderedContentControl.Header>
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                             <WrapPanel>
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                             </WrapPanel>
-                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.SourceLabel}" />
                                 <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.SourceValue}" />
                             </Grid></Border>
@@ -359,21 +338,24 @@
                     </HeaderedContentControl>
 
                     <!-- Mock2 scaffolding: text style (literal, applies to the selected overlay
-                         element; no selection-tracking exists yet so nothing to bind to). -->
+                         element; no selection-tracking exists yet so nothing to bind to). 0.9-beta
+                         pass: disabled + NotImplemented-tooltipped per-row, since these literal
+                         values (font/size, fill/stroke, plate %) read as live style state for the
+                         selected overlay element but nothing tracks a selection to apply them to. -->
                     <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.TextStyleHeader}" />
                         </HeaderedContentControl.Header>
                         <StackPanel Classes="Industry IndustryRows">
-                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontSizeLabel}" />
                                 <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.FontSizeValue}" />
                             </Grid></Border>
-                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FillStrokeLabel}" />
                                 <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.FillStrokeValue}" />
                             </Grid></Border>
-                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.PlateLabel}" />
                                 <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.PlateValue}" />
                             </Grid></Border>
