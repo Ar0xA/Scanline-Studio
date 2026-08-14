@@ -255,4 +255,47 @@ public class RxLineStagingBufferTests
         Assert.Throws<ArgumentOutOfRangeException>(() => buffer.DemodulatedAt(1));
         Assert.Throws<ArgumentOutOfRangeException>(() => buffer.DemodulatedAt(-1));
     }
+
+    [Fact]
+    public void HasHeadroomForSamples_MatchesTryAppendLinesOwnAdmissionBoundary_Empty()
+    {
+        // RX buffer subsystem Phase 8. Same strict `<` boundary TryAppendLine's own admission check
+        // uses (Count + length >= CapacitySamples is rejected) -- one definition, not two. An empty
+        // buffer has headroom for anything up to (but not including) a full-capacity request.
+        const int sampleRate = 1000; // CapacitySamples = 282,700
+        var buffer = new RxLineStagingBuffer(sampleRate);
+
+        Assert.True(buffer.HasHeadroomForSamples(buffer.CapacitySamples - 1));
+        Assert.False(buffer.HasHeadroomForSamples(buffer.CapacitySamples));
+    }
+
+    [Fact]
+    public void HasHeadroomForSamples_AfterAppending_ReflectsRemainingCapacity()
+    {
+        const int sampleRate = 1000; // CapacitySamples = 282,700
+        var buffer = new RxLineStagingBuffer(sampleRate);
+        var almostFull = new double[buffer.CapacitySamples - 2];
+        buffer.TryAppendLine(almostFull, almostFull);
+
+        // Exactly 2 samples of headroom remain (CapacitySamples - (CapacitySamples-2) = 2), but the
+        // strict `<` boundary means "room for 2 more" is FALSE -- the same "always leaves at least
+        // one element of slack unused" contract TryAppendLine's own exact-fill rejection test pins.
+        Assert.True(buffer.HasHeadroomForSamples(1));
+        Assert.False(buffer.HasHeadroomForSamples(2));
+    }
+
+    [Fact]
+    public void HasHeadroomForSamples_AtTheRealReachableMaximum_HasNoRoomForEvenOneMore()
+    {
+        const int sampleRate = 1000;
+        var buffer = new RxLineStagingBuffer(sampleRate);
+        var full = new double[buffer.CapacitySamples - 1]; // the real reachable maximum, see TryAppendLine_OneLessThanCapacity_Succeeds_TheRealReachableMaximum above
+        buffer.TryAppendLine(full, full);
+
+        // Count is now CapacitySamples-1 -- the strict `<` boundary means 0 additional samples still
+        // fits (Count+0 < CapacitySamples), matching TryAppendLine's own admission math exactly, but
+        // even 1 more does not.
+        Assert.True(buffer.HasHeadroomForSamples(0));
+        Assert.False(buffer.HasHeadroomForSamples(1));
+    }
 }

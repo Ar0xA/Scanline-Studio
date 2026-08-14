@@ -17,9 +17,14 @@ namespace ScanlineStudio.Core.Sstv;
 /// (<see cref="RxLineStagingBuffer"/>'s own admission check), and a disk-backed "no real cap"
 /// implementation would need an artificial sentinel value on this shared surface for a property nothing
 /// outside that one class reads. Stays a RAM-only property; <c>RxLineStagingBufferTests.cs</c>
-/// already constructs the concrete type directly. When Phase 8's <c>CorrectSlant</c> gate needs "is
-/// the RAM buffer already full?" (`Main.cpp:5268-5270`), add a <c>bool IsFull</c> then, not a
-/// capacity number now.
+/// already constructs the concrete type directly.
+///
+/// <b>Correction, RX buffer subsystem Phase 8</b>: this doc previously suggested adding a
+/// <c>bool IsFull</c> here for Phase 8's own "is the RAM buffer already full?" need
+/// (`Main.cpp:5268-5270`) -- that suggestion turned out to be the wrong shape once Phase 8's own
+/// plan-review worked through the actual legacy math: the tail commit-vs-revert check needs "is
+/// there room for 32 MORE lines" (`Main.cpp:5415-5416`), which a single boolean can't answer for an
+/// arbitrary lookahead. See <see cref="HasHeadroomForSamples"/> below instead.
 ///
 /// <see cref="IDisposable"/> -- a disk-backed implementation owns scratch files and a background
 /// writer that must be torn down; <see cref="RxLineStagingBuffer"/>'s own <c>Dispose()</c> is a
@@ -75,4 +80,20 @@ internal interface IRxLineStagingBuffer : IDisposable
     /// (<c>InitializeSlant</c> at every fresh lock, and the tail of every <c>PerformReplay</c>
     /// pass) -- MUST NEVER THROW, on any implementation.</summary>
     void Clear();
+
+    /// <summary>RX buffer subsystem Phase 8 -- <see langword="true"/> if appending
+    /// <paramref name="additionalSamples"/> MORE samples on top of what's already staged would NOT
+    /// exceed this buffer's own capacity notion. Answers both of `CorrectSlant`'s own
+    /// capacity-arithmetic questions (`Main.cpp:5268-5270`'s "+1 line" entry-gate check and
+    /// `:5415-5416`'s "+32 lines" tail commit-vs-revert check) via one member operating directly in
+    /// SAMPLES, matching how legacy's own two checks are both really about samples despite being
+    /// spelled as lines-times-width in the source.
+    ///
+    /// <see cref="RxLineStagingBuffer"/> (RAM): <c>Count + additionalSamples &lt; CapacitySamples</c>
+    /// -- the same strict <c>&lt;</c> boundary <see cref="TryAppendLine"/>'s own admission check
+    /// already uses, one definition, not two. A disk-backed implementation has no real capacity
+    /// notion (Phase 7's own design) -- always <see langword="true"/> unless <see cref="HasWriteFailed"/>
+    /// is already set, matching legacy's own real behavior: `m_StgBuf == NULL` (disk mode) skips the
+    /// capacity check entirely at both of `CorrectSlant`'s call sites.</summary>
+    bool HasHeadroomForSamples(int additionalSamples);
 }
