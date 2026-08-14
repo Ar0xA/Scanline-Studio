@@ -147,6 +147,20 @@ dedicated signal-strength meter; legacy debug "digital scope" tool); **flrig cli
 **OmniRig-as-client** (`[[03-cat-layer]]`'s "maybe later, not committed" note — worth adding only if
 real post-launch user demand shows up, not a design-now item).
 
+**SSTVAE mode** (user-flagged 2026-08-14, `https://github.com/arodland/SSTVAE`) — a genuinely new
+category, not a legacy YONIQ/MMSSTV mode to port: a convolutional-autoencoder image codec sent as
+OFDM carrier amplitudes (real-valued latents, not bits/packets), 3 modes at 32/64/95s in ~1200Hz at
+640x480, own separate C++/Qt desktop app (Artistic-2.0 licensed, distinct from this project's
+LGPL-3.0). Verified directly (`gh repo view`, 2026-08-14), not assumed from the name. Why this stays
+parked, not just "later": upstream's own README states the on-air format is explicitly **not
+frozen** ("expect incompatible changes," two stations must run the same commit AND the same ~40MB
+model checkpoint to interoperate) — building against a moving target now would mean re-doing it;
+the DSP shape (neural decode + OFDM demod) is orthogonal to every other mode in this port (FM
+continuous-tone scanning) rather than a variation on it, so it's not a small addition; and
+redistributing/bundling the model checkpoint needs its own license-audit line in `LICENSES.md`
+(CLAUDE.md §5's rule) before any integration. Revisit once upstream tags a real release and freezes
+the wire format, not before.
+
 Explicitly re-flagged per the user's own framing: no implied "revisit soon," fine to land whenever
 someone actually asks for one of these, not before.
 
