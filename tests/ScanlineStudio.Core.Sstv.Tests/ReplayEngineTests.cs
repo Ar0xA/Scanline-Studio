@@ -73,8 +73,10 @@ public class ReplayEngineTests
         Assert.True(replayLineCount > 0, "PerformReplay never fired LineDecoded -- expected it to redraw at least the rows already staged.");
     }
 
-    [Fact]
-    public void PerformReplay_AfterARealCorrectionCommits_LiveDecodeContinuesRowsWithoutGapOrRepeat()
+    [Theory]
+    [InlineData(RxBufferMode.On)]
+    [InlineData(RxBufferMode.Extended)]
+    public void PerformReplay_AfterARealCorrectionCommits_LiveDecodeContinuesRowsWithoutGapOrRepeat(RxBufferMode rxBufferMode)
     {
         // Round-1 code-review strengthening: the original version of this test used a CLEAN (no clock
         // mismatch) signal, under which SlantTracker.ProcessLine never commits and
@@ -92,6 +94,18 @@ public class ReplayEngineTests
         // observed DURING the replay call itself, then assert the FIRST row index observed once live
         // decode resumes afterward continues EXACTLY one RowsPerTransmissionLine step forward -- no
         // gap (a wrong/too-small NextLine), no repeat (a wrong/too-large re-anchor), no backward jump.
+        //
+        // Parameterized over RxBufferMode (RX buffer subsystem Phase 7, sub-piece 7e): Extended's
+        // disk-backed staging buffer must produce equivalent replay row-continuity and image quality
+        // to RAM's -- this is this whole phase's actual payoff (Extended gets REAL replay too, not
+        // just capture), and nothing about the reconciliation math above is RAM-specific, so the same
+        // test body proves it for both backends via IRxLineStagingBuffer's shared contract.
+        // Code-review correction: NOT literally "byte-identical" (an earlier version of this comment
+        // claimed that) -- Extended deliberately disables peak-picking for every mode, in both the
+        // live path and PerformReplay itself (AnalogFmSstvDecoder's own `_rxBufferMode ==
+        // RxBufferMode.Extended` checks), a real, pinned divergence (RxBufferCaptureTests.cs's own
+        // On-vs-Extended pixel-difference test) -- this test's own delta tolerance already accounts
+        // for that, it just never compares On's output against Extended's directly.
         var mode = SstvModeRegistry.Robot36;
         var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
         Array.Fill(pixels, new Rgb24(230, 230, 230));
@@ -101,7 +115,7 @@ public class ReplayEngineTests
         const int trueSampleRate = (int)(declaredSampleRate * 1.0005);
         var samples = Encode(mode, sourceImage, trueSampleRate);
 
-        var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On);
+        using var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: rxBufferMode);
         IImageSource? decodedImage = null;
         var replaying = false;
         var lastRowDuringReplay = -1;
@@ -143,6 +157,15 @@ public class ReplayEngineTests
 
         Assert.True(replayed, "Test setup problem: never observed a committed correction with staged lines available -- replay was never actually exercised against a real stride change.");
         Assert.True(lastRowDuringReplay >= 0, "Test setup problem: PerformReplay never fired LineDecoded.");
+        // Code-review finding: Extended can silently stop capturing (a full channel or a drain
+        // timeout both latch HasWriteFailed without throwing -- see RxDiskLineStagingBuffer's own
+        // contract) while LineCount stays frozen but still > 5, so the gate above would still fire
+        // the replay pass over a SHORTER staged extent than intended -- and neither the row-
+        // continuity nor the delta assertion below would necessarily catch that, since both are
+        // driven by decode-path bookkeeping, not by how much data actually made it to disk. Without
+        // this assertion, Extended's own half of this Theory could silently prove less than it
+        // claims to. Always false for On (RxLineStagingBuffer.HasWriteFailed is a hardcoded no-op).
+        Assert.False(decoder.RxLineStagingBufferForTests!.HasWriteFailed, "Staging buffer silently stopped capturing -- this test would then prove nothing about replay over the real intended staged extent.");
         Assert.NotNull(firstRowAfterReplay);
         // Round-3 code-review correction: PerformReplay's own sample-cursor re-anchor ALWAYS sacrifices
         // exactly one transmission line's own row (the row covering whatever raw samples were consumed
