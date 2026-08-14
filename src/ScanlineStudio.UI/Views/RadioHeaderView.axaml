@@ -62,8 +62,12 @@
                              comment: no real sideband concept exists on IRadioSessionService
                              today. RadioButtons (not ToggleButtons) so IndustrySegTheme's
                              mutual-exclusion visual applies; GroupName scopes them to this control
-                             only. -->
-                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="0">
+                             only. Combined-batch auditor review, 2026-08-14: was fully clickable
+                             despite being unwired — unlike the Receive tab's Auto/Locked segment
+                             (where "Auto" is real), none of USB/LSB/FM has any backing here, so the
+                             whole group is disabled, not just one option. -->
+                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="0"
+                                    IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                             <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}"
                                          GroupName="VfoSideband" IsChecked="True"
                                          Content="{loc:Translate RadioStatus.SidebandUsb}" />
@@ -218,7 +222,15 @@
                          stacking axis, no extra space to align within), so the minis never actually
                          reached the card's right edge as the mockup's `margin-left:auto` does. -->
                     <DockPanel LastChildFill="True">
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
+                        <!-- Combined-batch auditor review, 2026-08-14: all 3 were fully clickable.
+                             "Edit list" specifically has a real editor (EditorRows/AddPresetRowCommand/
+                             SavePresetsCommand) deliberately left unmapped per a direct prior user
+                             request — but that request was about not wiring the Command, not about
+                             leaving the button interactive with no effect; disabled here like its
+                             Import/Scan siblings (neither of which has any backend at all) to meet the
+                             "no fake-live/dead controls" bar. -->
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3"
+                                    IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
                                     Content="{loc:Translate RadioStatus.EditFavouritesList}" />
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
