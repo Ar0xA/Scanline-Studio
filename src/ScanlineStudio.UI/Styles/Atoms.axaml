@@ -314,9 +314,13 @@
                 <Setter Property="Template">
                     <ControlTemplate>
                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                            <!-- 2026-08-14, spec §5: "CheckBox / RadioButton: box is white #FFFFFF
+                                 / #A0A0A0 when off." Was IndustrySurface/IndustryDivider (grey),
+                                 same fix as the editable-field/read-only-data distinction — an
+                                 unchecked box should read like it's ready to receive input. -->
                             <Border Name="PART_Box" Width="14" Height="14" VerticalAlignment="Center"
-                                    Background="{StaticResource IndustrySurface}"
-                                    BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0">
+                                    Background="{StaticResource IndustryEditField}"
+                                    BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0">
                                 <Path Name="PART_Tick" Data="M 2.5,7.5 L 6,11 L 11.5,3.5"
                                       Stroke="{StaticResource IndustryBg}" StrokeThickness="1.5"
                                       Stretch="None" IsVisible="False"
