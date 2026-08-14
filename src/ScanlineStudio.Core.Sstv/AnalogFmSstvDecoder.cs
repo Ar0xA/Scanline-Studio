@@ -5114,33 +5114,41 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// pass, not the whole reception from the start -- a real, bounded, and now-documented divergence
     /// from legacy's own whole-buffer re-decode (`UpdateSampFreq`, `Main.cpp:5603-5612`).
     ///
-    /// <b>Known, deferred limitation, found and logged (not silently dropped) while implementing this
-    /// round's own two-pass test</b>: <see cref="RobotScanlineDecoder"/> (confirmed the only
-    /// <see cref="IScanlineDecoder"/> implementation with cross-line instance state, per the whole-
-    /// subsystem review's own sweep of all five -- <see cref="YCbCrSequentialScanlineDecoder"/>,
-    /// <see cref="YCbCrLinePairedScanlineDecoder"/>, <see cref="RgbSequentialScanlineDecoder"/>, and
-    /// <see cref="MonoAveragedPairedScanlineDecoder"/> all allocate fresh per-call state) caches the
-    /// PREVIOUS line's other chroma channel across `DecodeLine` calls, matching legacy's own
-    /// `m_D36[2][320]` cross-line state. This method's own "sacrifice one row per pass, and sometimes
-    /// re-decode an already-decoded row" design (see above) does not currently keep that cache
-    /// synchronized the way an unbroken legacy decode would -- a sacrificed row's own missing chroma
-    /// contribution, and a redrawn row's own re-run of the R-Y/B-Y alternation, can desynchronize it,
-    /// producing real (not merely cosmetic) cross-row color bleed for Robot-family modes specifically
-    /// under a multi-pass replay scenario. Confirmed via a real reproduction (not theoretical) while
-    /// building `ReplayEngineTests.cs`'s own two-pass regression test -- see that test's own doc comment
-    /// for the reproduction and why it now runs against a stateless decoder (R24) instead.
+    /// <b>Investigated as a possible Robot-family chroma-bleed bug (2026-08-14), closed as NOT a bug</b>:
+    /// <see cref="RobotScanlineDecoder"/> (confirmed the only <see cref="IScanlineDecoder"/>
+    /// implementation with cross-line instance state, per the whole-subsystem review's own sweep of all
+    /// five -- <see cref="YCbCrSequentialScanlineDecoder"/>, <see cref="YCbCrLinePairedScanlineDecoder"/>,
+    /// <see cref="RgbSequentialScanlineDecoder"/>, and <see cref="MonoAveragedPairedScanlineDecoder"/> all
+    /// allocate fresh per-call state) caches the PREVIOUS line's other chroma channel across
+    /// `DecodeLine` calls, matching legacy's own `m_D36[2][320]` cross-line state -- Robot 36's real,
+    /// by-design vertical chroma subsampling (one channel scanned per row, the other borrowed from the
+    /// row before it), not a port defect. An earlier pass here wrongly concluded this method's "sacrifice
+    /// one row per pass, and sometimes re-decode an already-decoded row" design corrupts MULTIPLE rows
+    /// per replay pass, based on a two-pass reproduction that turned out to be confounded: the test image
+    /// (`CreateRowIdentityTestImage`, deliberately adjacent-rows-differ-wildly to stress OTHER
+    /// row-misalignment bugs) is a pathological, invalid fidelity target for Robot 36 specifically --
+    /// its own inherent per-row chroma-subsampling error against that image (large, by design) was
+    /// mistaken for replay-caused corruption. Empirically closed via an auditor-derived arithmetic model
+    /// (predicting each row's delta from "own channel + neighbor's other channel," matching measured
+    /// values to within ~3 units) AND a direct no-replay control (`RxBufferMode.Off`, same image, same
+    /// scenario) that reproduced the SAME per-row deltas with zero replay activity at all. The only real,
+    /// replay-attributable artifact is a single stale seed row at each redraw window's start -- smaller
+    /// than the mode's own inherent per-row error on this stress image, and legacy-equivalent: legacy's
+    /// `UpdateSampFreq` (`Main.cpp:5603-5612`) never resets `m_D36` either and walks staged lines in the
+    /// same contiguous order, so legacy has the identical one-row seed artifact (always at image row 0,
+    /// since legacy's staging buffer is never truncated -- this port's own truncate-on-jump divergence
+    /// means the port's seed row lands mid-image on passes 2+, a location difference, not a severity
+    /// one). Not a Tier-0 item (`spec/14-roadmap.md`) -- a legacy-faithful characteristic, not a bug.
+    /// Only Robot 36 uses this decoder; Robot 72 (`ColorEncoding.YCbCrSequential`,
+    /// <see cref="YCbCrSequentialScanlineDecoder"/>) is stateless and entirely unaffected -- an earlier
+    /// "Robot36/Robot72" reachability claim here was wrong, corrected.
     ///
-    /// <b>Reachability escalation, RX buffer subsystem Phase 6d, re-confirmed by the whole-subsystem
-    /// review (2026-08-13)</b>: this limitation was originally deferred under the premise "replay has
-    /// no production caller yet" (true at Phase 6c). Phase 6d made replay fire AUTOMATICALLY by
-    /// default (`RxBufferMode.On` is this decoder's own default constructor parameter, matching
-    /// legacy's own compiled-in default, `Main.cpp:899`) -- so this is no longer a theoretical,
-    /// test-only concern: any Robot36/Robot72 reception with real clock drift, decoded with default
-    /// settings, now reaches this path automatically. Explicitly re-confirmed as an accepted, still-
-    /// deferred limitation (not silently carried forward unexamined) -- real, separate follow-up work,
-    /// tracked in `PROJECT_BRIEF.md`'s own RX buffer subsystem section. Candidate fixes, unchanged from
-    /// the original finding: either never sacrifice/redraw a row for a stateful-decoder-family mode, or
-    /// reset that decoder's own cross-line cache at a truncation boundary.</summary>
+    /// The genuinely separate, real, mode-independent divergence from legacy is the sacrificed row
+    /// itself (this method's own doc comment above) -- legacy never loses a row on replay, this port's
+    /// per-line `DecodeLine` granularity does, for every mode, not a Robot-specific concern. That is the
+    /// one piece of this area that would be real follow-up work if ever prioritized, tracked as a
+    /// pre-existing, already-documented, already-accepted tradeoff -- not new scope from this
+    /// investigation.</summary>
     private void PerformReplay()
     {
         if (_rxLineStagingBuffer is null || _mode is null || _slantTracker is null || _lineDecoder is null || _pixels is null)

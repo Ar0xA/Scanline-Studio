@@ -31,16 +31,24 @@ regrouping.
 
 The core loop was verified end-to-end (audio in → decode → save/gallery is real; image → encode →
 PTT-keyed TX is real; crop + draggable macro-resolved text overlay + Apply → Transmit is real). The
-only things wrong with it are controls that lie about it, plus one real image-quality bug:
+only things wrong with it are controls that lie about it — the suspected DSP bug below turned out
+not to be one:
 
-- **Robot 36/72 replay chroma-bleed** — `AnalogFmSstvDecoder.PerformReplay` (doc comment
-  ~`AnalogFmSstvDecoder.cs:5118-5145`). `RobotScanlineDecoder`'s cross-line chroma cache doesn't
-  survive a replay-sacrificed/redrawn row; reachable on **any** default-settings Robot 36/72
-  reception with real clock drift since Phase 6d made replay fire automatically — one of the
-  most-used modes on air, at stock settings, producing genuinely wrong pixels. Recommended fix:
-  skip the row-sacrifice specifically for stateful scanline decoders (Robot family), not a global
-  `RxBufferMode` default flip — bounded, doesn't blunt the other 42 modes' benefit. Unmeasured how
-  visible it actually is on real audio; worth a quick real-decode check before scoping the fix.
+> **"Robot 36/72 replay chroma-bleed" — investigated 2026-08-14, closed as NOT a bug, dropped from
+> Tier 0.** 2 rounds of auditor plan-review plus a direct empirical measurement (per-row deltas,
+> with AND without replay) found the suspected corruption was an artifact of the test image itself
+> (deliberately wild adjacent-row colors, an invalid fidelity target for Robot 36's own by-design
+> vertical chroma subsampling) — a no-replay control reproduced the identical per-row deltas with
+> zero replay activity. The one real, replay-attributable artifact (a single stale seed row per
+> redraw pass) is legacy-equivalent (legacy's own `UpdateSampFreq` never resets its `m_D36`
+> cross-line state either) and smaller than the mode's own inherent per-row error on a real image.
+> Also corrected in the same pass: only Robot 36 uses the stateful decoder — Robot 72 was never
+> affected (`ColorEncoding.YCbCrSequential`, stateless), an earlier "Robot36/Robot72" framing here
+> and in `PROJECT_BRIEF.md` was wrong. Full finding in `AnalogFmSstvDecoder.PerformReplay`'s own doc
+> comment (`AnalogFmSstvDecoder.cs`, ~line 5117 onward). The one genuinely real, separate,
+> mode-independent divergence from legacy (the sacrificed row on every replay pass, every mode) was
+> already known/documented/accepted before this investigation, not new scope from it.
+
 - **7 fake-live/dead controls inside the core loop** (`TxImageEditorPaneView.axaml:46-72,119-126,
   139-166,252-267` — tool strip, dead Transmit/Tune/Preview/Halt row + progress bar, 6 unbound
   adjustment sliders, decorative callsign/report-plate overlay; `MainWindow.axaml:178-179,436-440` —
