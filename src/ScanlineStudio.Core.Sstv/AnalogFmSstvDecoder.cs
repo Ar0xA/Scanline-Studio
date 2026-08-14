@@ -5424,6 +5424,315 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _rxBufferBaseTransmissionLine = resumeRowTransmissionLine;
     }
 
+    /// <summary>
+    /// RX buffer subsystem Phase 8 -- ports legacy's `CorrectSlant`/`KRCS` toolbar action
+    /// (`Main.cpp:5264-5426`), a one-shot 5-iteration search over the staged reception for a
+    /// corrected sample rate, distinct from Auto-Slant's continuous per-line tracking
+    /// (<see cref="SlantTracker"/>, already ported). Reads ONLY
+    /// <see cref="IRxLineStagingBuffer.SyncEnvelopeAt"/> -- confirmed by reading both legacy loop
+    /// bodies directly, the demodulated/picture stream is never touched by this algorithm. On a
+    /// real, converged rate change, writes <see cref="_effectiveSamplesPerLine"/> exactly once (at
+    /// commit, never mid-search -- a search that runs all 5 iterations without committing must
+    /// never leave live decode state corrupted) and returns <see langword="true"/>; the caller (RX
+    /// buffer subsystem Phase 8's own request/drain plumbing, a later sub-piece) is responsible for
+    /// triggering <see cref="PerformReplay"/> on a real commit, mirroring legacy's own
+    /// `RedrawSampFreq(FALSE)` call, which this port's Phase 6/6d already built the same mechanism
+    /// for.
+    ///
+    /// <b>Entry gate</b> (`:5267-5270`): buffer present, cumulative staged line count &gt;= 16 (NOT
+    /// <see cref="IRxLineStagingBuffer.LineCount"/> alone -- that resets on every replay truncation,
+    /// unlike legacy's own never-truncated `m_wStgLine`; add
+    /// <see cref="_rxBufferBaseTransmissionLine"/> back, same as <see cref="PerformReplay"/>'s own
+    /// origin calculation does), mode is not AVT, and (RAM mode only) there's headroom for one more
+    /// line -- <see cref="IRxLineStagingBuffer.HasHeadroomForSamples"/>.
+    ///
+    /// <b>Per iteration</b>: (1) a circular sync-envelope-amplitude histogram over the first
+    /// `min(LineCount, 32)` STAGED lines (this port's own local index space, NOT the entry gate's
+    /// cumulative count -- matching <see cref="PerformReplay"/>'s own
+    /// `SampleCountThroughLine(Math.Min(LineCount, 32))` bound)
+    /// finds the dominant sync-pulse position (`bpos`); (2) a full-buffer linear-regression fit of
+    /// peak-sync-position-vs-row-index, walking every staged sample as ONE flat pass (not per-line
+    /// -- `basePos` is a running absolute index, exactly how <see cref="PerformReplay"/> already
+    /// walks this same buffer), with a 4-branch wraparound-correction cascade against the CURRENT
+    /// `bpos` estimate (two of those branches ABORT THE WHOLE FIT PASS, `goto _nx` in the source --
+    /// ported as an early `break` out of the scan, not a `continue`) and `bpos` itself updated to
+    /// each newly-accepted row's own position (`:5364` -- NOT held fixed at the histogram's own
+    /// argmax); (3) if at least 6 rows were accumulated into the regression sums, a least-squares
+    /// slope converted to a candidate rate, snapped to the nearest 0.01Hz. The convergence check
+    /// itself is UNCONDITIONAL (not gated on the 6-row minimum) -- with fewer than 6 rows the
+    /// candidate defaults to the CURRENT iteration's own rate, which trivially "converges" and
+    /// breaks the loop immediately, committing whatever rate the PREVIOUS iteration had already
+    /// proposed (not "no commit" -- a real, easy-to-get-wrong behavior, see this method's own test
+    /// coverage). Non-convergence halves the search window (`searchWindow`, legacy's `LW`, an `int`
+    /// -- truncates every halving, `:5413`) and loops with the new candidate carried forward as
+    /// THIS method's own local state, never touching <see cref="_effectiveSamplesPerLine"/>
+    /// mid-search.
+    ///
+    /// <b>Tail</b> (`:5415-5423`): commits only if the rate actually changed from the search's own
+    /// starting value (an exact <c>!=</c> comparison, matching legacy's own real behavior -- both
+    /// sides are plain value copies through this method, never independently recomputed, so exact
+    /// double equality is safe and correct here, not a bug) AND (not-RAM-mode OR
+    /// RAM-mode-with-headroom-for-32-more-lines, checked against the line width at SEARCH START,
+    /// matching legacy's own frozen `m_WD` -- confirmed assigned exactly once in the entire legacy
+    /// codebase, `sstv.cpp:594`, never touched by a sample-rate change) --
+    /// <see cref="IRxLineStagingBuffer.HasHeadroomForSamples"/> again, this time also covering the
+    /// disk-always-commits case (that implementation is unconditionally <see langword="true"/>
+    /// there unless a write has already failed).
+    ///
+    /// <b>Two stated divergences from legacy</b>, both accepted, neither a design flaw: legacy's own
+    /// `MultProc()` (dropped here) lets its single-threaded UI keep draining LIVE incoming capture
+    /// WHILE this synchronous search runs, so legacy's OWN scanned extent can grow between
+    /// iterations during a live reception -- this port's decode thread serializes the search, so the
+    /// scanned extent (<see cref="IRxLineStagingBuffer.Count"/> at the moment the search begins) is
+    /// frozen across all 5 iterations, a more reproducible/testable choice than legacy's own
+    /// timing-dependent behavior, not a "missing feature." And: 10 full linear passes over a long
+    /// <see cref="RxBufferMode.Extended"/> reception (Phase 7's own "no RAM cap" design point) is a
+    /// real, accepted multi-second-scale synchronous stall on the decode thread, during which
+    /// inbound audio risks being dropped by <c>IAudioEngine</c>'s own drain-thread-overrun policy --
+    /// same category of accepted tradeoff as Phase 7's own drain-barrier blocking points, not a new
+    /// concern this method invents.
+    /// </summary>
+    private bool TryCorrectSlant()
+    {
+        var stagingBuffer = _rxLineStagingBuffer;
+        if (stagingBuffer is null || _mode is null)
+        {
+            return false;
+        }
+
+        var mode = _mode;
+        var cumulativeLineCount = _rxBufferBaseTransmissionLine + stagingBuffer.LineCount;
+        if (cumulativeLineCount < 16 || mode == SstvModeRegistry.Avt)
+        {
+            return false;
+        }
+
+        // this port's m_WD-equivalent -- computed ONCE, at search start, and never re-derived; the
+        // tail's own headroom check reuses this exact value (legacy's own m_WD is frozen for the
+        // same reason, see this method's own doc comment).
+        var startLineWidthSamples = (int)_effectiveSamplesPerLine;
+        if (!stagingBuffer.HasHeadroomForSamples(startLineWidthSamples))
+        {
+            return false;
+        }
+
+        var startSampleRate = _effectiveSamplesPerLine / (mode.LineDurationMs / 1000.0);
+        var candidateSampleRate = startSampleRate;
+        var candidateLineWidthSamples = _effectiveSamplesPerLine;
+
+        // Legacy's own LW: an int, truncates at init and every halving below (Main.cpp:5273/:5413)
+        // -- ported literally, not "cleaned up" to a double, since the truncation is load-bearing
+        // for the search-window boundary from iteration 3 onward.
+        var searchWindow = (int)(candidateLineWidthSamples * 0.1);
+
+        // Frozen for the whole search -- see this method's own doc comment on the MultProc
+        // divergence (legacy's own scanned extent can grow mid-search during a live reception;
+        // this port's decode thread serializes the search, so nothing grows underneath it).
+        var scannedSampleCount = stagingBuffer.Count;
+        var histogramSampleCount = stagingBuffer.SampleCountThroughLine(Math.Min(stagingBuffer.LineCount, 32));
+
+        for (var iteration = 0; iteration < 5; iteration++)
+        {
+            // --- Pass 1: circular sync-envelope-amplitude histogram, first histogramSampleCount
+            // samples only (Main.cpp:5277-5309). Values stay `double`, not truncated to `int` the
+            // way legacy's own already-16-bit-quantized `short* sp` naturally are -- this port's own
+            // sync envelope was never quantized (RxLineStagingBuffer's own doc comment: "this port's
+            // replay reads back full-precision doubles," an already-accepted, documented divergence
+            // from legacy's write-time 16-bit quantization) -- introducing a NEW truncation here
+            // would add a second, gratuitous precision loss this port doesn't otherwise have.
+            var histogramWidth = (int)candidateLineWidthSamples;
+            var histogram = new double[histogramWidth];
+            var histogramIndex = 0;
+            for (var i = 0; i < histogramSampleCount; i++)
+            {
+                histogram[histogramIndex] += stagingBuffer.SyncEnvelopeAt(i);
+                histogramIndex++;
+                if (histogramIndex >= histogramWidth)
+                {
+                    histogramIndex = 0;
+                }
+            }
+
+            double bpos = 0;
+            var histogramMax = 0.0;
+            for (var i = 0; i < histogramWidth; i++)
+            {
+                if (histogramMax < histogram[i])
+                {
+                    histogramMax = histogram[i];
+                    bpos = i;
+                }
+            }
+
+            // --- Pass 2: slant regression fit, ALL scannedSampleCount samples, one flat walk
+            // (Main.cpp:5312-5390) -- not per-line, exactly how PerformReplay already walks this
+            // same buffer by absolute index.
+            var y = 0;
+            var max = 0.0;
+            var min = 16384.0;
+            var n = 0;
+            var m = 0;
+            double ps = 0;
+            double sumY = 0, sumL = 0, sumYY = 0, sumYL = 0;
+
+            for (var basePos = 0; basePos < scannedSampleCount; basePos++)
+            {
+                var yy = (int)(basePos / candidateLineWidthSamples);
+                var xx = basePos % candidateLineWidthSamples; // fmod-equivalent -- C#'s % on a double operand matches fmod, not Math.IEEERemainder
+
+                if (yy != y)
+                {
+                    var aborted = false;
+
+                    // 4-branch wraparound cascade against the CURRENT bpos estimate -- only one
+                    // branch (if any) fires per row boundary. Two of these ABORT THE WHOLE FIT PASS
+                    // (Main.cpp:5341-5342/:5349-5350's `goto _nx`), not just adjust `ps`.
+                    if (bpos < 0)
+                    {
+                        if (ps >= candidateLineWidthSamples / 4)
+                        {
+                            ps -= candidateLineWidthSamples;
+                        }
+                        else if (ps >= candidateLineWidthSamples / 8)
+                        {
+                            aborted = true;
+                        }
+                    }
+                    else if (bpos >= candidateLineWidthSamples)
+                    {
+                        if (ps < candidateLineWidthSamples * 3 / 4)
+                        {
+                            ps += candidateLineWidthSamples;
+                        }
+                        else if (ps < candidateLineWidthSamples * 7 / 8)
+                        {
+                            aborted = true;
+                        }
+                    }
+                    else if (bpos >= candidateLineWidthSamples * 3 / 4)
+                    {
+                        if (ps < candidateLineWidthSamples / 4)
+                        {
+                            ps += candidateLineWidthSamples;
+                        }
+                    }
+                    else if (bpos <= candidateLineWidthSamples / 4)
+                    {
+                        if (ps >= candidateLineWidthSamples * 3 / 4)
+                        {
+                            ps -= candidateLineWidthSamples;
+                        }
+                    }
+
+                    if (aborted)
+                    {
+                        break;
+                    }
+
+                    // y is always >= 0 in practice here (starts at 0, only ever assigned from yy,
+                    // which is itself always >= 0) -- ported literally, matching Main.cpp:5363's own
+                    // always-true guard rather than rationalizing it away.
+                    if (y >= 0 && (max - min) >= 4800 && Math.Abs(ps - bpos) <= searchWindow)
+                    {
+                        bpos = ps; // NOT held fixed at the histogram's own argmax -- this is what lets bpos legitimately drift outside [0, candidateLineWidthSamples), the only thing that makes the two abort branches above reachable at all
+                        if (n >= 2)
+                        {
+                            sumY += y;
+                            sumL += ps;
+                            sumYY += (double)y * y;
+                            sumYL += y * ps;
+                            m++;
+                        }
+
+                        n++;
+                        if (n >= stagingBuffer.LineCount)
+                        {
+                            break;
+                        }
+                    }
+
+                    y = yy;
+                    max = 0;
+                    min = 16384;
+                    ps = 0;
+                }
+
+                var sample = stagingBuffer.SyncEnvelopeAt(basePos);
+                if (max < sample)
+                {
+                    max = sample;
+                    ps = xx;
+                }
+
+                if (min > sample)
+                {
+                    min = sample;
+                }
+            }
+
+            // --- Regression solve + convergence check (Main.cpp:5391-5412) ---
+            // `fq` is initialized to the CURRENT candidate BEFORE the `m >= 6` check -- this ordering
+            // is load-bearing (round-2 plan-review finding): with fewer than 6 accumulated rows, the
+            // convergence check below trivially succeeds against this unchanged default, breaking
+            // the loop and committing whatever candidate this iteration STARTED with -- "no real
+            // regression data" does not mean "no commit" once iteration > 0.
+            var fq = candidateSampleRate;
+            if (m >= 6)
+            {
+                var k0 = (m * sumYL - sumL * sumY) / (m * sumYY - sumY * sumY);
+                fq = candidateSampleRate + k0 * candidateSampleRate / candidateLineWidthSamples;
+                fq = Math.Floor(fq * 100.0 + 0.5) / 100.0; // NormalSampFreq(fq, 100) -- half-away-from-zero, NOT Math.Round's banker's rounding (ComLib.cpp:203-206)
+            }
+
+            if (Math.Abs(fq - candidateSampleRate) < 0.1 / 11025.0 * candidateSampleRate)
+            {
+                candidateSampleRate = fq;
+                candidateLineWidthSamples = mode.LineDurationMs / 1000.0 * candidateSampleRate;
+                break;
+            }
+
+            // Non-convergence: legacy reverts to StartSamp, calls MultProc() (dropped -- no DSP
+            // effect for this port, see this method's own doc comment), then advances to the new
+            // candidate `fq` -- since nothing observes the intermediate reverted state (MultProc is
+            // a no-op here), this collapses to advancing straight to `fq`.
+            candidateSampleRate = fq;
+            candidateLineWidthSamples = mode.LineDurationMs / 1000.0 * candidateSampleRate;
+            searchWindow /= 2; // legacy's `LW *= 0.5` on an int -- integer-truncating halving
+        }
+
+        if (candidateSampleRate == startSampleRate)
+        {
+            return false;
+        }
+
+        if (!stagingBuffer.HasHeadroomForSamples(32 * startLineWidthSamples))
+        {
+            return false;
+        }
+
+        _effectiveSamplesPerLine = candidateLineWidthSamples;
+        return true;
+    }
+
+    /// <summary>Test-only entry point for <see cref="TryCorrectSlant"/> -- lets a test drive the
+    /// search directly and inspect its result, without depending on the request/drain plumbing (a
+    /// later RX buffer subsystem Phase 8 sub-piece). Mirrors the established
+    /// <see cref="PerformReplayForTests"/> precedent (a thin pass-through wrapper around an
+    /// otherwise-private method).</summary>
+    internal bool TryCorrectSlantForTests() => TryCorrectSlant();
+
+    /// <summary>Test-only entry point for <see cref="InitializeSlant"/> -- lets a test reach a fully
+    /// initialized slant/staging-buffer state (in particular, a real, non-zero
+    /// <see cref="EffectiveSamplesPerLineForTests"/>) for a mode locked via <see cref="ForceMode"/>,
+    /// without needing a real audio decode. <see cref="ForceMode"/> alone is NOT sufficient for this:
+    /// its own <c>Commit()</c> sets <c>_mode</c> immediately, but defers <see cref="InitializeSlant"/>
+    /// itself to <c>FinalizeAnchorAndStartDecoding</c>, which only runs once
+    /// <c>TryResolveSyncAnchorCorrection</c> succeeds against real buffered audio (immediately, only
+    /// for AVT) -- a real gap an earlier draft of the Phase 8 test plan assumed away and had to be
+    /// corrected against actual behavior, not inferred. Mirrors the established
+    /// <see cref="PerformReplayForTests"/> precedent.</summary>
+    internal void InitializeSlantForTests(SstvModeDefinition mode) => InitializeSlant(mode);
+
     /// <summary>Test-only entry point for <see cref="PerformReplay"/> -- lets a test drive a single
     /// replay pass directly and deterministically, without depending on the automatic triggers'
     /// (RX buffer subsystem Phase 6d) own timing. Mirrors the established <c>InitializeAfcForTests</c>
