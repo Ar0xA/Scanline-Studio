@@ -54,14 +54,18 @@
              the same convention as the Options window's own disabled-placeholder items. -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
         <!-- Brand label: mock2 has one, the pre-redesign app didn't (just menus directly) — new,
-             non-databound literal, three Runs so the "/" alone can carry the accent color per
-             LAYOUT-SPEC §5 Band 1. -->
+             non-databound literal, three Runs so the "/" alone can carry its own distinct color per
+             LAYOUT-SPEC §5 Band 1. 2026-08-14: the "/" was IndustryAccent (blue) — under
+             mockups/colors/SSTV-Color-Scheme.md's four-hue rule blue means selection only, and this
+             is decorative brand chrome, not a selection, same reasoning already applied to group-box
+             titles/kicker text/the callsign badge — so it moves to IndustryLabel (still visually
+             distinct from the flanking IndustryText runs, just not a hue). -->
         <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="4,0,12,0"
                    FontFamily="{StaticResource IndustryHeadingFontFamily}" FontSize="12"
                    LetterSpacing="0.6">
             <!-- .05em * 12px = 0.6 device px. -->
             <Run Text="{loc:Translate MainWindow.Brand.Name}" Foreground="{StaticResource IndustryText}" />
-            <Run Text="{loc:Translate MainWindow.Brand.Slash}" Foreground="{StaticResource IndustryAccent}" />
+            <Run Text="{loc:Translate MainWindow.Brand.Slash}" Foreground="{StaticResource IndustryLabel}" />
             <Run Text="{loc:Translate MainWindow.Brand.Suite}" Foreground="{StaticResource IndustryText}" />
         </TextBlock>
         <Menu Grid.Column="1" Classes="Industry">
@@ -229,7 +233,7 @@
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.Source}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.SourceValue}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SlantPpm}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SlantPpmDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SyncOffset}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncOffsetSamplesDisplay}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.AutoCorrect}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Foreground="{StaticResource IndustryAccent700}" Text="{Binding AutoCorrectDisplay}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.AutoCorrect}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AutoCorrectDisplay}" /></Grid></Border>
                                     </StackPanel>
                                     <Grid ColumnDefinitions="*,*" ColumnSpacing="3">
                                         <!-- Padding="6,0" (design-fidelity-caught fix): IndustryBtn22's
@@ -356,7 +360,7 @@
                             </HeaderedContentControl.Header>
                             <Grid RowDefinitions="Auto,*">
                                 <TextBlock Grid.Row="0" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
-                                           Foreground="{StaticResource IndustryTextMuted50}" HorizontalAlignment="Right"
+                                           Foreground="{StaticResource IndustryLabel}" HorizontalAlignment="Right"
                                            Margin="0,0,0,4" Text="{loc:Translate Panes.Waterfall.RangeCaption}" />
                                 <Grid Grid.Row="1" ColumnSpacing="{StaticResource IndustrySpacingWide}">
                                     <Grid.ColumnDefinitions>
