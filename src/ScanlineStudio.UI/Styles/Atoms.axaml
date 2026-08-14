@@ -699,12 +699,17 @@
     <Style Selector="ToggleButton.IndustryMini:pressed /template/ Border#PART_Face">
         <Setter Property="Background" Value="#241D1F20" />
     </Style>
+    <!-- 2026-08-14, spec §5: "Latching toggles (AGC, NR, NOTCH, SPLIT, AUTO-SAVE): identical to
+         segmented-selected when on." Same tint fix as RadioButton.IndustrySeg:checked below —
+         was solid accent fill, now the tint triad, matching that rule literally (this class IS
+         the app's own latching-toggle atom, e.g. TxControlsPaneView's SWR-cutoff toggle, TX
+         editor's Snap-grid/Safe-area). -->
     <Style Selector="ToggleButton.IndustryMini:checked /template/ Border#PART_Face">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="Background" Value="{StaticResource IndustrySelectTint}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustrySelectTintBorder}" />
     </Style>
     <Style Selector="ToggleButton.IndustryMini:checked /template/ ContentPresenter">
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustrySelectTintText}" />
     </Style>
     <Style Selector="ToggleButton.IndustryMini:disabled">
         <Setter Property="Opacity" Value="0.45" />
@@ -715,12 +720,17 @@
     <Style Selector="RadioButton.IndustryMini:pressed /template/ Border#PART_Face">
         <Setter Property="Background" Value="#241D1F20" />
     </Style>
+    <!-- 2026-08-14: same tint fix as the ToggleButton/RadioButton.IndustrySeg variants — this is
+         the app's real "mini radio group" selector atom (Options window's SenseLevel/RxBpf/
+         DemodType/AppPriority/StereoSource groups, Identification's ID-method radios, etc.), the
+         same SELECTION semantics as a segmented control at a more compact size, per spec §5's own
+         "Selected = tint, not solid" rule. -->
     <Style Selector="RadioButton.IndustryMini:checked /template/ Border#PART_Face">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="Background" Value="{StaticResource IndustrySelectTint}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustrySelectTintBorder}" />
     </Style>
     <Style Selector="RadioButton.IndustryMini:checked /template/ ContentPresenter">
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustrySelectTintText}" />
     </Style>
     <Style Selector="RadioButton.IndustryMini:disabled">
         <Setter Property="Opacity" Value="0.45" />
@@ -1106,12 +1116,19 @@
     <Style Selector="RadioButton.IndustrySeg:pointerover:not(:checked) /template/ Border#PART_Face">
         <Setter Property="Background" Value="#121D1F20" />
     </Style>
+    <!-- 2026-08-14, spec §5: "Segmented ... Selected | face #C4DDF5 | border #2A5D8F | text
+         #0B3E68, 600." Was a SOLID accent fill with white/bg text — the same visual weight as a
+         Primary button. The spec deliberately gives selection a lighter, tinted treatment distinct
+         from a primary action's solid fill, even though both use the same hue — a selected segment
+         reporting "this is currently chosen" reads differently from a button reporting "click me to
+         commit." -->
     <Style Selector="RadioButton.IndustrySeg:checked /template/ Border#PART_Face">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="Background" Value="{StaticResource IndustrySelectTint}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustrySelectTintBorder}" />
     </Style>
     <Style Selector="RadioButton.IndustrySeg:checked /template/ ContentPresenter">
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustrySelectTintText}" />
+        <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="RadioButton.IndustrySeg:disabled">
         <Setter Property="Opacity" Value="0.45" />
