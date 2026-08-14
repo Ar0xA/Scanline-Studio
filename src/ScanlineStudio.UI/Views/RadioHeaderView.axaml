@@ -209,7 +209,7 @@
                                                        Text="{Binding FrequencyWithMode}" />
                                             <TextBlock FontFamily="{StaticResource IndustryBodyFontFamily}"
                                                        FontSize="9.5" FontWeight="Normal" LetterSpacing="0.57"
-                                                       Foreground="{StaticResource IndustryTextMuted62}"
+                                                       Foreground="{StaticResource IndustryLabel}"
                                                        Text="{Binding Label}" />
                                             <!-- .06em * 9.5px = 0.57 device px. -->
                                         </StackPanel>
@@ -242,7 +242,7 @@
                                     Content="{loc:Translate RadioStatus.ScanFavourites}" />
                         </StackPanel>
                         <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
-                                   Foreground="{StaticResource IndustryTextMuted50}" Margin="0,0,5,0"
+                                   Foreground="{StaticResource IndustryLabel}" Margin="0,0,5,0"
                                    Text="{loc:Translate RadioStatus.FavouritesHint}" VerticalAlignment="Center" />
                     </DockPanel>
                 </StackPanel>
