@@ -177,21 +177,20 @@ public class ReplayEngineTests
         // "useless discriminator" here, since a one-row misassignment falls below its own row-to-row
         // delta. Large per-row jumps make a wrong row assignment obvious.
         //
-        // R24 (YCbCrSequentialScanlineDecoder), not Robot36, deliberately: while diagnosing this test's
-        // own failures during round-4 implementation, Robot36 (RobotScanlineDecoder) surfaced a REAL,
-        // SEPARATE finding -- that decoder caches the previous line's OTHER chroma channel across
-        // DecodeLine calls (an instance field, matching legacy's own m_D36[2][320] cross-line state),
-        // which the "sacrifice one row + occasionally redraw an already-decoded row" replay design
-        // (this method's own doc comment) does not currently preserve correctly: a sacrificed row's own
-        // missing chroma contribution, and a redrawn row's own re-run of the R-Y/B-Y alternation, both
-        // desynchronize that cache from what an unbroken legacy decode would produce. Confirmed by
-        // running this exact scenario against Robot36 first -- it failed with a REAL cross-row color
-        // bleed (not a test-harness artifact) that this same test, run against R24 (a genuinely
-        // stateless decoder -- fresh Y/R-Y/B-Y arrays every call, verified by reading its source), does
-        // not exhibit. Logged as a known, deferred limitation (PerformReplay's own doc comment), not
-        // silently dropped -- fixing it is real, separate work (likely needs the replay engine to
-        // either never sacrifice/redraw a row for a stateful decoder family, or reset that decoder's
-        // own cross-line cache at a truncation boundary), out of scope for this round.
+        // R24 (YCbCrSequentialScanlineDecoder), not Robot36: while diagnosing this test's own failures
+        // during round-4 implementation, Robot36 (RobotScanlineDecoder, the only decoder with cross-line
+        // instance state -- caches the previous line's OTHER chroma channel across DecodeLine calls,
+        // matching legacy's own m_D36[2][320] state) failed this test's own per-row tolerance. That was
+        // ORIGINALLY attributed to real replay-caused cross-row bleed -- **investigated further and
+        // corrected 2026-08-14** (PerformReplay's own doc comment has the full finding): the failure was
+        // confounded by this test's own CreateRowIdentityTestImage, deliberately built with wildly
+        // different adjacent-row colors to stress OTHER row-misalignment bugs -- an invalid fidelity
+        // target for Robot36 specifically, whose real, by-design vertical chroma subsampling produces
+        // large per-row error against exactly that kind of image REGARDLESS of replay (confirmed via a
+        // no-replay control reproducing the same per-row deltas). R24 stays the right mode for THIS
+        // test's own row-misalignment-across-a-cursor-jump check (it needs a decoder whose correctness
+        // doesn't depend on neighboring-row chroma continuity), not because Robot36 has a replay bug --
+        // it doesn't. See PerformReplay's own doc comment for the full closed investigation.
         var mode = SstvModeRegistry.R24;
         var sourceImage = CreateRowIdentityTestImage(mode.ImageWidth, mode.ImageHeight);
 
