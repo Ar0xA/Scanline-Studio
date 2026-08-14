@@ -93,14 +93,11 @@ public class RxBufferCaptureTests
         // subsystem Phase 7's decoder-wiring sub-piece gives Extended a real disk-backed buffer
         // (RxDiskLineStagingBuffer), previously null (see the now-split-out
         // RxBufferMode_Off_DoesNotCapture, which used to also cover Extended as "doesn't capture yet").
-        // Not `using` -- AnalogFmSstvDecoder isn't IDisposable yet (a later Phase 7 sub-piece wires
-        // that up). Code-review correction: this test's scratch files do NOT merely "leak until GC" --
-        // RxDiskLineStagingBuffer has no finalizer and no FileOptions.DeleteOnClose (see that class's
-        // own doc comment); files are deleted ONLY in Dispose(), so without it they leak permanently
-        // for the life of the temp directory, same as every other RxBufferMode.Extended-constructing
-        // test in this file today (this is the first sub-piece where any of them actually creates real
-        // temp files, since the buffer was null before this wiring landed).
-        var decoder = new AnalogFmSstvDecoder(11025, rxBufferMode: RxBufferMode.Extended);
+        // `using`: AnalogFmSstvDecoder is IDisposable as of the disposal-chain sub-piece -- without
+        // this, the test's own scratch files would leak permanently (RxDiskLineStagingBuffer has no
+        // finalizer and no FileOptions.DeleteOnClose, see that class's own doc comment; files are
+        // deleted ONLY in Dispose()).
+        using var decoder = new AnalogFmSstvDecoder(11025, rxBufferMode: RxBufferMode.Extended);
         var mode = SstvModeRegistry.Robot36;
         var samples = EncodeRealTransmission(mode);
 
@@ -128,6 +125,29 @@ public class RxBufferCaptureTests
         var oneLine = mode.LineDurationMs / 1000.0 * 11025;
         var expectedApprox = lineCount * oneLine;
         Assert.InRange(decoder.RxLineStagingBufferForTests.Count, expectedApprox - oneLine, expectedApprox + oneLine);
+    }
+
+    [Fact]
+    public void Dispose_DisposesTheStagingBuffer_AndDeletesScratchFiles()
+    {
+        // RX buffer subsystem Phase 7 (disposal-chain sub-piece): AnalogFmSstvDecoder's own Dispose()
+        // is a thin forward to _rxLineStagingBuffer.Dispose() -- this pins that the forward actually
+        // happens, end to end, through the decoder's own public API (not just that
+        // RxDiskLineStagingBuffer.Dispose() works in isolation, already covered by its own test file).
+        var decoder = new AnalogFmSstvDecoder(11025, rxBufferMode: RxBufferMode.Extended);
+        var staging = (RxDiskLineStagingBuffer)decoder.RxLineStagingBufferForTests!;
+        var demodPath = staging.DemodPathForTests;
+        var syncPath = staging.SyncPathForTests;
+        Assert.True(File.Exists(demodPath), "Test setup problem: the scratch file should exist before Dispose().");
+        Assert.True(File.Exists(syncPath), "Test setup problem: the scratch file should exist before Dispose().");
+
+        decoder.Dispose();
+
+        Assert.False(File.Exists(demodPath));
+        Assert.False(File.Exists(syncPath));
+
+        var exception = Record.Exception(decoder.Dispose);
+        Assert.Null(exception);
     }
 
     [Fact]

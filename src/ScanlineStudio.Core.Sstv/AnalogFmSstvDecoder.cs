@@ -41,7 +41,7 @@ namespace ScanlineStudio.Core.Sstv;
 /// this port's own synthetic fixtures) is golden-vector validation against actual legacy binary
 /// output -- in progress, not yet complete; see spec/14-roadmap.md's Phase 1 section.
 /// </summary>
-public sealed class AnalogFmSstvDecoder : ISstvDecoder
+public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 {
     // Legacy's real CPLL is always 1500-2300Hz for every mode except the MN/MC narrow family
     // (narrowed further to 2044-2300Hz via CSSTVDEM::SetWidth/IsNarrowMode, sstv.cpp:1707-1719/
@@ -5472,6 +5472,33 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
         }
 
         return sum / (to - from);
+    }
+
+    // RX buffer subsystem Phase 7 (disposal-chain sub-piece): the only disposable resource this class
+    // owns is _rxLineStagingBuffer -- RxBufferMode.Extended's disk-backed implementation owns scratch
+    // files and a background writer task that must be torn down; RAM's own Dispose() is a documented
+    // no-op, and null (RxBufferMode.Off) needs nothing. No other field in this class implements
+    // IDisposable (SearchBandpassFilter/SyncIntervalTracker/SyncEnvelopeDetector are all pure DSP
+    // state, verified before adding this, along with every other field in the class). Idempotent (a
+    // guard field) -- code-review correction: RestartableSstvDecoder's own two dispose call sites
+    // (Swap()'s outgoing-instance disposal, and its own Dispose() disposing whichever instance is
+    // current) each target a DIFFERENT AnalogFmSstvDecoder instance, never the same one twice, so
+    // that chain alone can't double-dispose any single instance here. The real reason for the guard:
+    // this is a public IDisposable type, and any direct consumer calling Dispose() twice (the
+    // ordinary .NET IDisposable contract, not a scenario specific to this class's own callers) must
+    // not throw or double-run the teardown -- the same reasoning RestartableSstvDecoder's own guard
+    // states accurately below (that one DOES have a real double-dispose caller: the DI container).
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _rxLineStagingBuffer?.Dispose();
     }
 
     private sealed class MutableImageSource(int width, int height, Rgb24[] pixels) : IImageSource

@@ -482,6 +482,21 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public async Task DisposeAsync_DisposesTheDecoder_IfItIsDisposable()
+    {
+        // RX buffer subsystem Phase 7 (disposal-chain sub-piece): _decoder is ISstvDecoder-typed, not
+        // IDisposable itself -- SstvSessionService.DisposeAsync duck-types the check (same pattern
+        // already proven for Waterfall), matching the real production RestartableSstvDecoder, which
+        // now implements IDisposable to tear down RxBufferMode.Extended's scratch files/background
+        // writer task. FakeSstvDecoder implements IDisposable for exactly this test.
+        var (service, _, decoder, _, _, _) = CreateService();
+
+        await service.DisposeAsync();
+
+        Assert.True(decoder.DisposedForTests);
+    }
+
+    [Fact]
     public async Task TransmitAsync_WithNoLockEngaged_BehavesExactlyAsBeforeThisFeature()
     {
         // Regression guard: introducing the lock must not change the un-locked default path.
