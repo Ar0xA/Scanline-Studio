@@ -148,9 +148,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     // TryAutoSync/TryResolveSyncAnchorCorrection's own `_rxBufferMode != Off` gating in Phase 3, which
     // treats On and Extended identically; this field specifically is RAM-mode-only, `== On`).
     // Constructed once, capacity fixed for this decoder's lifetime (mirrors _searchBandpassFilter's own
-    // null-for-bypass shape). Captured samples currently go nowhere except this buffer -- Phase 6 (not
-    // yet built) is what will ever read them back.
-    private readonly RxLineStagingBuffer? _rxLineStagingBuffer;
+    // null-for-bypass shape). RX buffer subsystem Phase 7: field type is the interface, not the
+    // concrete RAM class, so this WILL be able to hold either RxLineStagingBuffer (RxBufferMode.On)
+    // or the disk-backed RxDiskLineStagingBuffer (RxBufferMode.Extended) once a later Phase 7
+    // sub-piece wires the disk implementation in -- the constructor assignment below is still
+    // RAM-only/On-only in THIS sub-piece (interface extraction, zero behavior change). Captured
+    // samples feed PerformReplay (Phase 6).
+    //
+    // CA1859 suppressed: this sub-piece (interface extraction) only wires the RAM concrete type in
+    // yet, so the analyzer sees a single-implementation field and suggests narrowing it back --
+    // genuinely temporary, resolved by the very next sub-piece (RxDiskLineStagingBuffer wiring),
+    // which makes the interface typing real rather than premature.
+#pragma warning disable CA1859
+    private readonly IRxLineStagingBuffer? _rxLineStagingBuffer;
+#pragma warning restore CA1859
 
     // In-progress accumulator for the CURRENT (not-yet-complete) line, since ApplySlantTracking's own
     // per-sample loop can pause mid-line across multiple PushSamples calls (bounded by _consumedSamples,
@@ -792,7 +803,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
             : new SearchBandpassFilter(sampleRate, rxBpfPreset, syncRestartEnabled);
         _rxBufferMode = rxBufferMode;
         // RX buffer subsystem Phase 5: RAM-mode capture only (`== On`, not `!= Off`) -- Extended's own
-        // disk-backed staging is a separate, still-unbuilt mechanism (Phase 7). Constructed against
+        // disk-backed staging (Extended) is wired in a later sub-piece of Phase 7 -- this sub-piece is
+        // the interface extraction only, RAM-path behavior unchanged. Constructed against
         // `sampleRate`, this class's own NOMINAL sample-rate parameter (never a slant/AFC-corrected
         // rate) -- see RxLineStagingBuffer's own constructor doc comment for why that distinction
         // matters for its capacity formula.
@@ -4376,12 +4388,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder
     /// Same reasoning as <see cref="DemodTypeForTests"/>/<see cref="RxBpfPresetForTests"/> above.</summary>
     internal RxBufferMode RxBufferModeForTests => _rxBufferMode;
 
-    /// <summary>Test-only visibility into the RX buffer subsystem's own RAM staging buffer -- null
-    /// unless <see cref="RxBufferMode.On"/> was selected (see <see cref="_rxLineStagingBuffer"/>'s own
-    /// doc comment for why <see cref="RxBufferMode.Extended"/> does NOT also produce a non-null value
-    /// here). Production code has no need to read this back yet (Phase 6, not yet built, is the first
-    /// production reader).</summary>
-    internal RxLineStagingBuffer? RxLineStagingBufferForTests => _rxLineStagingBuffer;
+    /// <summary>Test-only visibility into the RX buffer subsystem's own staging buffer -- non-null
+    /// only for <see cref="RxBufferMode.On"/> today (<see cref="RxLineStagingBuffer"/>, RAM); null for
+    /// both <see cref="RxBufferMode.Off"/> AND <see cref="RxBufferMode.Extended"/> (see
+    /// <see cref="_rxLineStagingBuffer"/>'s own doc comment -- Extended's disk-backed implementation
+    /// is wired in a later RX buffer subsystem Phase 7 sub-piece, not this one). Declared type is the
+    /// interface (Phase 7's interface-extraction sub-piece) -- every real call site in the shipped
+    /// Phase 3-6 tests only ever touches <c>Count</c>/<c>LineCount</c> against this property, both
+    /// interface members, so this keeps compiling unchanged (verified before the type change, not
+    /// assumed).</summary>
+    internal IRxLineStagingBuffer? RxLineStagingBufferForTests => _rxLineStagingBuffer;
 
     /// <summary>Test-only visibility into the output-row cursor (<see cref="_nextLine"/>, in BITMAP
     /// ROWS -- 2x transmission-line count for paired-channel modes, see <see cref="PerformReplay"/>'s
