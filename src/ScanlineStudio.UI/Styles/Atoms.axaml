@@ -1481,14 +1481,64 @@
         <Setter Property="Fill" Value="{StaticResource IndustryTxLed}" />
         <Setter Property="Stroke" Value="{StaticResource IndustryDangerSolidBorder}" />
     </Style>
+    <!-- 2026-08-14: added for the TX-inhibit chip (mockups/colors/SSTV-Color-Scheme.md §6's own
+         "TX inhibited" row is amber, a distinct concept from the red "fault" row .alert covers). -->
+    <Style Selector="Rectangle.IndustryLed.attention">
+        <Setter Property="Fill" Value="{StaticResource IndustryAttention}" />
+        <Setter Property="Stroke" Value="{StaticResource IndustryAttentionSolidBorder}" />
+    </Style>
 
-    <!-- Small muted readout label (Phase 7): ported 1:1 from the old design's TextBlock.readoutSmall
-         (Cards.axaml), Industry mono font swapped in. Only real consumer: the status-bar TX-inhibit
-         label next to IndustryLed above. -->
-    <Style Selector="TextBlock.IndustryReadoutSmall">
+    <!-- 2026-08-14: LED + lozenge composed status atom, spec §6 ("Every state indicator is the
+         same object: an 8px LED plus a monospace lozenge, 19px tall, padding 0 7px, gap 6px...
+         It is never clickable"). A Border can't inject a child Rectangle via a Style (no
+         ControlTemplate on Border), so this is the "host" half only — call sites author the LED
+         explicitly as the Border's child, matching the spec's own §8.1 wording ("Border
+         containing LED + TextBlock") without a full TemplatedControl:
+           <Border Classes="Industry IndustryStatus[.healthyTint/.attentionTint/.fault]">
+             <StackPanel Orientation="Horizontal" Spacing="6">
+               <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding ...}" />
+               <TextBlock Text="{Binding ...}" />
+             </StackPanel>
+           </Border>
+         Neutral at rest (DisabledFace/ControlBorder/StatusText) — the LED alone carries the hue
+         for most states; only the tint variants below light up the lozenge too, reserved for
+         states the operator must not miss (spec's own phrasing). -->
+    <Style Selector="Border.IndustryStatus">
+        <Setter Property="Height" Value="19" />
+        <Setter Property="MinHeight" Value="19" />
+        <Setter Property="Padding" Value="7,0,7,0" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
+    </Style>
+    <Style Selector="Border.IndustryStatus TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-        <Setter Property="FontSize" Value="10.5" />
-        <Setter Property="Foreground" Value="#FF8A8A8A" />
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryStatusText}" />
+    </Style>
+    <Style Selector="Border.IndustryStatus.healthyTint">
+        <Setter Property="Background" Value="{StaticResource IndustryHealthyTint}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryHealthyTintBorder}" />
+    </Style>
+    <Style Selector="Border.IndustryStatus.healthyTint TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource IndustryHealthyTintText}" />
+    </Style>
+    <Style Selector="Border.IndustryStatus.attentionTint">
+        <Setter Property="Background" Value="{StaticResource IndustryAttentionTint}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryAttentionTintBorder}" />
+    </Style>
+    <Style Selector="Border.IndustryStatus.attentionTint TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource IndustryAttentionTintText}" />
+    </Style>
+    <!-- Fault row (spec §6): neutral fill, red TEXT only — "a tinted lozenge is loud, and
+         TX-active must be the loudest thing on screen." No real fault-indicator consumer exists
+         in this app yet (verified: no audio-device/CAT-lost/write-failed state is surfaced
+         anywhere), so this variant has no call site today — added for completeness/future use,
+         not applied anywhere in this commit. -->
+    <Style Selector="Border.IndustryStatus.fault TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource IndustryDangerTintText}" />
     </Style>
 
 </Styles>
