@@ -548,8 +548,12 @@
                                      same NoHardcodedAxamlStringsTests reasoning as the stepper
                                      above; the checked-state Style below swaps Data to a
                                      horizontal-only line for "−". -->
+                                <!-- 2026-08-14: was IndustryAccent700 (blue) — matches the disclosure
+                                     header text fix below (same LabelBrush), so the "+"/"−" glyph
+                                     and its adjacent header text read as one consistent grey unit,
+                                     not a mismatched blue-glyph/grey-text pair. -->
                                 <Path Name="PART_Chevron" Data="M 0 3 L 6 3 M 3 0 L 3 6"
-                                      Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1"
+                                      Stroke="{StaticResource IndustryLabel}" StrokeThickness="1"
                                       Width="6" Height="6" VerticalAlignment="Center" />
                                 <ContentPresenter Content="{TemplateBinding Content}" />
                             </StackPanel>
@@ -761,11 +765,15 @@
         <Setter Property="BorderThickness" Value="0,1,0,0" />
         <Setter Property="BorderBrush" Value="{StaticResource IndustryRowRule6}" />
     </Style>
+    <!-- 2026-08-14: was IndustryTextMuted62 — mockups/colors/SSTV-Color-Scheme.md §2.1's own
+         neutrals table assigns "secondary labels" to LabelBrush, the exact role a row label plays
+         (e.g. "Source", "Slant ppm" in a data row) — same fix already applied to group-box titles
+         and kicker text, reaching hundreds of consumers here via this one shared class. -->
     <Style Selector="TextBlock.IndustryRowLabel">
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
         <Setter Property="FontSize" Value="11" />
         <Setter Property="LineHeight" Value="16.5" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted62}" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryLabel}" />
     </Style>
     <!-- 2026-08-14, mockups/colors/SSTV-Color-Scheme.md §3: "Every frequency, S-meter, SNR,
          line-count, timer and callsign-of-sender readout is a read-only data field: sunken
@@ -1153,7 +1161,9 @@
         <Setter Property="FontSize" Value="11" />
         <Setter Property="LetterSpacing" Value="0.88" />
         <!-- .08em * 11px = 0.88 device px (LAYOUT-SPEC §6 pitfall 8). -->
-        <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted62}" />
+        <!-- 2026-08-14: was IndustryTextMuted62 — same "secondary label" role as row labels/group
+             titles per the spec's §2.1 neutrals table. -->
+        <Setter Property="Foreground" Value="{StaticResource IndustryLabel}" />
     </Style>
     <Style Selector="Border.IndustryTableHeaderRule">
         <Setter Property="BorderThickness" Value="0,0,0,1" />
@@ -1228,10 +1238,13 @@
     <Style Selector="TextBlock.IndustryThumbnailCall.gallery">
         <Setter Property="FontSize" Value="11" />
     </Style>
+    <!-- 2026-08-14: was IndustryTextMuted50 — a timestamp under a thumbnail is incidental muted
+         data, not a caption/label describing a field, so this maps to MutedTextBrush (spec §2.1:
+         "sub-digits, units, placeholder") rather than LabelBrush. -->
     <Style Selector="TextBlock.IndustryThumbnailMeta">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="9" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted50}" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryMutedText}" />
     </Style>
     <Style Selector="TextBlock.IndustryThumbnailMeta.gallery">
         <Setter Property="FontSize" Value="9.5" />
@@ -1263,14 +1276,16 @@
     <!-- 16. Disclosure header — .gbt group-box-title typography (NOT kicker text — item 16's own
          correction), source text is mixed-case with CSS text-transform:uppercase, so markup
          authors type it uppercase (matching item 4's kicker convention) rather than relying on a
-         text-transform Avalonia doesn't have. -->
+         text-transform Avalonia doesn't have. 2026-08-14: Foreground was IndustryAccent700 (blue) —
+         same group-box-title typography means the same LabelBrush fix already applied to
+         TextBlock.IndustryGbTitle above applies here too. -->
     <Style Selector="ToggleButton.IndustryDisclosure /template/ ContentPresenter">
         <Setter Property="TextBlock.FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
         <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
         <Setter Property="TextBlock.FontSize" Value="9.5" />
         <Setter Property="TextBlock.LetterSpacing" Value="1.33" />
         <!-- .14em * 9.5px = 1.33 device px. -->
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryAccent700}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryLabel}" />
     </Style>
     <Style Selector="ToggleButton.IndustryDisclosure:checked /template/ Path#PART_Chevron">
         <Setter Property="Data" Value="M 0 3 L 6 3" />
