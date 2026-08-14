@@ -6,8 +6,18 @@ namespace ScanlineStudio.Application.Tests;
 // Implements ISstvDecoderMaintenance (unlike the two other FakeSstvDecoders in Core.Imaging.Tests/
 // Core.Logbook.Tests, which have no need for it) so SstvSessionServiceTests can drive the ultracode
 // audit finding #34 maintenance-signal wiring without a real RestartableSstvDecoder.
-internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance
+//
+// IDisposable (RX buffer subsystem Phase 7, disposal-chain sub-piece): ISstvDecoder itself does NOT
+// extend IDisposable (SstvSessionService.DisposeAsync duck-types `_decoder is IDisposable`, matching
+// the real production RestartableSstvDecoder, which implements it conditionally for the same reason)
+// -- implemented here too so SstvSessionServiceTests can assert that duck-typed dispose path actually
+// fires, without needing a real RestartableSstvDecoder/AnalogFmSstvDecoder.
+internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, IDisposable
 {
+    public bool DisposedForTests { get; private set; }
+
+    public void Dispose() => DisposedForTests = true;
+
     public List<ReadOnlyMemory<float>> PushedSamples { get; } = [];
 
     public Exception? ThrowOnPush { get; set; }

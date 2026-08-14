@@ -39,7 +39,7 @@ namespace ScanlineStudio.Core.Sstv;
 /// on a different thread and then contend for `_gate` against the (still-lock-holding) original
 /// thread -- a genuine deadlock. Raising outside the lock removes the whole class, since the swap has
 /// already fully happened by the time any handler runs.</summary>
-public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance
+public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, IDisposable
 {
     // Sized against AnalogFmSstvDecoder's own constructor default (11025) -- this class never passes
     // a different sampleRate (matching Program.cs's actual registration today), so these constants
@@ -174,6 +174,24 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             lock (_gate)
             {
                 return _inner.RxBufferModeForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.RxLineStagingBufferForTests"/> directly -- RX buffer subsystem
+    /// Phase 7 (disposal-chain sub-piece), lets a test capture a pre-swap instance's scratch-file
+    /// paths (via <c>RxDiskLineStagingBufferForTests</c>-style test-only properties on the concrete
+    /// disk implementation) to later assert they were actually deleted once <see cref="Swap"/>
+    /// disposes the outgoing decoder, same reasoning/shape as <see cref="InnerRxBufferModeForTests"/>
+    /// above.</summary>
+    internal IRxLineStagingBuffer? InnerRxLineStagingBufferForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.RxLineStagingBufferForTests;
             }
         }
     }
@@ -434,7 +452,41 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private void Swap()
     {
         UnsubscribeFrom(_inner);
+
+        // RX buffer subsystem Phase 7 (disposal-chain sub-piece): the outgoing instance's own
+        // RxBufferMode.Extended staging buffer (if any) owns scratch files and a background writer
+        // task -- disposing it here, before the reference is dropped, is the only place that ever
+        // happens for a decoder that gets swapped out mid-session (as opposed to torn down at
+        // session end, see this class's own Dispose() below). Every restart creates a fresh inner
+        // instance (CreateInner, below), so without this, Extended mode would leak two scratch files
+        // + a live consumer task per restart cycle -- a real, unbounded production leak, not a
+        // hypothetical one (this exact gap was flagged by round-2 plan-review before Phase 7 started).
+        // This whole method runs under `lock (_gate)` (this class's own established convention, see
+        // the class doc comment) -- the outgoing instance's own Dispose() does a bounded
+        // channel-drain-and-FileStream-dispose (RxDiskLineStagingBuffer.DrainTimeout, waited twice =
+        // ~10s worst case), so a genuinely stuck writer blocks whichever UI-thread property getter
+        // (SignalPeakLevel/SlantPpm/BufferedSampleCount) is waiting on this same lock for up to that
+        // long. Code-review-accepted: only reachable under a pathological stuck-writer condition at
+        // the ~12h swap interval, not a normal-operation cost.
+        var outgoing = _inner;
         _inner = CreateInner();
+
+        // Code-review finding: RxDiskLineStagingBuffer.Dispose() calls FileStream.Dispose()
+        // unguarded, which flushes and can throw IOException (a full disk during that final flush --
+        // exactly the failure mode this subsystem's own HasWriteFailed design already anticipates
+        // elsewhere). Letting that propagate here would skip _warningRaised/RestartCountForTests
+        // below AND abort PushSamples before its own RestartCriticallyOverdue/Restarted raise --
+        // silently defeating the overflow-safety guarantee this whole class exists for, over a
+        // disposal-time I/O failure in an already-outgoing, already-replaced instance. The swap
+        // itself (_inner reassignment above) has already fully happened by this point regardless.
+        try
+        {
+            outgoing.Dispose();
+        }
+        catch (IOException)
+        {
+        }
+
         _warningRaised = false;
         RestartCountForTests++;
     }
@@ -467,4 +519,28 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private void OnDecodeRestarted(SstvModeDefinition mode) => DecodeRestarted?.Invoke(mode);
 
     private void OnStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
+
+    // RX buffer subsystem Phase 7 (disposal-chain sub-piece): disposes whichever AnalogFmSstvDecoder
+    // is current at teardown time -- the outgoing-instance disposal inside Swap() (above) only covers
+    // decoders that get REPLACED mid-session; this covers the one that's still current when the
+    // session itself ends. Locked under _gate, consistent with every other _inner access in this
+    // class (this class's own doc comment on why: the swap and every _inner read/write share this one
+    // lock). Idempotent: this class is a container-created DI singleton (Program.cs), so the DI
+    // container can dispose it at host shutdown IN ADDITION to SstvSessionService's own explicit
+    // disposal call, in unspecified relative order (round-2 plan-review finding).
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _inner.Dispose();
+        }
+    }
 }

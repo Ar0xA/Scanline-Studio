@@ -207,6 +207,58 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void Swap_DisposesTheOutgoingInnerDecodersScratchFiles()
+    {
+        // RX buffer subsystem Phase 7 (disposal-chain sub-piece): without Swap() disposing the
+        // outgoing instance, RxBufferMode.Extended would leak two scratch files + a live background
+        // writer task PER RESTART -- a real, unbounded production leak (round-2 plan-review's own
+        // finding, flagged before Phase 7 started). Same swap-forcing recipe as
+        // RxBufferMode_ConstructorValue_SurvivesAPeriodicSwap above. `using`: code-review nit fix --
+        // RestartableSstvDecoder is IDisposable as of this sub-piece; without it, the NEW current
+        // instance's own scratch files (asserted live below) would leak past this test's own end.
+        using var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, rxBufferMode: RxBufferMode.Extended);
+        var outgoing = (RxDiskLineStagingBuffer)decoder.InnerRxLineStagingBufferForTests!;
+        var demodPath = outgoing.DemodPathForTests;
+        var syncPath = outgoing.SyncPathForTests;
+        Assert.True(File.Exists(demodPath), "Test setup problem: the outgoing instance's scratch file should exist before the swap.");
+        Assert.True(File.Exists(syncPath), "Test setup problem: the outgoing instance's scratch file should exist before the swap.");
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        Assert.False(File.Exists(demodPath), "Outgoing instance's scratch file should have been deleted by Swap()'s own disposal.");
+        Assert.False(File.Exists(syncPath), "Outgoing instance's scratch file should have been deleted by Swap()'s own disposal.");
+
+        // The NEW current instance has its own, different, still-live scratch files -- disposal
+        // targets only the outgoing instance, not every Extended-mode buffer that ever existed.
+        var current = (RxDiskLineStagingBuffer)decoder.InnerRxLineStagingBufferForTests!;
+        Assert.NotSame(outgoing, current);
+        Assert.True(File.Exists(current.DemodPathForTests));
+        Assert.True(File.Exists(current.SyncPathForTests));
+    }
+
+    [Fact]
+    public void Dispose_DisposesTheCurrentInnerDecoder_AndIsIdempotent()
+    {
+        var decoder = new RestartableSstvDecoder(rxBufferMode: RxBufferMode.Extended);
+        var inner = (RxDiskLineStagingBuffer)decoder.InnerRxLineStagingBufferForTests!;
+        var demodPath = inner.DemodPathForTests;
+        Assert.True(File.Exists(demodPath), "Test setup problem: the scratch file should exist before Dispose().");
+
+        decoder.Dispose();
+        Assert.False(File.Exists(demodPath));
+
+        // Round-2 plan-review finding: this class is a container-created DI singleton, so the DI
+        // container can dispose it at host shutdown IN ADDITION to SstvSessionService's own explicit
+        // call, in unspecified order -- must not throw on a second call.
+        var exception = Record.Exception(decoder.Dispose);
+        Assert.Null(exception);
+    }
+
+    [Fact]
     public void StationIdDecoded_ForwardsFromTheCurrentInner()
     {
         // CW-ID/FSK station-ID subsystem Phase 5 (RestartableSstvDecoder.StationIdDecoded's own doc

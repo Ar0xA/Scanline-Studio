@@ -670,6 +670,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
         {
             disposableWaterfall.Dispose();
         }
+
+        // RX buffer subsystem Phase 7 (disposal-chain sub-piece): _decoder is ISstvDecoder-typed, not
+        // IDisposable itself (RestartableSstvDecoder implements it, but ISstvDecoder deliberately
+        // doesn't extend it -- avoids widening that interface's surface for one production
+        // implementation's own resource-cleanup need), same duck-typed pattern as the Waterfall check
+        // above. Placed AFTER StopReceivingAsync() (already the first line of this method) so no
+        // in-flight PushSamples call can race the decoder's own disposal.
+        if (_decoder is IDisposable disposableDecoder)
+        {
+            disposableDecoder.Dispose();
+        }
     }
 
     private async Task PumpToPlaybackAsync(IAsyncEnumerable<float> samples, float gain, CancellationToken ct)
