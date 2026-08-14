@@ -197,6 +197,15 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
 
     public bool HasWriteFailed => _hasWriteFailed;
 
+    /// <summary>RX buffer subsystem Phase 8. No real capacity notion for a disk-backed buffer
+    /// (Phase 7's own design -- unbounded during capture, bounded only by disk space) -- always
+    /// <see langword="true"/> unless <see cref="HasWriteFailed"/> is already set, matching legacy's
+    /// own real behavior (`m_StgBuf == NULL`, disk mode, skips the capacity check entirely at both
+    /// of `CorrectSlant`'s call sites, `Main.cpp:5268`/`:5416`). See
+    /// <see cref="IRxLineStagingBuffer.HasHeadroomForSamples"/>'s own doc comment for the full
+    /// contract.</summary>
+    public bool HasHeadroomForSamples(int additionalSamples) => !_hasWriteFailed;
+
     /// <summary>Test-only visibility into the demodulated-stream scratch file's path -- lets a test
     /// assert the file is actually deleted after <see cref="Dispose"/>.</summary>
     internal string DemodPathForTests => _demodPath;

@@ -199,6 +199,32 @@ public class RxDiskLineStagingBufferTests
     }
 
     [Fact]
+    public void HasHeadroomForSamples_AlwaysTrue_NoRealCapacityNotion()
+    {
+        // RX buffer subsystem Phase 8. Disk-backed capture has no real capacity notion (Phase 7's
+        // own "no RAM cap" design) -- matches legacy's own real behavior (disk mode skips the
+        // capacity check entirely at both of CorrectSlant's call sites, since m_StgBuf == NULL there).
+        using var buffer = new RxDiskLineStagingBuffer();
+
+        Assert.True(buffer.HasHeadroomForSamples(0));
+        Assert.True(buffer.HasHeadroomForSamples(int.MaxValue));
+    }
+
+    [Fact]
+    public void HasHeadroomForSamples_FalseOnceWriteHasFailed()
+    {
+        using var buffer = new RxDiskLineStagingBuffer();
+        Assert.True(buffer.TryAppendLine([1.0], [2.0]));
+        _ = buffer.DemodulatedAt(0); // forces a drain -- line 1 is now guaranteed flushed
+        buffer.CorruptWriteStreamForTests();
+        buffer.TryAppendLine([3.0], [4.0]);
+        buffer.Clear(); // drains and observes the failure
+
+        Assert.True(buffer.HasWriteFailed);
+        Assert.False(buffer.HasHeadroomForSamples(0));
+    }
+
+    [Fact]
     public async Task Growth_PastTheRamFormulasOwnCapacity_StillSucceeds()
     {
         // The entire point of Phase 7: RxLineStagingBufferTests.CapacitySamples_MatchesLegacyFormula

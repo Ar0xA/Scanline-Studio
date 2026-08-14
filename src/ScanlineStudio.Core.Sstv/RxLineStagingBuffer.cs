@@ -215,6 +215,12 @@ internal sealed class RxLineStagingBuffer : IRxLineStagingBuffer
     /// <see cref="IRxLineStagingBuffer.HasWriteFailed"/>'s own doc comment.</summary>
     public bool HasWriteFailed => false;
 
+    /// <summary>RX buffer subsystem Phase 8. Same strict <c>&lt;</c> boundary
+    /// <see cref="TryAppendLine"/>'s own admission check uses below -- one definition, not two. See
+    /// <see cref="IRxLineStagingBuffer.HasHeadroomForSamples"/>'s own doc comment for the full
+    /// contract.</summary>
+    public bool HasHeadroomForSamples(int additionalSamples) => Count + additionalSamples < CapacitySamples;
+
     /// <summary>No-op -- this RAM implementation owns no unmanaged resources (no scratch files, no
     /// background writer task) to tear down. See <see cref="IRxLineStagingBuffer"/>'s own doc
     /// comment on why the interface is <see cref="IDisposable"/> at all (a disk-backed implementation
