@@ -85,7 +85,14 @@
                                    HorizontalAlignment="Right" VerticalAlignment="Center"
                                    Text="{Binding UtcClockDisplay}" />
 
-                        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="3">
+                        <!-- STUB (spec/16-gui-wiring-survey.md:344, reclassified FAKE-LIVE in that
+                             doc's own summary counts): no bandwidth/split concept exists on
+                             IRadioSessionService today. Disabled + tooltipped, matching this app's
+                             established stub convention (Options.NotImplemented.Help), instead of
+                             reading as live rig state. -->
+                        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="3"
+                                    IsEnabled="False" Opacity="0.45"
+                                    ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                             <Border Classes="Industry IndustryMini" BorderThickness="1">
                                 <TextBlock Text="{loc:Translate RadioStatus.BwValue}" />
                             </Border>
@@ -105,7 +112,12 @@
                             </Panel>
                         </Border>
 
-                        <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Spacing="3">
+                        <!-- STUB (spec/16-gui-wiring-survey.md:346): no step/RIT concept exists on
+                             IRadioSessionService today. Same disabled+tooltip treatment as the
+                             BW/Split pills above. -->
+                        <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Spacing="3"
+                                    IsEnabled="False" Opacity="0.45"
+                                    ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                             <Border Classes="Industry IndustryMini" BorderThickness="1">
                                 <TextBlock Text="{loc:Translate RadioStatus.StepValue}" />
                             </Border>
@@ -113,8 +125,12 @@
                                 <TextBlock Text="{loc:Translate RadioStatus.RitValue}" />
                             </Border>
                         </StackPanel>
+                        <!-- STUB (spec/16-gui-wiring-survey.md:347): no rig-meters concept exists on
+                             IRadioSessionService today. Same disabled+tooltip treatment as above. -->
                         <Border Grid.Row="2" Grid.Column="1" Classes="Industry IndustryMini" BorderThickness="1"
-                                HorizontalAlignment="Right" VerticalAlignment="Center">
+                                HorizontalAlignment="Right" VerticalAlignment="Center"
+                                IsEnabled="False" Opacity="0.45"
+                                ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                             <TextBlock Text="{loc:Translate RadioStatus.RigMetersValue}" />
                         </Border>
                     </Grid>
@@ -255,8 +271,13 @@
                              §7's own real example) — a literal pixel Width/Margin only matched by
                              coincidence when the track happened to be ~100px wide; this column is
                              actually "*" (stretchy), so proportional star-column Grids are used instead
-                             of a literal pixel value (design-fidelity-agent-caught fix). -->
-                        <Grid Grid.Column="1" Classes="IndustryMeter" VerticalAlignment="Center">
+                             of a literal pixel value (design-fidelity-agent-caught fix).
+                             FAKE-LIVE fix (0.9-beta pass): fill/marker are fixed literals, not bound
+                             to any real RX gain parameter (none exists on IRadioSessionService today)
+                             — disabled + tooltipped so this reads as a stub, not live meter data. -->
+                        <Grid Grid.Column="1" Classes="IndustryMeter" VerticalAlignment="Center"
+                              IsEnabled="False" Opacity="0.45"
+                              ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                             <Border Classes="IndustryMeterTrack" Height="8" />
                             <Grid ColumnDefinitions="63*,37*">
                                 <Border Grid.Column="0" Classes="IndustryMeterFill" Height="8" HorizontalAlignment="Stretch" />
@@ -265,7 +286,11 @@
                                 <Border Grid.Column="1" Classes="IndustryMeterMarker" HorizontalAlignment="Left" />
                             </Grid>
                         </Grid>
-                        <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{loc:Translate RadioStatus.RxLevelValue}" VerticalAlignment="Center" />
+                        <!-- Same FAKE-LIVE fix as the meter above: this literal numerically matched
+                             the fixed 63% fill by coincidence, not by binding. -->
+                        <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{loc:Translate RadioStatus.RxLevelValue}"
+                                   VerticalAlignment="Center" IsEnabled="False" Opacity="0.45"
+                                   ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                     </Grid>
                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.TxVolumeLabel}" VerticalAlignment="Center" />
