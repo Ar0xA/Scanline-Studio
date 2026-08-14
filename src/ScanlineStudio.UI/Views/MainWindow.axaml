@@ -110,8 +110,11 @@
              Options, so the chip is always present like mock2's own. No cfg/grid alongside it,
              per direct user request: mock2 also shows a "cfg: <profile>" chip and a grid-locator
              suffix here, both skipped since neither has a real backing concept yet (preserved
-             product decision, UI-redesign Phase 2 design doc §1). -->
-        <Border Grid.Column="2" Classes="Industry IndustryMini accentOutline" BorderThickness="1"
+             product decision, UI-redesign Phase 2 design doc §1). 2026-08-14: dropped the old
+             accentOutline (blue) — an identity badge is neither a selection nor a status, so under
+             mockups/colors/SSTV-Color-Scheme.md's four-hue rule it owns no hue at all, same
+             reasoning already applied to group-box titles/kicker text going grey. -->
+        <Border Grid.Column="2" Classes="Industry IndustryMini" BorderThickness="1"
                 Padding="8,1,8,1" Margin="0,0,8,0" VerticalAlignment="Center">
             <!-- Overrides IndustryMini's default 10px/mono metrics — this chip's own spec (design
                doc §1) is 12px with .08em letter-spacing = .08*12 = 0.96 device px, not the
@@ -1318,16 +1321,24 @@
              exist rather than inventing parallel ones: DetectedModeDisplay/AutoCorrectDisplay/
              SlantPpmStatusBarDisplay are the SAME RxImagePaneViewModel properties the Receive tab's
              own cards and the status bar below already use — this duplicates that surface (matches
-             LAYOUT-SPEC's own mockup, which shows slant/SNR on both bands, not a mistake). SNR and
-             Autosave have no backing property anywhere in this codebase (confirmed against
-             spec/16-gui-wiring-survey.md) — literal FAKE-LIVE placeholders, same established
-             convention as the status bar's own SnrValue. -->
+             LAYOUT-SPEC's own mockup, which shows slant/SNR on both bands, not a mistake). SNR has
+             no backing property but is an honest "—" placeholder (assets/locale/en.json), same
+             convention as the status bar's own SnrValue below. 2026-08-14: the detected-mode chip's
+             .active (green) is now conditional on a mode actually being detected — it was
+             unconditionally green even while showing the "—" empty state, which read as fake-live
+             once .active started carrying real color meaning (mockups/colors/SSTV-Color-Scheme.md
+             §6). AutosaveOn was a plain affirmative "AUTOSAVE ON" claim with zero backing property
+             (confirmed against spec/16-gui-wiring-survey.md) — genuinely fake-live, not the same
+             case as SNR's honest dash, despite this comment previously claiming otherwise. Given the
+             Disabled+tooltip treatment already used for other unimplemented stubs in this file
+             (RadioHeaderView.axaml's BW/Split pills). -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
                     Height="26" Margin="0,0,6,0" Spacing="5">
             <Border Classes="Industry IndustryMini" BorderThickness="1">
                 <TextBlock Text="{loc:Translate MainWindow.TabStrip.AutoDetect}" />
             </Border>
-            <Border Classes="Industry IndustryMini active" BorderThickness="1">
+            <Border Classes="Industry IndustryMini" BorderThickness="1"
+                    Classes.active="{Binding RxImage.DetectedMode, Converter={x:Static ObjectConverters.IsNotNull}}">
                 <TextBlock Text="{Binding RxImage.DetectedModeDisplay}" />
             </Border>
             <Border Classes="Industry IndustryMini" BorderThickness="1">
@@ -1339,7 +1350,8 @@
             <Border Classes="Industry IndustryMini" BorderThickness="1">
                 <TextBlock Text="{loc:Translate MainWindow.TabStrip.SnrValue}" />
             </Border>
-            <Border Classes="Industry IndustryMini accentOutline" BorderThickness="1">
+            <Border Classes="Industry IndustryMini" BorderThickness="1" IsEnabled="False" Opacity="0.45"
+                    ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                 <TextBlock Text="{loc:Translate MainWindow.TabStrip.AutosaveOn}" />
             </Border>
         </StackPanel>
