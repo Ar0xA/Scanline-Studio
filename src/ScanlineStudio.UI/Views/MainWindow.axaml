@@ -1394,7 +1394,7 @@
                         <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" />
                     </Border>
                     <StackPanel Orientation="Horizontal" Spacing="4">
-                        <Ellipse Classes="Industry IndustryLed" Classes.alert="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
+                        <Rectangle Classes="Industry IndustryLed" Classes.alert="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
                         <TextBlock Classes="Industry IndustryReadoutSmall" Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxInhibit.Help}" VerticalAlignment="Center" />
                     </StackPanel>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">

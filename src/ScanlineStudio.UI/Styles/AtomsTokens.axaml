@@ -25,10 +25,44 @@
                  (waterfall overlay lines, the TX editor's safe-area rectangle, interactive-state
                  hover/press tints) stay genuinely translucent; see the hatch-fill DrawingBrush and
                  the interaction-state colors added in Styles/Atoms.axaml (Phase 1) for those. -->
-            <Color x:Key="IndustryBgColor">#F2F2F3</Color>
+            <!-- ============ mockups/colors/SSTV-Color-Scheme.md, 2026-08-14 ============
+                 Supersedes this block's original LAYOUT-SPEC.md §2 values wholesale (user decision,
+                 not a hybrid): "grey is the default, color is a claim about meaning, exactly four
+                 claims" — blue=selection, green=healthy, amber=attention, red=destroying. The spec
+                 was authored against the PRE-Phase-7 "Aesthetic Directive" tree (its own §8 says
+                 "add to avalonia/fixed/Styles/Tokens.axaml", "keep the ScanlineStudio prefix" — that
+                 tree was deleted, see this file's own header comment) — its §8/§9 implementation
+                 instructions are reference-only, NOT applicable literally; its §1-§7/§11 rules and
+                 palette ARE authoritative and are what's implemented here. Old Industry-ramp values
+                 (#F2F2F3 ground, #1D1F20 text, #5980A6 accent, single #D0D0D1 divider, 5-step
+                 Muted42..72 ramp, Accent100/600/700/800/900) are being migrated OFF, additively:
+                 this block updates the direct 1:1 concept matches (Ground/Text/Accent/Danger) now:
+                 - Ground/Surface/Text: LAYOUT-SPEC values -> spec's exact Ground/ControlFace/Text.
+                 - Accent: user decision "switch entirely" -> IndustryAccentColor IS the new Select
+                   blue #0F62A8 now, not a separate token — every existing IndustryAccent consumer
+                   picks this up automatically. Where a consumer's real role is chrome/branding
+                   rather than "selection" (group-box titles, kickers — user decision: both move to
+                   grey/Label, NOT blue) that consumer is migrated OFF IndustryAccent entirely onto
+                   IndustryLabel, per-usage, as those views are swept (Phase B/C, not this file).
+                 - Danger: value corrected to spec's exact #B42A2A (was the old design's own
+                   #B93636); the OLD comment's TX-active-toggle/error-text/danger-button consumers
+                   are still correct consumers of this same token under the new spec (§4 destructive
+                   buttons, §6 TX-active state) — only the value changes, not the semantic role.
+                   New IndustryTxLed (#D42A2A) is the spec's own separate, deliberately-brighter red
+                   for LED dots specifically (§2.2's "do not unify" rule) — was previously a bare
+                   literal on Ellipse.IndustryLed.alert in Atoms.axaml, not a token; consolidated here.
+                 The 5-step muted-text ramp, Accent100/600/700/800/900, and IndustryDivider/Surface
+                 are LEFT AS-IS in this pass (not deleted) — Phase B/C remaps each of their real
+                 consumers onto the new precise tokens below (Label/MutedText/DisabledText,
+                 ChromeBorder/ControlBorder, Hover/Press) per-usage, since collapsing a 5-step ramp
+                 or splitting one border color into two requires knowing what each specific consumer
+                 actually means, not just a value swap. Old tokens get deleted once nothing
+                 references them, not before (this project's own established migration pattern —
+                 see this file's header comment on how AtomsTokens.axaml itself replaced Tokens.axaml). -->
+            <Color x:Key="IndustryBgColor">#F0F0F0</Color>
             <Color x:Key="IndustrySurfaceColor">#E9E9EA</Color>
-            <Color x:Key="IndustryTextColor">#1D1F20</Color>
-            <Color x:Key="IndustryAccentColor">#5980A6</Color>
+            <Color x:Key="IndustryTextColor">#101010</Color>
+            <Color x:Key="IndustryAccentColor">#0F62A8</Color>
             <Color x:Key="IndustryDividerColor">#D0D0D1</Color>
             <Color x:Key="IndustryTextMuted42Color">#99999A</Color>
             <Color x:Key="IndustryTextMuted50Color">#88898A</Color>
@@ -52,20 +86,60 @@
             <Color x:Key="IndustryAccent800Color">#2C455D</Color>
             <Color x:Key="IndustryAccent900Color">#1D2D3D</Color>
 
-            <!-- Danger/alert red (Phase 7): ported 1:1 from the old design's ScanlineStudioTxActiveColor
-                 (Tokens.axaml, Light variant - the app runs RequestedThemeVariant="Light" only, so
-                 that was the color actually in effect) rather than invented, since this is the last
-                 real consumer of that resource before the old files are deleted. Reused by the TX
-                 transmit toggle's :checked state, TX/radio-header error text, and (via its own
-                 separate literal, not this token - see Ellipse.IndustryLed below) the status-bar
-                 alert LED, which was historically a different red in the old design and stays that
-                 way rather than being silently unified. -->
-            <Color x:Key="IndustryDangerColor">#B93636</Color>
+            <!-- Danger/alert red: value corrected 2026-08-14 to the color spec's exact #B42A2A (see
+                 the block comment above) — was ported 1:1 from the old design's
+                 ScanlineStudioTxActiveColor at Phase 7 (#B93636), now superseded. Same real
+                 consumers as before (TX transmit toggle's :checked state, TX/radio-header error
+                 text, destructive buttons), only the value changed. -->
+            <Color x:Key="IndustryDangerColor">#B42A2A</Color>
             <Color x:Key="IndustryDangerForegroundColor">#FFFFFF</Color>
+            <!-- Spec §2.2: "Red for TX-active LEDs is #D42A2A, not #B42A2A... this is the only
+                 place the two reds differ; do not unify them." Was a bare literal on
+                 Ellipse.IndustryLed.alert (Atoms.axaml); tokenized here, value unchanged. -->
+            <Color x:Key="IndustryTxLedColor">#D42A2A</Color>
+
+            <!-- ============ New spec-exact tokens (additive, mockups/colors/SSTV-Color-Scheme.md) ============ -->
+            <!-- §2.1 neutrals not already covered by a direct rename above. -->
+            <Color x:Key="IndustryControlFaceColor">#E9E9E9</Color>
+            <Color x:Key="IndustryDataFieldColor">#E4E4E4</Color>
+            <Color x:Key="IndustryEditFieldColor">#FFFFFF</Color>
+            <Color x:Key="IndustryDisabledFaceColor">#EDEDED</Color>
+            <Color x:Key="IndustryChromeBorderColor">#B9B9B9</Color>
+            <Color x:Key="IndustryControlBorderColor">#A0A0A0</Color>
+            <Color x:Key="IndustryDisabledBorderColor">#C6C6C6</Color>
+            <Color x:Key="IndustryLabelColor">#454545</Color>
+            <Color x:Key="IndustryMutedTextColor">#8A8A8A</Color>
+            <Color x:Key="IndustryDisabledTextColor">#9A9A9A</Color>
+            <!-- §2.2 hue tint triads (Select uses IndustryAccentColor above as its base — spec's
+                 "blue" IS the app's one accent now, not a separate hue). -->
+            <Color x:Key="IndustrySelectSolidBorderColor">#0B4C83</Color>
+            <Color x:Key="IndustrySelectTintColor">#C4DDF5</Color>
+            <Color x:Key="IndustrySelectTintBorderColor">#2A5D8F</Color>
+            <Color x:Key="IndustrySelectTintTextColor">#0B3E68</Color>
+            <Color x:Key="IndustryHealthyColor">#2E9E44</Color>
+            <Color x:Key="IndustryHealthySolidBorderColor">#256F33</Color>
+            <Color x:Key="IndustryHealthyTintColor">#DCEFD9</Color>
+            <Color x:Key="IndustryHealthyTintBorderColor">#4E9A4E</Color>
+            <Color x:Key="IndustryHealthyTintTextColor">#14471C</Color>
+            <Color x:Key="IndustryAttentionColor">#C88A00</Color>
+            <Color x:Key="IndustryAttentionSolidBorderColor">#8F6300</Color>
+            <Color x:Key="IndustryAttentionTintColor">#FAECC4</Color>
+            <Color x:Key="IndustryAttentionTintBorderColor">#B0871F</Color>
+            <Color x:Key="IndustryAttentionTintTextColor">#4A3600</Color>
+            <Color x:Key="IndustryDangerSolidBorderColor">#8C1F1F</Color>
+            <Color x:Key="IndustryDangerTintColor">#F3D9D9</Color>
+            <Color x:Key="IndustryDangerTintBorderColor">#B45A5A</Color>
+            <Color x:Key="IndustryDangerTintTextColor">#5A1010</Color>
+            <!-- Interaction-only, not semantic (spec §2.2): hover/press need somewhere to go. -->
+            <Color x:Key="IndustryHoverFaceColor">#DCE9F5</Color>
+            <Color x:Key="IndustryHoverBorderColor">#7EB4EA</Color>
+            <Color x:Key="IndustryPressFaceColor">#C4DDF5</Color>
+            <Color x:Key="IndustryPressBorderColor">#5A9AD4</Color>
 
             <SolidColorBrush x:Key="IndustryBg" Color="{StaticResource IndustryBgColor}" />
             <SolidColorBrush x:Key="IndustryDanger" Color="{StaticResource IndustryDangerColor}" />
             <SolidColorBrush x:Key="IndustryDangerForeground" Color="{StaticResource IndustryDangerForegroundColor}" />
+            <SolidColorBrush x:Key="IndustryTxLed" Color="{StaticResource IndustryTxLedColor}" />
             <SolidColorBrush x:Key="IndustrySurface" Color="{StaticResource IndustrySurfaceColor}" />
             <SolidColorBrush x:Key="IndustryText" Color="{StaticResource IndustryTextColor}" />
             <SolidColorBrush x:Key="IndustryAccent" Color="{StaticResource IndustryAccentColor}" />
@@ -85,6 +159,40 @@
             <SolidColorBrush x:Key="IndustryAccent700" Color="{StaticResource IndustryAccent700Color}" />
             <SolidColorBrush x:Key="IndustryAccent800" Color="{StaticResource IndustryAccent800Color}" />
             <SolidColorBrush x:Key="IndustryAccent900" Color="{StaticResource IndustryAccent900Color}" />
+
+            <SolidColorBrush x:Key="IndustryControlFace" Color="{StaticResource IndustryControlFaceColor}" />
+            <SolidColorBrush x:Key="IndustryDataField" Color="{StaticResource IndustryDataFieldColor}" />
+            <SolidColorBrush x:Key="IndustryEditField" Color="{StaticResource IndustryEditFieldColor}" />
+            <SolidColorBrush x:Key="IndustryDisabledFace" Color="{StaticResource IndustryDisabledFaceColor}" />
+            <SolidColorBrush x:Key="IndustryChromeBorder" Color="{StaticResource IndustryChromeBorderColor}" />
+            <SolidColorBrush x:Key="IndustryControlBorder" Color="{StaticResource IndustryControlBorderColor}" />
+            <SolidColorBrush x:Key="IndustryDisabledBorder" Color="{StaticResource IndustryDisabledBorderColor}" />
+            <SolidColorBrush x:Key="IndustryLabel" Color="{StaticResource IndustryLabelColor}" />
+            <SolidColorBrush x:Key="IndustryMutedText" Color="{StaticResource IndustryMutedTextColor}" />
+            <SolidColorBrush x:Key="IndustryDisabledText" Color="{StaticResource IndustryDisabledTextColor}" />
+
+            <SolidColorBrush x:Key="IndustrySelectSolidBorder" Color="{StaticResource IndustrySelectSolidBorderColor}" />
+            <SolidColorBrush x:Key="IndustrySelectTint" Color="{StaticResource IndustrySelectTintColor}" />
+            <SolidColorBrush x:Key="IndustrySelectTintBorder" Color="{StaticResource IndustrySelectTintBorderColor}" />
+            <SolidColorBrush x:Key="IndustrySelectTintText" Color="{StaticResource IndustrySelectTintTextColor}" />
+            <SolidColorBrush x:Key="IndustryHealthy" Color="{StaticResource IndustryHealthyColor}" />
+            <SolidColorBrush x:Key="IndustryHealthySolidBorder" Color="{StaticResource IndustryHealthySolidBorderColor}" />
+            <SolidColorBrush x:Key="IndustryHealthyTint" Color="{StaticResource IndustryHealthyTintColor}" />
+            <SolidColorBrush x:Key="IndustryHealthyTintBorder" Color="{StaticResource IndustryHealthyTintBorderColor}" />
+            <SolidColorBrush x:Key="IndustryHealthyTintText" Color="{StaticResource IndustryHealthyTintTextColor}" />
+            <SolidColorBrush x:Key="IndustryAttention" Color="{StaticResource IndustryAttentionColor}" />
+            <SolidColorBrush x:Key="IndustryAttentionSolidBorder" Color="{StaticResource IndustryAttentionSolidBorderColor}" />
+            <SolidColorBrush x:Key="IndustryAttentionTint" Color="{StaticResource IndustryAttentionTintColor}" />
+            <SolidColorBrush x:Key="IndustryAttentionTintBorder" Color="{StaticResource IndustryAttentionTintBorderColor}" />
+            <SolidColorBrush x:Key="IndustryAttentionTintText" Color="{StaticResource IndustryAttentionTintTextColor}" />
+            <SolidColorBrush x:Key="IndustryDangerSolidBorder" Color="{StaticResource IndustryDangerSolidBorderColor}" />
+            <SolidColorBrush x:Key="IndustryDangerTint" Color="{StaticResource IndustryDangerTintColor}" />
+            <SolidColorBrush x:Key="IndustryDangerTintBorder" Color="{StaticResource IndustryDangerTintBorderColor}" />
+            <SolidColorBrush x:Key="IndustryDangerTintText" Color="{StaticResource IndustryDangerTintTextColor}" />
+            <SolidColorBrush x:Key="IndustryHoverFace" Color="{StaticResource IndustryHoverFaceColor}" />
+            <SolidColorBrush x:Key="IndustryHoverBorder" Color="{StaticResource IndustryHoverBorderColor}" />
+            <SolidColorBrush x:Key="IndustryPressFace" Color="{StaticResource IndustryPressFaceColor}" />
+            <SolidColorBrush x:Key="IndustryPressBorder" Color="{StaticResource IndustryPressBorderColor}" />
 
             <!-- ================= Spacing (LAYOUT-SPEC.md §2) =================
                  Real steps are 2, 3, 4, 5, 6, 7, 9, 11, deliberately off a 4px grid, matching the
@@ -203,7 +311,11 @@
             <DrawingBrush x:Key="IndustryHatchStripeBrush" TileMode="Tile"
                           SourceRect="0,0,16.9706,16.9706" DestinationRect="0,0,16.9706,16.9706">
                 <DrawingBrush.Drawing>
-                    <GeometryDrawing Brush="#245980A6">
+                    <!-- Accent at 14% alpha (0x24) — updated 2026-08-14 to match IndustryAccentColor's
+                         new value (#0F62A8, was #5980A6); this literal isn't token-referenced since
+                         DrawingBrush geometry needs a genuinely translucent composite, not the
+                         opaque pre-blend the Color/SolidColorBrush tokens above use. -->
+                    <GeometryDrawing Brush="#240F62A8">
                         <GeometryDrawing.Geometry>
                             <GeometryGroup FillRule="NonZero">
                                 <!-- NW triangle: (0,0) to (8.4853,0) to (0,8.4853); area S^2/8 -->
