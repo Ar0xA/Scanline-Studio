@@ -124,9 +124,11 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   LanguageSettingsDialog) — genuinely blocked on a per-section split + scoping pass, several
   sections overlap with already-shipped work (waterfall palette, CW-ID/FSK) so building this as one
   lump risks duplication.
-- QRZ.com callsign lookup — real legacy feature (`qrzcom.cpp`), UI slot exists (Gallery
-  Frame-metadata "Lookup QRZ" button + Grid/dist/QRZ readout, currently STUB/FAKE-LIVE). Design
-  decision still open: where Name/QTH land (no "current session His Call" concept exists yet).
+- ~~QRZ.com callsign lookup~~ — **stale entry, removed 2026-08-14**: verified against current source
+  before starting work on it — `LookupQrzCommand` is real, bound, calls the real
+  `ILogbookSessionService.LookupCallsignAsync` backend (`RxImagePaneViewModel.cs:713`); `NameDisplay`/
+  `QthDisplay`/`GridDisplay` all real. This was already shipped 2026-08-11/12 (`spec/16-gui-wiring-
+  survey.md`'s QRZ.com tab entry), predating this Tier list — carried forward as open by mistake.
 - CW-ID/FSK residuals (subsystem itself shipped 2026-08-12, these are real leftovers, not "done"):
   NR/RST sub-packet has real backend settings but zero Options UI (`OptionsWindowView.axaml:
   413-417`); `MacroTextResolver` still only covers `%m`/`%D`/`%T`, not his-callsign/name/QTH/RST
@@ -139,8 +141,10 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   lie, but not done either). Correction: an earlier `PROJECT_BRIEF.md` note claiming these were
   "bundled into CW-ID/FSK, done" was wrong, verified against source 2026-08-13.
 - Logbook deltas explicitly carved out of the shipped Logbook pane (`QsoRecord.cs:12-13`): QSL
-  sent/received flags, duplicate-QSO detection (by callsign/band), delete-a-QSO, Gallery "Log
-  entry"/"Open in log" cross-pane wiring.
+  sent/received flags, duplicate-QSO detection (by callsign/band), delete-a-QSO. **Correction
+  2026-08-14**: Gallery "Log entry"/"Open in log" cross-pane wiring is NOT open — verified real,
+  shipped 2026-08-11 (`OpenInLogCommand`/`QsoLinkWindowView`, commit `13a8ca7`, `spec/16`'s own
+  entry). Carried forward as open by mistake; only the 3 items above remain.
 - JPEG save quality — bundled with the Gallery's still-stub "Export frame" button, not standalone.
 - Transmit tab Queue/TX-log/Recently-sent — 100% stub, no such feature exists yet.
 - Receive tab Sync&Slant/Input-chain/Signal-quality cards — real new DSP work (no live audio-chain
