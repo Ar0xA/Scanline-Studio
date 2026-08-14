@@ -183,7 +183,7 @@
                                        of placing them side by side). -->
                                     <Grid ColumnDefinitions="*,*" Margin="0,0,0,2">
                                         <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" IsChecked="True" Content="{loc:Translate Panes.RxImage.AutoLockedAuto}" />
-                                        <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" Content="{loc:Translate Panes.RxImage.AutoLockedLocked}" />
+                                        <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" Content="{loc:Translate Panes.RxImage.AutoLockedLocked}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </Grid>
                                     <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" SelectedIndex="0" ToolTip.Tip="{loc:Translate Panes.RxImage.ModeOverride.Help}">
                                         <ComboBoxItem Content="{Binding DetectedModeDisplay}" />
@@ -235,7 +235,7 @@
                                         <Button Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
                                         <Button Grid.Column="1" Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </Grid>
-                                    <ToggleButton x:Name="AdvancedTimingToggle" Classes="Industry IndustryDisclosure" Theme="{StaticResource IndustryDisclosureToggleTheme}" Content="{loc:Translate Panes.RxSync.AdvancedTiming}" />
+                                    <ToggleButton x:Name="AdvancedTimingToggle" Classes="Industry IndustryDisclosure" Theme="{StaticResource IndustryDisclosureToggleTheme}" Content="{loc:Translate Panes.RxSync.AdvancedTiming}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     <StackPanel Classes="Industry IndustryRows" IsVisible="{Binding #AdvancedTimingToggle.IsChecked}">
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SampleClock}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.SampleClockValue}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SyncWindow}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.SyncWindowValue}" /></Grid></Border>
@@ -272,14 +272,19 @@
                                     <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource IndustryRowRule6}" Padding="0,4,0,0">
                                         <StackPanel Spacing="3">
                                             <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelL}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelLValue}" /></Grid>
+                                            <!-- No real stereo levels exist (this port's demod path is
+                                                 mono-only) — fill left at 0*/100* (empty track), not a
+                                                 fake percentage, matching this pane's own "no fake-live
+                                                 data" convention rather than IsEnabled=False (Border/Grid
+                                                 have no visual disabled state to react to). -->
                                             <Grid Classes="IndustryMeter">
                                                 <Border Classes="IndustryMeterTrack" Height="6" />
-                                                <Grid ColumnDefinitions="63*,37*"><Border Grid.Column="0" Classes="IndustryMeterFill" Height="6" HorizontalAlignment="Stretch" /></Grid>
+                                                <Grid ColumnDefinitions="0*,100*"><Border Grid.Column="0" Classes="IndustryMeterFill" Height="6" HorizontalAlignment="Stretch" /></Grid>
                                             </Grid>
                                             <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelR}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelRValue}" /></Grid>
                                             <Grid Classes="IndustryMeter">
                                                 <Border Classes="IndustryMeterTrack" Height="6" />
-                                                <Grid ColumnDefinitions="60*,40*"><Border Grid.Column="0" Classes="IndustryMeterFill" Height="6" HorizontalAlignment="Stretch" /></Grid>
+                                                <Grid ColumnDefinitions="0*,100*"><Border Grid.Column="0" Classes="IndustryMeterFill" Height="6" HorizontalAlignment="Stretch" /></Grid>
                                             </Grid>
                                         </StackPanel>
                                     </Border>
@@ -440,14 +445,19 @@
                                      header caption (same value, different spot) was dropped. -->
                                 <DockPanel DockPanel.Dock="Bottom" Margin="0,4,0,0">
                                     <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingSnug}">
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Content="{loc:Translate Panes.RxImage.SaveFrame}" />
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.Abort}" />
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.RedecodeAction}" />
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.CopyToTx}" />
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.LogQso}" />
+                                        <!-- No Save/Abort/Re-decode/Copy-to-TX/Log-QSO commands exist on
+                                             RxImagePaneViewModel today — disabled rather than left
+                                             clickable-but-dead (auto-save already happens silently
+                                             elsewhere, so a live "Save Frame" button that does nothing
+                                             would read as data loss). -->
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Content="{loc:Translate Panes.RxImage.SaveFrame}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.Abort}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.RedecodeAction}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.CopyToTx}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.LogQso}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </StackPanel>
                                     <TextBlock DockPanel.Dock="Right" Classes="IndustryRowValue" VerticalAlignment="Center" Margin="12,0,0,0" Text="{loc:Translate Panes.RxImage.FrameLineCount}" />
-                                    <ProgressBar Classes="Industry" VerticalAlignment="Center" Margin="12,0,0,0" Minimum="0" Maximum="100" Value="70" />
+                                    <ProgressBar Classes="Industry" VerticalAlignment="Center" Margin="12,0,0,0" Minimum="0" Maximum="100" Value="0" />
                                 </DockPanel>
                                 <!-- Previous-frames strip relocated here from its own right-column
                                      card, matching mock2's own placement (inside the Incoming-frame
@@ -610,7 +620,14 @@
                             </HeaderedContentControl.Header>
                             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                                 <StackPanel Classes="Industry IndustryRows">
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.CallsignValue}" /></Grid></Border>
+                                    <!-- Real FSK-decoded-callsign fix (0.9-beta UI-honesty pass):
+                                         bound to CallsignDisplay, which mirrors the editable
+                                         "Override callsign" TextBox below (both read OverrideCallsign,
+                                         auto-filled by OnStationIdDecoded) instead of a hardcoded
+                                         "EA7KDT" literal. Label trimmed to plain "Callsign" — the
+                                         value no longer comes from OCR (which still doesn't exist),
+                                         so keeping "· OCR" in the label would misattribute the source. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding CallsignDisplay}" /></Grid></Border>
                                     <!-- Wired 2026-08-11: real QRZ.com lookup (QrzCallsignLookup.cs).
                                          Name/QTH have no legacy-equivalent row in this card's original
                                          inventory (mock2 draws none), added because the lookup itself
@@ -657,38 +674,19 @@
                             </StackPanel>
                         </HeaderedContentControl>
 
-                        <!-- Session frames: literal scrollable list (SessionFrames isn't a real
-                             bindable property anywhere in the app: grepped repo-wide, only
-                             exists in mockups/); a scrollable 15-row list fills the column height
-                             the way a real ItemsSource-bound list would, instead of 3 static rows
-                             leaving a large empty gap (spec/14-roadmap.md backlog). Row markup kept
-                             as 15 literal repeats (not refactored to an ItemsControl), that's a
-                             bigger structural change than this pass's re-skin scope, and the
-                             existing file's own comment already explains why a real ItemsSource
-                             isn't available here. -->
+                        <!-- Session frames: was a 15-row hand-written literal list (45 TextBlocks,
+                             Row1Callsign..Row15Meta) with zero backing ItemsSource — the worst
+                             fake-live offender in this file, reading as a populated session history
+                             that never existed. No real per-session frame log exists anywhere in the
+                             app (spec/14-roadmap.md backlog); collapsed to one honest empty state
+                             instead (0.9-beta UI-honesty pass), matching this pane's own
+                             NoHistoryYet convention, rather than placeholder-ing 45 individual
+                             TextBlocks — the wrong shape for what was actually a fake list. -->
                         <HeaderedContentControl Grid.Row="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
                             <HeaderedContentControl.Header>
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxSessionFrames.CardHeader}" />
                             </HeaderedContentControl.Header>
-                            <ScrollViewer>
-                                <StackPanel Classes="Industry IndustryRows">
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row1Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row1Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row1Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row2Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row2Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row2Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row3Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row3Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row3Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row4Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row4Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row4Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row5Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row5Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row5Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row6Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row6Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row6Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row7Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row7Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row7Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row8Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row8Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row8Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row9Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row9Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row9Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row10Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row10Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row10Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row11Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row11Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row11Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row12Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row12Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row12Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row13Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row13Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row13Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row14Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row14Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row14Meta}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingTight}"><TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.Row15Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSessionFrames.Row15Mode}" /><TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{loc:Translate Panes.RxSessionFrames.Row15Meta}" /></Grid></Border>
-                                </StackPanel>
-                            </ScrollViewer>
+                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.NoSessionYet}" />
                         </HeaderedContentControl>
                     </Grid>
                 </Grid>
@@ -1136,8 +1134,11 @@
                                      specific row. -->
                                 <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,2,0,0">
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" Command="{Binding OpenInLogCommand}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.Redecode}" />
+                                    <!-- Neither has a Command wired (RxHistoryPaneViewModel has no
+                                         export/redecode feature) — clickable-but-dead before this
+                                         fix, same as the Incoming-frame card's own 5 buttons. -->
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.Redecode}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 </StackPanel>
                                 <TextBlock Text="{Binding ErrorMessage}"
                                            Foreground="{StaticResource IndustryDanger}"
