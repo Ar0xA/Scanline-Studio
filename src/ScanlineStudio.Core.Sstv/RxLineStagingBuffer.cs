@@ -66,7 +66,7 @@ namespace ScanlineStudio.Core.Sstv;
 /// right tradeoff for the eventual disk-backed Extended mode (Phase 7, which needs no RAM cap at all,
 /// and where a `short`-width on-disk format would halve I/O) is that phase's own call, not this class's.
 /// </summary>
-internal sealed class RxLineStagingBuffer
+internal sealed class RxLineStagingBuffer : IRxLineStagingBuffer
 {
     private readonly List<double> _demodulated;
     private readonly List<double> _syncEnvelope;
@@ -207,5 +207,19 @@ internal sealed class RxLineStagingBuffer
         _demodulated.Clear();
         _syncEnvelope.Clear();
         _lineBoundaries.Clear();
+    }
+
+    /// <summary>Always <see langword="false"/> -- this RAM implementation has no background writer
+    /// that can fail; capacity exhaustion (a full <see cref="TryAppendLine"/> rejection) is a
+    /// separate, expected, non-error condition, not a write failure. See
+    /// <see cref="IRxLineStagingBuffer.HasWriteFailed"/>'s own doc comment.</summary>
+    public bool HasWriteFailed => false;
+
+    /// <summary>No-op -- this RAM implementation owns no unmanaged resources (no scratch files, no
+    /// background writer task) to tear down. See <see cref="IRxLineStagingBuffer"/>'s own doc
+    /// comment on why the interface is <see cref="IDisposable"/> at all (a disk-backed implementation
+    /// needs it, this one doesn't).</summary>
+    public void Dispose()
+    {
     }
 }
