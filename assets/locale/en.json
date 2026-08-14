@@ -70,7 +70,7 @@
   "RadioStatus.RitValue": "RIT 0",
   "RadioStatus.UtcValueFormat": "{0:HH:mm:ss}Z",
   "RadioStatus.RigMetersValue": "S9 · 42 W",
-  "RadioStatus.FavouritesHint": "M1…M7 recall · Shift+M store · double-click to rename",
+  "RadioStatus.FavouritesHint": "Click a preset to recall it",
   "RadioStatus.StoreCurrent": "Store current",
   "RadioStatus.EditFavouritesList": "Edit list...",
   "RadioStatus.ImportFavourites": "Import",
