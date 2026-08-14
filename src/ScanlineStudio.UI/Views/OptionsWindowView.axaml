@@ -363,8 +363,8 @@
 
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Decode.RxBuffer}" />
                                     <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Off}" IsChecked="True" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.On}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Off}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.On}" IsChecked="True" />
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Extended}" />
                                     </WrapPanel>
 
@@ -374,7 +374,7 @@
                                     </StackPanel>
                                     <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.Off}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.On}" IsChecked="True" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.On}" />
                                     </WrapPanel>
 
                                     <!-- Wired 2026-08-12: SstvDecoderSettings.AutoStopEnabled/SyncRestartEnabled are
