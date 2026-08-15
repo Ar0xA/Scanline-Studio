@@ -170,6 +170,48 @@ public class RadioControllerTests
     }
 
     [Fact]
+    public async Task RigId_StaysStable_DuringReconnectBackoff_NotFlappingToNone()
+    {
+        // Regression test for a code-review finding on spec/18-path-to-1.0.md Critical item 1:
+        // RigId used to read straight off the live _protocol field, so it flapped to "none" during
+        // the poll loop's protocol-null gap between disposing a failed transport and resolving its
+        // replacement -- silently defeating PTT keying for a genuinely configured, momentarily
+        // unreachable rig. RadioController now caches the id separately and only clears it on an
+        // explicit DisconnectAsync.
+        var createCount = 0;
+        var factory = new FakeProtocolFactory(_ => true, _ =>
+        {
+            createCount++;
+            var failThisInstance = createCount == 1;
+            return new FakeProtocol(
+                _ => failThisInstance
+                    ? throw new IOException("simulated transport failure")
+                    : Task.FromResult(FixedStateValue));
+        });
+
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(100) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+
+        Assert.Equal("fake", controller.RigId);
+
+        var seenDuringBackoff = new List<string>();
+        var sw = Stopwatch.StartNew();
+        while (createCount < 2 && sw.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            seenDuringBackoff.Add(controller.RigId);
+            await Task.Delay(5);
+        }
+
+        await controller.DisconnectAsync();
+
+        Assert.True(createCount >= 2);
+        Assert.NotEmpty(seenDuringBackoff);
+        Assert.All(seenDuringBackoff, id => Assert.Equal("fake", id));
+        Assert.Equal("none", controller.RigId); // explicit disconnect does reset it
+    }
+
+    [Fact]
     public async Task PollLoop_SurvivesAThrowingStateChangesSubscriber()
     {
         var pollCount = 0;

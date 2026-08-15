@@ -91,16 +91,21 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(StartedDisplay))]
     private DateTimeOffset? _startedAt;
 
-    /// <summary>The CONFIGURED RX capture device's display name (see
+    /// <summary>The RX capture device's display name -- what
+    /// <see cref="ISstvSessionService.StartReceivingAsync"/> would actually resolve and use right
+    /// now, including a fallback to the backend-reported default device when nothing is explicitly
+    /// configured (spec/18-path-to-1.0.md Critical item 1 / item 8; see
     /// <see cref="ISstvSessionService.GetConfiguredCaptureDeviceNameAsync"/>'s own doc comment for
-    /// the "configured, not necessarily currently in-flight" caveat) -- backs mock2's Receive tab
-    /// "Device" field, exact mirror of <c>TxControlsPaneViewModel.OutputDeviceName</c>'s own
-    /// pattern. <see langword="null"/> until the best-effort initial load below completes, or if no
-    /// device is configured / the configured device is no longer present. Loaded once at
-    /// construction, not re-fetched on a live settings change while this pane stays open -- same
-    /// convention as the TX-side property. TX-side <c>TxControlsPaneViewModel.OutputDeviceName</c>
-    /// now has the exact same <c>OutputDeviceNameDisplay</c> wrapper and is genuinely wired to
-    /// `TxControlsPaneView.axaml` (fixed 2026-08-11, was a stale gap noted here before that).</summary>
+    /// the full "what WOULD be resolved, not necessarily currently in-flight" caveat) -- backs
+    /// mock2's Receive tab "Device" field, exact mirror of
+    /// <c>TxControlsPaneViewModel.OutputDeviceName</c>'s own pattern. <see langword="null"/> until
+    /// the best-effort initial load below completes, or if a configured device is no longer
+    /// present, or (now the rare case) nothing is configured AND the backend reports no default
+    /// either. Loaded once at construction, not re-fetched on a live settings change while this
+    /// pane stays open -- same convention as the TX-side property. TX-side
+    /// <c>TxControlsPaneViewModel.OutputDeviceName</c> now has the exact same
+    /// <c>OutputDeviceNameDisplay</c> wrapper and is genuinely wired to `TxControlsPaneView.axaml`
+    /// (fixed 2026-08-11, was a stale gap noted here before that).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CaptureDeviceNameDisplay))]
     private string? _captureDeviceName;

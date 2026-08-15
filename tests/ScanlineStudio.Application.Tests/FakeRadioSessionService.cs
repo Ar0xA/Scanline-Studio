@@ -10,6 +10,13 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
 
     public RadioCapabilities Capabilities { get; set; } = RadioCapabilities.None;
 
+    /// <summary>Defaults to a non-"none" value so every EXISTING test that constructs this fake
+    /// with no explicit override keeps exercising PTT keying/unkeying exactly as before
+    /// (spec/18-path-to-1.0.md Critical item 1 -- <c>SstvSessionService.PlayWithPttAsync</c>'s new
+    /// guard skips keying specifically when this equals <c>"none"</c>). Set explicitly to
+    /// <c>"none"</c> only in the new tests that exercise the no-radio-configured path.</summary>
+    public string RigId { get; set; } = "fake-radio";
+
     public IObservable<RadioState> StateChanges { get; } = System.Reactive.Linq.Observable.Never<RadioState>();
 
     public IObservable<RadioConnectionEvent> ConnectionEvents { get; } = System.Reactive.Linq.Observable.Never<RadioConnectionEvent>();
@@ -32,6 +39,17 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     public Task SetPttAsync(bool tx, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        // Mirrors NoneRadioProtocol.SetPttAsync's real always-throws behavior when RigId == "none"
+        // (spec/18-path-to-1.0.md Critical item 1, round-1 plan-review's own explicit "add a
+        // ThrowOnSetPtt-shaped guard" recommendation) -- without this, the fake couldn't verify the
+        // real end-to-end claim that PlayWithPttAsync's UNGUARDED cleanup un-key call is still safe
+        // against the real null-object backend (it's wrapped in TryCleanupAsync, which needs
+        // something to actually catch to prove anything).
+        if (RigId == "none")
+        {
+            throw new InvalidOperationException("No radio is connected -- nothing to key PTT on.");
+        }
+
         PttCalls.Add(tx);
         return Task.CompletedTask;
     }

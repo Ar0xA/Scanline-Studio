@@ -41,6 +41,25 @@ public interface IRadioController
 {
     RadioState? LastKnownState { get; }
     RadioCapabilities Capabilities { get; }
+
+    /// <summary>Which backend is currently connected — <c>"none"</c> for the null-object "no radio"
+    /// backend (<see cref="NoneConnectionSpec"/>) or before any <see cref="ConnectAsync"/> call,
+    /// matching <see cref="IRadioProtocol.RigId"/>'s own <c>"none"</c> sentinel for that case.
+    /// Deliberately NOT the same signal as <see cref="Capabilities"/>: real backends (rigctld/
+    /// Hamlib) connect lazily, so <see cref="Capabilities"/> reads <see cref="RadioCapabilities.None"/>
+    /// for a real window during startup (before the first successful poll) and during reconnect
+    /// backoff — a capability-flag check can't distinguish "genuinely no radio" from "a real,
+    /// PTT-capable rig that just hasn't finished negotiating yet." This is a stable identity
+    /// instead, known immediately at connect time (no negotiation required) and never flapping —
+    /// an implementation must cache the resolved id separately from its live protocol handle and
+    /// only clear it back to <c>"none"</c> on an explicit disconnect, NOT on a transient
+    /// reconnect-backoff disposal (the reference implementation does this) — otherwise this
+    /// property would flap to <c>"none"</c> during every backoff window even for a genuinely
+    /// configured, momentarily unreachable rig, defeating the whole point. See
+    /// <c>SstvSessionService.PlayWithPttAsync</c>'s own PTT-capability guard for why that
+    /// distinction is safety-relevant, not cosmetic.</summary>
+    string RigId { get; }
+
     IObservable<RadioState> StateChanges { get; }
     IObservable<RadioConnectionEvent> ConnectionEvents { get; }
 

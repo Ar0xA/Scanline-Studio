@@ -53,8 +53,14 @@ public sealed class SstvSessionServiceTests
         return (service, audioEngine, decoder, waterfall, radioSession, settingsStore);
     }
 
+    // Renamed + re-commented (spec/18-path-to-1.0.md Critical item 1 / item 8, round-1 plan-review
+    // finding 4): this now specifically tests "nothing configured AND no default device available
+    // either" -- it stays passing only because CreateService's fixture capture device has
+    // IsDefault left at its default (false), not because "nothing configured" alone still throws.
+    // See DeviceFallback_NoDeviceConfigured_FallsBackToBackendReportedDefault below for the new
+    // fallback-success path.
     [Fact]
-    public async Task StartReceivingAsync_NoCaptureDeviceConfigured_Throws()
+    public async Task StartReceivingAsync_NoCaptureDeviceConfigured_AndNoDefaultDeviceAvailable_Throws()
     {
         var (service, _, _, _, _, _) = CreateService(captureDeviceId: null);
 
@@ -236,8 +242,11 @@ public sealed class SstvSessionServiceTests
         Assert.Single(waterfall.PushedSamples);
     }
 
+    // Renamed + re-commented (spec/18-path-to-1.0.md Critical item 1 / item 8, round-1 plan-review
+    // finding 4): now specifically "no default device available either" -- see the fallback-success
+    // and no-radio-configured tests near the bottom of this file for the new behavior.
     [Fact]
-    public async Task TransmitAsync_NoPlaybackDeviceConfigured_Throws()
+    public async Task TransmitAsync_NoPlaybackDeviceConfigured_AndNoDefaultDeviceAvailable_Throws()
     {
         var (service, _, _, _, _, _) = CreateService(playbackDeviceId: null);
 
@@ -254,8 +263,9 @@ public sealed class SstvSessionServiceTests
         Assert.Equal("Playback", name);
     }
 
+    // Renamed (round-1 plan-review finding 4): "no default device available either."
     [Fact]
-    public async Task GetConfiguredPlaybackDeviceNameAsync_NoPlaybackDeviceConfigured_ReturnsNull_NotThrow()
+    public async Task GetConfiguredPlaybackDeviceNameAsync_NoPlaybackDeviceConfigured_AndNoDefaultDeviceAvailable_ReturnsNull_NotThrow()
     {
         var (service, _, _, _, _, _) = CreateService(playbackDeviceId: null);
 
@@ -284,8 +294,9 @@ public sealed class SstvSessionServiceTests
         Assert.Equal("Capture", name);
     }
 
+    // Renamed (round-1 plan-review finding 4): "no default device available either."
     [Fact]
-    public async Task GetConfiguredCaptureDeviceNameAsync_NoCaptureDeviceConfigured_ReturnsNull_NotThrow()
+    public async Task GetConfiguredCaptureDeviceNameAsync_NoCaptureDeviceConfigured_AndNoDefaultDeviceAvailable_ReturnsNull_NotThrow()
     {
         var (service, _, _, _, _, _) = CreateService(captureDeviceId: null);
 
@@ -304,6 +315,108 @@ public sealed class SstvSessionServiceTests
         Assert.Null(name);
     }
 
+    // spec/18-path-to-1.0.md Critical item 1 / item 8: the fresh-install fallback -- nothing
+    // configured, but the backend reports a default device, so RX/TX both succeed instead of
+    // throwing, and the display readouts show the real device that will actually be used.
+    // CreateService's own device enumerator has no IsDefault device, so these three tests build a
+    // fresh SstvSessionService directly (FakeAudioDeviceEnumerator is a constructor-only
+    // dependency, no settable property to swap it in after the fact) sharing the same fake pieces
+    // CreateService would otherwise have built.
+    [Fact]
+    public async Task StartReceivingAsync_NoCaptureDeviceConfigured_FallsBackToBackendReportedDefault()
+    {
+        var audioEngine = new FakeAudioEngine();
+        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000], IsDefault: true)],
+            OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025])],
+        };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = null, PlaybackDeviceId = "playback-1", SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+
+        await service.StartReceivingAsync();
+
+        Assert.True(audioEngine.IsCapturing);
+    }
+
+    [Fact]
+    public async Task TransmitAsync_NoPlaybackDeviceConfigured_FallsBackToBackendReportedDefault()
+    {
+        var audioEngine = new FakeAudioEngine();
+        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
+            OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025], IsDefault: true)],
+        };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = null, SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.Equal(ExpectedPlaybackSamples, audioEngine.PlaybackSamples);
+    }
+
+    [Fact]
+    public async Task TransmitAsync_ConfiguredPlaybackDeviceMissing_StillThrows_EvenWhenADefaultDeviceExists()
+    {
+        var audioEngine = new FakeAudioEngine();
+        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
+            OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025], IsDefault: true)],
+        };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-vanished", SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+
+        // A device the user explicitly configured going missing must still fail loudly -- never
+        // silently substituted with the default, even though one exists (round-1 plan-review's own
+        // explicit design confirmation).
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage));
+    }
+
+    // Capture-side counterpart of the playback test immediately above -- same shared
+    // TryResolveDeviceAsync/ResolveDeviceAsync code path (code-review nit on spec/18-path-to-1.0.md
+    // Critical item 1: only the playback direction had a "configured device missing" regression
+    // test).
+    [Fact]
+    public async Task StartReceivingAsync_ConfiguredCaptureDeviceMissing_StillThrows_EvenWhenADefaultDeviceExists()
+    {
+        var audioEngine = new FakeAudioEngine();
+        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000], IsDefault: true)],
+            OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025])],
+        };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = "capture-vanished", PlaybackDeviceId = "playback-1", SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.StartReceivingAsync());
+    }
+
     [Fact]
     public async Task TransmitAsync_KeysPttOnThenOffAroundPlayback()
     {
@@ -312,6 +425,24 @@ public sealed class SstvSessionServiceTests
         await service.TransmitAsync(TestMode, TestImage);
 
         Assert.Equal(PttOnThenOff, radioSession.PttCalls);
+    }
+
+    // spec/18-path-to-1.0.md Critical item 1: the actual bug this whole fix targets -- previously
+    // NoneRadioProtocol.SetPttAsync always throwing meant this exact scenario (RigId="none", the
+    // real default for a fresh install) made every transmit fail before any audio was ever
+    // produced. RigId="none" is a real value FakeRadioSessionService now supports specifically for
+    // this test (see its own doc comment) -- every OTHER existing test in this file keeps using the
+    // fake's non-"none" default and is unaffected.
+    [Fact]
+    public async Task TransmitAsync_NoRadioConfigured_StillProducesAudio_AndNeverCallsSetPtt()
+    {
+        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        radioSession.RigId = "none";
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.Equal(ExpectedPlaybackSamples, audioEngine.PlaybackSamples);
+        Assert.Empty(radioSession.PttCalls);
     }
 
     [Fact]
