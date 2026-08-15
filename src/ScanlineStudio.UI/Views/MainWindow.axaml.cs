@@ -114,6 +114,24 @@ public partial class MainWindow : Window
                     }
                 };
 
+                // Same synchronous, unawaited shape as OptionsRequested above (spec/18-path-to-1.0.md
+                // High item 5) -- a static-content dialog with no async work, no exception surface to
+                // guard the way the QsoLinkRequested handler below needs to.
+                vm.AboutRequested += aboutViewModel =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.ConstructingAboutWindow(logger);
+                    }
+
+                    var window = new AboutWindowView { DataContext = aboutViewModel };
+                    window.ShowDialog(this);
+                    if (logger is not null)
+                    {
+                        Log.AboutShowDialogReturned(logger);
+                    }
+                };
+
                 // Code-review fix: async void event handler (the delegate type is Action<...>, not
                 // Func<...,Task>) -- an unhandled exception from ShowDialog would otherwise crash the
                 // process instead of logging. Wrapped explicitly rather than left to propagate, unlike
@@ -193,6 +211,12 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit requested; closing main window")]
         public static partial void ExitRequested(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing AboutWindowView")]
+        public static partial void ConstructingAboutWindow(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "AboutWindowView.ShowDialog returned")]
+        public static partial void AboutShowDialogReturned(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing QsoLinkWindowView")]
         public static partial void ConstructingQsoLinkWindow(ILogger logger);
