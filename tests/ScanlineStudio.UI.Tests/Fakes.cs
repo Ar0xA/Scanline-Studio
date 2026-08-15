@@ -180,8 +180,11 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         LastForcedMode = mode;
     }
 
+    public int StartReceivingCallCount { get; private set; }
+
     public Task StartReceivingAsync(CancellationToken ct = default)
     {
+        StartReceivingCallCount++;
         if (ThrowOnStartReceiving)
         {
             throw new InvalidOperationException("no audio device configured");

@@ -127,6 +127,39 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         UpdateUtcClock();
         _utcClockTimer = new DispatcherTimer(UtcClockTickInterval, DispatcherPriority.Background, (_, _) => UpdateUtcClock());
         _utcClockTimer.Start();
+
+        // spec/18-path-to-1.0.md High item 8: Program.cs's own automatic StartReceivingAsync()
+        // attempt at app launch (the ONLY place capture starts -- this app has no explicit "Start
+        // Receiving" first-run step) runs before this ViewModel exists, so a failure there (e.g.
+        // no configured/default audio device) is caught and only logged -- nothing in the UI ever
+        // explained it, "first-run silent dead end." If that attempt already failed, `_isReceiving`
+        // above is false; setting the PUBLIC property here (not the backing field) is exactly what
+        // a real user click on the Receiving toggle does -- OnIsReceivingChanged fires and reuses
+        // SetReceivingSafeAsync's already-working retry/ErrorMessage machinery unchanged. Two
+        // outcomes, both already correct via existing code: the retry SUCCEEDS (a transient timing
+        // issue at the earlier attempt -- silently self-heals, strictly better than explaining a
+        // failure a retry would have avoided), or it FAILS AGAIN (a genuinely unavailable device --
+        // the toggle correctly reverts to Halt and ErrorMessage becomes visible in the header,
+        // satisfying the roadmap's own "status-bar message" minimum-fix option). Code-review
+        // correction: the toggle/status-LED DOES visibly claim "Receiving" for a real, possibly
+        // non-trivial window before that revert lands -- not merely "one frame." The revert is
+        // deferred through SetReceivingSafeAsync's full await chain (device enumeration/probing,
+        // MiniAudioDeviceEnumerator.RefreshAsync's own doc comment notes this can be slow or, on a
+        // wedged audio server, hang outright), not a single Dispatcher.Post hop. Accepted anyway:
+        // on any healthy machine this resolves in well under a second, and the pathological-hang
+        // case is a pre-existing risk in SetReceivingSafeAsync itself, not something this retry
+        // introduces -- not fixed here. Safe to fire synchronously from THIS constructor either
+        // way: RefreshAsync offloads via Task.Run, so this always yields before any of that device
+        // I/O runs, and the awaited chain in front of it (settings load) is a small local file read
+        // that completes inline regardless -- the constructor itself never blocks waiting for a
+        // result, it only kicks off work that continues after the constructor has already
+        // returned. A no-op when the earlier attempt already succeeded (the overwhelmingly common
+        // case): the `!_isReceiving` guard above skips the property set entirely, so
+        // OnIsReceivingChanged never fires and no redundant StartReceivingAsync call happens.
+        if (!_isReceiving)
+        {
+            IsReceiving = true;
+        }
     }
 
     private void UpdateUtcClock() => UtcClockDisplay = _localization.GetString("RadioStatus.UtcValueFormat", DateTimeOffset.UtcNow);
