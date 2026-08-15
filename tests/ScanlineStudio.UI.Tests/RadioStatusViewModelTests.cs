@@ -224,14 +224,68 @@ public sealed class RadioStatusViewModelTests
     [AvaloniaFact]
     public void CheckingIsReceiving_CallsStartReceivingOnTheSstvSession()
     {
-        var sstvSession = new FakeSstvSessionService();
+        // spec/18-path-to-1.0.md High item 8: the constructor now retries StartReceivingAsync
+        // itself whenever IsReceiving starts false, which would otherwise make the explicit
+        // toggle-on below a no-op (already-true -> true short-circuits, OnIsReceivingChanged never
+        // fires) and this assertion pass for the wrong reason. Starting IsReceiving true dodges
+        // that retry; the explicit off-then-on cycle below isolates the real toggle-on path this
+        // test actually means to exercise.
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
         var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsReceiving = false;
         Dispatcher.UIThread.RunJobs();
 
         vm.IsReceiving = true;
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(sstvSession.IsReceiving);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_IsReceivingAlreadyTrue_NeverCallsStartReceivingAgain()
+    {
+        // spec/18-path-to-1.0.md High item 8: the retry is gated on !_isReceiving specifically so
+        // the overwhelmingly common case (Program.cs's own startup attempt already succeeded) stays
+        // a true no-op -- no redundant StartReceivingAsync call.
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, sstvSession.StartReceivingCallCount);
+        Assert.True(vm.IsReceiving);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_IsReceivingFalse_RetrySucceeds_SelfHealsWithoutAnError()
+    {
+        // spec/18-path-to-1.0.md High item 8: a transient failure at Program.cs's own earlier
+        // attempt (e.g. a timing issue) shouldn't leave the user staring at an unexplained error if
+        // this later retry, from the ViewModel constructor, would have succeeded.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, sstvSession.StartReceivingCallCount);
+        Assert.True(vm.IsReceiving);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_IsReceivingFalse_RetryFailsAgain_SurfacesTheErrorWithoutAnyUserAction()
+    {
+        // spec/18-path-to-1.0.md High item 8's actual target scenario: no configured/default audio
+        // device at all -- Program.cs's own startup attempt failed silently (a Warning-level log
+        // entry only), and this constructor-time retry fails again for the same real reason. The
+        // fix's whole point is that ErrorMessage becomes visible in the header without the user
+        // having to discover and manually retry the toggle themselves.
+        var sstvSession = new FakeSstvSessionService { ThrowOnStartReceiving = true };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, sstvSession.StartReceivingCallCount);
+        Assert.False(vm.IsReceiving);
+        Assert.NotNull(vm.ErrorMessage);
     }
 
     [AvaloniaFact]
@@ -250,6 +304,12 @@ public sealed class RadioStatusViewModelTests
     [AvaloniaFact]
     public void CheckingIsReceiving_SessionThrows_RevertsToggleAndSetsErrorMessageInsteadOfCrashing()
     {
+        // spec/18-path-to-1.0.md High item 8's own constructor-time retry already exercises this
+        // exact throw-and-revert path once (IsReceiving starts false here, so the retry fires and
+        // fails, reverting to false before this test's own explicit toggle runs) -- the explicit
+        // vm.IsReceiving = true below is a genuine SECOND, real state transition (false -> true),
+        // deliberately re-testing the same real user-toggle path this test's own name describes,
+        // not relying on the constructor alone.
         var sstvSession = new FakeSstvSessionService { ThrowOnStartReceiving = true };
         var vm = CreateViewModel(sstvSession: sstvSession);
         Dispatcher.UIThread.RunJobs();
@@ -259,6 +319,11 @@ public sealed class RadioStatusViewModelTests
 
         Assert.False(vm.IsReceiving);
         Assert.NotNull(vm.ErrorMessage);
+        // Code-review finding: without this, the assertions above pass identically whether or not
+        // the explicit toggle-on two lines up actually ran anything -- the constructor's own retry
+        // alone produces the same final (false, non-null) state. This is what proves a genuine
+        // SECOND StartReceivingAsync call happened, not just the constructor's first one.
+        Assert.Equal(2, sstvSession.StartReceivingCallCount);
     }
 
     [AvaloniaFact]
