@@ -3,6 +3,7 @@ using System.ComponentModel;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
@@ -42,6 +43,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private readonly ITransmitImagePreparer _preparer;
     private readonly IMacroTextResolver _macroTextResolver;
     private readonly OperatorSettings _operatorSettings;
+    private readonly ILogger<TxImageEditorPaneViewModel> _logger;
 
     [ObservableProperty]
     private NormalizedRect _cropRect = new(0, 0, 1, 1);
@@ -63,13 +65,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         SstvModeDefinition targetMode,
         ITransmitImagePreparer preparer,
         IMacroTextResolver macroTextResolver,
-        OperatorSettings operatorSettings)
+        OperatorSettings operatorSettings,
+        ILogger<TxImageEditorPaneViewModel> logger)
     {
         _originalSource = originalSource;
         _targetMode = targetMode;
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
         _operatorSettings = operatorSettings;
+        _logger = logger;
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
         WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
@@ -186,6 +190,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [RelayCommand]
     private void Apply()
     {
+        Log.ApplyInvoked(_logger, _targetMode.Id);
         var cropped = _preparer.Crop(_originalSource, CropRect);
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
         var final = _preparer.ApplyOverlay(resized, BuildOverlay());
@@ -193,7 +198,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void Cancel() => Cancelled?.Invoke();
+    private void Cancel()
+    {
+        Log.CancelInvoked(_logger);
+        Cancelled?.Invoke();
+    }
 
     partial void OnCropRectChanged(NormalizedRect value)
     {
@@ -263,5 +272,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         var width = Math.Max(1, (int)Math.Round(source.Width * scale));
         var height = Math.Max(1, (int)Math.Round(source.Height * scale));
         return preparer.Resize(source, width, height, preserveAspect: false);
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Apply invoked: targetMode={TargetMode}")]
+        public static partial void ApplyInvoked(ILogger logger, string targetMode);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Cancel invoked")]
+        public static partial void CancelInvoked(ILogger logger);
     }
 }

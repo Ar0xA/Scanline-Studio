@@ -427,6 +427,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             return;
         }
 
+        Log.OpenInLogInvoked(_logger, entry.Entry.Id);
         var qsoLinkVm = new QsoLinkWindowViewModel(_logbookSession, _historyStore, _localization, _qsoLinkLogger, entry.Entry);
         qsoLinkVm.Linked += qsoId => Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entry.Entry.Id, e => e with { LinkedQsoId = qsoId }));
         QsoLinkRequested?.Invoke(qsoLinkVm);
@@ -737,6 +738,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SelectedEntry changed")]
         public static partial void SelectedEntryChanged(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "OpenInLog invoked: entryId={EntryId}")]
+        public static partial void OpenInLogInvoked(ILogger logger, string entryId);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading preview image failed")]
         public static partial void LoadPreviewFailed(ILogger logger, Exception ex);
