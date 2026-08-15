@@ -48,6 +48,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _rememberWindowPosition;
 
+    /// <summary>Backs the General tab's "JPEG quality" stepper -- same "deliberately NOT part of
+    /// <see cref="OptionsSnapshot"/>" reasoning as <see cref="RememberWindowPosition"/> directly
+    /// above: gates a UI-owned settings section (<see cref="ImageExportSettings"/>), loaded/saved
+    /// directly via <see cref="_settingsStore"/>. 1..100, default 85 matches this dialog's own
+    /// pre-existing (previously disabled) `NumericUpDown` placeholder value.</summary>
+    [ObservableProperty]
+    private int _jpegQuality = 85;
+
     [ObservableProperty]
     private AudioDeviceInfo? _selectedCaptureDevice;
 
@@ -622,6 +630,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
             var appSettings = await _settingsStore.LoadAsync();
             RememberWindowPosition = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)?.RememberWindowPosition ?? false;
+            JpegQuality = Math.Clamp(appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings)?.JpegQuality ?? 85, 1, 100);
 
             await _audioDeviceEnumerator.RefreshAsync();
             CaptureDevices.Clear();
@@ -772,7 +781,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             // MainWindow's own domain (captured passively on Closing), not user-edited fields here.
             var appSettings = await _settingsStore.LoadAsync();
             var currentGeometry = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
-            await _settingsStore.SaveAsync(appSettings.WithSection(WindowGeometrySettings.SectionKey, currentGeometry with { RememberWindowPosition = RememberWindowPosition }, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings));
+            var updatedAppSettings = appSettings.WithSection(WindowGeometrySettings.SectionKey, currentGeometry with { RememberWindowPosition = RememberWindowPosition }, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
+            // Chained onto the SAME loaded/updated instance above (one load, one save) -- a second
+            // independent LoadAsync/SaveAsync round-trip here would race the geometry write above.
+            updatedAppSettings = updatedAppSettings.WithSection(ImageExportSettings.SectionKey, new ImageExportSettings { JpegQuality = JpegQuality }, ImageExportSettingsJsonContext.Default.ImageExportSettings);
+            await _settingsStore.SaveAsync(updatedAppSettings);
 
             if (SelectedCulture is { } culture && !culture.Equals(_localization.CurrentCulture))
             {
@@ -808,6 +821,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         Log.ResetSectionInvoked(_logger, "General");
         SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == OptionsSettingsService.Defaults.CultureCode);
         RememberWindowPosition = false;
+        JpegQuality = 85;
     }
 
     [RelayCommand]

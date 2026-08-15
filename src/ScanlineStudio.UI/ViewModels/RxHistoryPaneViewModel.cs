@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -7,7 +8,10 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Application;
+using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Imaging;
+using ScanlineStudio.UI.Services;
+using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -39,6 +43,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private readonly ILogger<RxHistoryPaneViewModel> _logger;
     private readonly ILogbookSessionService _logbookSession;
     private readonly ILogger<QsoLinkWindowViewModel> _qsoLinkLogger;
+    private readonly IReceivedFrameExporter _frameExporter;
+    private readonly IFilePickerService _filePicker;
+    private readonly ISettingsStore _settingsStore;
 
     /// <summary>Chains <see cref="PersistFlaggedAsync"/> calls so a rapid double-toggle can't
     /// complete out of order -- see that method's own doc comment. Deliberately a plain
@@ -136,6 +143,16 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [ObservableProperty]
     private string? _errorMessage;
 
+    /// <summary>Export-frame-only success feedback (`ExportFrameAsync`) -- deliberately a SEPARATE
+    /// property from <see cref="ErrorMessage"/>, not reused for the success case: that one renders
+    /// in `IndustryDanger` red (`MainWindow.axaml`), and a re-encode's actual effect (did the chosen
+    /// JPEG quality really apply?) is otherwise invisible to the user, unlike this pane's other
+    /// silent-on-success actions (Note/Flag persist) which have no equivalent "did it really work"
+    /// ambiguity. Mirrors <c>LogbookPaneViewModel.StatusMessage</c>'s own established pattern for
+    /// the same kind of "confirm an export actually happened" feedback.</summary>
+    [ObservableProperty]
+    private string? _exportStatusMessage;
+
     /// <summary>Gallery tab's All/Today filter (spec/09-ui.md) -- real, backed by
     /// <see cref="IReceiveHistoryStore.QueryAsync"/>'s own <c>From</c>/<c>To</c> filter fields.
     /// Defaults to <see langword="true"/>, matching the mock2 draft's own default selection.
@@ -196,13 +213,19 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         ILocalizationService localization,
         ILogger<RxHistoryPaneViewModel> logger,
         ILogbookSessionService logbookSession,
-        ILogger<QsoLinkWindowViewModel> qsoLinkLogger)
+        ILogger<QsoLinkWindowViewModel> qsoLinkLogger,
+        IReceivedFrameExporter frameExporter,
+        IFilePickerService filePicker,
+        ISettingsStore settingsStore)
     {
         _historyStore = historyStore;
         _localization = localization;
         _logger = logger;
         _logbookSession = logbookSession;
         _qsoLinkLogger = qsoLinkLogger;
+        _frameExporter = frameExporter;
+        _filePicker = filePicker;
+        _settingsStore = settingsStore;
 
         Entries.CollectionChanged += (_, _) =>
         {
@@ -433,6 +456,54 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         QsoLinkRequested?.Invoke(qsoLinkVm);
     }
 
+    private bool CanExportFrame() => SelectedEntry is not null;
+
+    /// <summary>Gallery pane's "Export" button -- saves the selected frame's already-auto-saved PNG
+    /// file to a user-chosen location, optionally re-encoded as JPEG at the quality configured in
+    /// Options (<see cref="ImageExportSettings"/>). Captures <c>sourcePath</c> from
+    /// <see cref="SelectedEntry"/> BEFORE the first <c>await</c> (the picker call) and never reads
+    /// <see cref="SelectedEntry"/> again afterward -- a <see cref="IReceiveHistoryStore.Recorded"/>-
+    /// triggered <see cref="RefreshAsync"/> could null/replace it while the save dialog is open, and
+    /// this method must keep exporting the frame the user actually clicked, not whatever happens to
+    /// be selected once the dialog closes.</summary>
+    [RelayCommand(CanExecute = nameof(CanExportFrame))]
+    private async Task ExportFrameAsync()
+    {
+        if (SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        var sourcePath = entry.Entry.FilePath;
+        ErrorMessage = null;
+        ExportStatusMessage = null;
+
+        Log.ExportFrameInvoked(_logger, entry.Entry.Id);
+
+        var suggestedFileName = Path.GetFileName(sourcePath);
+        var picked = await _filePicker.PickSaveImageFileAsync(suggestedFileName);
+        if (picked is not { } result)
+        {
+            return;
+        }
+
+        try
+        {
+            var appSettings = await _settingsStore.LoadAsync();
+            var quality = Math.Clamp(appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings)?.JpegQuality ?? 85, 1, 100);
+
+            await _frameExporter.ExportAsync(sourcePath, result.Path, quality);
+
+            Log.ExportFrameSucceeded(_logger, result.Path);
+            ExportStatusMessage = _localization.GetString("Panes.RxHistory.Status.Exported", result.Path);
+        }
+        catch (Exception ex)
+        {
+            Log.ExportFrameFailed(_logger, ex);
+            ErrorMessage = _localization.GetString("Panes.RxHistory.Error.ExportFrameFailed");
+        }
+    }
+
     partial void OnSelectedEntryChanged(RxHistoryEntryViewModel? value)
     {
         Log.SelectedEntryChanged(_logger);
@@ -442,6 +513,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         // OpenInLogCommand enabled with nothing selected until some LATER unrelated change happens
         // to fire it.
         OpenInLogCommand.NotifyCanExecuteChanged();
+        ExportFrameCommand.NotifyCanExecuteChanged();
 
         if (_isRepopulating && value is null)
         {
@@ -479,6 +551,11 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             SelectedEntryIsFlagged = value?.Entry.IsFlagged ?? false;
             _suppressSelectedEntryEdits = false;
             ErrorMessage = null;
+            // Code-review finding: without this, "Exported to /tmp/a.png." from a PREVIOUS
+            // selection kept showing under the Selected-frame panel after switching to a different
+            // entry -- ExportStatusMessage has no other clear point besides ExportFrameAsync's own
+            // start-of-attempt reset.
+            ExportStatusMessage = null;
         }
 
         if (value?.Entry.Id == _previewedEntryId)
@@ -756,6 +833,15 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetFlaggedAsync: entry {EntryId} no longer exists")]
         public static partial void SetFlaggedEntryMissing(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "ExportFrame invoked: entryId={EntryId}")]
+        public static partial void ExportFrameInvoked(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Frame exported to {DestinationPath}")]
+        public static partial void ExportFrameSucceeded(ILogger logger, string destinationPath);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ExportFrameAsync failed")]
+        public static partial void ExportFrameFailed(ILogger logger, Exception ex);
     }
 }
 

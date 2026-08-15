@@ -189,6 +189,9 @@ internal static partial class Program
         // itself; see that class's own doc comment for why this is layering-legal).
         hostBuilder.Services.AddSingleton<IImageFileLoader, ImageFileLoader>();
         hostBuilder.Services.AddSingleton<IReceivedImageBuffer, ReceivedImageBuffer>();
+        // Gallery pane's "Export frame" (2026-08-15) -- re-saves an already-received image file to a
+        // user-chosen location, optionally re-encoded as JPEG.
+        hostBuilder.Services.AddSingleton<IReceivedFrameExporter, ReceivedFrameExporter>();
 
         // Phase 4 image-tooling UI -- spec/07-image-pipeline.md's "Stock image library"/"RX history"
         // sections. ReceiveHistoryRecorder is resolved once, explicitly, below (nothing else in the
