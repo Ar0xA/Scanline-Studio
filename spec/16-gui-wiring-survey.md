@@ -97,7 +97,7 @@ Three columns — Mode/Sync/Input/Signal cards (left), Waterfall + Incoming-fram
 | Line time / Lines | REAL | `MainWindow.axaml:203-204` | `LineTimeText`/`LinesText`, both derived from the real `DetectedMode`. |
 | Remaining | FAKE-LIVE | `MainWindow.axaml:205` | `Panes.RxImage.RemainingValue` literal loc key, no backing property. |
 
-**Sync & slant card** (`MainWindow.axaml:213-239`, `DataContext="{Binding RxImage}"` at `:216`) — **UPDATED 2026-08-10**: Slant ppm/Sync offset/Auto-correct/Re-sync are now real, wired to `RxImagePaneViewModel` (batch 1/6, `spec/17-rx-telemetry-feasibility.md`). Source/Reset/Advanced-timing remain unwired.
+**Sync & slant card** (`MainWindow.axaml:213-239`, `DataContext="{Binding RxImage}"` at `:216`) — **UPDATED 2026-08-15**: Slant ppm/Sync offset/Auto-correct/Re-sync are real, wired to `RxImagePaneViewModel` (batch 1/6, `spec/17-rx-telemetry-feasibility.md`); Correct slant now real too (RX buffer subsystem — `RequestCorrectSlant()`, backend Phase 8, this UI trigger added afterward). Source/Reset/Advanced-timing remain unwired. Line refs below are approximate as of this update, not re-verified for every row below this card.
 
 | Control | Class | File:line | Note |
 |---|---|---|---|
@@ -105,9 +105,10 @@ Three columns — Mode/Sync/Input/Signal cards (left), Waterfall + Incoming-fram
 | Slant ppm | REAL | `MainWindow.axaml:220` | `RxImagePaneViewModel.SlantPpmDisplay` (`RxImagePaneViewModel.cs:237`) — plain bound `TextBlock` now, not a `NumericUpDown` (the field is a live readout, not an editable input; the original survey's "editable but writes nowhere" finding no longer applies). |
 | Sync offset | REAL | `MainWindow.axaml:221` | `SyncOffsetSamplesDisplay` (`RxImagePaneViewModel.cs:250`). |
 | Auto-correct | REAL | `MainWindow.axaml:222` | `AutoCorrectDisplay` (`RxImagePaneViewModel.cs:288`) — 4-way AVT/Off/Locked/on-not-locked readout (batch 6), gated by new `SstvDecoderSettings.AutoSlantEnabled`. |
-| Resync button | REAL | `MainWindow.axaml:228` | `RequestReSyncCommand`. |
-| Reset button | STUB | `MainWindow.axaml:229` | Still `IsEnabled="False"`, no `Command` — unlike Resync, no legacy-verified semantics decided for this one yet (`spec/17`). |
-| Advanced timing (Sample clock/Sync window/VIS threshold/Drop-line) | FAKE-LIVE | `MainWindow.axaml:231-236` | All 4 rows still literal loc-key values behind an `IndustryDisclosureToggleTheme` toggle — unchanged, needs a product decision per `spec/17`. |
+| Resync button | REAL | `MainWindow.axaml:255` | `RequestReSyncCommand`. |
+| Correct slant button | REAL | `MainWindow.axaml:256` | `RequestCorrectSlantCommand` — the port of legacy's `KRCS`/`KRCSClick` popup-menu item, added as a sibling to Resync (RX buffer subsystem Phase 8's decoder-side method, this UI trigger). |
+| Reset button | STUB | `MainWindow.axaml:257` | Still `IsEnabled="False"`, no `Command` — unlike Resync/Correct slant, no legacy-verified semantics decided for this one yet (`spec/17`, explicitly NOT the same control as Correct slant). |
+| Advanced timing (Sample clock/Sync window/VIS threshold/Drop-line) | FAKE-LIVE | `MainWindow.axaml:~245-250` | All 4 rows still literal loc-key values behind an `IndustryDisclosureToggleTheme` toggle — unchanged, needs a product decision per `spec/17`. |
 
 **Input chain card** (`MainWindow.axaml:245-275`) — **UPDATED 2026-08-10**: Device/AGC/Buffer/Clipping are now real (batches 1/3/4/5). Squelch/BPF/Notch/Noise-floor/Level L·R remain unwired — no live audio-chain measurement path exists for those specifically (Squelch/Noise-floor need a product decision, Notch is an unported filter, true stereo L/R doesn't exist in this port's mono-only demod path).
 
