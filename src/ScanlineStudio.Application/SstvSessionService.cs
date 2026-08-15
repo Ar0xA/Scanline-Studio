@@ -293,6 +293,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.RequestReSync();
     }
 
+    /// <summary>See <see cref="ISstvSessionService.RequestCorrectSlant"/>.</summary>
+    public void RequestCorrectSlant()
+    {
+        Log.CorrectSlantRequested(_logger);
+        _decoder.RequestCorrectSlant();
+    }
+
     /// <summary>See <see cref="ISstvSessionService.ForceMode"/>.</summary>
     public void ForceMode(SstvModeDefinition mode)
     {
@@ -794,6 +801,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual ReSync requested")]
         public static partial void ReSyncRequested(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Manual Correct Slant requested")]
+        public static partial void CorrectSlantRequested(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Decode mode forced to {ModeId}")]
         public static partial void ModeForced(ILogger logger, string modeId);

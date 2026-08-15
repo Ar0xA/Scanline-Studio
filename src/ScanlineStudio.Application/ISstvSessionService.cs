@@ -99,6 +99,16 @@ public interface ISstvSessionService : IAsyncDisposable
     /// currently receiving a locked image.</summary>
     void RequestReSync();
 
+    /// <summary>Requests a one-time "Correct Slant" search from the decoder — see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestCorrectSlant"/> for the full
+    /// contract (the port of legacy's real "Correct Slant" popup-menu item, `KRCS`/`KRCSClick`,
+    /// `Main.cpp:13176` — the same right-click context menu on the picture box that also holds
+    /// `KRFS`, this port's own already-shipped <see cref="RequestReSync"/> button). Safe to call from
+    /// any thread; a no-op if not currently receiving a locked image, or under any of the other
+    /// conditions <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestCorrectSlant"/>'s
+    /// own doc comment lists.</summary>
+    void RequestCorrectSlant();
+
     /// <summary>Requests an immediate decode restart into <paramref name="mode"/>, bypassing VIS
     /// header detection — see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.ForceMode"/> for the full contract

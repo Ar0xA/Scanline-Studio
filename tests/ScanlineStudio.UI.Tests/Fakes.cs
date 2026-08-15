@@ -155,6 +155,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public void RequestReSync() => RequestReSyncCallCount++;
 
+    public int RequestCorrectSlantCallCount { get; private set; }
+
+    public void RequestCorrectSlant() => RequestCorrectSlantCallCount++;
+
     public int ForceModeCallCount { get; private set; }
 
     public SstvModeDefinition? LastForcedMode { get; private set; }

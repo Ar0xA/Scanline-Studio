@@ -676,6 +676,17 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_RequestCorrectSlantCommand_DelegatesToTheSessionService()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.RequestCorrectSlantCommand.Execute(null);
+
+        Assert.Equal(1, sstvSession.RequestCorrectSlantCallCount);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_SyncToneDisplay_MeasuredIsNominalMinusCorrectionMinusCalibrationOffset()
     {
         // Regression test for two real bugs an auditor round caught before this shipped:

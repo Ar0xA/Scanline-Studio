@@ -235,12 +235,26 @@
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SyncOffset}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncOffsetSamplesDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.AutoCorrect}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AutoCorrectDisplay}" /></Grid></Border>
                                     </StackPanel>
-                                    <Grid ColumnDefinitions="*,*" ColumnSpacing="3">
+                                    <!-- RX buffer subsystem: Correct-Slant UI trigger added as a THIRD
+                                         column here, not by repurposing "Reset": spec/17-rx-telemetry-
+                                         feasibility.md's own "Unverified" section explicitly warns "Reset"
+                                         has no confirmed legacy mapping and "don't guess and wire it to
+                                         the wrong command"; legacy's real KRCS ("Correct Slant") is a
+                                         DIFFERENT popup-menu item from whatever "Reset" turns out to map
+                                         to, in the SAME right-click context menu as KRFS (this port's
+                                         already-shipped Re-sync button, to its left). -->
+                                    <!-- Unequal column widths (not "*,*,*"): "Correct slant" is
+                                         measurably wider than "Re-sync"/"Reset", and an equal 3-way split
+                                         truncated it to "Correct slan" (design-fidelity check, real-window
+                                         screenshot). Widening the middle column instead of shortening the
+                                         label to something less clear. -->
+                                    <Grid ColumnDefinitions="0.8*,1.4*,0.8*" ColumnSpacing="3">
                                         <!-- Padding="6,0" (design-fidelity-caught fix): IndustryBtn22's
                                              fixed 22px box was clipping the label's descenders/baseline
                                              against Fluent's own default Button padding. -->
                                         <Button Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
-                                        <Button Grid.Column="1" Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Grid.Column="1" Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.CorrectSlant}" Command="{Binding RequestCorrectSlantCommand}" />
+                                        <Button Grid.Column="2" Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </Grid>
                                     <ToggleButton x:Name="AdvancedTimingToggle" Classes="Industry IndustryDisclosure" Theme="{StaticResource IndustryDisclosureToggleTheme}" Content="{loc:Translate Panes.RxSync.AdvancedTiming}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     <StackPanel Classes="Industry IndustryRows" IsVisible="{Binding #AdvancedTimingToggle.IsChecked}">
