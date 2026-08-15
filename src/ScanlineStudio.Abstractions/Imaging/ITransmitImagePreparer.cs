@@ -34,4 +34,9 @@ public interface ITransmitImagePreparer
     /// smears/distorts already-drawn glyphs. Crop -&gt; Resize -&gt; ApplyOverlay is the only
     /// correct order.</summary>
     IImageSource ApplyOverlay(IImageSource source, ImageOverlay overlay);
+
+    /// <summary>Rotates 90° clockwise, always -- no direction parameter. Matches the TX image
+    /// editor's single-button UX (4 clicks returns to the original orientation); width/height are
+    /// swapped in the result.</summary>
+    IImageSource Rotate(IImageSource source);
 }
