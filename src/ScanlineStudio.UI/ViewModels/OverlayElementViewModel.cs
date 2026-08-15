@@ -26,13 +26,18 @@ public sealed partial class OverlayElementViewModel : ObservableObject
     [ObservableProperty]
     private Rgb24 _color = new(255, 255, 255);
 
-    /// <summary>Set once by the owning <see cref="TxImageEditorPaneViewModel"/> at creation time (the
-    /// canvas's own pixel dimensions never change after the editor opens) -- lets this element compute
-    /// its own on-screen position without the View needing a multi-binding/converter to combine X/Y
-    /// with the canvas size itself.</summary>
-    public double ImageWidth { get; init; }
+    /// <summary>Set by the owning <see cref="TxImageEditorPaneViewModel"/> at creation time -- lets
+    /// this element compute its own on-screen position without the View needing a
+    /// multi-binding/converter to combine X/Y with the canvas size itself. Settable (not the
+    /// original <c>init</c>), not because it changes often -- the canvas's pixel dimensions were
+    /// fixed for the editor's whole lifetime until Rotate existed -- but because
+    /// <see cref="TxImageEditorPaneViewModel.RotateCommand"/> now updates every existing element's
+    /// dimensions in place after a 90° rotation swaps width/height.</summary>
+    [ObservableProperty]
+    private double _imageWidth;
 
-    public double ImageHeight { get; init; }
+    [ObservableProperty]
+    private double _imageHeight;
 
     /// <summary>Set once by <see cref="TxImageEditorPaneViewModel.AddOverlayElement"/> at creation
     /// time (its own <c>RemoveOverlayElementCommand</c>), not bound in XAML via
@@ -65,6 +70,10 @@ public sealed partial class OverlayElementViewModel : ObservableObject
     partial void OnXChanged(double value) => OnPropertyChanged(nameof(LeftPixels));
 
     partial void OnYChanged(double value) => OnPropertyChanged(nameof(TopPixels));
+
+    partial void OnImageWidthChanged(double value) => OnPropertyChanged(nameof(LeftPixels));
+
+    partial void OnImageHeightChanged(double value) => OnPropertyChanged(nameof(TopPixels));
 
     partial void OnTextChanged(string value) => OnPropertyChanged(nameof(ResolvedText));
 }
