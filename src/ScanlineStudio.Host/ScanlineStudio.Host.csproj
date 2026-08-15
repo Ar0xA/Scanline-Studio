@@ -5,6 +5,18 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
+  <!--
+    spec/18-path-to-1.0.md High item 5: no custom git-SHA-stamping target needed here. Confirmed
+    empirically (not assumed) by building once WITH a hand-rolled short-git-SHA-stamping target
+    and inspecting the actual built DLL's strings: the .NET 8 SDK already appends the full
+    git commit SHA to InformationalVersion automatically once it detects a .git directory (via its
+    bundled Microsoft.Build.Tasks.Git machinery, no SourceLink NuGet package required). The
+    custom target's own short-SHA suffix and the SDK's own automatic full-SHA suffix both landed
+    in the same string ("0.9.0+3647ad5.3647ad5bfb52f959...", redundant and ugly), proving the SDK
+    already solves "which build did this bug report come from" for free. Directory.Build.props's
+    plain <Version>/<Product>/<Copyright> is sufficient; do not re-add a git-stamping target here.
+  -->
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
   </ItemGroup>
@@ -34,6 +46,22 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- spec/18-path-to-1.0.md High item 5: previously not shipped with the app at all. A binary
+       distribution had no delivery path for the LGPL notice these files satisfy (the roadmap's own
+       stated gap: "the LGPL notice has no delivery path in a binary distribution without an About
+       box"). Static None items, not a dynamically-added target-time item. CopyToPublishDirectory
+       is unset deliberately, matching the locale/font ItemGroups immediately above/below: the SDK
+       defaults it from CopyToOutputDirectory automatically for statically-declared items (confirmed
+       via `-v diagnostic`: "DefaultCopyToPublishDirectoryMetadata = true"), so it doesn't need
+       stating explicitly here the way the native-shim targets above had to fight for it (those are
+       dynamically generated at build time, a fundamentally different, harder case; see their own
+       doc comment for why). -->
+  <ItemGroup>
+    <None Include="..\..\COPYING" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\COPYING.LESSER" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\LICENSES.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- Bundled overlay font (spec/07-image-pipeline.md's "TX image editor" section, LICENSES.md's
        DejaVu Sans Mono entry): loaded explicitly into a SixLabors.Fonts.FontCollection, never
        relying on SystemFonts enumeration (can be empty on a minimal Linux install). -->
@@ -48,11 +76,27 @@
     ScanlineStudio.Core.Audio.MiniAudio.Tests.csproj's own CopyNativeShim* targets: .NET does not
     automatically propagate a ProjectReference's native build artifacts (confirmed directly in
     this project during piece Audio 1), so the real IAudioEngine registration above would throw
-    DllNotFoundException on first resolve without an explicit copy here too.
+    DllNotFoundException on first resolve without an explicit copy here too. AfterTargets="Build"
+    Copy tasks, unchanged in mechanism from before, still the path for a plain `dotnet build`/
+    `dotnet run`, empirically confirmed still working after the item-registration fix below was
+    added (deleted the copied file, rebuilt, confirmed it reappeared).
+
+    spec/18-path-to-1.0.md High item 5 fix, second bug found empirically (not by inspection): the
+    Include path below used to reuse THIS project's own $(OutDir) to locate the sibling MiniAudio
+    project's build output. That coincidentally matches when neither project has a
+    RuntimeIdentifier (the common `dotnet build`/`dotnet run` case: both resolve to
+    bin/$(Configuration)/$(TargetFramework)/), but a real publish for a specific runtime
+    (`dotnet publish -r linux-x64`) gives THIS project's own $(OutDir) an extra
+    runtime-identifier path segment while the plain-class-library MiniAudio project's own output
+    never gets one. Confirmed directly: `dotnet publish -r linux-x64` failed outright with
+    MSB3030 (source file not found) using the old $(OutDir)-based path, because it was looking in
+    a linux-x64 subfolder that doesn't exist for that sibling project. Building the sibling's path
+    from $(Configuration)/$(TargetFramework) directly, instead of reusing $(OutDir), fixes both
+    the plain build case and the RID-specific publish case with one mechanism.
   -->
   <Target Name="CopyNativeShimLinux" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
     <ItemGroup>
-      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.so" />
+      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libyoniqaudio.so" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
   </Target>
@@ -61,16 +105,92 @@
        build target doc comment. -->
   <Target Name="CopyNativeShimWindows" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <ItemGroup>
-      <NativeShim Include="$(MSBuildProjectDirectory)\..\ScanlineStudio.Core.Audio.MiniAudio\$(OutDir)yoniqaudio.dll" />
+      <NativeShim Include="$(MSBuildProjectDirectory)\..\ScanlineStudio.Core.Audio.MiniAudio\bin\$(Configuration)\$(TargetFramework)\yoniqaudio.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
   </Target>
 
   <Target Name="CopyNativeShimMacOS" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
     <ItemGroup>
-      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.dylib" />
+      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libyoniqaudio.dylib" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
+  </Target>
+
+  <!--
+    spec/18-path-to-1.0.md High item 5 fix, separate from the Copy tasks above on purpose: a raw
+    Copy task physically places the file in $(OutDir) for a plain `dotnet build`/`dotnet run`, but
+    is invisible to `dotnet publish`. A file that only ever existed as a Copy task's side effect
+    never reaches the publish output, so a published build throws DllNotFoundException on first
+    IAudioEngine resolve; no RX, no TX, ever, in a published build, and this was never actually
+    tested before this fix.
+
+    Four approaches were tried in order, each verified (not just theorized) against a real
+    self-contained `dotnet publish -c Release -r linux-x64` run of this exact project, before
+    landing on the one below:
+      1) A None item with CopyToPublishDirectory metadata, added AfterTargets="Build".
+      2) The same None item, moved to BeforeTargets="Build" instead. Confirmed via
+         `-v diagnostic` that the item WAS genuinely added to the in-memory None list, yet the
+         file still never appeared in the publish output.
+      3) Adding straight to @(ResolvedFileToPublish) (the list the SDK's publish copy step
+         actually reads) via BeforeTargets="Publish".
+      4) Same item, moved to BeforeTargets="CopyFilesToPublishDirectory".
+    All four failed for the SAME underlying reason, confirmed against the .NET 8 SDK's own
+    target sources (Microsoft.Common.CurrentVersion.targets / Microsoft.NET.Publish.targets), not
+    just re-guessed: MSBuild runs a target's DependsOnTargets before its BeforeTargets hooks fire.
+    CopyFilesToPublishDirectory has the actual copy targets as dependencies, so hooking
+    BeforeTargets on IT (attempt 4) or on Publish itself (attempt 3, even later) fires after the
+    copy already ran. The same ordering rule makes AfterTargets="Build" run after
+    CoreBuild/AssignTargetPaths explains attempts 1-2 too.
+    Fix that actually works: BeforeTargets="ComputeResolvedFilesToPublishList", not because that
+    target's own output gets specially cached (an earlier draft of this comment claimed that;
+    wrong, that target has no Inputs/Outputs to cache), but because it runs strictly before EVERY
+    real consumer of @(ResolvedFileToPublish): the copy targets themselves,
+    _GetCurrentAndPriorPublishFileWrites, GeneratePublishDependencyFile, and
+    GenerateSingleFileBundle. (GetPublishItemsOutputGroupOutputs/PublishItemsOutputGroup, mentioned
+    in an earlier draft of this comment, is an IDE/tooling output group, not what `dotnet publish`
+    itself copies from, also wrong, corrected here.) This is the earliest, and therefore
+    strictly safest, of the four hook points tried, not a lucky guess among equals.
+    Verified end to end, not just "file present": ran a real self-contained Release publish for
+    linux-x64, confirmed libyoniqaudio.so present and byte-identical to the source project's own
+    build output, then ACTUALLY RAN the published binary and confirmed via its own log output that
+    IAudioEngine resolved a real default capture/playback device (proof the native P/Invoke calls
+    succeeded, no DllNotFoundException) before the process was cleanly stopped. See
+    PROJECT_BRIEF.md/the commit message for this change for the exact commands.
+
+    Deliberately NOT Condition="Exists(...)"-guarded on the Include below (code-review finding):
+    that would turn "the native shim failed to build" from a loud MSB3030 failure (today's
+    behavior, via the unguarded Copy tasks above, which Publish itself depends on via Build) into
+    a published binary that LOOKS complete and throws DllNotFoundException only when a user
+    actually tries to receive/transmit, exactly the failure mode this whole fix exists to catch
+    earlier. A missing file here should still fail the build.
+  -->
+  <Target Name="PublishNativeShimLinux" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libyoniqaudio.so">
+        <RelativePath>libyoniqaudio.so</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <!-- Unverified in this project's own dev sandbox (Linux-only); see PublishNativeShimLinux's own doc comment above for the reasoning this mirrors. -->
+  <Target Name="PublishNativeShimWindows" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)\..\ScanlineStudio.Core.Audio.MiniAudio\bin\$(Configuration)\$(TargetFramework)\yoniqaudio.dll">
+        <RelativePath>yoniqaudio.dll</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="PublishNativeShimMacOS" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libyoniqaudio.dylib">
+        <RelativePath>libyoniqaudio.dylib</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
   </Target>
 
 </Project>

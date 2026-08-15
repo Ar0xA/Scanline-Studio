@@ -21,6 +21,24 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 
     <IsPackable>false</IsPackable>
+
+    <!--
+      spec/18-path-to-1.0.md High item 5: previously absent entirely, so every assembly shipped
+      as the .NET default 1.0.0.0 with no way to tell which build a bug report came from. Centralized
+      here (not per-project) since every assembly in the solution should agree on the same product
+      identity. The .NET 8 SDK automatically appends a full git commit SHA to InformationalVersion
+      once it detects a .git directory (bundled Microsoft.Build.Tasks.Git, no SourceLink package
+      needed). Confirmed empirically, no custom stamping target exists anywhere in this solution;
+      see ScanlineStudio.Host.csproj's own doc comment for that dead end (an earlier version of
+      THIS comment wrongly pointed there, corrected here).
+    -->
+    <Version>0.9.0</Version>
+    <Product>Scanline Studio</Product>
+    <!-- A literal year, not $([System.DateTime]::Now.Year) (code-review finding): the latter makes
+         two builds of the identical commit produce different assembly content depending on what
+         day they're built, which defeats reproducible/deterministic builds for no real benefit.
+         Bump by hand at each new year, same as any other copyright notice. -->
+    <Copyright>Copyright © 2026 the Scanline Studio contributors</Copyright>
   </PropertyGroup>
 
 </Project>
