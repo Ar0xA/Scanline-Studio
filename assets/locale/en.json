@@ -131,6 +131,7 @@
   "Panes.RxSync.SyncOffset": "Sync offset",
   "Panes.RxSync.AutoCorrect": "Auto-correct",
   "Panes.RxSync.Resync": "Re-sync",
+  "Panes.RxSync.CorrectSlant": "Correct slant",
   "Panes.RxSync.Reset": "Reset",
   "Panes.RxSync.AdvancedTiming": "ADVANCED TIMING",
   "Panes.RxSync.SampleClock": "Sample clock",

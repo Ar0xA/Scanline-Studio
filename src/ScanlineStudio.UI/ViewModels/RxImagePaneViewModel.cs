@@ -448,6 +448,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [RelayCommand]
     private void RequestReSync() => _sstvSession.RequestReSync();
 
+    [RelayCommand]
+    private void RequestCorrectSlant() => _sstvSession.RequestCorrectSlant();
+
     /// <summary>Normally invoked only by <see cref="_telemetryTimer"/>'s own tick -- public so tests
     /// can poll deterministically instead of waiting on a real <see cref="DispatcherTimer"/>
     /// interval.</summary>
