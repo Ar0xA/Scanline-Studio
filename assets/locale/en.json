@@ -391,6 +391,8 @@
   "Panes.TxImageEditor.CardHeader": "EDITOR — OUTGOING FRAME · 640×496 · PD120",
   "Panes.TxImageEditor.DimensionsChip": "640×496",
   "Panes.TxImageEditor.PreserveAspect": "Preserve aspect (letterbox)",
+  "Panes.TxImageEditor.LockAspectToMode": "Lock crop to mode",
+  "Panes.TxImageEditor.LockAspectToMode.Help": "Constrains the crop rectangle to the selected mode's own aspect ratio. Combine with Preserve aspect OFF to fill the frame edge-to-edge with no distortion and no letterboxing.",
   "Panes.TxImageEditor.AddText": "Add Text",
   "Panes.TxImageEditor.Remove": "Remove",
   "Panes.TxImageEditor.Apply": "Apply",

@@ -84,6 +84,17 @@
                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="12,0,4,4"
                               IsChecked="{Binding PreserveAspect}"
                               Content="{loc:Translate Panes.TxImageEditor.PreserveAspect}" />
+                <!-- Real, wired (spec/18-path-to-1.0.md High item 4): constrains crop-rect drag-resize
+                     SHAPE to the target mode's own aspect ratio — orthogonal to PreserveAspect above,
+                     which governs the separate letterbox-vs-stretch Resize step, not crop shape.
+                     Combining this ON with PreserveAspect OFF (stretch) fills the mode's frame
+                     edge-to-edge with zero distortion and zero letterboxing — the tooltip states
+                     that combination explicitly since the two toggles' relationship isn't obvious
+                     from the labels alone. -->
+                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4"
+                              IsChecked="{Binding LockAspectToMode}"
+                              Content="{loc:Translate Panes.TxImageEditor.LockAspectToMode}"
+                              ToolTip.Tip="{loc:Translate Panes.TxImageEditor.LockAspectToMode.Help}" />
                 <!-- Real, wired (spec/18-path-to-1.0.md High item 3): a real action button, not a
                      RadioButton in the EditorTool group above — rotate is an instant 90°-clockwise
                      action (4 clicks returns to the original orientation), not a persistent
