@@ -60,6 +60,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [ObservableProperty]
     private bool _preserveAspect = true;
 
+    /// <summary>Constrains the crop-rectangle drag-resize handle (NOT the keyboard Shift+arrow
+    /// nudge, which stays free-form -- see <see cref="NudgeCropResize"/>'s own doc comment) to
+    /// always maintain <see cref="_targetMode"/>'s own aspect ratio (spec/18-path-to-1.0.md High
+    /// item 4). Orthogonal to <see cref="PreserveAspect"/>, which governs the separate Resize step
+    /// (letterbox vs. stretch) -- this one constrains crop SHAPE. Default OFF so existing free-form
+    /// behavior is unchanged unless a user opts in.</summary>
+    [ObservableProperty]
+    private bool _lockAspectToMode;
+
     [ObservableProperty]
     private Bitmap? _workingCopyBitmap;
 
@@ -143,10 +152,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     /// <summary>Shift+arrow resizes the crop rect's bottom-right corner by 1px and auto-engages
     /// stretch mode (<see cref="PreserveAspect"/> = false) -- legacy's own real behavior
-    /// (`SBStrach->Down = TRUE` in the same verified source).</summary>
+    /// (`SBStrach->Down = TRUE` in the same verified source). Also clears
+    /// <see cref="LockAspectToMode"/> for the same reason and the same legacy line: `SBRatio`/
+    /// `SBStrach`/`SBNStrach` are a mutually-exclusive group in legacy, so engaging stretch mode on
+    /// Shift+arrow also disengages legacy's own keep-aspect radio -- keyboard nudge stays free-form
+    /// on both axes independently of whatever the drag-resize lock toggle currently reads
+    /// (spec/18-path-to-1.0.md High item 4, round-1 plan-review finding).</summary>
     public void NudgeCropResize(NudgeDirection direction)
     {
         PreserveAspect = false;
+        LockAspectToMode = false;
         var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, 1);
         ApplyCropResize((double)dxPixels / _originalSource.Width, (double)dyPixels / _originalSource.Height);
     }
@@ -270,6 +285,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             }
 
             CropRect = TransformCropRectClockwise(CropRect);
+
+            // Code-review finding on spec/18-path-to-1.0.md High item 4: rotating the crop rect
+            // via the 90°-clockwise transform above swaps its width/height along with the working
+            // copy's own dimension swap -- for an already-aspect-locked rect, that leaves the
+            // PIXEL aspect at the RECIPROCAL of _targetMode's own (unchanged) aspect, while
+            // LockAspectToMode still reads true. Re-fitting immediately closes the gap the same
+            // way OnLockAspectToModeChanged does when the toggle is first engaged -- safe here
+            // too: X/Y are untouched by the rect transform above, so the max-bounds this re-fit
+            // computes from them stay valid, and the fit can only shrink, never grow past bounds.
+            if (LockAspectToMode)
+            {
+                ApplyCropResizeAspectLocked(0, 0);
+            }
         }
         finally
         {
@@ -311,6 +339,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     partial void OnPreserveAspectChanged(bool value) => RecomputePreview();
 
+    /// <summary>Re-fits the CURRENT crop rect the instant the lock engages, rather than waiting for
+    /// the next drag -- legacy's own `SBRatioClick` (`PicRect.cpp:653-662`) does the same on click.
+    /// The `(0,0)` delta means <see cref="ApplyCropResizeAspectLocked"/> only performs its
+    /// inner-fit/overflow/reject logic against the rect as it already stands.</summary>
+    partial void OnLockAspectToModeChanged(bool value)
+    {
+        if (value)
+        {
+            ApplyCropResizeAspectLocked(0, 0);
+        }
+    }
+
     private void OnOverlayElementPropertyChanged(object? sender, PropertyChangedEventArgs e) => RecomputePreview();
 
     private void ApplyCropMove(double dx, double dy)
@@ -322,9 +362,82 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     private void ApplyCropResize(double dx, double dy)
     {
+        if (LockAspectToMode)
+        {
+            ApplyCropResizeAspectLocked(dx, dy);
+            return;
+        }
+
         var newWidth = Math.Clamp(CropRect.Width + dx, MinNormalizedCropSize, 1 - CropRect.X);
         var newHeight = Math.Clamp(CropRect.Height + dy, MinNormalizedCropSize, 1 - CropRect.Y);
         CropRect = CropRect with { Width = newWidth, Height = newHeight };
+    }
+
+    /// <summary>Inner-fit to <see cref="_targetMode"/>'s own aspect ratio -- the largest
+    /// target-aspect box that fits within the raw (unconstrained) dragged box. Monotonic and stable
+    /// regardless of how a drag gesture is split across pointer-move events, unlike a "which axis
+    /// moved more this event" heuristic (frame-rate/event-granularity dependent for the same
+    /// physical gesture -- considered and discarded, spec/18-path-to-1.0.md High item 4's own
+    /// design doc). Deliberately NOT a port of legacy's own `AdjustRatio` branch rule (round-1
+    /// plan-review finding: that rule compares ABSOLUTE lengths in two different coordinate spaces,
+    /// not an aspect ratio, and can actually GROW the crop box on a shrink drag -- a real
+    /// difference, not a simplification. The overflow-handling shape below (shrink the OTHER axis
+    /// proportionally, never an independent per-axis clamp) does mirror legacy's own
+    /// `PicRect.cpp:182-189` in effect (code-review correction: `:178-179` is inside an
+    /// `#if 0`-disabled block, not live code -- the real overflow handling is `:182-189`, both the
+    /// X- and Y-overflow halves).</summary>
+    private void ApplyCropResizeAspectLocked(double dx, double dy)
+    {
+        var targetAspect = (double)_targetMode.ImageWidth / _targetMode.ImageHeight;
+        var minWidthPixels = MinNormalizedCropSize * WorkingCopyWidth;
+        var minHeightPixels = MinNormalizedCropSize * WorkingCopyHeight;
+        var maxWidthPixels = (1 - CropRect.X) * WorkingCopyWidth;
+        var maxHeightPixels = (1 - CropRect.Y) * WorkingCopyHeight;
+
+        // 1) Raw, unconstrained delta, floored to the per-axis minimum -- NOT capped to the max
+        // here, which would change which axis step 2 picks as oversized. Flooring guards against a
+        // fast drag pushing a raw axis to zero/negative (e.g. dragging the handle above CropRect.Y
+        // in one pointer-move event), which would otherwise corrupt the ratio test below.
+        var rawWidthPixels = Math.Max(minWidthPixels, (CropRect.Width + dx) * WorkingCopyWidth);
+        var rawHeightPixels = Math.Max(minHeightPixels, (CropRect.Height + dy) * WorkingCopyHeight);
+
+        // 2) Shrink whichever axis is proportionally oversized relative to targetAspect.
+        double widthPixels, heightPixels;
+        if (rawWidthPixels / rawHeightPixels > targetAspect)
+        {
+            heightPixels = rawHeightPixels;
+            widthPixels = heightPixels * targetAspect;
+        }
+        else
+        {
+            widthPixels = rawWidthPixels;
+            heightPixels = widthPixels / targetAspect;
+        }
+
+        // 3) Boundary overflow: shrink the OTHER axis proportionally to pull back in -- never an
+        // independent per-axis clamp, which would re-break the aspect this method enforces.
+        if (widthPixels > maxWidthPixels)
+        {
+            widthPixels = maxWidthPixels;
+            heightPixels = widthPixels / targetAspect;
+        }
+
+        if (heightPixels > maxHeightPixels)
+        {
+            heightPixels = maxHeightPixels;
+            widthPixels = heightPixels * targetAspect;
+        }
+
+        // 4) If the aspect-correct box that fits within both the bounds AND the minimum floor is
+        // EMPTY, there is no valid resize to make -- reject it and leave CropRect exactly as it
+        // was, rather than emit a rect that violates the lock (round-1 plan-review blocker: a real,
+        // deterministic case -- narrow available width + wide target aspect -- not pathological).
+        if (widthPixels < minWidthPixels || heightPixels < minHeightPixels)
+        {
+            return;
+        }
+
+        CropRect = CropRect with { Width = widthPixels / WorkingCopyWidth, Height = heightPixels / WorkingCopyHeight };
     }
 
     private static (int Dx, int Dy) DirectionToPixelDelta(NudgeDirection direction, int magnitude) => direction switch
