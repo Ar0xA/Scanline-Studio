@@ -5237,6 +5237,34 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         var lineDecoder = _lineDecoder;
         var pixels = _pixels;
         var stagingBuffer = _rxLineStagingBuffer;
+
+        // spec/18-path-to-1.0.md High item 6, checkpoint 1 of 2 (see the second checkpoint below,
+        // right after ComputeOrigin, for why one check here isn't enough on its own). A disk write
+        // failure (RxBufferMode.Extended only -- always false for RAM, RxLineStagingBuffer.cs's own
+        // hardcoded HasWriteFailed) means EnsureSnapshot/ReadSnapshot CAN zero-fill the ENTIRE
+        // staged snapshot on the next read (RxDiskLineStagingBuffer.cs's own doc comment, only when
+        // the read itself actually fails/comes up short -- not on every latch), not just whatever's
+        // actually missing -- replaying against that would silently redraw an already-correctly-
+        // decoded portion of the image with zeros. Bailing here, before any of the AutoSync/
+        // SlantTracker resets below, leaves the decoder exactly as if this replay request had never
+        // fired; live (non-replay) decoding of new lines is unaffected regardless (Extended capture
+        // has already stopped admitting new lines by construction once HasWriteFailed latches --
+        // TryAppendLine's own guard). Code-review correction: HasWriteFailed does NOT reset on a
+        // fresh lock -- InitializeSlant only calls Clear() (RxLineStagingBuffer's own Clear/
+        // TryAppendLine contract), which never clears this flag, and Clear()'s own failure path
+        // deliberately leaves it set; a genuinely fresh RxDiskLineStagingBuffer instance only exists
+        // after a RestartableSstvDecoder.Swap() (the ~12h restart interval).
+        // So once latched, replay and Correct Slant (see TryCorrectSlant's own guard) are silently
+        // disabled for the rest of THIS DECODER INSTANCE's lifetime -- across every subsequent
+        // reception, not just this one. This is exactly where these guards earn their keep the most:
+        // without them, the very NEXT reception's first replay would redraw from the PREVIOUS
+        // reception's stale/zeroed staging data (Clear()'s own failure path leaves _count/
+        // _lineBoundaries non-zero against a file that was never actually truncated).
+        if (stagingBuffer.HasWriteFailed)
+        {
+            return;
+        }
+
         var stagedSampleCount = stagingBuffer.Count;
         if (stagedSampleCount == 0)
         {
@@ -5316,6 +5344,36 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             hilbertGroupDelayCorrection,
             effectiveSampleRate);
         _lastReplayOriginForTests = origin;
+
+        // Checkpoint 2 of 2 (see the entry guard above for checkpoint 1 and the full rationale).
+        // ComputeOrigin above is this pass's own FIRST read of the staging buffer (via the
+        // SyncEnvelopeAt delegate) -- the first read after any new writes is exactly when
+        // RxDiskLineStagingBuffer.EnsureSnapshot/ReadSnapshot can latch HasWriteFailed for the FIRST
+        // time (a drain/flush failure, or a short file caught mid-read), i.e. after checkpoint 1
+        // already passed with the flag still false -- the EnsureSnapshot/ReadSnapshot latch itself is
+        // synchronous within this read, so checkpoint 2 doesn't depend on any timing window to catch
+        // THAT case. Round-2 code-review correction: the flag can ALSO latch from the background
+        // writer task at any moment regardless of any read (HasWriteFailed is `volatile` precisely
+        // because of this -- RxDiskLineStagingBuffer.cs's own ConsumeAsync catch blocks), so a real
+        // write error landing between checkpoint 1 and checkpoint 2 is a genuine possibility, not
+        // ruled out -- checkpoint 2 catches that case too, which is what makes it load-bearing beyond
+        // just the read-triggered case. Either way, once EnsureSnapshot has run once for this
+        // generation its result is cached (invalidated only by the next TryAppendLine/Clear, neither
+        // of which runs mid-pass), so the redraw loop further down is safe reading that same cached
+        // snapshot regardless of which path set the flag. Placed HERE specifically (not lower, inside
+        // the loops below): any later point either writes persistent decoder state from a possibly-
+        // corrupted `origin` (_slantIdealSamplesSoFarInLine, right below) or mutates _pixels (the
+        // redraw loop further down) -- this is the last point before either happens. `origin` itself
+        // may have been computed from zeroed data in this scenario; harmless, since it's discarded
+        // unused below. Unlike checkpoint 1, the AutoSync/SlantTracker/_slantLine* resets above
+        // (:5296-5316) have ALREADY run by the time this checkpoint can fire -- deliberately not
+        // rolled back (see checkpoint 1's own "accepted note" on this trade-off in the plan doc);
+        // don't read checkpoint 1's "exactly as if this replay request had never fired" as applying
+        // to a bail that happens here instead.
+        if (stagingBuffer.HasWriteFailed)
+        {
+            return;
+        }
 
         // Auto-Sync/Auto-Slant re-feed: ONE continuous per-sample walk over the whole valid staged
         // range, suppressed (isReplay: true) -- matches legacy's own per-sample AutoStopJob re-feed
@@ -5499,9 +5557,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// `RedrawSampFreq(FALSE)` call, which this port's Phase 6/6d already built the same mechanism
     /// for.
     ///
-    /// <b>Entry gate</b> (`:5267-5270`): buffer present, cumulative staged line count &gt;= 16 (NOT
-    /// <see cref="IRxLineStagingBuffer.LineCount"/> alone -- that resets on every replay truncation,
-    /// unlike legacy's own never-truncated `m_wStgLine`; add
+    /// <b>Entry gate</b> (`:5267-5270`): buffer present, mode not null, NOT
+    /// <see cref="IRxLineStagingBuffer.HasWriteFailed"/> (spec/18-path-to-1.0.md High item 6 --
+    /// defense-in-depth only, see this early exit's own inline comment; correctness on a failed
+    /// buffer is already guaranteed by the headroom checks below regardless), cumulative staged
+    /// line count &gt;= 16 (NOT <see cref="IRxLineStagingBuffer.LineCount"/> alone -- that resets on
+    /// every replay truncation, unlike legacy's own never-truncated `m_wStgLine`; add
     /// <see cref="_rxBufferBaseTransmissionLine"/> back, same as <see cref="PerformReplay"/>'s own
     /// origin calculation does), mode is not AVT, and (RAM mode only) there's headroom for one more
     /// line -- <see cref="IRxLineStagingBuffer.HasHeadroomForSamples"/>.
@@ -5556,6 +5617,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     {
         var stagingBuffer = _rxLineStagingBuffer;
         if (stagingBuffer is null || _mode is null)
+        {
+            return false;
+        }
+
+        // spec/18-path-to-1.0.md High item 6. Defense-in-depth, not a correctness fix: this
+        // method's own existing HasHeadroomForSamples checks below (entry and pre-commit) already
+        // fully protect correctness on a failed buffer -- RxDiskLineStagingBuffer.HasHeadroomForSamples
+        // is `=> !_hasWriteFailed`, so a failure is already caught before any commit either way. This
+        // explicit check exists only to skip the full 5-iteration/10-pass linear search over a
+        // known-already-failed buffer (a real cost on the decode thread for a long Extended
+        // reception, see this method's own performance-tradeoff doc comment below) rather than to
+        // catch a bug HasHeadroomForSamples doesn't already catch. See PerformReplay's own guards for
+        // the write-failure case that IS a real correctness fix.
+        if (stagingBuffer.HasWriteFailed)
         {
             return false;
         }
