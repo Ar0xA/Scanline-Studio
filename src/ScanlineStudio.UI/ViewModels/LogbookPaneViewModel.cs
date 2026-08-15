@@ -241,6 +241,35 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         StatusMessage = null;
     }
 
+    /// <summary>Called from <c>MainWindow.axaml.cs</c>'s <c>RxImagePaneViewModel.LogQsoRequested</c>
+    /// handler -- "Log QSO" on the RX pane switches to this tab with a fresh entry pre-filled from
+    /// what that pane already knows live. Uses <see cref="New"/>'s full "start clean" semantics
+    /// (clears <see cref="StatusMessage"/> too, not just <see cref="ResetForm"/>'s form fields) --
+    /// landing on a freshly-prefilled form under a stale "Logged. ADIF forwarded 1/1..." message
+    /// left over from a previous action would read as "this was already logged." Deliberately does
+    /// NOT set <see cref="FormFrequencyHz"/>/<see cref="FormMode"/> -- no radio-state auto-fill
+    /// mechanism exists in this pane at all yet (spec/08-logging.md's own "Auto-fill from radio and
+    /// DSP state" section describes this as planned, not built); inventing a partial auto-fill here
+    /// would be a worse inconsistency than leaving both blank for the user to fill by hand, same as
+    /// every other manually-started entry. <paramref name="name"/>/<paramref name="qth"/>/
+    /// <paramref name="gridSquare"/> DO carry over (code-review finding, rx-log-qso.md) -- unlike
+    /// frequency/mode these come from a QRZ lookup the RX pane already performed
+    /// (<c>RxImagePaneViewModel.LookupName</c>/<c>LookupQth</c>/<c>LookupGrid</c>), not an unbuilt
+    /// auto-fill mechanism; dropping them would silently discard a lookup the user already did and
+    /// make them repeat it on this tab.</summary>
+    public void PrefillForNewEntry(string? callsign, string? sstvModeId, DateTimeOffset startUtc, string? name, string? qth, string? gridSquare)
+    {
+        Log.PrefillForNewEntryInvoked(_logger, callsign, sstvModeId);
+        ResetForm();
+        StatusMessage = null;
+        FormCallsign = callsign;
+        FormSstvModeId = sstvModeId;
+        FormStartUtc = startUtc;
+        FormName = name;
+        FormQth = qth;
+        FormGridSquare = gridSquare;
+    }
+
     /// <summary>Also clears <see cref="SelectedEntry"/> -- without this, selecting row A, clicking
     /// New, then clicking row A again would never re-fire <see cref="OnSelectedEntryChanged"/>
     /// (same value assigned twice, no <c>PropertyChanged</c>), leaving the form stuck empty with
@@ -452,6 +481,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "New invoked")]
         public static partial void NewInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Prefilled a new entry from the RX pane: callsign={Callsign}, sstvModeId={SstvModeId}")]
+        public static partial void PrefillForNewEntryInvoked(ILogger logger, string? callsign, string? sstvModeId);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SearchAsync failed; logbook list stays as-is")]
         public static partial void SearchFailed(ILogger logger, Exception ex);
