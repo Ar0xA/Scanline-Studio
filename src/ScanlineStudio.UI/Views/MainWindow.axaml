@@ -70,7 +70,10 @@
         </TextBlock>
         <Menu Grid.Column="1" Classes="Industry">
             <MenuItem Header="{loc:Translate MainWindow.Menu.File}">
-                <MenuItem Header="{loc:Translate MainWindow.Menu.File.OpenImage}" InputGesture="Ctrl+O" Command="{Binding TxControls.SelectImageCommand}" />
+                <!-- spec/18-path-to-1.0.md Medium item 5: same SelectImageCommand as the Transmit
+                     pane's own "Browse..." button. A disabled MenuItem also suppresses its own
+                     InputGesture, so this closes the Ctrl+O accelerator too, not just the click. -->
+                <MenuItem Header="{loc:Translate MainWindow.Menu.File.OpenImage}" InputGesture="Ctrl+O" Command="{Binding TxControls.SelectImageCommand}" IsEnabled="{Binding !TxControls.IsEditorOpen}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.SaveFrameAs}" InputGesture="Ctrl+S" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <Separator />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.Exit}" Command="{Binding ExitCommand}" />
