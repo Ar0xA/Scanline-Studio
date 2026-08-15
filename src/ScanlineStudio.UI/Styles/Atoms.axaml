@@ -1552,6 +1552,18 @@
     <Style Selector="Border.IndustryStatus.attentionTint TextBlock">
         <Setter Property="Foreground" Value="{StaticResource IndustryAttentionTintText}" />
     </Style>
+    <!-- spec/18-path-to-1.0.md High item 10: filled-lozenge red variant for the new TX-KEYED
+         status chip, mockups/colors/SSTV-Color-Scheme.md's own "Transmitting" row (distinct from
+         the amber "TX inhibited" row .attentionTint already covers). Same two-rule shape as
+         .healthyTint/.attentionTint above, reusing the danger tokens .fault below already
+         established (previously text-only, no filled-lozenge consumer existed until now). -->
+    <Style Selector="Border.IndustryStatus.dangerTint">
+        <Setter Property="Background" Value="{StaticResource IndustryDangerTint}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDangerTintBorder}" />
+    </Style>
+    <Style Selector="Border.IndustryStatus.dangerTint TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource IndustryDangerTintText}" />
+    </Style>
     <!-- Fault row (spec §6): neutral fill, red TEXT only — "a tinted lozenge is loud, and
          TX-active must be the loudest thing on screen." No real fault-indicator consumer exists
          in this app yet (verified: no audio-device/CAT-lost/write-failed state is surfaced

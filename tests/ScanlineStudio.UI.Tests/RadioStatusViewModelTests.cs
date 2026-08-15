@@ -427,4 +427,102 @@ public sealed class RadioStatusViewModelTests
 
         Assert.True(vm.CatLinked);
     }
+
+    [AvaloniaFact]
+    public void IsKeyed_TracksTheRigsOwnPttReadback_TrueThenFalse()
+    {
+        // spec/18-path-to-1.0.md High item 10.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsKeyed);
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsKeyed);
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsKeyed);
+    }
+
+    [AvaloniaFact]
+    public void IsKeyed_NeverSetByAnyRadioState_StaysFalse()
+    {
+        // The safe default: no CAT link (or the "none" backend) means no RadioState ever arrives,
+        // so IsKeyed must never claim "confirmed keyed" with nothing behind it.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsKeyed);
+    }
+
+    [AvaloniaFact]
+    public void IsKeyed_RevertsToFalse_WhenCatLinkDropsMidSession()
+    {
+        // spec/18-path-to-1.0.md High item 10, round-1 plan-review blocker: without this, a rig
+        // that was keyed when the link dropped would stay showing "keyed" forever -- IsKeyed is
+        // only ever refreshed by a successful poll, so losing the connection needs its own,
+        // separate clear via OnConnectionEvent, not just relying on the next (never-arriving) poll.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsKeyed);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Disconnected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.CatLinked);
+        Assert.False(vm.IsKeyed);
+    }
+
+    [AvaloniaFact]
+    public void IsKeyed_RevertsToFalse_WhenConnectionEntersReconnecting()
+    {
+        // Code-review finding: the sibling test above (explicit Disconnected) is the wrong
+        // real-world shape for the scenario this fix actually targets -- a mid-transmission
+        // transport failure publishes Reconnecting, not Disconnected (RadioController's own poll
+        // loop never publishes Disconnected except from an explicit DisconnectAsync call). The
+        // guard (`!= Connected`) is already correct for both, but only THIS state exercises the
+        // real failure path.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsKeyed);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Reconnecting, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.CatLinked);
+        Assert.False(vm.IsKeyed);
+    }
+
+    [AvaloniaFact]
+    public void IsKeyed_UnaffectedByCommandFailed_MatchingCatLinkedsOwnContract()
+    {
+        // A single failed command doesn't mean the connection itself dropped -- IsKeyed must not
+        // be cleared by this event either, same reasoning CatLinked already establishes.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsKeyed);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.CommandFailed, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsKeyed);
+    }
 }
