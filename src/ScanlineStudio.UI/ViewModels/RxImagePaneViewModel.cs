@@ -156,6 +156,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// no backing feature yet, same for the quick-mode-button grid below it
     /// (spec/14-roadmap.md backlog).</summary>
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(LogQsoCommand))]
     private SstvModeDefinition? _detectedMode;
 
     /// <summary>Frame-metadata card's "Size on disk" row -- real, but only for a COMPLETED save: set
@@ -496,6 +497,20 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             DetectedMode = mode;
             StartedAt = DateTimeOffset.UtcNow;
             FileSizeBytes = null;
+            // Round-1 plan-review finding (Log QSO / rx-log-qso.md): these 4 are per-RECEPTION
+            // "who is this station" state, same category as DetectedMode/StartedAt above, but were
+            // never reset here -- station A sends an FSK-decoded callsign, station B then
+            // transmits with no FSK ID, and DetectedMode/StartedAt update to B's while
+            // OverrideCallsign/the QRZ-lookup fields silently stay A's. Previously just cosmetic
+            // staleness in the RX pane's own readout; now that LogQsoCommand can persist
+            // OverrideCallsign into a real logbook row, a stale value there would produce a wrong
+            // QSO record -- the other three (Lookup*) only ever feed this pane's own read-only
+            // display plus this method's own prefill copy, so for them it's still display
+            // staleness, just now also copied into the prefilled form rather than shown live.
+            OverrideCallsign = null;
+            LookupName = null;
+            LookupQth = null;
+            LookupGrid = null;
         });
     }
 
@@ -758,6 +773,31 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             IsLookingUpQrz = false;
         }
     }
+
+    /// <summary>Fires with no payload -- <c>MainWindow.axaml.cs</c>'s subscriber (the composition
+    /// root holding both this VM and <see cref="LogbookPaneViewModel"/>) reads
+    /// <see cref="OverrideCallsign"/>/<see cref="DetectedMode"/>/<see cref="StartedAt"/> directly
+    /// off THIS instance rather than this event carrying a payload -- see the "Log QSO" plan's own
+    /// design decision for why (same-callstack, same-tick hand-off, no new DTO type needed). The
+    /// subscriber's read is safe specifically because every writer of those three properties
+    /// already routes through <see cref="Dispatcher"/>, so a synchronous read on the UI thread
+    /// (which is where <see cref="LogQsoCommand"/> itself always runs) can never observe a
+    /// half-updated state.</summary>
+    public event Action? LogQsoRequested;
+
+    /// <summary>Enabled once a mode has EVER been detected this session, not "currently receiving"
+    /// -- nothing nulls <see cref="DetectedMode"/> after a reception ends, which is the more useful
+    /// behavior here (the natural moment to log a QSO is right after the frame finishes, not only
+    /// mid-reception). Deliberately does NOT also require <see cref="OverrideCallsign"/> to be
+    /// non-empty -- this button's role is "start logging what I'm currently/just received," not
+    /// "auto-complete a decoded callsign"; gating on the FSK auto-fill specifically would disable
+    /// it for the common case where the other station never sent one. The user can always type the
+    /// callsign by hand on the Logbook tab -- that tab's own <c>CanLog</c> already requires a
+    /// non-empty callsign before Log itself is clickable.</summary>
+    private bool CanLogQso() => DetectedMode is not null;
+
+    [RelayCommand(CanExecute = nameof(CanLogQso))]
+    private void LogQso() => LogQsoRequested?.Invoke();
 
     private static partial class Log
     {

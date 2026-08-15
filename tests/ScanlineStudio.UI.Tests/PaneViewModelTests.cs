@@ -206,6 +206,87 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_LogQsoCommand_DisabledUntilAModeHasBeenDetected()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+        Assert.False(vm.LogQsoCommand.CanExecute(null));
+
+        var mode = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        // Enabled once a mode has EVER been detected, not only "currently receiving" -- nothing
+        // nulls DetectedMode after a reception ends, matching this VM's own doc comment on
+        // CanLogQso: the natural moment to log a QSO is right after the frame finishes.
+        Assert.True(vm.LogQsoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_LogQsoCommand_FiresLogQsoRequestedWithNoPayload()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var mode = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        var fireCount = 0;
+        vm.LogQsoRequested += () => fireCount++;
+
+        vm.LogQsoCommand.Execute(null);
+
+        Assert.Equal(1, fireCount);
+    }
+
+    /// <summary>Round-1 plan-review finding (rx-log-qso.md, 2026-08-15): OverrideCallsign/
+    /// LookupName/LookupQth/LookupGrid are per-RECEPTION "who is this station" state but were never
+    /// reset on a new ModeDetected -- station A sends an FSK-decoded callsign, station B then
+    /// transmits with no FSK ID, and DetectedMode/StartedAt would update to B's while these 4
+    /// fields silently stayed A's. LogQsoCommand persists OverrideCallsign into a real logbook
+    /// row, so that staleness would produce a wrong QSO record; the other three (Lookup*) feed
+    /// only this pane's own display plus the prefilled form's Name/QTH/Grid, so for them it's
+    /// still display staleness, just now copied into the form too.</summary>
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_ClearsStalePerReceptionCallsignAndLookupFields()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+        var modeA = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(modeA);
+        Dispatcher.UIThread.RunJobs();
+        // Simulates FSK-decoded-callsign auto-fill + a completed QRZ lookup for station A --
+        // ApplyStationIdDecodedAsync/LookupQrzAsync's own paths are covered elsewhere; setting
+        // these 4 fields directly is sufficient to pin THIS specific staleness bug.
+        vm.OverrideCallsign = "W1AW";
+        vm.LookupName = "Hiram Maxim";
+        vm.LookupQth = "Newington";
+        vm.LookupGrid = "FN31pr";
+
+        var modeB = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(modeB);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.OverrideCallsign);
+        Assert.Null(vm.LookupName);
+        Assert.Null(vm.LookupQth);
+        Assert.Null(vm.LookupGrid);
+        Assert.Equal("Martin M1", vm.DetectedModeText);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_ModeDetectedEvent_SetsStartedAt()
     {
         var sstvSession = new FakeSstvSessionService();
@@ -2009,6 +2090,45 @@ public sealed class PaneViewModelTests
         vm.SelectedEntry = vm.Entries[0];
         Assert.True(vm.IsEditing);
         Assert.Equal("N0CALL", vm.FormCallsign);
+    }
+
+    /// <summary>"Log QSO" on the RX pane (rx-log-qso.md, 2026-08-15) calls this to switch to a
+    /// fresh entry pre-filled from what that pane already knows live.</summary>
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_PrefillForNewEntry_SetsFieldsAndClearsStatusAndInProgressEdit()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Assert.True(vm.IsEditing);
+        vm.StatusMessage = "QSO logged. Forwarded to 1/1 destination(s). QRZ: not sent.";
+
+        var startUtc = new DateTimeOffset(2026, 8, 15, 12, 0, 0, TimeSpan.Zero);
+        vm.PrefillForNewEntry("W1AW", "martin1", startUtc, "Some Op", "Somewhere", "AB12cd");
+
+        Assert.Equal("W1AW", vm.FormCallsign);
+        Assert.Equal("martin1", vm.FormSstvModeId);
+        Assert.Equal(startUtc, vm.FormStartUtc);
+        // Code-review finding (rx-log-qso.md): these DO carry over from the RX pane's own QRZ
+        // lookup, unlike frequency/mode below -- dropping them would discard a lookup the user
+        // already did on the other tab.
+        Assert.Equal("Some Op", vm.FormName);
+        Assert.Equal("Somewhere", vm.FormQth);
+        Assert.Equal("AB12cd", vm.FormGridSquare);
+        // No radio-state auto-fill mechanism exists yet (spec/08-logging.md) -- must stay untouched,
+        // not silently defaulted to something.
+        Assert.Null(vm.FormFrequencyHz);
+        Assert.Null(vm.FormMode);
+        // Round-1 plan-review finding: must use New()'s full "start clean" semantics, not just
+        // ResetForm() -- a stale StatusMessage from a previous action would read as "already
+        // logged" under the freshly-prefilled form.
+        Assert.Null(vm.StatusMessage);
+        // The in-progress edit from the OTHER tab is discarded, same "start clean" contract New()
+        // already has -- an accepted tradeoff (rx-log-qso.md), not fixed further here.
+        Assert.False(vm.IsEditing);
+        Assert.Null(vm.SelectedEntry);
     }
 
     [AvaloniaFact]
