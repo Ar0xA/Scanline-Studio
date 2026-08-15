@@ -540,6 +540,7 @@
   "Options.Decode.DemodType.ZeroCrossing": "Zero crossing",
   "Options.Decode.DemodType.Hilbert": "Hilbert transform",
   "Options.Decode.RxBuffer": "RX buffering",
+  "Options.Decode.RxBuffer.Help": "Stages decoded picture lines so a later sample-rate/sync correction (Auto Slant, or a manual Correct Slant) can redraw already-received lines without re-decoding from scratch. Off disables this entirely -- no correction ever redraws past lines, and Auto Slant is unavailable. On keeps the buffer in memory, bounded by available RAM. Extended stores it on disk instead, with no practical size cap but real disk I/O cost -- best for long or marginal-signal receptions. Takes effect after restarting.",
   "Options.Decode.RxBuffer.Off": "Off",
   "Options.Decode.RxBuffer.On": "On",
   "Options.Decode.RxBuffer.Extended": "Extended (disk-backed)",

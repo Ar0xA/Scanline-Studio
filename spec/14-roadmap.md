@@ -113,11 +113,18 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
 
 ### Tier 2 — road to 1.0 (real gaps, correct to ship 0.9 beta without)
 
-- RX buffer Phases 8-9 (**Phase 7 — disk-backed Extended mode — DONE, 2026-08-14**, 5 sub-pieces,
-  each through auditor code-review, plus 2 full rounds of mandatory plan-review before
-  implementation started; full history `PROJECT_BRIEF.md` + `/home/artien/.claude/plans/
-  wise-riding-hearth.md`). Remaining: "Correct Slant" one-shot search (Phase 8), Options UI wiring
-  (Phase 9 — also closes the Tier-0 "RX buffer shown hardcoded-Off" stub above). Migrated from
+- RX buffer Phase 9 (**Phases 7 and 8 — disk-backed Extended mode, and the "Correct Slant" one-shot
+  search — both DONE, 2026-08-14/15**, each through multiple rounds of auditor code-review plus 2
+  full rounds of mandatory plan-review before Phase 8 implementation started; full history
+  `PROJECT_BRIEF.md` + `/home/artien/.claude/plans/wise-riding-hearth.md`). Remaining: Options UI
+  wiring (Phase 9, per the original plan's own written scope — un-stub the `RxBufferMode` radio
+  group in `OptionsWindowView.axaml:364-368`, add `IsEnabled` gating to the Auto-Slant checkbox row,
+  settings/localization, real-window verification; also closes the Tier-0 "RX buffer shown
+  hardcoded-Off" stub above). **Correction, 2026-08-15**: an earlier version of this entry wrongly
+  folded in "a real Correct Slant button/menu item calling `RequestCorrectSlant()`" as part of
+  Phase 9 — the original 9-phase plan's own Phase 9 section does not include that; it's a genuinely
+  separate, currently unscoped gap (Phase 8 ships the decoder-side method with no UI trigger for it
+  at all yet) — logged here as its own item, not conflated with Phase 9's real scope. Migrated from
   PROJECT_BRIEF (still duplicated there until its next prune): Auto-Slant's convergence characteristic changed
   materially at Phase 6d (`SlantTracker.ResetBaseline()` now actually runs in production) with
   nothing measuring whether that's better or worse, and `SlantTests.cs`'s "bitmask permanently
@@ -126,6 +133,20 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   replay land in the same per-line iteration; `DrainPendingSkip`'s own staging-buffer-discontinuity
   gap (currently unreachable, but **documented as must-resolve before any future manual-redraw UI
   trigger** — a real precondition on a not-yet-built feature, not just a nice-to-have).
+- **"Correct Slant" UI trigger** (2026-08-15) — `ISstvDecoder.RequestCorrectSlant()` (RX buffer
+  Phase 8, shipped) has no real UI caller anywhere in this port yet; legacy's own trigger is a
+  toolbar button/popup-menu item (`KRCS`, `Main.cpp`), matching manual ReSync's own already-real
+  trigger. Same shape as `RequestReSync()`'s own existing UI wiring (find and mirror that call site)
+  — a small, mechanical addition once located, not a new design question.
+- **Audit INFO/DEBUG logging coverage across the app** (2026-08-15, user request) — `docs/logging-guidelines.md`'s
+  mandatory `[LoggerMessage]` pattern is in place project-wide (`project_logging_infrastructure`
+  memory), but its actual COVERAGE has never been swept end-to-end: confirm the right log lines
+  exist at the right call sites for UI actions, TX, and RX specifically, and that each one actually
+  fires when its own triggering action happens (not just that a `[LoggerMessage]` method exists
+  somewhere unreachable) — i.e. verify by exercising the real code path and checking the log output,
+  the same technique that caught the Phase 9 real-window Save-button-miss this session (the app's
+  own `SaveInvoked`/`Settings saved to <path>` log lines were what exposed two silently-missed
+  simulated clicks). A real gap-finding pass, not a re-confirmation that the pattern itself exists.
 - Advanced tab: PLL/Zero-crossing tuning-parameter UI (backend already real, demod-type subsystem),
   TX BPF/LPF toggle (the filter already applies unconditionally — this is a bypass switch only, not
   core), Loopback/calibration wizards (fully unbuilt).
@@ -4728,16 +4749,19 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   no further per-item confirmation needed. Decode tab: Auto-Sync/Auto-Slant/Auto-stop/Auto-restart/
   Sense level all shipped (see `PROJECT_BRIEF.md` for detail).
 
-  > **Correction, 2026-08-13, updated 2026-08-14**: the three paragraphs below (RX BPF, Demod type,
-  > RX buffer) are STALE research, kept only for their scoping reasoning. **All three shipped**: RX
-  > BPF (2026-08-12, Kaiser-window `MakeFilter` + preset-parameterized filter, incl. the H1-cutoff
-  > fix the "Also found, logged not fixed" note below flags — that's fixed too, not open), Demod
-  > type (2026-08-12, runtime dispatch across all 3 demodulators), RX buffer (Phases 1-7 of 9,
-  > 2026-08-13/14 — the "buffered-line-replay mechanism this port doesn't have" comment cited below
-  > no longer exists in `AnalogFmSstvDecoder.cs`; replay is real and wired, and as of Phase 7
-  > (2026-08-14) `RxBufferMode.Extended`'s disk-backed variant is real too, including its own
-  > replay path, not just a stub. Phases 8-9 remain, tracked in Tier 2 above). Auto-start below is
-  > still genuinely open, also tracked in Tier 2.
+  > **Correction, 2026-08-13, updated 2026-08-14, updated 2026-08-15**: the three paragraphs below
+  > (RX BPF, Demod type, RX buffer) are STALE research, kept only for their scoping reasoning. **All
+  > three shipped**: RX BPF (2026-08-12, Kaiser-window `MakeFilter` + preset-parameterized filter,
+  > incl. the H1-cutoff fix the "Also found, logged not fixed" note below flags — that's fixed too,
+  > not open), Demod type (2026-08-12, runtime dispatch across all 3 demodulators), RX buffer
+  > (Phases 1-8 of 9, 2026-08-13/15 — the "buffered-line-replay mechanism this port doesn't have"
+  > comment cited below no longer exists in `AnalogFmSstvDecoder.cs`; replay is real and wired, and
+  > as of Phase 7 (2026-08-14) `RxBufferMode.Extended`'s disk-backed variant is real too, including
+  > its own replay path, not just a stub; Phase 8 (2026-08-15) adds the manual "Correct Slant"
+  > one-shot search, `RequestCorrectSlant()` on `ISstvDecoder`, wired through the decode loop with a
+  > real fix to a cross-mechanism state-sync bug auditor code-review caught. Phase 9 (Options UI
+  > wiring) remains, tracked in Tier 2 above). Auto-start below is still genuinely open, also tracked
+  > in Tier 2.
 
   Remaining Decode controls scoped (historical, see correction above):
   **RX BPF** — real legacy control (`Option.dfm`'s `RGRxBPF`), but bigger than a wiring task:
