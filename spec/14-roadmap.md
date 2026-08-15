@@ -152,14 +152,16 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   API addition first, bigger than a logging fix) and Auto-Sync/Auto-Slant/Auto-Stop commit logging
   (no event exists to hook a log call onto at all — these are polled properties, not events; would
   need a new `ISstvDecoder`-level event, a design question, not a logging pass).
-- **`DecodeRestarted` has no trace anywhere** (found by the logging audit above, 2026-08-15) —
-  `AnalogFmSstvDecoder.DecodeRestarted` (mode restart / Auto-Stop abandonment, legacy-significant)
-  is never forwarded by `ISstvSessionService` to the UI layer at all
-  (`RxImagePaneViewModel.cs:86`'s own comment already documents this gap). The two Core-layer
-  subscribers that do exist (`ReceiveHistoryRecorder`, `ReceivedImageBuffer`) use it for state
-  bookkeeping only, no logging either. A real "why did my last image fail" debugging blind spot.
-  Needs `ISstvSessionService.DecodeRestarted` added (API surface change) before a log call can be
-  hung on it anywhere — scope this as its own small piece, not bundled into a future logging pass.
+- ~~**`DecodeRestarted` had no UI-layer subscriber**~~ — **DONE 2026-08-15.** `ISstvDecoder.DecodeRestarted`
+  fires on a new sync lock found mid-reception, `ForceMode`, or Auto-Stop abandonment (NOT "sync
+  lost" — an earlier draft of this entry and this fix's own first-pass log message both got that
+  backwards, corrected after auditor review) — was never forwarded past `Core.Sstv`, so no
+  `ScanlineStudio.UI` code could observe it (`Core.Logbook`'s own separate `ReceiveHistoryRecorder`
+  subscriber, which saves a partial image at ≥65% complete, already existed and is unaffected).
+  Added `ISstvSessionService.DecodeRestarted` (mirrors `ModeDetected`'s own passthrough shape
+  exactly) and a logging-only subscriber in `RxImagePaneViewModel` (no new bound UI state — a
+  logging fix, not a restart-UI feature). 1 round of auditor code-review found a real wording bug
+  (log message/doc comments claimed the wrong dominant trigger) — fixed, not just noted.
 - Advanced tab: PLL/Zero-crossing tuning-parameter UI (backend already real, demod-type subsystem),
   TX BPF/LPF toggle (the filter already applies unconditionally — this is a bypass switch only, not
   core), Loopback/calibration wizards (fully unbuilt).
