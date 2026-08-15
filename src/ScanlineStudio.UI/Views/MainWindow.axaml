@@ -192,28 +192,34 @@
                                        of placing them side by side). -->
                                     <Grid ColumnDefinitions="*,*" Margin="0,0,0,2">
                                         <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" IsChecked="True" Content="{loc:Translate Panes.RxImage.AutoLockedAuto}" />
-                                        <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" Content="{loc:Translate Panes.RxImage.AutoLockedLocked}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" Content="{loc:Translate Panes.RxImage.AutoLockedLocked}" IsEnabled="False" ToolTip.Tip="{loc:Translate Panes.RxImage.LockedMode.Help}" />
                                     </Grid>
                                     <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" SelectedIndex="0" ToolTip.Tip="{loc:Translate Panes.RxImage.ModeOverride.Help}">
                                         <ComboBoxItem Content="{Binding DetectedModeDisplay}" />
                                     </ComboBox>
+                                    <!-- spec/18-path-to-1.0.md High item 7: quick-mode buttons force the NEXT
+                                       decode into a specific mode via QuickSelectModeCommand (ISstvDecoder.ForceMode,
+                                       a one-shot kick, not a persistent lock: see DetectedMode's own doc comment).
+                                       CommandParameter is each mode's real SstvModeDefinition.Id, not the pill's own
+                                       display label. M3/M4 were relabeled from non-existent "Martin M3/M4" to the
+                                       real R24/PD240 modes (see the plan doc for that judgment call). -->
                                     <UniformGrid Columns="4" Rows="4">
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC1}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SCDX}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M1}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M2}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M3}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M4}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.R36}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.R72}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD50}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD90}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD120}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD160}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD180}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD290}" /></Border>
-                                        <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2180}" /></Border>
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC1}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-s1" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC2}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-s2" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SCDX}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-dx" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M1}" Command="{Binding QuickSelectModeCommand}" CommandParameter="martin-m1" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M2}" Command="{Binding QuickSelectModeCommand}" CommandParameter="martin-m2" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M3}" Command="{Binding QuickSelectModeCommand}" CommandParameter="r24" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M4}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd240" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.R36}" Command="{Binding QuickSelectModeCommand}" CommandParameter="robot-36" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.R72}" Command="{Binding QuickSelectModeCommand}" CommandParameter="robot-72" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD50}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd50" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD90}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd90" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD120}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd120" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD160}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd160" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD180}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd180" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD290}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd290" />
+                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC2180}" Command="{Binding QuickSelectModeCommand}" CommandParameter="sc2-180" />
                                     </UniformGrid>
                                     <StackPanel Classes="Industry IndustryRows">
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.LineTime}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LineTimeText}" /></Grid></Border>

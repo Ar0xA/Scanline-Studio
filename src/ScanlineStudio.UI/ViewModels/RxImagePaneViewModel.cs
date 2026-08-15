@@ -154,12 +154,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     private double _signalPeakLevel;
 
     /// <summary>The currently (or most recently) auto-detected RX mode -- real data from
-    /// <see cref="ISstvSessionService.ModeDetected"/>. There is no manual "lock to a specific
-    /// mode" decode feature in this port (<see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder"/>
-    /// always auto-detects via the VIS header) -- mock2's Auto/Locked segmented control is shown
-    /// (Auto statically checked, matching this real always-auto-detect behavior) but "Locked" has
-    /// no backing feature yet, same for the quick-mode-button grid below it
-    /// (spec/14-roadmap.md backlog).</summary>
+    /// <see cref="ISstvSessionService.ModeDetected"/>. spec/18-path-to-1.0.md High item 7 update:
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder"/> still always auto-detects via
+    /// the VIS header by default, but a one-shot manual override now exists --
+    /// <see cref="QuickSelectModeCommand"/> (backed by <see cref="ISstvSessionService.ForceMode"/>)
+    /// forces the NEXT decode into a specific mode, matching legacy's real quick-mode-button click;
+    /// it is NOT a persistent lock (auto-detect resumes for the transmission after). mock2's Auto/
+    /// Locked segmented control still shows "Locked" disabled (Auto statically checked) because no
+    /// PERSISTENT lock feature exists to back it -- see that control's own tooltip.</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LogQsoCommand))]
     private SstvModeDefinition? _detectedMode;
@@ -459,6 +461,52 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
     [RelayCommand]
     private void RequestCorrectSlant() => _sstvSession.RequestCorrectSlant();
+
+    /// <summary>Backs the quick-mode-button grid (spec/18-path-to-1.0.md High item 7) --
+    /// <see cref="ISstvSessionService.ForceMode"/> is a one-shot "start decoding as this mode
+    /// right now" kick (see its own doc comment), not a persistent lock, so this is safe to fire
+    /// repeatedly. Gated on <see cref="ISstvSessionService.IsReceiving"/>: <c>ForceMode</c>'s
+    /// request is otherwise deferred until whatever <c>PushSamples</c> call happens next, which
+    /// while not receiving could be an arbitrarily-later, surprising moment -- a body-level check,
+    /// not a view-layer <c>IsEnabled</c>/<c>CanExecute</c> binding, since this pane doesn't track
+    /// <see cref="ISstvSessionService.IsReceiving"/> reactively (only <c>RadioStatusViewModel</c>
+    /// does). A <paramref name="modeId"/> with no matching entry in
+    /// <see cref="ISstvSessionService.AvailableModes"/> logs a warning and no-ops (defensive
+    /// against a mistyped XAML <c>CommandParameter</c>, matching this file's existing style).
+    ///
+    /// <b>Code-review-noted divergence from legacy</b>: `Main.cpp:6114`'s real `SBMClick` gate
+    /// (`!pDem-&gt;m_Sync || (SSTVSET.m_Mode != m_ModeAssignRX[m_ExtMode])`) skips the restart
+    /// entirely when the clicked mode is ALREADY the one actively decoding -- this port's own
+    /// call is unconditional, so re-clicking the mode already in progress abandons and restarts
+    /// the current image rather than being a no-op. Not fixed: <see cref="DetectedMode"/> is
+    /// deliberately never nulled at end-of-reception (its only assignment is
+    /// <c>OnModeDetected</c>; nothing nulls it), so a naive `DetectedMode?.Id == modeId` check
+    /// would also wrongly block a legitimate re-force after a PREVIOUS reception ended, and
+    /// <see cref="ISstvSessionService"/> exposes no "currently synced" flag distinct from
+    /// <see cref="ISstvSessionService.IsReceiving"/> to disambiguate the two cases correctly. A
+    /// real, accepted UX rough edge -- LIMITED data loss, not none:
+    /// <c>ReceiveHistoryRecorder</c>'s own <see cref="ISstvSessionService.DecodeRestarted"/>
+    /// handler only saves the abandoned partial when it was already &gt;=65% complete
+    /// (<c>ReceiveHistoryRecorder.cs</c>'s own completeness threshold); an early re-click
+    /// discards it. Not silently missed, just not fixed here.</summary>
+    [RelayCommand]
+    private void QuickSelectMode(string modeId)
+    {
+        if (!_sstvSession.IsReceiving)
+        {
+            return;
+        }
+
+        var mode = _sstvSession.AvailableModes.FirstOrDefault(m => m.Id == modeId);
+        if (mode is null)
+        {
+            Log.QuickSelectModeUnknownId(_logger, modeId);
+            return;
+        }
+
+        Log.QuickSelectModeInvoked(_logger, modeId);
+        _sstvSession.ForceMode(mode);
+    }
 
     /// <summary>Normally invoked only by <see cref="_telemetryTimer"/>'s own tick -- public so tests
     /// can poll deterministically instead of waiting on a real <see cref="DispatcherTimer"/>
@@ -814,6 +862,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Decode restarted, abandoning mode {AbandonedModeId} (new sync lock found mid-reception, forced mode, or Auto-Stop)")]
         public static partial void DecodeRestarted(ILogger logger, string abandonedModeId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Quick-mode button forced mode {ModeId}")]
+        public static partial void QuickSelectModeInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode button pressed for unknown mode id {ModeId} -- no matching AvailableModes entry")]
+        public static partial void QuickSelectModeUnknownId(ILogger logger, string modeId);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the just-saved RX image's file size failed")]
         public static partial void ReadSavedFileSizeFailed(ILogger logger, Exception ex);

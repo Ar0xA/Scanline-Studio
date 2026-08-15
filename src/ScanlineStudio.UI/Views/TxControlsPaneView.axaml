@@ -36,9 +36,11 @@
                     <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="TxModeAutoManual" IsChecked="{Binding !AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualManual}" />
                 </Grid>
                 <!-- Visual scaffolding only below this point (spec/14-roadmap.md backlog): "Auto
-                     picks" caption, quick-mode pill grid, Duration/Geometry/VOX-tone rows have no
-                     real data source; values shown as neutral "—" placeholders, not fake-live
-                     literals (0.9 beta bar: no fake-live items, mock/disabled is fine). -->
+                     picks" caption, Duration/Geometry/VOX-tone rows have no real data source;
+                     values shown as neutral "—" placeholders, not fake-live literals (0.9 beta
+                     bar: no fake-live items, mock/disabled is fine). The quick-mode pill grid
+                     immediately below is NO LONGER scaffolding: spec/18-path-to-1.0.md High item
+                     7 wired it to QuickSelectModeCommand. -->
                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.AutoPicksLabel}" />
                     <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.AutoPicksValue}" />
@@ -46,23 +48,31 @@
                 <!-- Order matches mock2: seg -> Auto picks -> 4x4 quick-mode grid -> select ->
                      Selected/Duration/... rows (design-fidelity-agent-caught fix: the ComboBox
                      previously rendered ABOVE the grid). -->
+                <!-- spec/18-path-to-1.0.md High item 7: quick-mode buttons set SelectedMode via
+                     QuickSelectModeCommand: distinct from the Favorites row further down (this pane's
+                     own user-configurable quick-mode feature); the roadmap's own plan-review explicitly
+                     calls for wiring this fixed grid too, even though both do the same thing to
+                     SelectedMode, since this is what the mockup shows. CommandParameter is each mode's
+                     real SstvModeDefinition.Id. M3/M4 relabeled from non-existent "Martin M3/M4" to
+                     the real R24/PD240 modes (see the plan doc). IsEnabled mirrors the ComboBox's own
+                     !IsEditorOpen gate below: High item 2's stale-mode transmit crash fix. -->
                 <UniformGrid Columns="4" Rows="4">
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC1}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SCDX}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M1}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M2}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M3}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.M4}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.R36}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.R72}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD50}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD90}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD120}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD160}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD180}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.PD290}" /></Border>
-                    <Border Classes="Industry IndustryMini" Margin="1"><TextBlock HorizontalAlignment="Center" Text="{loc:Translate Panes.QuickModeGrid.SC2180}" /></Border>
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC1}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-s1" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC2}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-s2" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SCDX}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-dx" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M1}" Command="{Binding QuickSelectModeCommand}" CommandParameter="martin-m1" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M2}" Command="{Binding QuickSelectModeCommand}" CommandParameter="martin-m2" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M3}" Command="{Binding QuickSelectModeCommand}" CommandParameter="r24" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M4}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd240" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.R36}" Command="{Binding QuickSelectModeCommand}" CommandParameter="robot-36" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.R72}" Command="{Binding QuickSelectModeCommand}" CommandParameter="robot-72" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD50}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd50" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD90}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd90" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD120}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd120" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD160}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd160" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD180}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd180" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD290}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd290" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC2180}" Command="{Binding QuickSelectModeCommand}" CommandParameter="sc2-180" IsEnabled="{Binding !IsEditorOpen}" />
                 </UniformGrid>
                 <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}"
                           SelectedItem="{Binding SelectedMode}"
