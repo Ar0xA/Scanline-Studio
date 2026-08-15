@@ -13,7 +13,7 @@ namespace ScanlineStudio.Core.Logbook;
 /// definition — not <see cref="string.Length"/> (UTF-16 char count) — <see cref="AdifImporter"/>
 /// slices on the matching byte count, so a non-ASCII <c>NAME</c>/<c>QTH</c>/<c>COMMENT</c> round-
 /// trips correctly and, just as importantly, the single-QSO payload this feeds to
-/// <c>GridTrackerStreamer</c>'s <c>LoggedADIF</c> UDP message stays byte-exact (a wrong length
+/// <c>AdifUdpStreamer</c>'s <c>LoggedADIF</c> UDP message stays byte-exact (a wrong length
 /// there corrupts the datagram with no error surfaced on either end).</summary>
 public sealed class AdifExporter : IAdifExporter
 {

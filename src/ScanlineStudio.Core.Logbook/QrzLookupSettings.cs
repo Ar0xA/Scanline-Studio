@@ -7,7 +7,7 @@ namespace ScanlineStudio.Core.Logbook;
 /// <see cref="QrzUploadSettings"/> -- the app never queries QRZ without the user explicitly
 /// enabling it and supplying their own account credentials (never legacy's hardcoded personal
 /// username/password). Nullable properties only, per the STJ-missing-property-defaults-to-CLR-default
-/// trap documented on <see cref="QrzUploadSettings"/>/<see cref="GridTrackerStreamingSettings"/>.
+/// trap documented on <see cref="QrzUploadSettings"/>/<see cref="AdifUdpStreamingSettings"/>.
 ///
 /// Storing a real QRZ.com account PASSWORD here (not a scoped, revocable API key like
 /// <see cref="QrzUploadSettings.ApiKey"/>) is a materially different exposure -- plaintext in the

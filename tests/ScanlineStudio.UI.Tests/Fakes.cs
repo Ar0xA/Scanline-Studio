@@ -635,7 +635,7 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
         }
 
         Records.Add(record);
-        return Task.FromResult(LogResultToReturn ?? new LogQsoResult(record, false, false, null, null));
+        return Task.FromResult(LogResultToReturn ?? new LogQsoResult(record, 0, 0, false, null));
     }
 
     public Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default)

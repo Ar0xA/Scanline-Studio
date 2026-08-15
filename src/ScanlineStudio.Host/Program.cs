@@ -200,12 +200,16 @@ internal static partial class Program
         hostBuilder.Services.AddSingleton<ReceiveHistoryRecorder>();
 
         // QSO logbook backend (spec/08-logging.md + the accompanying plan file) -- SQLite storage
-        // (same history.db file as RX history above), ADIF import/export, GridTracker UDP
-        // streaming, and QRZ.com Logbook API upload. Backend-only this pass; no UI wired to it yet.
+        // (same history.db file as RX history above), ADIF import/export, ADIF-over-UDP streaming
+        // (generalized 2026-08-15 from a GridTracker-only streamer to fan the same WSJT-X
+        // LoggedADIF datagram out to any configured destination -- GridTracker, N1MM Logger+,
+        // Log4OM, or anything else that speaks the same protocol), and QRZ.com Logbook API upload.
+        // No UI wired to ADIF UDP streaming yet this piece -- settings only reachable by
+        // hand-editing settings.json until the Options-dialog piece lands.
         hostBuilder.Services.AddSingleton<ILogbookRepository, SqliteLogbookRepository>();
         hostBuilder.Services.AddSingleton<IAdifExporter, AdifExporter>();
         hostBuilder.Services.AddSingleton<IAdifImporter, AdifImporter>();
-        hostBuilder.Services.AddSingleton<IGridTrackerStreamer, GridTrackerStreamer>();
+        hostBuilder.Services.AddSingleton<IAdifUdpStreamer, AdifUdpStreamer>();
         hostBuilder.Services.AddSingleton<IQrzLogbookUploader, QrzLogbookUploader>();
 
         // QRZ.com XML Callbook lookup (spec/08-logging.md's "QRZ.com lookup" section) -- a
