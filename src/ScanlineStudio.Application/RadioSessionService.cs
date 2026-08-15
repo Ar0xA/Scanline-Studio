@@ -22,6 +22,8 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
     public RadioCapabilities Capabilities => _controller.Capabilities;
 
+    public string RigId => _controller.RigId;
+
     public IObservable<RadioState> StateChanges => _controller.StateChanges;
 
     public IObservable<RadioConnectionEvent> ConnectionEvents => _controller.ConnectionEvents;

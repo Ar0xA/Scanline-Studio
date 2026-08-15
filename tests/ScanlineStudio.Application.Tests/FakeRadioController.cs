@@ -16,6 +16,8 @@ internal sealed class FakeRadioController : IRadioController, IDisposable
 
     public RadioCapabilities Capabilities => RadioCapabilities.SetFrequency | RadioCapabilities.SetMode | RadioCapabilities.PttControl;
 
+    public string RigId { get; set; } = "fake-rig";
+
     public IObservable<RadioState> StateChanges => _stateChanges;
 
     public IObservable<RadioConnectionEvent> ConnectionEvents => _connectionEvents;

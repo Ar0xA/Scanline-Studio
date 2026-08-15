@@ -291,6 +291,11 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public RadioCapabilities Capabilities { get; set; } = RadioCapabilities.None;
 
+    // ScanlineStudio.UI.Tests never constructs a real SstvSessionService (only FakeSstvSessionService),
+    // so unlike the same-named fake in ScanlineStudio.Application.Tests, this value never actually
+    // gates anything -- present only to satisfy IRadioSessionService's interface contract.
+    public string RigId { get; set; } = "fake-radio";
+
     public IObservable<RadioState> StateChanges => _stateChanges;
 
     public IObservable<RadioConnectionEvent> ConnectionEvents => _connectionEvents;

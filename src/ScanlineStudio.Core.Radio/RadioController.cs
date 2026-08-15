@@ -38,6 +38,18 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
     private Task? _pollLoopTask;
     private bool _disposed;
 
+    // Cached separately from _protocol -- see RigId's own doc comment. Set whenever a protocol is
+    // freshly resolved (ConnectAsync, and the poll loop's own reconnect-after-backoff path); reset to
+    // "none" only on an explicit DisconnectAsync, NEVER by SafeDisposeCurrentProtocolAsync (a
+    // transient reconnect-backoff disposal, not a real "no radio configured" state) -- code-review
+    // finding on spec/18-path-to-1.0.md Critical item 1: reading RigId straight off _protocol made it
+    // flap to "none" during the poll loop's protocol-null window (mid-backoff, before the next
+    // reconnect attempt), silently defeating PTT keying for a genuinely configured, momentarily
+    // unreachable rig -- the same failure class round-1 plan-review rejected for Capabilities, just
+    // relocated. Caching here means a transient drop now surfaces loudly (SetPttAsync throws via
+    // RequireProtocol, same as before this whole fix existed) instead of silently skipping.
+    private string _rigId = "none";
+
     // Gates the poll loop's failure logging so a dead rig logs once on entering a failure state,
     // not every poll interval forever (the poll loop is effectively a hot path once backed off to
     // a short interval) -- see docs/logging-guidelines.md's hot-path rule.
@@ -52,6 +64,8 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
     public RadioState? LastKnownState => _stateChanges.Value;
 
     public RadioCapabilities Capabilities => _protocol?.Capabilities ?? RadioCapabilities.None;
+
+    public string RigId => _rigId;
 
     /// <summary>Filters out the internal <c>BehaviorSubject&lt;RadioState?&gt;</c>'s null sentinel
     /// (used to represent "never polled yet"/"disconnected" for <see cref="LastKnownState"/>) --
@@ -77,6 +91,7 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
         PublishConnectionEvent(RadioConnectionState.Connecting, reason: null, error: null);
 
         _protocol = ResolveProtocol(spec);
+        _rigId = _protocol.RigId;
 
         PublishConnectionEvent(RadioConnectionState.Connected, reason: null, error: null);
         Log.Connected(_logger, spec.GetType().Name, _protocol.Capabilities);
@@ -113,6 +128,7 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
         {
             var protocol = _protocol;
             _protocol = null;
+            _rigId = "none";
             await protocol.DisposeAsync().ConfigureAwait(false);
             _stateChanges.OnNext(null);
             PublishConnectionEvent(RadioConnectionState.Disconnected, reason: null, error: null);
@@ -225,6 +241,7 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                     // "reconnected" here, which also permanently suppressed the real one, since
                     // _lastLoggedFailureState was cleared before the connection was ever proven).
                     _protocol = ResolveProtocol(spec);
+                    _rigId = _protocol.RigId;
                 }
                 catch (Exception reconnectEx)
                 {

@@ -159,25 +159,32 @@ public interface ISstvSessionService : IAsyncDisposable
 
     Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default);
 
-    /// <summary>The display name of the currently CONFIGURED TX playback device (`AudioDeviceSettings.PlaybackDeviceId`
-    /// resolved against the device enumerator), for a UI readout -- e.g. mock2's Transmit tab
-    /// "Device" field. Reuses the exact same settings/enumerator lookup <see cref="TransmitAsync"/>
-    /// itself uses to pick the real device, so this can never disagree with what a TX would actually
-    /// use -- but non-throwing (<see langword="null"/> instead of an exception) for no device
-    /// configured or a configured device no longer present, since this is a passive readout, not an
-    /// action that should fail loudly. Reflects the CONFIGURED device, not necessarily whatever
-    /// device an already-in-flight <see cref="TransmitAsync"/> call resolved earlier under different
-    /// settings -- a real, accepted approximation for a passive display, not a live "what is TX
-    /// using right now" guarantee.</summary>
+    /// <summary>The display name of the TX playback device that a real <see cref="TransmitAsync"/>
+    /// call would actually resolve and use right now (`AudioDeviceSettings.PlaybackDeviceId`
+    /// resolved against the device enumerator, falling back to the backend-reported default device
+    /// when nothing is explicitly configured -- spec/18-path-to-1.0.md Critical item 1 / item 8, a
+    /// behavior change from this method's own earlier "null if nothing configured" contract), for a
+    /// UI readout -- e.g. mock2's Transmit tab "Device" field. Reuses the exact same settings/
+    /// enumerator/fallback lookup <see cref="TransmitAsync"/> itself uses, so this can never
+    /// disagree with what a TX would actually use -- but non-throwing (<see langword="null"/>
+    /// instead of an exception) for a configured device no longer present, or for the now-rare case
+    /// where nothing is configured AND the backend reports no default either, since this is a
+    /// passive readout, not an action that should fail loudly. Reflects what WOULD be resolved
+    /// right now, not necessarily whatever device an already-in-flight <see cref="TransmitAsync"/>
+    /// call resolved earlier under different settings -- a real, accepted approximation for a
+    /// passive display, not a live "what is TX using right now" guarantee.</summary>
     Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default);
 
-    /// <summary>The display name of the currently CONFIGURED RX capture device
-    /// (`AudioDeviceSettings.CaptureDeviceId` resolved against the device enumerator), for a UI
-    /// readout -- e.g. mock2's Receive tab "Device" field. Exact mirror of
+    /// <summary>The display name of the RX capture device a real <see cref="StartReceivingAsync"/>
+    /// call would actually resolve and use right now (`AudioDeviceSettings.CaptureDeviceId`
+    /// resolved against the device enumerator, with the same backend-reported-default fallback as
+    /// <see cref="GetConfiguredPlaybackDeviceNameAsync"/> -- spec/18-path-to-1.0.md Critical item 1
+    /// / item 8), for a UI readout -- e.g. mock2's Receive tab "Device" field. Exact mirror of
     /// <see cref="GetConfiguredPlaybackDeviceNameAsync"/>'s own contract (reuses the same
-    /// settings/enumerator lookup <see cref="StartReceivingAsync"/> itself uses, non-throwing,
-    /// reflects the CONFIGURED device not necessarily whatever an already-running capture resolved
-    /// earlier) -- see that method's own doc comment for the full reasoning, not repeated here.</summary>
+    /// settings/enumerator/fallback lookup <see cref="StartReceivingAsync"/> itself uses,
+    /// non-throwing, reflects what WOULD be resolved right now, not necessarily whatever an
+    /// already-running capture resolved earlier) -- see that method's own doc comment for the full
+    /// reasoning, not repeated here.</summary>
     Task<string?> GetConfiguredCaptureDeviceNameAsync(CancellationToken ct = default);
 
     /// <summary>Whether <see cref="SetPttLockAsync"/>'s lock is currently engaged.</summary>

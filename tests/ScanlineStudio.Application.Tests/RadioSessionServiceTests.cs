@@ -51,4 +51,13 @@ public sealed class RadioSessionServiceTests
 
         Assert.Equal([true, false], controller.PttCalls);
     }
+
+    [Fact]
+    public void RigId_DelegatesToController()
+    {
+        var controller = new FakeRadioController { RigId = "elecraft-k3" };
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), NullLogger<RadioSessionService>.Instance);
+
+        Assert.Equal("elecraft-k3", service.RigId);
+    }
 }
