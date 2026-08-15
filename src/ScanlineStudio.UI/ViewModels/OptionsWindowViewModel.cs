@@ -163,6 +163,18 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private RxBpfPreset _rxBpfPreset = RxBpfPreset.Wide;
 
+    /// <summary>RX buffering mode -- see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.RxBufferMode"/>'s own doc comment for the legacy
+    /// basis and the absent-vs-out-of-range fallback (both fallbacks here are the SAME value,
+    /// <see cref="RxBufferMode.On"/>, same shape as <see cref="DemodType"/>/<see cref="RxBpfPreset"/>
+    /// above, not <see cref="SenseLevel"/>'s "different fallback" shape). Backed by 3
+    /// <c>IsRxBufferXSelected</c> computed properties below, same pattern as
+    /// <see cref="IsRxBpfOffSelected"/>/etc. Also gates <see cref="IsAutoSlantRowEnabled"/> -- Auto
+    /// Slant has no effect with RX buffering off (legacy's own <c>CBASlant->Enabled</c> gate,
+    /// `Option.cpp:222`).</summary>
+    [ObservableProperty]
+    private RxBufferMode _rxBufferMode = RxBufferMode.On;
+
     [ObservableProperty]
     private bool _qrzLookupEnabled;
 
@@ -435,6 +447,54 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Backs the Decode tab's 3-way RX buffering radio group -- same computed-bool-property
+    /// idiom as <see cref="IsRxBpfOffSelected"/>/etc above. Item order (0=Off/1=On/2=Extended)
+    /// matches <c>Option.dfm</c>'s real <c>RGRBuf</c> item order and <see cref="RxBufferMode"/>'s own
+    /// enum values.</summary>
+    public bool IsRxBufferOffSelected
+    {
+        get => RxBufferMode == RxBufferMode.Off;
+        set
+        {
+            if (value)
+            {
+                RxBufferMode = RxBufferMode.Off;
+            }
+        }
+    }
+
+    public bool IsRxBufferOnSelected
+    {
+        get => RxBufferMode == RxBufferMode.On;
+        set
+        {
+            if (value)
+            {
+                RxBufferMode = RxBufferMode.On;
+            }
+        }
+    }
+
+    public bool IsRxBufferExtendedSelected
+    {
+        get => RxBufferMode == RxBufferMode.Extended;
+        set
+        {
+            if (value)
+            {
+                RxBufferMode = RxBufferMode.Extended;
+            }
+        }
+    }
+
+    /// <summary>Gates the Decode tab's Auto Slant checkbox row -- legacy's own
+    /// <c>CBASlant->Enabled = RGRBuf->ItemIndex ? TRUE : FALSE</c> (`Option.cpp:222`): Auto Slant has
+    /// no effect with RX buffering off (no staging buffer to track a correction against), so the
+    /// checkbox is disabled, not hidden, matching this dialog's own established per-control disable
+    /// convention. Not persisted itself -- purely a UI-enablement derivation from
+    /// <see cref="RxBufferMode"/>.</summary>
+    public bool IsAutoSlantRowEnabled => RxBufferMode != RxBufferMode.Off;
+
     /// <summary>Backs the Identification tab's "ID method" radio group -- same computed-bool idiom
     /// as <see cref="IsSenseLevelVeryLowSelected"/>/etc above. No <c>IsIdMethodSoundFileSelected</c>
     /// counterpart -- see <see cref="CwIdMode"/>'s own doc comment for why that option's `RadioButton`
@@ -600,6 +660,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         // out-of-range) resolve to the SAME value here (Wide), matching
         // SstvDecoderSettings.RxBpfPreset's own doc comment.
         RxBpfPreset = Enum.IsDefined(snapshot.RxBpfPreset) ? snapshot.RxBpfPreset : RxBpfPreset.Wide;
+        // Clamp, not trust -- same reasoning as DemodType/RxBpfPreset above, both fallbacks (absent
+        // AND out-of-range) resolve to the SAME value here (On), matching
+        // SstvDecoderSettings.RxBufferMode's own doc comment.
+        RxBufferMode = Enum.IsDefined(snapshot.RxBufferMode) ? snapshot.RxBufferMode : RxBufferMode.On;
         QrzLookupEnabled = snapshot.QrzLookupEnabled;
         QrzLookupUsername = snapshot.QrzLookupUsername;
         QrzLookupPassword = snapshot.QrzLookupPassword;
@@ -647,6 +711,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             SenseLevel: SenseLevel,
             DemodType: DemodType,
             RxBpfPreset: RxBpfPreset,
+            RxBufferMode: RxBufferMode,
             QrzLookupEnabled: QrzLookupEnabled,
             QrzLookupUsername: QrzLookupUsername,
             QrzLookupPassword: QrzLookupPassword,
@@ -755,6 +820,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         SenseLevel = defaults.SenseLevel;
         DemodType = defaults.DemodType;
         RxBpfPreset = defaults.RxBpfPreset;
+        RxBufferMode = defaults.RxBufferMode;
     }
 
     [RelayCommand]
@@ -857,6 +923,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsRxBpfWideSelected));
         OnPropertyChanged(nameof(IsRxBpfNarrowSelected));
         OnPropertyChanged(nameof(IsRxBpfVeryNarrowSelected));
+    }
+
+    partial void OnRxBufferModeChanged(RxBufferMode value)
+    {
+        OnPropertyChanged(nameof(IsRxBufferOffSelected));
+        OnPropertyChanged(nameof(IsRxBufferOnSelected));
+        OnPropertyChanged(nameof(IsRxBufferExtendedSelected));
+        OnPropertyChanged(nameof(IsAutoSlantRowEnabled));
     }
 
     partial void OnCaptureChannelSourceChanged(AudioChannelSource value)

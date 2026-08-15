@@ -317,13 +317,13 @@
                      Auto-restart + Sense level wired 2026-08-12, Demod type wired 2026-08-12
                      (demod-type runtime-dispatch subsystem, all 4 phases), RX BPF wired 2026-08-12
                      (RX BPF subsystem, all 4 phases: CalcBPF-equivalent FIR filter-preset port,
-                     including the new Kaiser-Bessel-window math Narrow/VeryNarrow need), all real
-                     SstvDecoderSettings fields, restart-required. RX buffer/Auto-start remain
-                     disabled: no backing settings surface exists yet for RX buffer (needs its own
-                     larger DSP-scoping pass, a whole buffered-line-replay subsystem), and
-                     Auto-start's real legacy behavior lives on the legacy TOOLBAR (SBAuto), not in
-                     Option.dfm: a placement question, not investigated further; see
-                     spec/16-gui-wiring-survey.md's Decode-tab section for both. -->
+                     including the new Kaiser-Bessel-window math Narrow/VeryNarrow need), RX buffer
+                     wired 2026-08-15 (RX buffer subsystem Phase 9, the whole 9-phase subsystem's
+                     final piece: a real buffered-line-replay/Correct-Slant search backs it now,
+                     not a stub), all real SstvDecoderSettings fields, restart-required. Auto-start
+                     remains disabled: its real legacy behavior lives on the legacy TOOLBAR (SBAuto),
+                     not in Option.dfm: a placement question, not investigated further; see
+                     spec/16-gui-wiring-survey.md's Decode-tab section. -->
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Decode.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
@@ -361,11 +361,14 @@
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="DemodType" Content="{loc:Translate Options.Decode.DemodType.Hilbert}" IsChecked="{Binding IsDemodTypeHilbertSelected}" />
                                     </WrapPanel>
 
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Decode.RxBuffer}" />
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Off}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.On}" IsChecked="True" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBufferPlaceholder" Content="{loc:Translate Options.Decode.RxBuffer.Extended}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.RxBuffer}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.RxBuffer.Help}" />
+                                    </StackPanel>
+                                    <WrapPanel>
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBuffer" Content="{loc:Translate Options.Decode.RxBuffer.Off}" IsChecked="{Binding IsRxBufferOffSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBuffer" Content="{loc:Translate Options.Decode.RxBuffer.On}" IsChecked="{Binding IsRxBufferOnSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBuffer" Content="{loc:Translate Options.Decode.RxBuffer.Extended}" IsChecked="{Binding IsRxBufferExtendedSelected}" />
                                     </WrapPanel>
 
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
@@ -397,8 +400,11 @@
                                          own doc comment on these two properties). -->
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoSync}"
                                               IsChecked="{Binding AutoSyncEnabled}" />
+                                    <!-- IsEnabled gating added RX buffer subsystem Phase 9: legacy's own
+                                         CBASlant->Enabled = RGRBuf->ItemIndex ? TRUE : FALSE (Option.cpp:222).
+                                         Auto Slant has no effect with RX buffering off. -->
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoSlant}"
-                                              IsChecked="{Binding AutoSlantEnabled}" />
+                                              IsChecked="{Binding AutoSlantEnabled}" IsEnabled="{Binding IsAutoSlantRowEnabled}" />
 
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetDecodeToDefaultCommand}" />
                                 </StackPanel>
