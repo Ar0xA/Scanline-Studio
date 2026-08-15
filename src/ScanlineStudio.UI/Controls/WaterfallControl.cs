@@ -31,6 +31,15 @@ public sealed class WaterfallControl : Control, IDisposable
     public static readonly StyledProperty<double> GainDbProperty =
         AvaloniaProperty.Register<WaterfallControl, double>(nameof(GainDb), defaultValue: 50.0);
 
+    /// <summary>spec/18-path-to-1.0.md Medium item 2, second half -- defaults match
+    /// <c>WaterfallPaneViewModel</c>'s own <c>StartHz</c>/<c>SpanHz</c> defaults, same reasoning as
+    /// <see cref="SpectrumTraceControl.StartHzProperty"/>.</summary>
+    public static readonly StyledProperty<double> StartHzProperty =
+        AvaloniaProperty.Register<WaterfallControl, double>(nameof(StartHz), defaultValue: 1000.0);
+
+    public static readonly StyledProperty<double> SpanHzProperty =
+        AvaloniaProperty.Register<WaterfallControl, double>(nameof(SpanHz), defaultValue: 1600.0);
+
     private WriteableBitmap? _bitmap;
     private byte[]? _colorHistory;
 
@@ -42,6 +51,14 @@ public sealed class WaterfallControl : Control, IDisposable
     private float[]? _dbHistory;
     private int _bins;
 
+    // spec/18-path-to-1.0.md Medium item 2: needed by Render() to convert StartHz/SpanHz to a bin
+    // range (WaterfallRenderMath.TryComputeWindow) -- frame.BinWidthHz was never stored anywhere
+    // before this, only implicit in _bins/_colorHistory sizing. Reset in Dispose() alongside the
+    // other per-frame state fields (this class's own established "full reset, not just the bitmap"
+    // rule, see Dispose()'s own doc comment) so a post-Dispose Render() call can't compute a window
+    // against a stale bin-width left over from before the reset.
+    private double _binWidthHz;
+
     static WaterfallControl()
     {
         FrameProperty.Changed.AddClassHandler<WaterfallControl>((control, _) => control.OnFrameChanged());
@@ -50,7 +67,10 @@ public sealed class WaterfallControl : Control, IDisposable
         // the recolor pass runs and just repaint the stale bitmap a frame early.
         ZeroDbProperty.Changed.AddClassHandler<WaterfallControl>((control, _) => control.RecolorizeAll());
         GainDbProperty.Changed.AddClassHandler<WaterfallControl>((control, _) => control.RecolorizeAll());
-        AffectsRender<WaterfallControl>(FrameProperty);
+        // Unlike ZeroDb/GainDb: no recolor pass exists for Start/Span (nothing about the underlying
+        // _colorHistory/_dbHistory changes), so AffectsRender is the correct, only mechanism needed
+        // to make a Start/Span-only change (no new frame) actually repaint.
+        AffectsRender<WaterfallControl>(FrameProperty, StartHzProperty, SpanHzProperty);
     }
 
     public WaterfallFrame? Frame
@@ -75,12 +95,40 @@ public sealed class WaterfallControl : Control, IDisposable
         set => SetValue(GainDbProperty, value);
     }
 
+    public double StartHz
+    {
+        get => GetValue(StartHzProperty);
+        set => SetValue(StartHzProperty, value);
+    }
+
+    public double SpanHz
+    {
+        get => GetValue(SpanHzProperty);
+        set => SetValue(SpanHzProperty, value);
+    }
+
     public override void Render(DrawingContext context)
     {
-        if (_bitmap is not null && Bounds.Width > 0 && Bounds.Height > 0)
+        if (_bitmap is null || Bounds.Width <= 0 || Bounds.Height <= 0)
         {
-            context.DrawImage(_bitmap, new Rect(_bitmap.PixelSize.ToSize(1)), Bounds);
+            return;
         }
+
+        if (!WaterfallRenderMath.TryComputeWindow(StartHz, SpanHz, _binWidthHz, _bins, Bounds.Width,
+                out var sourceX, out var sourceWidth, out var destX, out var destWidth))
+        {
+            return;
+        }
+
+        // Deliberately NOT `Bounds` directly for the dest rect (unlike the pre-windowing version of
+        // this method): Bounds carries this control's own (X,Y) offset within its parent (e.g. the
+        // 1px IndustryPlot border), which SpectrumTraceControl's own Render doesn't apply (it uses
+        // only Bounds.Width/Height) -- passing Bounds here would draw the waterfall offset by that
+        // border from the spectrum trace above it, a real, separate 1px misalignment code-review
+        // caught during this item's own plan-review. Both rects below are explicitly zero-origin.
+        var sourceRect = new Rect(sourceX, 0, sourceWidth, HistoryRows);
+        var destRect = new Rect(destX, 0, destWidth, Bounds.Height);
+        context.DrawImage(_bitmap, sourceRect, destRect);
     }
 
     protected override void OnDetachedFromVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
@@ -102,6 +150,7 @@ public sealed class WaterfallControl : Control, IDisposable
         _colorHistory = null;
         _dbHistory = null;
         _bins = 0;
+        _binWidthHz = 0;
     }
 
     private void OnFrameChanged()
@@ -111,6 +160,12 @@ public sealed class WaterfallControl : Control, IDisposable
         {
             return;
         }
+
+        // Code-review finding (plan-review): must be assigned AFTER the null-frame guard above, not
+        // before -- FrameProperty is nullable and LatestFrame starts null, so the initial binding
+        // push fires this handler with a null frame; reading frame.BinWidthHz above the guard would
+        // NullReferenceException on that very first call.
+        _binWidthHz = frame.BinWidthHz;
 
         var bins = frame.MagnitudesDb.Count;
         if (_colorHistory is null || _dbHistory is null || _bins != bins)
