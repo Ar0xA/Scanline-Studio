@@ -336,7 +336,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
             return;
         }
 
-        // Deliberately no GridTracker/QRZ status line here -- UpdateQsoAsync never re-pushes (see
+        // Deliberately no ADIF-UDP/QRZ status line here -- UpdateQsoAsync never re-pushes (see
         // its own doc comment), so there is nothing to report beyond "saved." ResetForm() (not
         // New()) -- New() would null the status line just set below.
         ResetForm();
@@ -361,11 +361,15 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormNotes,
         null);
 
+    /// <summary>ADIF-UDP forwarding status clause: a distinct "not forwarded (no destinations
+    /// configured)" string when <see cref="LogQsoResult.AdifUdpEnabledCount"/> is 0, rather than a
+    /// confusing "0/0" reading -- <see cref="LogQsoResult.AdifUdpSentCount"/> only carries meaning
+    /// once at least one destination is enabled.</summary>
     private string BuildLogStatusMessage(LogQsoResult result)
     {
-        var gridTracker = result.GridTrackerSent
-            ? _localization.GetString("Panes.Logbook.Status.GridTrackerSent")
-            : _localization.GetString("Panes.Logbook.Status.GridTrackerNotSent");
+        var adifUdp = result.AdifUdpEnabledCount > 0
+            ? _localization.GetString("Panes.Logbook.Status.AdifUdpForwarded", result.AdifUdpSentCount, result.AdifUdpEnabledCount)
+            : _localization.GetString("Panes.Logbook.Status.AdifUdpNotConfigured");
 
         var qrz = result.QrzUploaded
             ? _localization.GetString("Panes.Logbook.Status.QrzUploaded")
@@ -373,7 +377,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
                 ? _localization.GetString("Panes.Logbook.Status.QrzFailed", result.QrzError)
                 : _localization.GetString("Panes.Logbook.Status.QrzNotSent");
 
-        return _localization.GetString("Panes.Logbook.Status.LoggedFormat", gridTracker, qrz);
+        return _localization.GetString("Panes.Logbook.Status.LoggedFormat", adifUdp, qrz);
     }
 
     [RelayCommand]

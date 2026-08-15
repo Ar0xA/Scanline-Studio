@@ -26,7 +26,7 @@ public sealed partial class QrzLogbookUploader : IQrzLogbookUploader
     }
 
     /// <summary>Best-effort per <see cref="IQrzLogbookUploader"/>'s implicit contract (mirrors
-    /// <c>GridTrackerStreamer.SendLoggedQsoAsync</c>'s own documented one, after that class's
+    /// <c>AdifUdpStreamer.SendLoggedQsoAsync</c>'s own documented one, after that class's
     /// auditor pass found the same gap): catches every realistic failure mode (network failure,
     /// an unreadable/malformed response body) and reports it via <see cref="QrzUploadResult"/>
     /// rather than throwing, so a QRZ outage or misconfiguration never blocks the caller from

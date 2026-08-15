@@ -6,21 +6,21 @@ using ScanlineStudio.Settings;
 namespace ScanlineStudio.Application;
 
 /// <summary>See <see cref="ILogbookSessionService"/>. Composes <c>ScanlineStudio.Core.Logbook</c>'s
-/// building blocks (repository, ADIF exporter/importer, GridTracker streamer, QRZ upload, QRZ
+/// building blocks (repository, ADIF exporter/importer, ADIF-UDP streamer, QRZ upload, QRZ
 /// lookup) — none of which know about each other or about settings sections outside their own.
 /// This is the one place that does: reads <see cref="OperatorSettings"/> for the ADIF
 /// <c>STATION_CALLSIGN</c>, <see cref="QrzUploadSettings"/> for the upload enabled/API-key gate,
 /// and <see cref="QrzLookupSettings"/> for the lookup enabled/username/password gate (unlike
-/// GridTracker streaming, which <c>GridTrackerStreamer</c> gates internally against its own
-/// settings section — <see cref="IQrzLogbookUploader"/>/<see cref="IQrzCallsignLookup"/> both take
-/// credentials as an explicit per-call parameter instead, so there is no symmetric internal gate to
-/// rely on there).</summary>
+/// ADIF-UDP streaming, which <c>AdifUdpStreamer</c> gates internally against its own settings
+/// section, per-destination — <see cref="IQrzLogbookUploader"/>/<see cref="IQrzCallsignLookup"/>
+/// both take credentials as an explicit per-call parameter instead, so there is no symmetric
+/// internal gate to rely on there).</summary>
 public sealed partial class LogbookSessionService : ILogbookSessionService
 {
     private readonly ILogbookRepository _repository;
     private readonly IAdifExporter _adifExporter;
     private readonly IAdifImporter _adifImporter;
-    private readonly IGridTrackerStreamer _gridTrackerStreamer;
+    private readonly IAdifUdpStreamer _adifUdpStreamer;
     private readonly IQrzLogbookUploader _qrzUploader;
     private readonly IQrzCallsignLookup _qrzLookup;
     private readonly ISettingsStore _settingsStore;
@@ -30,7 +30,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         ILogbookRepository repository,
         IAdifExporter adifExporter,
         IAdifImporter adifImporter,
-        IGridTrackerStreamer gridTrackerStreamer,
+        IAdifUdpStreamer adifUdpStreamer,
         IQrzLogbookUploader qrzUploader,
         IQrzCallsignLookup qrzLookup,
         ISettingsStore settingsStore,
@@ -39,7 +39,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         _repository = repository;
         _adifExporter = adifExporter;
         _adifImporter = adifImporter;
-        _gridTrackerStreamer = gridTrackerStreamer;
+        _adifUdpStreamer = adifUdpStreamer;
         _qrzUploader = qrzUploader;
         _qrzLookup = qrzLookup;
         _settingsStore = settingsStore;
@@ -59,7 +59,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         _adifExporter.Export([persisted], writer, stationCallsign);
         var adifText = writer.ToString();
 
-        var gridTrackerSent = await _gridTrackerStreamer.SendLoggedQsoAsync(adifText, ct).ConfigureAwait(false);
+        var adifUdpResult = await _adifUdpStreamer.SendLoggedQsoAsync(adifText, ct).ConfigureAwait(false);
 
         var qrzUploaded = false;
         string? qrzError = null;
@@ -71,19 +71,19 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
             qrzError = qrzResult.ErrorReason;
         }
 
-        Log.QsoLogged(_logger, persisted.Id, gridTrackerSent, qrzUploaded);
-        return new LogQsoResult(persisted, gridTrackerSent, qrzUploaded, null, qrzError);
+        Log.QsoLogged(_logger, persisted.Id, adifUdpResult.SentCount, adifUdpResult.EnabledCount, qrzUploaded);
+        return new LogQsoResult(persisted, adifUdpResult.SentCount, adifUdpResult.EnabledCount, qrzUploaded, qrzError);
     }
 
     public Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default) => _repository.SearchAsync(query, ct);
 
     /// <summary>Edits an already-logged QSO in place -- thin delegation to
     /// <see cref="ILogbookRepository.UpdateAsync"/> (already fully implemented). Deliberately does
-    /// NOT re-push to GridTracker or QRZ the way <see cref="LogQsoAsync"/> does: <see cref="_qrzUploader"/>'s
+    /// NOT re-push via ADIF-UDP or QRZ the way <see cref="LogQsoAsync"/> does: <see cref="_qrzUploader"/>'s
     /// real QRZ Logbook API call is INSERT-only (see <see cref="IQrzLogbookUploader"/>'s own doc
     /// comment) -- a re-push here would file as a SECOND, duplicate contact at QRZ's end, not an
     /// update; real re-push support would need QRZ's own OPTION=REPLACE/LOGID tracking, which
-    /// doesn't exist anywhere in this codebase. <see cref="_gridTrackerStreamer"/>'s own
+    /// doesn't exist anywhere in this codebase. <see cref="_adifUdpStreamer"/>'s own
     /// `SendLoggedQsoAsync` is an equally one-shot "QSO logged" UDP datagram with no update
     /// semantics either. A future re-push feature would need real work in both of those classes
     /// first, not just a call site change here.</summary>
@@ -138,8 +138,8 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
     private static partial class Log
     {
-        [LoggerMessage(Level = LogLevel.Information, Message = "QSO logged: {Id} (GridTracker sent={GridTrackerSent}, QRZ uploaded={QrzUploaded})")]
-        public static partial void QsoLogged(ILogger logger, string id, bool gridTrackerSent, bool qrzUploaded);
+        [LoggerMessage(Level = LogLevel.Information, Message = "QSO logged: {Id} (ADIF-UDP sent={AdifUdpSentCount}/{AdifUdpEnabledCount}, QRZ uploaded={QrzUploaded})")]
+        public static partial void QsoLogged(ILogger logger, string id, int adifUdpSentCount, int adifUdpEnabledCount, bool qrzUploaded);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Exported {Count} QSO(s) to {FilePath}")]
         public static partial void AdifExported(ILogger logger, string filePath, int count);

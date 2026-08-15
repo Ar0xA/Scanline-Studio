@@ -8,16 +8,16 @@ namespace ScanlineStudio.Application;
 public interface ILogbookSessionService
 {
     /// <summary>Persists <paramref name="record"/> via <c>ILogbookRepository</c> — this always
-    /// happens and is never skipped, regardless of what follows. If GridTracker streaming and/or
+    /// happens and is never skipped, regardless of what follows. If ADIF-UDP streaming and/or
     /// QRZ.com upload are enabled in settings, both are then attempted best-effort (network
     /// failures there are logged and reported back via <see cref="LogQsoResult"/>, never thrown —
-    /// a GridTracker/QRZ outage must not prevent the QSO from being logged locally). No retry
+    /// an ADIF-UDP/QRZ outage must not prevent the QSO from being logged locally). No retry
     /// queue: a failed push is surfaced once, not automatically retried.</summary>
     Task<LogQsoResult> LogQsoAsync(QsoRecord record, CancellationToken ct = default);
 
     Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default);
 
-    /// <summary>Edits an already-logged QSO in place. Deliberately does NOT re-push to GridTracker
+    /// <summary>Edits an already-logged QSO in place. Deliberately does NOT re-push via ADIF-UDP
     /// or QRZ the way <see cref="LogQsoAsync"/> does -- see the implementation's own doc comment for
     /// why (QRZ's real upload API is INSERT-only; a re-push would file as a duplicate, not an
     /// update).</summary>
