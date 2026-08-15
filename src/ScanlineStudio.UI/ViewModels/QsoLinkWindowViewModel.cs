@@ -52,7 +52,7 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
     /// call succeeds -- guards <see cref="CanCreateAndLink"/> against a second click after a
     /// subsequent <see cref="IReceiveHistoryStore.SetLinkedQsoIdAsync"/> failure. Without this, a
     /// user reading "the frame could no longer be linked" (which reads like nothing was saved) would
-    /// naturally retry, creating a SECOND <see cref="QsoRecord"/> and pushing it to GridTracker/QRZ
+    /// naturally retry, creating a SECOND <see cref="QsoRecord"/> and pushing it to ADIF-UDP/QRZ
     /// a second time -- the QSO from the first click is already real and already logged by the time
     /// that failure can happen.</summary>
     private string? _createdQsoId;
@@ -217,7 +217,7 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
     /// must exist before anything can reference it): once <see cref="ILogbookSessionService.LogQsoAsync"/>
     /// succeeds, <see cref="_createdQsoId"/> is set and <see cref="CreateAndLinkCommand"/> is
     /// permanently disabled for this dialog instance BEFORE attempting the link write -- a QSO that
-    /// already exists and was already pushed to GridTracker/QRZ (if enabled) must never be logged a
+    /// already exists and was already pushed to ADIF-UDP/QRZ (if enabled) must never be logged a
     /// second time just because the entry-side link happened to fail afterward.</summary>
     [RelayCommand(CanExecute = nameof(CanCreateAndLink))]
     private async Task CreateAndLinkAsync()
@@ -268,7 +268,7 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
                 return;
             }
 
-            Log.QsoLogged(_logger, result.Record.Id, result.GridTrackerSent, result.QrzUploaded, result.QrzError);
+            Log.QsoLogged(_logger, result.Record.Id, result.AdifUdpSentCount, result.AdifUdpEnabledCount, result.QrzUploaded, result.QrzError);
 
             // Set BEFORE attempting the link write below -- see this method's own doc comment.
             _createdQsoId = result.Record.Id;
@@ -284,7 +284,7 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
                 // Code-review fix: this used to share LinkSelectedAsync's own QsoLink.Error.LinkFailed
                 // ("Could not link this frame to the QSO") -- misleading here specifically, same
                 // reasoning as the !linked branch below: the QSO record already exists and was already
-                // pushed to GridTracker/QRZ by this point, an exception here isn't "nothing happened."
+                // pushed to ADIF-UDP/QRZ by this point, an exception here isn't "nothing happened."
                 Log.LinkFailed(_logger, _entry.Id, result.Record.Id, ex);
                 ErrorMessage = _localization.GetString("QsoLink.Error.LoggedButLinkFailed");
                 return;
@@ -341,7 +341,7 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Warning, Message = "LogQsoAsync failed while creating a QSO from a Gallery frame")]
         public static partial void CreateFailed(ILogger logger, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "QSO {QsoId} logged: gridTrackerSent={GridTrackerSent}, qrzUploaded={QrzUploaded}, qrzError={QrzError}")]
-        public static partial void QsoLogged(ILogger logger, string qsoId, bool gridTrackerSent, bool qrzUploaded, string? qrzError);
+        [LoggerMessage(Level = LogLevel.Debug, Message = "QSO {QsoId} logged: adifUdpSent={AdifUdpSentCount}/{AdifUdpEnabledCount}, qrzUploaded={QrzUploaded}, qrzError={QrzError}")]
+        public static partial void QsoLogged(ILogger logger, string qsoId, int adifUdpSentCount, int adifUdpEnabledCount, bool qrzUploaded, string? qrzError);
     }
 }

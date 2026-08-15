@@ -12,7 +12,7 @@ public sealed class LogbookSessionServiceTests
 
     private static LogbookSessionService CreateService(
         FakeLogbookRepository? repository = null,
-        FakeGridTrackerStreamer? gridTrackerStreamer = null,
+        FakeAdifUdpStreamer? adifUdpStreamer = null,
         FakeQrzLogbookUploader? qrzUploader = null,
         FakeQrzCallsignLookup? qrzLookup = null,
         FakeSettingsStore? settingsStore = null)
@@ -21,7 +21,7 @@ public sealed class LogbookSessionServiceTests
             repository ?? new FakeLogbookRepository(),
             new AdifExporter(),
             new AdifImporter(),
-            gridTrackerStreamer ?? new FakeGridTrackerStreamer(),
+            adifUdpStreamer ?? new FakeAdifUdpStreamer(),
             qrzUploader ?? new FakeQrzLogbookUploader(),
             qrzLookup ?? new FakeQrzCallsignLookup(),
             settingsStore ?? new FakeSettingsStore(),
@@ -29,10 +29,10 @@ public sealed class LogbookSessionServiceTests
     }
 
     [Fact]
-    public async Task LogQsoAsync_AlwaysPersists_RegardlessOfGridTrackerOrQrzOutcome()
+    public async Task LogQsoAsync_AlwaysPersists_RegardlessOfAdifUdpOrQrzOutcome()
     {
         var repository = new FakeLogbookRepository();
-        var gridTracker = new FakeGridTrackerStreamer { ReturnValue = false };
+        var adifUdp = new FakeAdifUdpStreamer { ResultToReturn = new AdifUdpSendResult(0, 1) };
         var qrz = new FakeQrzLogbookUploader { ReturnValue = new QrzUploadResult(false, null, "rejected") };
         var settingsStore = new FakeSettingsStore
         {
@@ -41,42 +41,44 @@ public sealed class LogbookSessionServiceTests
                 new QrzUploadSettings { Enabled = true, ApiKey = "key" },
                 QrzUploadSettingsJsonContext.Default.QrzUploadSettings),
         };
-        var service = CreateService(repository, gridTracker, qrz, settingsStore: settingsStore);
+        var service = CreateService(repository, adifUdp, qrz, settingsStore: settingsStore);
 
         var result = await service.LogQsoAsync(SampleRecord());
 
         Assert.Single(repository.Records);
-        Assert.False(result.GridTrackerSent);
+        Assert.Equal(0, result.AdifUdpSentCount);
+        Assert.Equal(1, result.AdifUdpEnabledCount);
         Assert.False(result.QrzUploaded);
         Assert.Equal("rejected", result.QrzError);
     }
 
     [Fact]
-    public async Task LogQsoAsync_RepositoryThrows_PropagatesAndNeverCallsGridTrackerOrQrz()
+    public async Task LogQsoAsync_RepositoryThrows_PropagatesAndNeverCallsAdifUdpOrQrz()
     {
         var repository = new FakeLogbookRepository { ThrowOnAdd = new InvalidOperationException("disk full") };
-        var gridTracker = new FakeGridTrackerStreamer();
+        var adifUdp = new FakeAdifUdpStreamer();
         var qrz = new FakeQrzLogbookUploader();
-        var service = CreateService(repository, gridTracker, qrz);
+        var service = CreateService(repository, adifUdp, qrz);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.LogQsoAsync(SampleRecord()));
 
-        Assert.Equal(0, gridTracker.CallCount);
+        Assert.Equal(0, adifUdp.CallCount);
         Assert.Equal(0, qrz.CallCount);
     }
 
     [Fact]
-    public async Task LogQsoAsync_GridTrackerStreamerIsAlwaysCalled_GatingIsInternalToTheStreamer()
+    public async Task LogQsoAsync_AdifUdpStreamerIsAlwaysCalled_GatingIsInternalToTheStreamer()
     {
-        // LogbookSessionService never reads GridTrackerStreamingSettings itself -- the real
-        // GridTrackerStreamer gates on its own Enabled setting internally and just returns false
-        // when disabled, so the session service always calls it unconditionally.
-        var gridTracker = new FakeGridTrackerStreamer { ReturnValue = false };
-        var service = CreateService(gridTrackerStreamer: gridTracker);
+        // LogbookSessionService never reads AdifUdpStreamingSettings itself -- the real
+        // AdifUdpStreamer gates per-destination on its own settings section internally and just
+        // returns a 0-sent result when nothing is enabled, so the session service always calls it
+        // unconditionally.
+        var adifUdp = new FakeAdifUdpStreamer { ResultToReturn = new AdifUdpSendResult(0, 0) };
+        var service = CreateService(adifUdpStreamer: adifUdp);
 
         await service.LogQsoAsync(SampleRecord());
 
-        Assert.Equal(1, gridTracker.CallCount);
+        Assert.Equal(1, adifUdp.CallCount);
     }
 
     [Fact]
@@ -132,7 +134,7 @@ public sealed class LogbookSessionServiceTests
     [Fact]
     public async Task LogQsoAsync_BuildsAdifTextWithStationCallsignFromOperatorSettings()
     {
-        var gridTracker = new FakeGridTrackerStreamer();
+        var adifUdp = new FakeAdifUdpStreamer();
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
@@ -140,13 +142,13 @@ public sealed class LogbookSessionServiceTests
                 new OperatorSettings { Callsign = "w1aw" },
                 OperatorSettingsJsonContext.Default.OperatorSettings),
         };
-        var service = CreateService(gridTrackerStreamer: gridTracker, settingsStore: settingsStore);
+        var service = CreateService(adifUdpStreamer: adifUdp, settingsStore: settingsStore);
 
         await service.LogQsoAsync(SampleRecord());
 
-        Assert.Contains("<STATION_CALLSIGN:4>W1AW", gridTracker.LastAdifText);
-        Assert.Contains("<CALL:6>N0CALL", gridTracker.LastAdifText);
-        Assert.Contains("<EOR>", gridTracker.LastAdifText);
+        Assert.Contains("<STATION_CALLSIGN:4>W1AW", adifUdp.LastAdifText);
+        Assert.Contains("<CALL:6>N0CALL", adifUdp.LastAdifText);
+        Assert.Contains("<EOR>", adifUdp.LastAdifText);
     }
 
     [Fact]
@@ -176,11 +178,11 @@ public sealed class LogbookSessionServiceTests
     }
 
     [Fact]
-    public async Task UpdateQsoAsync_NeverPushesToGridTrackerOrQrz()
+    public async Task UpdateQsoAsync_NeverPushesToAdifUdpOrQrz()
     {
         var repository = new FakeLogbookRepository();
         await repository.AddAsync(SampleRecord("1"));
-        var gridTracker = new FakeGridTrackerStreamer();
+        var adifUdp = new FakeAdifUdpStreamer();
         var qrz = new FakeQrzLogbookUploader();
         var settingsStore = new FakeSettingsStore
         {
@@ -189,11 +191,11 @@ public sealed class LogbookSessionServiceTests
                 new QrzUploadSettings { Enabled = true, ApiKey = "my-key" },
                 QrzUploadSettingsJsonContext.Default.QrzUploadSettings),
         };
-        var service = CreateService(repository, gridTracker, qrz, settingsStore: settingsStore);
+        var service = CreateService(repository, adifUdp, qrz, settingsStore: settingsStore);
 
         await service.UpdateQsoAsync(SampleRecord("1") with { Notes = "edited" });
 
-        Assert.Equal(0, gridTracker.CallCount);
+        Assert.Equal(0, adifUdp.CallCount);
         Assert.Equal(0, qrz.CallCount);
     }
 

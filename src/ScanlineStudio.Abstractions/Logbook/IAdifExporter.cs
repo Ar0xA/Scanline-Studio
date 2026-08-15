@@ -3,8 +3,8 @@ namespace ScanlineStudio.Abstractions.Logbook;
 /// <summary>Writes <see cref="QsoRecord"/>s as an ADIF 3.x file — see spec/08-logging.md's "ADIF
 /// import/export" section. Deliberately pure (a <see cref="TextWriter"/>, no file I/O) so the same
 /// implementation backs both the batch file-export use case and a single-QSO payload for
-/// GridTracker's <c>LoggedADIF</c> UDP message (which is itself just a complete one-record ADIF
-/// file, see <c>IGridTrackerStreamer</c>'s own doc comment).</summary>
+/// <see cref="IAdifUdpStreamer"/>'s <c>LoggedADIF</c> UDP message (which is itself just a complete
+/// one-record ADIF file, see that interface's own doc comment).</summary>
 public interface IAdifExporter
 {
     /// <param name="stationCallsign">The logging operator's own callsign (ADIF
