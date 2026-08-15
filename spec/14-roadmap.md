@@ -163,7 +163,17 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   exactly) and a logging-only subscriber in `RxImagePaneViewModel` (no new bound UI state — a
   logging fix, not a restart-UI feature). 1 round of auditor code-review found a real wording bug
   (log message/doc comments claimed the wrong dominant trigger) — fixed, not just noted.
-- Advanced tab: PLL/Zero-crossing tuning-parameter UI (backend already real, demod-type subsystem),
+- Advanced tab: PLL/Zero-crossing tuning-parameter UI — **correction 2026-08-15, this entry's own
+  "backend already real" claim was wrong, caught before starting work on it**: verified directly
+  against source (no legacy clone available in this sandbox to cross-check the DSP semantics
+  either, a separate blocker) — `PllFmDemodulator`'s constructor DOES accept `loopOrder`/
+  `loopCutoffHz`/`outputOrder`/`outputCutoffHz` with legacy-matching defaults, but
+  `AnalogFmSstvDecoder` always constructs it with ONLY `sampleRate`/low/high-Hz, never threading a
+  settings value through; `ZeroCrossingFrequencyCounter`'s constructor doesn't even accept
+  order/cutoff/smoothing params at all; `Vco` (the PLL's own VCO) has no gain parameter anywhere.
+  None of the 7 Advanced-tab PLL/Zero-crossing `NumericUpDown`s have a real value to bind to today
+  — this is genuinely unbuilt DSP-parameter-exposure work (decode-path/DSP-core, CLAUDE.md §7's
+  full 2-round-plan-review-plus-code-review tier, not a UI-wiring task), not a stub-button fix.
   TX BPF/LPF toggle (the filter already applies unconditionally — this is a bypass switch only, not
   core), Loopback/calibration wizards (fully unbuilt).
 - Auto-start (Decode tab) — real legacy behavior, needs its own scoping pass: no single choke point
@@ -242,9 +252,6 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
 - Transmit tab Queue/TX-log/Recently-sent — 100% stub, no such feature exists yet.
 - Receive tab Sync&Slant/Input-chain/Signal-quality cards — real new DSP work (no live audio-chain
   measurement exists for most of these), long-term counterpart to Tier 1's short-term grey-out.
-- `.ini` legacy settings importer + migration chain (`[[12-settings]]`) — a stated CLAUDE.md §2
-  backward-compatibility commitment ("`.ini` settings still import cleanly"), not yet built (no
-  `IniImport`/`LegacyIni` anywhere in `src/`).
 - Localization completion — remaining unlocalized views + community-translation workflow.
 - `TemplateCatProtocol` fallback (`[[03-cat-layer]]`) — still a real planned deliverable (it's the
   named example in CLAUDE.md §4's binary-is-bytes rule), zero occurrences in `src/` yet.
@@ -263,6 +270,20 @@ plugin system** entire (`IPlugin`/`PluginHost`/`IImageFilter` — none exist in 
 dedicated signal-strength meter; legacy debug "digital scope" tool); **flrig client backend** and
 **OmniRig-as-client** (`[[03-cat-layer]]`'s "maybe later, not committed" note — worth adding only if
 real post-launch user demand shows up, not a design-now item).
+
+~~`.ini` legacy settings importer + migration chain~~ — **PARKED 2026-08-15, user redirect** ("not
+important, put it on the maybe one day"). Still a stated CLAUDE.md §2 backward-compatibility
+commitment ("`.ini` settings still import cleanly"), not yet built (`[[12-settings]]` has a design
+sketch, no `IniImport`/`LegacyIni` anywhere in `src/`) — real legacy `.ini` fixtures ARE available
+locally (`yoniq-old/YONIQ-main/Mmsstv.ini` etc., confirmed present after an earlier false "no
+legacy clone in this sandbox" conclusion mid-session, see `feedback_yoniq_old_clone_location`
+memory) if this is ever picked back up. A scoping-only research pass was started (mapping the real
+file's ~50 `[Section]` headers against this port's actual settings model) but stopped mid-run at
+the user's redirect before producing a plan — no `~/.claude/plans/` file exists for this, start
+fresh if resumed. Rough size, from what was seen before stopping: the file is 1118 lines/~50
+sections, but most (window layout, recent-files lists, external "Program" launcher slots, VCL menu
+customization) have no equivalent in this port at all; the genuinely portable slice is likely
+narrow (operator callsign/name/grid, audio device, rig/CAT settings, a handful of decode toggles).
 
 **SSTVAE mode** (user-flagged 2026-08-14, `https://github.com/arodland/SSTVAE`) — a genuinely new
 category, not a legacy YONIQ/MMSSTV mode to port: a convolutional-autoencoder image codec sent as
