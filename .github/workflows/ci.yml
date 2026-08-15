@@ -36,8 +36,13 @@ jobs:
       # ("solution configuration Debug|x64 is invalid"). Override explicitly on every dotnet
       # invocation; cl.exe itself (BuildNativeShimWindows) is invoked via Exec, not MSBuild's
       # $(Platform), so it's unaffected.
+      # Configuration=Release must match the Build step below: ScanlineStudio.UI.csproj conditions
+      # the Avalonia.Diagnostics PackageReference on '$(Configuration)' == 'Debug' (DevTools must not
+      # ship in Release output) -- a Debug-defaulted restore writes project.assets.json with that
+      # package included, and --no-restore on Build then silently resolves package assets from that
+      # stale file instead of re-evaluating the condition.
       - name: Restore
-        run: dotnet restore ScanlineStudio.sln /p:Platform="Any CPU"
+        run: dotnet restore ScanlineStudio.sln /p:Platform="Any CPU" /p:Configuration=Release
 
       - name: Build (warnings as errors)
         run: dotnet build ScanlineStudio.sln --no-restore --configuration Release /p:Platform="Any CPU"
