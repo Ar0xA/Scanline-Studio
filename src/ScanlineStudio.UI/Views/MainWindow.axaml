@@ -466,7 +466,9 @@
                                 <!-- Bottom action bar: Save/Abort/Re-decode/Copy-to-TX are still
                                      literal/no-op (spec/14-roadmap.md backlog); Log QSO is real
                                      (wired 2026-08-15, see the inner comment below). Progress
-                                     bar/count are likewise literal. DockPanel (not StackPanel):
+                                     bar/count are real too (spec/18-path-to-1.0.md High item 9):
+                                     RxImage.Progress/LineProgressText, the same properties already
+                                     bound in the status bar (:1483-ish). DockPanel (not StackPanel):
                                      buttons left, count
                                      pinned far right (no "Ln" prefix - just the raw x/y count),
                                      progress bar fills the middle gap between them - matches
@@ -489,8 +491,8 @@
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.CopyToTx}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.LogQso}" Command="{Binding RxImage.LogQsoCommand}" />
                                     </StackPanel>
-                                    <TextBlock DockPanel.Dock="Right" Classes="IndustryRowValue" VerticalAlignment="Center" Margin="12,0,0,0" Text="{loc:Translate Panes.RxImage.FrameLineCount}" />
-                                    <ProgressBar Classes="Industry" VerticalAlignment="Center" Margin="12,0,0,0" Minimum="0" Maximum="100" Value="0" />
+                                    <TextBlock DockPanel.Dock="Right" Classes="IndustryRowValue" VerticalAlignment="Center" Margin="12,0,0,0" Text="{Binding RxImage.LineProgressText}" />
+                                    <ProgressBar Classes="Industry" VerticalAlignment="Center" Margin="12,0,0,0" Minimum="0" Maximum="1" Value="{Binding RxImage.Progress, TargetNullValue=0}" />
                                 </DockPanel>
                                 <!-- Previous-frames strip relocated here from its own right-column
                                      card, matching mock2's own placement (inside the Incoming-frame

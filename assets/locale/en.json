@@ -93,7 +93,6 @@
   "Panes.RxImage.ModeOverride.Help": "The decoder always auto-detects mode from the VIS header. There is no persistent mode lock -- use a quick-mode button below to force the next decode into a specific mode.",
   "Panes.RxImage.LockedMode.Help": "No persistent mode lock exists -- use a quick-mode button below to force the next decode into a specific mode.",
   "Panes.RxImage.CardHeader": "INCOMING FRAME",
-  "Panes.RxImage.FrameLineCount": "—",
   "Panes.RxImage.SaveFrame": "Save frame",
   "Panes.RxImage.Abort": "Abort",
   "Panes.RxImage.RedecodeAction": "Re-decode",
