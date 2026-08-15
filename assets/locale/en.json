@@ -27,6 +27,8 @@
   "MainWindow.StatusBar.Rx": "Receiving",
   "MainWindow.StatusBar.TxInhibit": "TX INHIBIT",
   "MainWindow.StatusBar.TxInhibit.Help": "Lit when the last transmit attempt ended in an error or an automatic SWR cutoff -- does not persistently block a new Transmit.",
+  "MainWindow.StatusBar.TxKeyed": "TX KEYED",
+  "MainWindow.StatusBar.TxKeyed.Help": "Live PTT state read back from the connected rig. Requires a CAT link and a rig that reports PTT state (not all VOX/DTR-keyed rigs do) -- without both, this can't confirm whether the rig is actually keyed.",
   "MainWindow.StatusBar.MemoryTag": "—",
   "MainWindow.StatusBar.LineProgressValueFormat": "line {0} / {1}",
   "MainWindow.StatusBar.LineProgressValueNoLock": "line — / —",

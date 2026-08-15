@@ -1469,6 +1469,18 @@
                             <TextBlock Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
+                    <!-- spec/18-path-to-1.0.md High item 10: live PTT/keyed readback from the
+                         connected rig (RadioStatus.IsKeyed: RadioState.IsTransmitting, cleared
+                         on CAT loss, see that property's own doc comment). Red "Transmitting" row
+                         (mockups/colors/SSTV-Color-Scheme.md), distinct from the amber TX-INHIBIT
+                         chip just above (.dangerTint/.alert, not .attentionTint/.attention). -->
+                    <Border Classes="Industry IndustryStatus" Classes.dangerTint="{Binding RadioStatus.IsKeyed}"
+                            ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxKeyed.Help}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Rectangle Classes="Industry IndustryLed" Classes.alert="{Binding RadioStatus.IsKeyed}" VerticalAlignment="Center" />
+                            <TextBlock Text="{loc:Translate MainWindow.StatusBar.TxKeyed}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RadioStatus.FrequencyDisplay}" />
                     </Border>
