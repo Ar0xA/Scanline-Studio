@@ -130,11 +130,14 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   any future manual-redraw UI trigger** — a real precondition on a not-yet-built feature); the two
   items below (Correct Slant's own missing UI trigger, and the logging-coverage audit) surfaced
   during Phase 9's own real-window verification.
-- **"Correct Slant" UI trigger** (2026-08-15) — `ISstvDecoder.RequestCorrectSlant()` (RX buffer
-  Phase 8, shipped) has no real UI caller anywhere in this port yet; legacy's own trigger is a
-  toolbar button/popup-menu item (`KRCS`, `Main.cpp`), matching manual ReSync's own already-real
-  trigger. Same shape as `RequestReSync()`'s own existing UI wiring (find and mirror that call site)
-  — a small, mechanical addition once located, not a new design question.
+- ~~**"Correct Slant" UI trigger"**~~ — **DONE, 2026-08-15.** A sibling "Correct slant" button next
+  to the existing Re-sync button (`MainWindow.axaml`), wired through `ISstvSessionService`/
+  `SstvSessionService` (new `[LoggerMessage]` log line included) to `RequestCorrectSlant()`. Verified
+  against legacy source (`KRCS`/`Main.dfm`'s `PopupR` popup menu, same menu as `KRFS`) that this is a
+  genuinely different control from the still-unresolved "Reset" button in the same row (deliberately
+  left untouched — `spec/17-rx-telemetry-feasibility.md`'s own warning). Real-window verified,
+  including catching a real column-width truncation bug before it shipped. 1 round of code-review
+  (GO), pushed as `3d4d151`.
 - **Audit INFO/DEBUG logging coverage across the app** (2026-08-15, user request) — `docs/logging-guidelines.md`'s
   mandatory `[LoggerMessage]` pattern is in place project-wide (`project_logging_infrastructure`
   memory), but its actual COVERAGE has never been swept end-to-end: confirm the right log lines
