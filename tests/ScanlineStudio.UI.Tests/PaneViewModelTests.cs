@@ -62,7 +62,7 @@ public sealed class PaneViewModelTests
     public void WaterfallPaneViewModel_PushedFrame_UpdatesLatestFrameOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession);
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
         var frame = new WaterfallFrame([0f, 1f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
 
         ((FakeWaterfallSource)sstvSession.Waterfall).Emit(frame);
@@ -80,7 +80,7 @@ public sealed class PaneViewModelTests
         // thread. Same Dispatcher.UIThread.Post-then-RunJobs pattern as OnFrame's own test above
         // proves the marshaling actually happens.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession);
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
         Assert.Null(vm.CurrentMode);
 
         var mode = new SstvModeDefinition(
@@ -96,7 +96,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void WaterfallPaneViewModel_ViewMode_DefaultsToBoth()
     {
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
 
         Assert.Equal(WaterfallViewMode.Both, vm.ViewMode);
         Assert.True(vm.IsViewBoth);
@@ -107,7 +107,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void WaterfallPaneViewModel_SettingIsViewSpectrumOnly_UpdatesViewModeAndTheOtherComputedBools()
     {
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
 
         vm.IsViewSpectrumOnly = true;
 
@@ -120,7 +120,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void WaterfallPaneViewModel_SettingIsViewWaterfallOnly_UpdatesViewModeAndTheOtherComputedBools()
     {
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
 
         vm.IsViewWaterfallOnly = true;
 
@@ -133,12 +133,44 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void WaterfallPaneViewModel_StartHzSpanHzPeakHoldEnabled_HaveTheDocumentedDefaults()
     {
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
 
         Assert.Equal(1000.0, vm.StartHz);
         Assert.Equal(1600.0, vm.SpanHz);
         Assert.False(vm.PeakHoldEnabled);
         Assert.Equal(0.0, vm.BinsPerPixel);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_RangeCaptionDisplay_ReflectsStartHzAndSpanHz_NotAStaleLiteral()
+    {
+        // spec/18-path-to-1.0.md Medium item 2: the caption used to be a static localized string
+        // ("1000…2600 Hz") that silently lied the moment Start/Span were touched -- this confirms
+        // the caller passes the CURRENT, live Start/end (not Span itself) as the format arguments,
+        // and that changing EITHER property raises PropertyChanged for RangeCaptionDisplay (code-
+        // review finding: re-reading the property alone would pass even with zero
+        // [NotifyPropertyChangedFor] attributes -- only a real PropertyChanged subscription proves
+        // the binding would actually refresh).
+        var localization = new FakeLocalizationService();
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization);
+
+        _ = vm.RangeCaptionDisplay;
+        Assert.Equal("Panes.Waterfall.RangeCaptionFormat", localization.LastKey);
+        Assert.Equal([1000.0, 2600.0], localization.LastArgs);
+
+        var raisedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
+
+        vm.StartHz = 700.0;
+        Assert.Contains(nameof(WaterfallPaneViewModel.RangeCaptionDisplay), raisedProperties);
+        raisedProperties.Clear();
+
+        vm.SpanHz = 2000.0;
+        Assert.Contains(nameof(WaterfallPaneViewModel.RangeCaptionDisplay), raisedProperties);
+
+        _ = vm.RangeCaptionDisplay;
+
+        Assert.Equal([700.0, 2700.0], localization.LastArgs);
     }
 
     [AvaloniaFact]
