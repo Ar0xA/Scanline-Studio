@@ -4,10 +4,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Localization;
+using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Radio;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
@@ -1017,5 +1019,164 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(stationId!.NrRstEnabled);
         Assert.Equal("599123", stationId.NrRstText);
         Assert.True(stationId.FskIdTxEnabled);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_LoadsPersistedAdifUdpDestinations()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AdifUdpStreamingSettings.SectionKey,
+                new AdifUdpStreamingSettings
+                {
+                    Destinations =
+                    [
+                        new AdifUdpDestination { Enabled = true, Name = "GridTracker", Host = "127.0.0.1", Port = 2237 },
+                        new AdifUdpDestination { Enabled = false, Name = "N1MM", Host = "192.168.1.50", Port = 2333 },
+                    ],
+                    ClientId = "TestClient",
+                },
+                AdifUdpStreamingSettingsJsonContext.Default.AdifUdpStreamingSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, vm.AdifUdpDestinations.Count);
+        Assert.True(vm.AdifUdpDestinations[0].Enabled);
+        Assert.Equal("GridTracker", vm.AdifUdpDestinations[0].Name);
+        Assert.Equal("127.0.0.1", vm.AdifUdpDestinations[0].Host);
+        Assert.Equal(2237, vm.AdifUdpDestinations[0].Port);
+        Assert.False(vm.AdifUdpDestinations[1].Enabled);
+        Assert.Equal("N1MM", vm.AdifUdpDestinations[1].Name);
+    }
+
+    /// <summary>The dialog must show exactly what <c>AdifUdpStreamer</c> will actually send --
+    /// see <c>AdifUdpStreamingSettings.MigrateIfNeeded</c>'s own doc comment. An upgrading user's
+    /// already-working legacy GridTracker config must appear here as a real, visible destination
+    /// row, not silently show an empty list while forwarding keeps happening underneath.</summary>
+    [AvaloniaFact]
+    public void Constructor_NoNewSectionButLegacyGridTrackerEnabled_MigratesOneDestinationRow()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                LegacyGridTrackerStreamingSettings.SectionKey,
+                new LegacyGridTrackerStreamingSettings { Enabled = true, Host = "192.168.1.99", Port = 9999 },
+                AdifUdpStreamingSettingsJsonContext.Default.LegacyGridTrackerStreamingSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        var destination = Assert.Single(vm.AdifUdpDestinations);
+        Assert.True(destination.Enabled);
+        Assert.Equal("GridTracker", destination.Name);
+        Assert.Equal("192.168.1.99", destination.Host);
+        Assert.Equal(9999, destination.Port);
+    }
+
+    [AvaloniaFact]
+    public void AddAdifUdpDestinationCommand_AppendsABlankRowWithAWorkingRemoveCommand()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Empty(vm.AdifUdpDestinations);
+
+        vm.AddAdifUdpDestinationCommand.Execute(null);
+
+        var row = Assert.Single(vm.AdifUdpDestinations);
+        Assert.False(row.Enabled);
+        Assert.Null(row.Name);
+        Assert.NotNull(row.RemoveCommand);
+
+        row.RemoveCommand!.Execute(row);
+        Assert.Empty(vm.AdifUdpDestinations);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_PersistsAdifUdpDestinations_AndPreservesClientIdWithNoDialogControl()
+    {
+        // ClientId has no dialog control (same "preserve previous" contract as
+        // SstvDecoderSettings.AfcEnabled / StationIdSettings.NrRstEnabled above) -- a naive
+        // full-section overwrite on Save would silently null a hand-set ClientId.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AdifUdpStreamingSettings.SectionKey,
+                new AdifUdpStreamingSettings { Destinations = [], ClientId = "MyClientId" },
+                AdifUdpStreamingSettingsJsonContext.Default.AdifUdpStreamingSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.AddAdifUdpDestinationCommand.Execute(null);
+        vm.AdifUdpDestinations[0].Enabled = true;
+        vm.AdifUdpDestinations[0].Name = "GridTracker";
+        vm.AdifUdpDestinations[0].Host = "127.0.0.1";
+        vm.AdifUdpDestinations[0].Port = 2237;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var saved = settingsStore.Settings.GetSection(AdifUdpStreamingSettings.SectionKey, AdifUdpStreamingSettingsJsonContext.Default.AdifUdpStreamingSettings);
+        Assert.NotNull(saved);
+        Assert.Equal("MyClientId", saved!.ClientId); // preserved, not wiped
+        var destination = Assert.Single(saved.Destinations!);
+        Assert.True(destination.Enabled);
+        Assert.Equal("GridTracker", destination.Name);
+        Assert.Equal("127.0.0.1", destination.Host);
+        Assert.Equal(2237, destination.Port);
+    }
+
+    /// <summary>Auditor code-review finding: the test above seeds the NEW section directly, so
+    /// `previousAdifUdp` resolves through `MigrateIfNeeded`'s `ContainsKey` branch -- a naive
+    /// `GetSection(...) ?? new AdifUdpStreamingSettings()` would pass that test identically. This is
+    /// the actual scenario `OptionsSettingsService.SaveAsync`'s own doc comment justifies itself
+    /// with: only a LEGACY GridTracker section exists on disk, the user opens the dialog and hits
+    /// Save WITHOUT touching the Forwarding tab at all -- the migrated ClientId/destination must
+    /// still be what gets persisted, not silently dropped back to an empty section.</summary>
+    [AvaloniaFact]
+    public async Task SaveCommand_OnlyLegacyGridTrackerSectionOnDisk_SaveWithNoEditsPersistsTheMigratedConfig()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                LegacyGridTrackerStreamingSettings.SectionKey,
+                new LegacyGridTrackerStreamingSettings { Enabled = true, Host = "192.168.1.99", Port = 9999, ClientId = "Legacy" },
+                AdifUdpStreamingSettingsJsonContext.Default.LegacyGridTrackerStreamingSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Single(vm.AdifUdpDestinations); // migration already visible in the dialog before any edit
+
+        await vm.SaveCommand.ExecuteAsync(null); // no edits to the Forwarding tab at all
+
+        var saved = settingsStore.Settings.GetSection(AdifUdpStreamingSettings.SectionKey, AdifUdpStreamingSettingsJsonContext.Default.AdifUdpStreamingSettings);
+        Assert.NotNull(saved);
+        Assert.Equal("Legacy", saved!.ClientId);
+        var destination = Assert.Single(saved.Destinations!);
+        Assert.True(destination.Enabled);
+        Assert.Equal("GridTracker", destination.Name);
+        Assert.Equal("192.168.1.99", destination.Host);
+        Assert.Equal(9999, destination.Port);
+    }
+
+    [AvaloniaFact]
+    public void ResetForwardingToDefaultCommand_ClearsAllDestinationRows()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AdifUdpStreamingSettings.SectionKey,
+                new AdifUdpStreamingSettings { Destinations = [new AdifUdpDestination { Enabled = true, Name = "X", Host = "127.0.0.1", Port = 1234 }] },
+                AdifUdpStreamingSettingsJsonContext.Default.AdifUdpStreamingSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Single(vm.AdifUdpDestinations);
+
+        vm.ResetForwardingToDefaultCommand.Execute(null);
+
+        Assert.Empty(vm.AdifUdpDestinations);
     }
 }
