@@ -804,6 +804,47 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_QuickSelectMode_WhileReceiving_CallsForceMode()
+    {
+        // spec/18-path-to-1.0.md High item 7.
+        var mode = TestMode;
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [mode], IsReceiving = true };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.QuickSelectModeCommand.Execute(mode.Id);
+
+        Assert.Equal(1, sstvSession.ForceModeCallCount);
+        Assert.Equal(mode.Id, sstvSession.LastForcedMode?.Id);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_QuickSelectMode_WhileNotReceiving_IsASafeNoOp()
+    {
+        // Deliberate simplification (plan-review decision, not an oversight): ForceMode's own
+        // request is deferred until whatever PushSamples call happens next, which while not
+        // receiving could be an arbitrarily-later moment -- gated in the body rather than letting a
+        // click silently queue a surprise for later.
+        var mode = TestMode;
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [mode], IsReceiving = false };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.QuickSelectModeCommand.Execute(mode.Id);
+
+        Assert.Equal(0, sstvSession.ForceModeCallCount);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_QuickSelectMode_UnknownModeId_IsASafeNoOp()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], IsReceiving = true };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.QuickSelectModeCommand.Execute("no-such-mode");
+
+        Assert.Equal(0, sstvSession.ForceModeCallCount);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_SyncToneDisplay_MeasuredIsNominalMinusCorrectionMinusCalibrationOffset()
     {
         // Regression test for two real bugs an auditor round caught before this shipped:
@@ -1325,6 +1366,71 @@ public sealed class PaneViewModelTests
 
         Assert.False(vm.IsEditorOpen);
         Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeB));
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_QuickSelectMode_SetsSelectedMode()
+    {
+        // spec/18-path-to-1.0.md High item 7.
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        vm.SelectedMode = modeA;
+
+        vm.QuickSelectModeCommand.Execute("other");
+
+        Assert.Equal("other", vm.SelectedMode?.Id);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_QuickSelectMode_UnknownModeId_IsASafeNoOp()
+    {
+        var modeA = TestMode;
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        vm.SelectedMode = modeA;
+
+        vm.QuickSelectModeCommand.Execute("no-such-mode");
+
+        Assert.Equal("test", vm.SelectedMode?.Id);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_EditorOpen_DisablesTheQuickSelectModeCommand()
+    {
+        // Mirrors TxControlsPaneViewModel_EditorOpen_DisablesTheFavoriteModeCommand above --
+        // QuickSelectMode is a separate command with its own CanExecute/body-level guard, not a
+        // wrapper around SelectFavoriteMode, so this session's own High item 2 fix needs its own
+        // regression coverage here, not an inherited assumption.
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        Assert.True(vm.QuickSelectModeCommand.CanExecute("other"));
+
+        var canExecuteChangedCount = 0;
+        vm.QuickSelectModeCommand.CanExecuteChanged += (_, _) => canExecuteChangedCount++;
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+
+        Assert.True(vm.IsEditorOpen);
+        Assert.False(vm.QuickSelectModeCommand.CanExecute("other"));
+        Assert.True(canExecuteChangedCount > 0);
+
+        // Also exercises QuickSelectMode's own body-level IsEditorOpen guard directly, the same
+        // way SelectFavoriteMode's own sibling test does (CanExecute isn't a hard gate --
+        // RelayCommand<T>.Execute doesn't consult it, only Avalonia's Button.OnClick does).
+        vm.QuickSelectModeCommand.Execute("other");
+        Assert.Equal("test", vm.SelectedMode?.Id);
+
+        editor.CancelCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsEditorOpen);
+        Assert.True(vm.QuickSelectModeCommand.CanExecute("other"));
     }
 
     [AvaloniaFact]

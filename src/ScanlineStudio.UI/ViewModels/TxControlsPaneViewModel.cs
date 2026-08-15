@@ -609,10 +609,46 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         SelectedMode = mode;
     }
 
-    /// <summary>Keeps the favorite-mode buttons' enabled state in sync with <see cref="IsEditorOpen"/>
-    /// -- <see cref="CanSelectFavoriteMode"/> alone only re-evaluates when something explicitly
-    /// requests it.</summary>
-    partial void OnIsEditorOpenChanged(bool value) => SelectFavoriteModeCommand.NotifyCanExecuteChanged();
+    private bool CanQuickSelectMode() => !IsEditorOpen;
+
+    /// <summary>Backs the fixed 16-pill quick-mode grid (spec/18-path-to-1.0.md High item 7) --
+    /// distinct from <see cref="SelectFavoriteMode"/> above (the user-configurable Favorites row);
+    /// the roadmap's own plan-review explicitly calls for wiring both, even though they do the
+    /// same thing to <see cref="SelectedMode"/>, since the fixed grid is what the mockup shows.
+    /// Mirrors <see cref="SelectFavoriteMode"/>'s own triple guard exactly, for the identical
+    /// reason: <c>CanExecute</c> alone isn't a hard gate for a direct <c>Execute()</c> call, only
+    /// <c>Button.OnClick</c> consults it -- this body-level check is the real backstop. A
+    /// <paramref name="modeId"/> with no matching entry in <see cref="AvailableModes"/> logs a
+    /// warning and no-ops (mistyped XAML <c>CommandParameter</c> defense, matching this file's
+    /// existing style).</summary>
+    [RelayCommand(CanExecute = nameof(CanQuickSelectMode))]
+    private void QuickSelectMode(string modeId)
+    {
+        if (IsEditorOpen)
+        {
+            return;
+        }
+
+        var mode = AvailableModes.FirstOrDefault(m => m.Id == modeId);
+        if (mode is null)
+        {
+            Log.QuickSelectModeUnknownId(_logger, modeId);
+            return;
+        }
+
+        Log.QuickSelectModeInvoked(_logger, modeId);
+        SelectedMode = mode;
+    }
+
+    /// <summary>Keeps the favorite-mode AND quick-mode-grid buttons' enabled state in sync with
+    /// <see cref="IsEditorOpen"/> -- <see cref="CanSelectFavoriteMode"/>/
+    /// <see cref="CanQuickSelectMode"/> alone only re-evaluate when something explicitly requests
+    /// it.</summary>
+    partial void OnIsEditorOpenChanged(bool value)
+    {
+        SelectFavoriteModeCommand.NotifyCanExecuteChanged();
+        QuickSelectModeCommand.NotifyCanExecuteChanged();
+    }
 
     [RelayCommand]
     private async Task RefreshStockLibraryAsync()
@@ -909,6 +945,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SelectFavoriteMode invoked: {ModeId}")]
         public static partial void SelectFavoriteModeInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "QuickSelectMode invoked: {ModeId}")]
+        public static partial void QuickSelectModeInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QuickSelectMode pressed for unknown mode id {ModeId} -- no matching AvailableModes entry")]
+        public static partial void QuickSelectModeUnknownId(ILogger logger, string modeId);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "RefreshStockLibrary invoked")]
         public static partial void RefreshStockLibraryInvoked(ILogger logger);
