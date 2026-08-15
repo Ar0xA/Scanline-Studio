@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Reactive.Subjects;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
@@ -135,6 +136,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public event Action<SstvModeDefinition>? ModeDetected;
 
+    public event Action<SstvModeDefinition>? DecodeRestarted;
+
     public event Action<FskStationIdDecodedInfo>? StationIdDecoded;
 
     public string? OperatorCallsign { get; set; }
@@ -267,6 +270,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     public void RaiseModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
+
+    public void RaiseDecodeRestarted(SstvModeDefinition mode) => DecodeRestarted?.Invoke(mode);
 
     public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
 
@@ -722,5 +727,27 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
         }
 
         return Task.FromResult(TestQrzLookupResultToReturn);
+    }
+}
+
+/// <summary>Captures log entries for assertion, matching the hand-rolled `Fake*` test-double
+/// convention already established for this project (no mocking library is used anywhere in this
+/// codebase) -- same shape as `ScanlineStudio.Core.Localization.Tests.FakeLogger&lt;T&gt;`.</summary>
+internal sealed class FakeLogger<T> : ILogger<T>
+{
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter)
+    {
+        Entries.Add((logLevel, formatter(state, exception)));
     }
 }

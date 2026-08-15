@@ -82,9 +82,11 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// not fixed): Auto Stop's erratic/weak-signal abandonment fires <c>DecodeRestarted</c> with NO
     /// follow-up <see cref="ModeDetected"/>, so <see cref="IReceivedImageBuffer"/> blanks
     /// <c>Current</c>/<c>Progress</c> but this stays pinned to the abandoned image's start time --
-    /// a blank image next to a live-looking "Started" readout. <c>ISstvSessionService</c> doesn't
-    /// expose <c>DecodeRestarted</c> at all today, so clearing this on that path would need new API
-    /// surface; not worth adding for this one edge case.</summary>
+    /// a blank image next to a live-looking "Started" readout. <see cref="ISstvSessionService.DecodeRestarted"/>
+    /// is now exposed (2026-08-15, logging-coverage audit) and this VM already subscribes to it
+    /// (see <see cref="OnDecodeRestarted"/>) -- but that subscriber is logging-only by deliberate
+    /// scope decision (a logging-coverage fix, not a UI-behavior fix), so this edge case is still not
+    /// wired up; not worth folding into that pass for one edge case.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(StartedDisplay))]
     private DateTimeOffset? _startedAt;
@@ -249,6 +251,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _receivedImage.Updated += OnUpdated;
         _receivedImage.Saved += OnSaved;
         sstvSession.ModeDetected += OnModeDetected;
+        sstvSession.DecodeRestarted += OnDecodeRestarted;
         sstvSession.StationIdDecoded += OnStationIdDecoded;
 
         _telemetryTimer = new DispatcherTimer(TelemetryPollInterval, DispatcherPriority.Background, (_, _) => PollTelemetry());
@@ -495,6 +498,16 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             FileSizeBytes = null;
         });
     }
+
+    /// <summary>Logging-only subscriber (logging-coverage audit, 2026-08-15) -- picked as the
+    /// canonical place to trace <see cref="ISstvSessionService.DecodeRestarted"/> for the same
+    /// reason this VM already owns <see cref="OnModeDetected"/>. Deliberately does NOT touch any
+    /// bound state here: this closes the "no reachable UI-layer subscriber" debugging gap the audit
+    /// found (`ReceiveHistoryRecorder` already has its own, separate Core.Logbook-side subscriber
+    /// for the >=65%-complete-abandoned-image case), it does not add new user-visible restart UI
+    /// (out of scope for a logging fix). <paramref name="mode"/> is the *abandoned* mode, per the
+    /// underlying event's own doc comment -- not the mode about to be detected next.</summary>
+    private void OnDecodeRestarted(SstvModeDefinition mode) => Log.DecodeRestarted(_logger, mode.Id);
 
     /// <summary>CW-ID/FSK station-ID subsystem Phase 5: auto-fill wiring for a decoded FSK station-ID
     /// (<see cref="ISstvSessionService.StationIdDecoded"/>). Fires on the decode thread -- per that
@@ -753,6 +766,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Mode detected: {ModeId}")]
         public static partial void ModeDetected(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Decode restarted, abandoning mode {AbandonedModeId} (new sync lock found mid-reception, forced mode, or Auto-Stop)")]
+        public static partial void DecodeRestarted(ILogger logger, string abandonedModeId);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the just-saved RX image's file size failed")]
         public static partial void ReadSavedFileSizeFailed(ILogger logger, Exception ex);
