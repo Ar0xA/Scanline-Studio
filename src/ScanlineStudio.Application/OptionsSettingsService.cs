@@ -89,7 +89,10 @@ public sealed partial class OptionsSettingsService
         CwWpm: new StationIdSettings().CwWpm ?? StationIdSettings.DefaultCwWpm,
         CwToneFrequencyHz: new StationIdSettings().CwToneFrequencyHz ?? StationIdSettings.DefaultCwToneFrequencyHz,
         FskIdTxEnabled: new StationIdSettings().FskIdTxEnabled,
-        FskIdRxEnabled: new StationIdSettings().FskIdRxEnabled);
+        FskIdRxEnabled: new StationIdSettings().FskIdRxEnabled,
+        // Immutable empty, never a shared mutable List<T> -- this property is static, so a mutable
+        // default would be a single shared instance every caller could accidentally mutate.
+        AdifUdpDestinations: []);
 
     public async Task<OptionsSnapshot> LoadAsync(CancellationToken ct = default)
     {
@@ -103,6 +106,10 @@ public sealed partial class OptionsSettingsService
         var qrzLookup = _loadedSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
         var appPerformance = _loadedSettings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings) ?? new AppPerformanceSettings();
         var stationId = _loadedSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
+        // MigrateIfNeeded (not a plain GetSection) so this dialog shows exactly what
+        // AdifUdpStreamer.SendLoggedQsoAsync will actually send -- an upgrading user's already-
+        // working legacy GridTracker config must appear here, not read back as an empty list.
+        var adifUdp = AdifUdpStreamingSettings.MigrateIfNeeded(_loadedSettings);
 
         return new OptionsSnapshot(
             CultureCode: localization.CultureCode,
@@ -138,7 +145,8 @@ public sealed partial class OptionsSettingsService
             CwWpm: stationId.CwWpm ?? StationIdSettings.DefaultCwWpm,
             CwToneFrequencyHz: stationId.CwToneFrequencyHz ?? StationIdSettings.DefaultCwToneFrequencyHz,
             FskIdTxEnabled: stationId.FskIdTxEnabled,
-            FskIdRxEnabled: stationId.FskIdRxEnabled);
+            FskIdRxEnabled: stationId.FskIdRxEnabled,
+            AdifUdpDestinations: adifUdp.Destinations ?? []);
     }
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
@@ -147,6 +155,12 @@ public sealed partial class OptionsSettingsService
         var previousRadio = _loadedSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
         var previousDecoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
         var previousStationId = _loadedSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
+        // MigrateIfNeeded (not a plain GetSection ?? new X()) -- same reasoning as LoadAsync above:
+        // a user who opens the dialog and immediately hits Save, with only a legacy GridTracker
+        // section on disk, must persist the MIGRATED ClientId/destination, not silently drop it back
+        // to an empty AdifUdpStreamingSettings just because the new section was never explicitly
+        // read through this exact call before.
+        var previousAdifUdp = AdifUdpStreamingSettings.MigrateIfNeeded(_loadedSettings);
 
         var settings = _loadedSettings
             .WithSection(LocalizationSettings.SectionKey, new LocalizationSettings { CultureCode = snapshot.CultureCode }, LocalizationSettingsJsonContext.Default.LocalizationSettings)
@@ -235,7 +249,13 @@ public sealed partial class OptionsSettingsService
                     FskIdTxEnabled = snapshot.FskIdTxEnabled,
                     FskIdRxEnabled = snapshot.FskIdRxEnabled,
                 },
-                StationIdSettingsJsonContext.Default.StationIdSettings);
+                StationIdSettingsJsonContext.Default.StationIdSettings)
+            .WithSection(
+                AdifUdpStreamingSettings.SectionKey,
+                // ClientId is preserved as-is -- same reasoning as AfcEnabled/NrRstEnabled above,
+                // this dialog has no control for it (see OptionsSnapshot's own doc comment).
+                previousAdifUdp with { Destinations = snapshot.AdifUdpDestinations },
+                AdifUdpStreamingSettingsJsonContext.Default.AdifUdpStreamingSettings);
 
         await _settingsStore.SaveAsync(settings, ct).ConfigureAwait(false);
         _loadedSettings = settings;

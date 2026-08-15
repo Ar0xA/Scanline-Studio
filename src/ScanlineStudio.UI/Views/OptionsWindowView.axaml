@@ -21,10 +21,10 @@
          IndustryMiniRadioTheme inside a WrapPanel (not a plain horizontal StackPanel), so a narrow
          resize wraps chips to a new line instead of clipping them; same WrapPanel-plus-per-item-
          margin idiom this file's own color-swatch row already used before this port. Window
-         Width/MinWidth were widened from the old 640/480 - 7 tab headers (incl. "Radio / CAT" and
-         "Identification") plus the Advanced tab's 4-column stepper grid made the old floor a real
-         clipping risk; verify via a real-window screenshot at both default size and the MinWidth
-         floor, not assumed safe from arithmetic alone. -->
+         Width/MinWidth were widened from the old 640/480 - 9 tab headers (as of the Forwarding tab,
+         2026-08-15; incl. "Radio / CAT" and "Identification") plus the Advanced tab's 4-column
+         stepper grid made the old floor a real clipping risk; verify via a real-window screenshot at
+         both default size and the MinWidth floor, not assumed safe from arithmetic alone. -->
 
     <Border Background="{StaticResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
@@ -616,6 +616,90 @@
                             </HeaderedContentControl>
 
                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetQrzToDefaultCommand}" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <TabItem Classes="Industry" Header="{loc:Translate Options.Forwarding.Tab}">
+                    <ScrollViewer>
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Forwarding.Header}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Forwarding.Description}" TextWrapping="Wrap" />
+
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Forwarding.EmptyHint}"
+                                               IsVisible="{Binding !AdifUdpDestinations.Count}" />
+
+                                    <!-- Column-header captions: the Port NumericUpDown's own Watermark doesn't
+                                         visibly render in this theme (real-window-verified: no other
+                                         NumericUpDown in this codebase relies on Watermark either, they all
+                                         use an adjacent label like this instead), so a static header row
+                                         above the whole list is the fix, not a per-row hack.
+
+                                         Alignment (auditor code-review finding, round 1: an earlier version
+                                         of this header used bare "Auto,*,*,Auto,Auto" columns with no
+                                         content in columns 0/4, which auto-sized those columns to 0, since
+                                         the row grid below has a REAL CheckBox/Button in those columns,
+                                         Auto resolved to two DIFFERENT widths per grid, so the "*" columns
+                                         absorbed different amounts of leftover space and every caption from
+                                         "Host" onward drifted right of its real field, with "Port" landing
+                                         over the Remove button. Avalonia's Grid has no SharedSizeGroup
+                                         (that's WPF-only), so the fix is a same-content-shape trick: an
+                                         invisible CheckBox/Button in columns 0/4 with the row's own
+                                         Classes/Theme/Margin/Padding/Content forces Auto to resolve
+                                         IDENTICALLY to the row grid, and Margin="7,0,7,0" on this Grid
+                                         compensates for the row's own ContentControl Padding (6) + 1px
+                                         border the header has no equivalent of. Verified pixel-exact via a
+                                         native-resolution screenshot crop, not just visual inspection:
+                                         the earlier version's crop LOOKED plausible while actually being off
+                                         by tens of pixels, a real lesson for future header/row alignment
+                                         work in this codebase. -->
+                                    <Grid ColumnDefinitions="Auto,*,*,Auto,Auto" Margin="7,0,7,0" IsVisible="{Binding !!AdifUdpDestinations.Count}">
+                                        <CheckBox Grid.Column="0" Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Margin="0,0,6,0" Opacity="0" IsHitTestVisible="False" Focusable="False" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowLabel" Text="{loc:Translate Options.Forwarding.ColumnName}" Margin="0,0,4,0" />
+                                        <TextBlock Grid.Column="2" Classes="IndustryRowLabel" Text="{loc:Translate Options.Forwarding.ColumnHost}" Margin="0,0,4,0" />
+                                        <TextBlock Grid.Column="3" Classes="IndustryRowLabel" Text="{loc:Translate Options.Forwarding.ColumnPort}" Width="110" Margin="0,0,4,0" />
+                                        <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Forwarding.RemoveButton}" Opacity="0" IsHitTestVisible="False" Focusable="False" />
+                                    </Grid>
+
+                                    <!-- List-editable destination rows: no mock2 equivalent (real app-added
+                                         feature), same "plain bordered, no title notch" box per row as
+                                         TxImageEditorPaneView's overlay-element rows. -->
+                                    <ItemsControl ItemsSource="{Binding AdifUdpDestinations}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:AdifUdpDestinationRowViewModel">
+                                                <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Margin="0,0,0,4" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
+                                                    <Grid ColumnDefinitions="Auto,*,*,Auto,Auto" RowDefinitions="Auto" >
+                                                        <CheckBox Grid.Column="0" Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}"
+                                                                  IsChecked="{Binding Enabled}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Forwarding.NameWatermark}"
+                                                                 Text="{Binding Name}" Margin="0,0,4,0" />
+                                                        <TextBox Grid.Column="2" Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Forwarding.HostWatermark}"
+                                                                 Text="{Binding Host}" Margin="0,0,4,0" />
+                                                        <!-- No Watermark here: NumericUpDown doesn't visibly render one in this
+                                                             theme (see the column-header Grid above, which is the real fix). -->
+                                                        <NumericUpDown Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}"
+                                                                       Value="{Binding Port}" Minimum="1" Maximum="65535"
+                                                                       Width="110" Margin="0,0,4,0" />
+                                                        <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
+                                                                Content="{loc:Translate Options.Forwarding.RemoveButton}"
+                                                                Command="{Binding RemoveCommand}"
+                                                                CommandParameter="{Binding}" />
+                                                    </Grid>
+                                                </ContentControl>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Forwarding.AddButton}"
+                                            Command="{Binding AddAdifUdpDestinationCommand}" />
+                                </StackPanel>
+                            </HeaderedContentControl>
+
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetForwardingToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>

@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
@@ -255,6 +257,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     public ObservableCollection<AudioDeviceInfo> CaptureDevices { get; } = [];
 
     public ObservableCollection<AudioDeviceInfo> PlaybackDevices { get; } = [];
+
+    /// <summary>Forwarding tab's list-editable destination rows -- see
+    /// <see cref="AdifUdpDestinationRowViewModel"/>'s own doc comment for the list-editable-row
+    /// pattern this mirrors. Repopulated (not mutated in place) by <see cref="ApplyFromSnapshot"/>
+    /// and <see cref="ResetForwardingToDefault"/>, same "Clear() then re-Add" shape as
+    /// <see cref="CaptureDevices"/>/<see cref="PlaybackDevices"/> above.</summary>
+    public ObservableCollection<AdifUdpDestinationRowViewModel> AdifUdpDestinations { get; } = [];
 
     public bool IsRigctldSelected => RadioBackendId == "rigctld";
 
@@ -676,6 +685,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         CwToneFrequencyHz = snapshot.CwToneFrequencyHz;
         FskIdTxEnabled = snapshot.FskIdTxEnabled;
         FskIdRxEnabled = snapshot.FskIdRxEnabled;
+
+        AdifUdpDestinations.Clear();
+        foreach (var destination in snapshot.AdifUdpDestinations)
+        {
+            AdifUdpDestinations.Add(new AdifUdpDestinationRowViewModel
+            {
+                Enabled = destination.Enabled == true,
+                Name = destination.Name,
+                Host = destination.Host,
+                Port = destination.Port,
+                RemoveCommand = RemoveAdifUdpDestinationCommand,
+            });
+        }
     }
 
     [RelayCommand]
@@ -723,7 +745,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             CwWpm: CwWpm,
             CwToneFrequencyHz: CwToneFrequencyHz,
             FskIdTxEnabled: FskIdTxEnabled,
-            FskIdRxEnabled: FskIdRxEnabled);
+            FskIdRxEnabled: FskIdRxEnabled,
+            AdifUdpDestinations: AdifUdpDestinations.Select(row => row.ToDestination()).ToList());
 
         try
         {
@@ -847,6 +870,41 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         FskIdRxEnabled = defaults.FskIdRxEnabled;
     }
 
+    [RelayCommand]
+    private void ResetForwardingToDefault()
+    {
+        Log.ResetSectionInvoked(_logger, "Forwarding");
+        // Reads OptionsSettingsService.Defaults (today an empty list) rather than hardcoding
+        // Clear() -- same "never hardcoded again at the call site" convention that property's own
+        // doc comment states, so this stays correct if a future default ever seeds a destination.
+        AdifUdpDestinations.Clear();
+        foreach (var destination in OptionsSettingsService.Defaults.AdifUdpDestinations)
+        {
+            AdifUdpDestinations.Add(new AdifUdpDestinationRowViewModel
+            {
+                Enabled = destination.Enabled == true,
+                Name = destination.Name,
+                Host = destination.Host,
+                Port = destination.Port,
+                RemoveCommand = RemoveAdifUdpDestinationCommand,
+            });
+        }
+    }
+
+    [RelayCommand]
+    private void AddAdifUdpDestination() => AdifUdpDestinations.Add(new AdifUdpDestinationRowViewModel { RemoveCommand = RemoveAdifUdpDestinationCommand });
+
+    [RelayCommand]
+    private void RemoveAdifUdpDestination(AdifUdpDestinationRowViewModel? row)
+    {
+        if (row is null)
+        {
+            return;
+        }
+
+        AdifUdpDestinations.Remove(row);
+    }
+
     private bool CanTestQrzLookup() => !IsTestingQrzLookup && !string.IsNullOrWhiteSpace(QrzLookupUsername) && !string.IsNullOrWhiteSpace(QrzLookupPassword);
 
     [RelayCommand(CanExecute = nameof(CanTestQrzLookup))]
@@ -887,6 +945,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         ResetDecodeToDefault();
         ResetQrzToDefault();
         ResetIdentificationToDefault();
+        ResetForwardingToDefault();
         IsConfirmingResetAll = false;
     }
 
