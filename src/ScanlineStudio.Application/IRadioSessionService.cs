@@ -17,6 +17,11 @@ public interface IRadioSessionService
     /// as <see cref="LastKnownState"/> being <see langword="null"/>).</summary>
     RadioCapabilities Capabilities { get; }
 
+    /// <summary>Pass-through of <see cref="IRadioController.RigId"/> — see that member's own doc
+    /// comment for why this is a stable "none"-or-not identity check, not derived from
+    /// <see cref="Capabilities"/>.</summary>
+    string RigId { get; }
+
     IObservable<RadioState> StateChanges { get; }
 
     IObservable<RadioConnectionEvent> ConnectionEvents { get; }

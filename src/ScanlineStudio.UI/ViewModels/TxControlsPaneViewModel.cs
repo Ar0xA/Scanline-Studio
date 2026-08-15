@@ -164,14 +164,18 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private double _swrCutoffThreshold = 3.0;
 
-    /// <summary>The CONFIGURED TX playback device's display name (see
+    /// <summary>The TX playback device's display name -- what
+    /// <see cref="ISstvSessionService.TransmitAsync"/> would actually resolve and use right now,
+    /// including a fallback to the backend-reported default device when nothing is explicitly
+    /// configured (spec/18-path-to-1.0.md Critical item 1 / item 8; see
     /// <see cref="ISstvSessionService.GetConfiguredPlaybackDeviceNameAsync"/>'s own doc comment for
-    /// the "configured, not necessarily currently in-flight" caveat) -- backs mock2's Transmit tab
-    /// "Device" field. <see langword="null"/> until the best-effort initial load below completes,
-    /// or if no device is configured / the configured device is no longer present (same
-    /// non-throwing contract the service method itself has -- this is a passive display field, not
-    /// something that should surface an error banner). Loaded once at construction, same convention
-    /// as <see cref="AutoFollowRxMode"/>/<see cref="SwrCutoffEnabled"/> above -- not re-fetched on a
+    /// the full "what WOULD be resolved, not necessarily currently in-flight" caveat) -- backs
+    /// mock2's Transmit tab "Device" field. <see langword="null"/> until the best-effort initial
+    /// load below completes, or if a configured device is no longer present, or (now the rare case)
+    /// nothing is configured AND the backend reports no default either (same non-throwing contract
+    /// the service method itself has -- this is a passive display field, not something that should
+    /// surface an error banner). Loaded once at construction, same convention as
+    /// <see cref="AutoFollowRxMode"/>/<see cref="SwrCutoffEnabled"/> above -- not re-fetched on a
     /// live settings change while this pane stays open; a future pass can add that if it turns out
     /// to matter in practice.</summary>
     [ObservableProperty]

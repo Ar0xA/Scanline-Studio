@@ -120,10 +120,14 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
             var id = NativeAudio.DecodeFixedString(nativeDevices[i].Id);
             var name = NativeAudio.DecodeFixedString(nativeDevices[i].Name);
             var (maxChannels, sampleRates) = ProbeNativeFormats(id, isCapture);
+            // spec/18-path-to-1.0.md Critical item 1 / item 8: previously discarded -- the native
+            // shim has always reported this (yoniq_audio.h/.c's own IsDefault field), it just never
+            // reached AudioDeviceInfo until SstvSessionService needed a fallback device.
+            var isDefault = nativeDevices[i].IsDefault != 0;
 
             result.Add(isCapture
-                ? new AudioDeviceInfo(id, name, MaxInputChannels: maxChannels, MaxOutputChannels: 0, sampleRates)
-                : new AudioDeviceInfo(id, name, MaxInputChannels: 0, MaxOutputChannels: maxChannels, sampleRates));
+                ? new AudioDeviceInfo(id, name, MaxInputChannels: maxChannels, MaxOutputChannels: 0, sampleRates, IsDefault: isDefault)
+                : new AudioDeviceInfo(id, name, MaxInputChannels: 0, MaxOutputChannels: maxChannels, sampleRates, IsDefault: isDefault));
         }
 
         return result;

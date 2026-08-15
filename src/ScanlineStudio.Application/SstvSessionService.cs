@@ -551,8 +551,24 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
             if (!_pttLocked)
             {
-                await _radioSession.SetPttAsync(true, ct).ConfigureAwait(false);
-                Log.PttKeyed(_logger);
+                // Guarded on RigId ("none" = the null-object "no radio" backend, spec/18-path-to-
+                // 1.0.md Critical item 1), not Capabilities -- see IRadioController.RigId's own doc
+                // comment for why a live-capability check would be unsafe here (real backends
+                // connect lazily, so Capabilities reads None during a real window even with a
+                // genuine PTT-capable rig configured). This is the only guarded SetPttAsync call in
+                // this method -- the cleanup un-key below is deliberately NOT guarded, it's already
+                // wrapped in TryCleanupAsync so a throw there is already non-fatal, and RigId is
+                // stable so there's no "was available at entry, gone by cleanup" scenario to protect
+                // against either.
+                if (_radioSession.RigId != "none")
+                {
+                    await _radioSession.SetPttAsync(true, ct).ConfigureAwait(false);
+                    Log.PttKeyed(_logger);
+                }
+                else
+                {
+                    Log.PttSkippedNoRadio(_logger);
+                }
             }
 
             await _audioEngine.StartPlaybackAsync(
@@ -596,7 +612,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
             var skipUnkeyAndRxResume = !abnormalTermination && (leaveKeyedAfterCall || _pttLocked);
             if (!skipUnkeyAndRxResume)
             {
-                if (await TryCleanupAsync("PTT off", () => _radioSession.SetPttAsync(false, cleanupCts.Token)).ConfigureAwait(false))
+                if (await TryUnkeyPttAsync(cleanupCts.Token).ConfigureAwait(false))
                 {
                     // Force-release: whether or not a lock was engaged, PTT is now confirmed
                     // physically off -- IsPttLocked must never report true once that's true.
@@ -621,6 +637,38 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     _rxPendingResumeAfterUnlock = true;
                 }
             }
+        }
+    }
+
+    /// <summary>The cleanup un-key call is deliberately unconditional (see PlayWithPttAsync's own
+    /// doc comment for why it's never guarded on RigId, unlike the entry key) -- but with RigId ==
+    /// "none" that means it throws on every single default-config transmit, since the null-object
+    /// backend always throws from SetPttAsync. Code-review finding on spec/18-path-to-1.0.md
+    /// Critical item 1: routing that through the generic TryCleanupAsync would log a Warning with a
+    /// stack trace on every transmit for the most common configuration (fresh install, no radio
+    /// set up yet), directly undercutting that Warning's own stated purpose (flagging a genuinely
+    /// stuck-keyed rig). Re-checks RigId at catch time, not before the call, so a rig that
+    /// disconnects mid-cleanup still gets the real Warning -- only a "none" backend at the moment of
+    /// failure is treated as the expected, benign case.</summary>
+    private async Task<bool> TryUnkeyPttAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _radioSession.SetPttAsync(false, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (_radioSession.RigId == "none")
+            {
+                Log.PttUnkeySkippedNoRadio(_logger);
+            }
+            else
+            {
+                Log.CleanupStepFailed(_logger, "PTT off", ex);
+            }
+
+            return false;
         }
     }
 
@@ -744,8 +792,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
             var deviceId = forCapture ? settings.CaptureDeviceId : settings.PlaybackDeviceId;
             if (deviceId is null)
             {
+                // TryResolveDeviceAsync already tried the backend-reported default and found none
+                // (spec/18-path-to-1.0.md Critical item 1 / item 8) -- this is now the rarer
+                // "genuinely no audio device available at all" case, not "user never opened
+                // Options."
                 Log.NoDeviceConfigured(_logger, kind);
-                throw new InvalidOperationException($"No {kind} audio device configured -- set one in settings before starting a session.");
+                throw new InvalidOperationException($"No {kind} audio device configured, and no default {kind} device is available -- set one in Options before starting a session.");
             }
 
             await _deviceEnumerator.RefreshAsync(ct).ConfigureAwait(false);
@@ -759,22 +811,38 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     /// <summary>Non-throwing counterpart to <see cref="ResolveDeviceAsync"/>, extracted from it (not
     /// duplicated) so <see cref="GetConfiguredPlaybackDeviceNameAsync"/>'s passive readout use and
-    /// <see cref="ResolveDeviceAsync"/>'s action-that-should-fail-loudly use share one lookup --
-    /// <see langword="null"/> for either "no device configured" or "configured device not found",
-    /// not distinguished here (the caller-facing exception messages for those two cases still live
-    /// in <see cref="ResolveDeviceAsync"/> alone, the only caller that needs them).</summary>
+    /// <see cref="ResolveDeviceAsync"/>'s action-that-should-fail-loudly use share one lookup.
+    /// <see langword="null"/> means either "configured device not found" (a device WAS explicitly
+    /// configured, but isn't among the currently enumerated devices -- deliberately NOT
+    /// substituted with the default, since a device the user explicitly picked going missing is a
+    /// real problem worth surfacing, not silently working around) or "nothing configured, and the
+    /// backend reports no default device either" (spec/18-path-to-1.0.md Critical item 1 / item 8
+    /// -- a genuinely rare case, e.g. a headless machine with no audio hardware at all). When
+    /// nothing is explicitly configured but the backend DOES report a default, that default is
+    /// returned here -- this deliberately changes what
+    /// <see cref="GetConfiguredPlaybackDeviceNameAsync"/>/<see cref="GetConfiguredCaptureDeviceNameAsync"/>
+    /// display: they now show the device that will actually be used, not a blank "not configured"
+    /// placeholder that silently implied nothing would happen.</summary>
     private async Task<AudioDeviceInfo?> TryResolveDeviceAsync(bool forCapture, CancellationToken ct)
     {
         var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
         var deviceId = forCapture ? settings.CaptureDeviceId : settings.PlaybackDeviceId;
-        if (deviceId is null)
-        {
-            return null;
-        }
 
         await _deviceEnumerator.RefreshAsync(ct).ConfigureAwait(false);
         var devices = forCapture ? _deviceEnumerator.InputDevices : _deviceEnumerator.OutputDevices;
-        return devices.FirstOrDefault(d => d.Id == deviceId);
+
+        if (deviceId is not null)
+        {
+            return devices.FirstOrDefault(d => d.Id == deviceId);
+        }
+
+        var fallback = devices.FirstOrDefault(d => d.IsDefault);
+        if (fallback is not null)
+        {
+            Log.UsingDefaultDevice(_logger, forCapture ? "capture" : "playback", fallback.Name);
+        }
+
+        return fallback;
     }
 
     public async Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default)
@@ -835,6 +903,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
         [LoggerMessage(Level = LogLevel.Information, Message = "PTT keyed")]
         public static partial void PttKeyed(ILogger logger);
 
+        [LoggerMessage(Level = LogLevel.Debug, Message = "PTT key skipped -- no radio backend configured (RigId=\"none\")")]
+        public static partial void PttSkippedNoRadio(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "PTT un-key skipped -- no radio backend configured (RigId=\"none\")")]
+        public static partial void PttUnkeySkippedNoRadio(ILogger logger);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "PTT released")]
         public static partial void PttReleased(ILogger logger);
 
@@ -855,6 +929,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Configured {Kind} device '{DeviceId}' not found among {AvailableCount} available devices")]
         public static partial void ConfiguredDeviceNotFound(ILogger logger, string kind, string deviceId, int availableCount);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "No {Kind} device configured -- using backend-reported default '{DeviceName}'")]
+        public static partial void UsingDefaultDevice(ILogger logger, string kind, string deviceName);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX maintenance warning raised (approaching automatic restart threshold)")]
         public static partial void MaintenanceWarningRaised(ILogger logger);
