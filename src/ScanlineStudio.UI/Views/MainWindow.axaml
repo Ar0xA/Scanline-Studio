@@ -386,7 +386,7 @@
                             <Grid RowDefinitions="Auto,*">
                                 <TextBlock Grid.Row="0" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
                                            Foreground="{StaticResource IndustryLabel}" HorizontalAlignment="Right"
-                                           Margin="0,0,0,4" Text="{loc:Translate Panes.Waterfall.RangeCaption}" />
+                                           Margin="0,0,0,4" Text="{Binding Waterfall.RangeCaptionDisplay}" />
                                 <Grid Grid.Row="1" ColumnSpacing="{StaticResource IndustrySpacingWide}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="{Binding Waterfall.ViewMode, Converter={x:Static conv:WaterfallViewModeToColumnWidthConverter.Instance}, ConverterParameter=Spectrum}" />

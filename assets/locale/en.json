@@ -117,7 +117,7 @@
   "Panes.QuickModeGrid.PD290": "PD290",
   "Panes.QuickModeGrid.SC2180": "SC2-180",
   "Panes.Waterfall.CardHeader": "SPECTRUM & WATERFALL",
-  "Panes.Waterfall.RangeCaption": "1000…2600 Hz",
+  "Panes.Waterfall.RangeCaptionFormat": "{0:0}…{1:0} Hz",
   "Panes.Waterfall.BinsPerPixel": "Bins / px",
   "Panes.Waterfall.Start": "Start",
   "Panes.Waterfall.Span": "Span",

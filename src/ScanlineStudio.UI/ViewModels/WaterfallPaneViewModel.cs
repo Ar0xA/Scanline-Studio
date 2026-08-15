@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.UI.Controls;
@@ -44,9 +45,11 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
     /// design (spec/06 exempts this visualization from strict port-first fidelity). Default 1000/1600
     /// sits on legacy's own 1.5k preset.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RangeCaptionDisplay))]
     private double _startHz = 1000.0;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RangeCaptionDisplay))]
     private double _spanHz = 1600.0;
 
     /// <summary>Read-only computed telemetry pushed FROM <c>SpectrumTraceControl.BinsPerPixel</c> via
@@ -72,11 +75,20 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
     [ObservableProperty]
     private SstvModeDefinition? _currentMode;
 
-    public WaterfallPaneViewModel(ISstvSessionService sstvSession)
+    private readonly ILocalizationService _localization;
+
+    public WaterfallPaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization)
     {
+        _localization = localization;
         sstvSession.Waterfall.Frames.Subscribe(OnFrame);
         sstvSession.ModeDetected += OnModeDetected;
     }
+
+    /// <summary>spec/18-path-to-1.0.md Medium item 2: was a static localized literal
+    /// ("1000…2600 Hz") that silently lied the moment the Start/Span steppers below were touched.
+    /// Real now, derived from the same <see cref="StartHz"/>/<see cref="SpanHz"/> the spectrum plot
+    /// itself already windows against.</summary>
+    public string RangeCaptionDisplay => _localization.GetString("Panes.Waterfall.RangeCaptionFormat", StartHz, StartHz + SpanHz);
 
     /// <summary>Same "worry, don't fire-and-forget" concurrency contract as <see cref="OnFrame"/>:
     /// <see cref="ISstvSessionService.ModeDetected"/>'s own doc comment states it fires synchronously
