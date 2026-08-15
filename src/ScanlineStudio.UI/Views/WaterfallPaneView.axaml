@@ -6,7 +6,8 @@
              x:DataType="vm:WaterfallPaneViewModel">
 
     <Border Classes="IndustryPlot">
-        <controls:WaterfallControl Frame="{Binding LatestFrame}" ZeroDb="{Binding ZeroDb}" GainDb="{Binding GainDb}" />
+        <controls:WaterfallControl Frame="{Binding LatestFrame}" ZeroDb="{Binding ZeroDb}" GainDb="{Binding GainDb}"
+                                    StartHz="{Binding StartHz}" SpanHz="{Binding SpanHz}" />
     </Border>
 
 </UserControl>

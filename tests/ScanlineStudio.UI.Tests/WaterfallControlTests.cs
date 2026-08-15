@@ -140,6 +140,44 @@ public sealed class WaterfallControlTests
     }
 
     [AvaloniaFact]
+    public void StartHzAndSpanHz_DefaultToTheSameValuesAsWaterfallPaneViewModel()
+    {
+        // spec/18-path-to-1.0.md Medium item 2, second half. Kept in sync deliberately -- a
+        // freshly-constructed control (before any real binding value ever arrives) should already
+        // show the same window the ViewModel itself defaults to, not some other arbitrary range.
+        using var control = new WaterfallControl();
+
+        Assert.Equal(1000.0, control.StartHz);
+        Assert.Equal(1600.0, control.SpanHz);
+    }
+
+    [AvaloniaFact]
+    public void SettingStartHzAndSpanHz_DoesNotThrow_IncludingDegenerateValues_WithOrWithoutAFrameSet()
+    {
+        // No Minimum/Maximum exists on the real steppers (a separate, pre-existing gap this item's
+        // own plan-review explicitly deferred) -- WaterfallRenderMath.TryComputeWindow is what
+        // actually guards Render() against these, covered directly and exhaustively by
+        // WaterfallRenderMathTests; this only proves the control itself survives being handed them,
+        // both before and after a real frame exists.
+        using var control = new WaterfallControl();
+
+        control.StartHz = -500;
+        control.SpanHz = 0;
+        control.StartHz = 10000;
+        control.SpanHz = -100;
+
+        control.Frame = new WaterfallFrame([-50f, -20f, -5f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
+
+        control.StartHz = -500;
+        control.SpanHz = 0;
+        control.StartHz = 10000;
+        control.SpanHz = -100;
+
+        Assert.Equal(10000, control.StartHz);
+        Assert.Equal(-100, control.SpanHz);
+    }
+
+    [AvaloniaFact]
     public void Dispose_ThenPushingANewFrame_RendersAgain_NotPermanentlyBlank()
     {
         // Auditor-caught (batch 8): WaterfallPaneView sits inside the Receive TabItem
