@@ -1,4 +1,5 @@
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Sstv;
 
 namespace ScanlineStudio.Application;
@@ -18,7 +19,9 @@ namespace ScanlineStudio.Application;
 /// the RX-side equivalent, <c>RxImagePaneViewModel.DecodedNrRst</c>, unbound for the same reason).
 /// <see cref="OptionsSettingsService.SaveAsync"/> preserves whatever those two fields already were
 /// (same pattern as <c>SstvDecoderSettings.AfcEnabled</c>, which also has no dialog control),
-/// they're never silently reset by a Save from this dialog.</summary>
+/// they're never silently reset by a Save from this dialog. <c>AdifUdpStreamingSettings.ClientId</c>
+/// is the same shape (no dialog control, preserved as-is on Save) -- only <see cref="AdifUdpDestinations"/>
+/// (the first list-valued field here) is dialog-editable.</summary>
 public sealed record OptionsSnapshot(
     string? CultureCode,
     string? CaptureDeviceId,
@@ -53,4 +56,5 @@ public sealed record OptionsSnapshot(
     bool FskIdRxEnabled,
     DemodType DemodType,
     RxBpfPreset RxBpfPreset,
-    RxBufferMode RxBufferMode);
+    RxBufferMode RxBufferMode,
+    IReadOnlyList<AdifUdpDestination> AdifUdpDestinations);
