@@ -52,4 +52,5 @@ public sealed record OptionsSnapshot(
     bool FskIdTxEnabled,
     bool FskIdRxEnabled,
     DemodType DemodType,
-    RxBpfPreset RxBpfPreset);
+    RxBpfPreset RxBpfPreset,
+    RxBufferMode RxBufferMode);
