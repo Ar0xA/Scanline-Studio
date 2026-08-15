@@ -188,11 +188,29 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   nothing today, matching legacy's own unconfigured-sound-file behavior — a benign no-op, not a
   lie, but not done either). Correction: an earlier `PROJECT_BRIEF.md` note claiming these were
   "bundled into CW-ID/FSK, done" was wrong, verified against source 2026-08-13.
-- Logbook deltas explicitly carved out of the shipped Logbook pane (`QsoRecord.cs:12-13`): QSL
-  sent/received flags, duplicate-QSO detection (by callsign/band), delete-a-QSO. **Correction
-  2026-08-14**: Gallery "Log entry"/"Open in log" cross-pane wiring is NOT open — verified real,
-  shipped 2026-08-11 (`OpenInLogCommand`/`QsoLinkWindowView`, commit `13a8ca7`, `spec/16`'s own
-  entry). Carried forward as open by mistake; only the 3 items above remain.
+- ~~Logbook deltas~~ — **PARKED 2026-08-15, user redirect**: QSL sent/received flags,
+  duplicate-QSO detection (by callsign/band), delete-a-QSO. Was explicitly carved out of the
+  shipped Logbook pane (`QsoRecord.cs:12-13`); a full 2-round-plan-reviewed implementation plan
+  exists at `/home/artien/.claude/plans/logbook-deltas.md` but the user reframed scope before
+  implementation started: "basics only" for the Logbook pane itself (already sufficient — add/
+  edit/search/ADIF export), prioritize SSTV-side work over deeper logbook features (see
+  `feedback_logbook_minimal_footprint` memory). Not resumed unless asked. **Correction 2026-08-14**
+  (predates the redirect, kept for history): Gallery "Log entry"/"Open in log" cross-pane wiring is
+  NOT open — verified real, shipped 2026-08-11 (`OpenInLogCommand`/`QsoLinkWindowView`, commit
+  `13a8ca7`, `spec/16`'s own entry).
+- ~~**ADIF UDP forwarding (multi-destination)**~~ — **DONE 2026-08-15**, shipped as the direct
+  alternative to the parked Logbook-deltas item above. Generalized the existing GridTracker-only
+  UDP streamer (`GridTrackerStreamer`, shipped as part of the original Logbook backend,
+  2026-08-07) into `AdifUdpStreamer`/`AdifUdpStreamingSettings`: fans the same WSJT-X
+  `LoggedADIF` datagram out to any number of configured destinations (verified via web research
+  that GridTracker2/N1MM Logger+/Log4OM all listen for the same protocol — this was a
+  generalization, not 3 separate integrations) plus a new Options dialog "Forwarding" tab (the
+  feature previously had zero UI, settings-only via hand-edited `settings.json`). Full plan +
+  2 rounds of plan-review + 2 rounds of code-review per piece (both pieces) at
+  `/home/artien/.claude/plans/adif-udp-streaming.md`; commits `90575c8` (backend) and `e60e3d4`
+  (UI). See `spec/08-logging.md`'s own "ADIF UDP forwarding" section for the settings-migration
+  contract (legacy single-destination config auto-seeds one row on first load, `ClientId`
+  preserved across saves with no dialog control of its own).
 - JPEG save quality — bundled with the Gallery's still-stub "Export frame" button, not standalone.
 - Transmit tab Queue/TX-log/Recently-sent — 100% stub, no such feature exists yet.
 - Receive tab Sync&Slant/Input-chain/Signal-quality cards — real new DSP work (no live audio-chain
@@ -4714,8 +4732,9 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   `LogbookPaneViewModel`: search/browse (callsign exact-match + UTC calendar-date From/To range,
   30-day default), add/edit QSO form (all `QsoRecord` fields except `Id`/`ReceivedImageId`), ADIF
   import/export via 2 new `IFilePickerService` methods. New facade method
-  `ILogbookSessionService.UpdateQsoAsync` (deliberately no GridTracker/QRZ re-push — QRZ's real
-  upload API is INSERT-only). Fixed a pre-existing `ExportAdifFileAsync` gap (missing
+  `ILogbookSessionService.UpdateQsoAsync` (deliberately no ADIF-UDP/QRZ re-push — QRZ's real
+  upload API is INSERT-only; ADIF-UDP forwarding was GridTracker-only at the time this shipped,
+  generalized to multi-destination 2026-08-15, see `spec/08-logging.md`'s own section). Fixed a pre-existing `ExportAdifFileAsync` gap (missing
   `STATION_CALLSIGN`, exported files didn't import cleanly into LoTW/eQSL). Scoped via 2 rounds of
   auditor plan-review, then 2 rounds of post-implementation auditor code-review — round 1 caught 3
   real blockers (status messages silently discarded after every Log/Update; Mode and SSTV-mode

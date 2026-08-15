@@ -324,7 +324,7 @@ Grid: `MainWindow.axaml:1131-1327`, `DataContext="{Binding Logbook}"` = `Logbook
 
 - Callsign/date-range search + Refresh — REAL, exact-match `CallsignFilter` against `ILogbookSessionService.SearchAsync`.
 - Entry list — REAL, `Entries` populated from the search.
-- Add/Edit form (Callsign/Start/End/Freq/Mode/SSTV-mode/RST×2/Name/QTH/Grid/Country/Notes) — REAL, every field is a genuine two-way-bound `QsoRecord` field; Log/Update commands genuinely persist and report GridTracker/QRZ push status.
+- Add/Edit form (Callsign/Start/End/Freq/Mode/SSTV-mode/RST×2/Name/QTH/Grid/Country/Notes) — REAL, every field is a genuine two-way-bound `QsoRecord` field; Log/Update commands genuinely persist and report ADIF-UDP/QRZ push status (generalized 2026-08-15 from GridTracker-only to multi-destination ADIF-over-UDP streaming, `spec/08-logging.md`'s own "ADIF UDP forwarding" section).
 - New button — REAL, resets the form.
 - Status message — REAL, reflects actual success/failure of the last operation.
 - ADIF Import/Export — REAL, `ImportAdifCommand`/`ExportAdifCommand` call the real `ILogbookSessionService` ADIF pipeline.
