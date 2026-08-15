@@ -879,6 +879,88 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void Constructor_LoadsJpegQualityFromPersistedSettings()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                ImageExportSettings.SectionKey,
+                new ImageExportSettings { JpegQuality = 60 },
+                ImageExportSettingsJsonContext.Default.ImageExportSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(60, vm.JpegQuality);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_DefaultsJpegQualityTo85WhenSectionMissing()
+    {
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(85, vm.JpegQuality);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_OutOfRangePersistedJpegQuality_IsClamped()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                ImageExportSettings.SectionKey,
+                new ImageExportSettings { JpegQuality = 0 },
+                ImageExportSettingsJsonContext.Default.ImageExportSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, vm.JpegQuality);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_PersistsJpegQuality_WithoutDisturbingWindowGeometry()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings()
+                .WithSection(WindowGeometrySettings.SectionKey, new WindowGeometrySettings { RememberWindowPosition = true, Left = 10, Top = 20, Width = 800, Height = 600 }, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)
+                .WithSection(ImageExportSettings.SectionKey, new ImageExportSettings { JpegQuality = 60 }, ImageExportSettingsJsonContext.Default.ImageExportSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.JpegQuality = 30;
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var quality = settingsStore.Settings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings)?.JpegQuality;
+        Assert.Equal(30, quality);
+        var geometry = settingsStore.Settings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
+        Assert.True(geometry?.RememberWindowPosition);
+        Assert.Equal(10, geometry?.Left);
+    }
+
+    [AvaloniaFact]
+    public void ResetGeneralToDefaultCommand_ResetsJpegQualityTo85()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                ImageExportSettings.SectionKey,
+                new ImageExportSettings { JpegQuality = 12 },
+                ImageExportSettingsJsonContext.Default.ImageExportSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(12, vm.JpegQuality);
+
+        vm.ResetGeneralToDefaultCommand.Execute(null);
+
+        Assert.Equal(85, vm.JpegQuality);
+    }
+
+    [AvaloniaFact]
     public void Constructor_NoStationIdSection_DefaultsToOffAndLegacyCwDefaults()
     {
         // StationIdSettings.CwIdMode default (Off), DefaultCwWpm (28), DefaultCwToneFrequencyHz

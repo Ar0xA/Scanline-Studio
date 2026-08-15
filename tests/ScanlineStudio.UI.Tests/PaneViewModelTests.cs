@@ -10,6 +10,9 @@ using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
+using ScanlineStudio.Settings;
+using ScanlineStudio.UI.Services;
+using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.UI.Tests;
@@ -1281,7 +1284,7 @@ public sealed class PaneViewModelTests
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
 
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -1304,7 +1307,7 @@ public sealed class PaneViewModelTests
         // all (unlike RxImagePaneViewModel, which takes ISstvSessionService specifically for that
         // live binding) -- a live-buffer interaction is structurally impossible here, not just
         // unobserved, so there is nothing to fake/assert against for that half of the guarantee.
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -1319,7 +1322,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_DefaultsToTodayOnly_MatchingTheMock2DraftsOwnDefaultSelection()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.ShowTodayOnly);
@@ -1337,7 +1340,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_TogglingToAll_ReQueriesWithNoDateFilter()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
 
         vm.ShowTodayOnly = false;
@@ -1355,7 +1358,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_Constructed_LoadsImagesDirectory_ForTheGalleryTabsStorageCard()
     {
         var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "/tmp/scanlinestudio-history" };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("/tmp/scanlinestudio-history", vm.ImagesDirectory);
@@ -1385,7 +1388,7 @@ public sealed class PaneViewModelTests
                 new ReceiveHistoryEntry("2", DateTimeOffset.Now, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
             ],
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(2, vm.FramesTodayCount);
@@ -1413,7 +1416,7 @@ public sealed class PaneViewModelTests
         // finding): before this, Entries only refreshed at construction/manual-refresh/filter-change,
         // never as new frames actually landed during a session.
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
         Assert.Empty(vm.Entries);
 
@@ -1449,7 +1452,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [selectedEntry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
         var originalSelectedInstance = vm.Entries.Single(e => e.Entry.Id == "selected");
         vm.SelectedEntry = originalSelectedInstance;
@@ -1488,7 +1491,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [selectedEntry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
 
         var listBox = new ListBox { ItemsSource = vm.Entries };
@@ -1526,7 +1529,7 @@ public sealed class PaneViewModelTests
         var older = new ReceiveHistoryEntry("older", DateTimeOffset.Now.AddMinutes(-5), "robot36", "/tmp/older.png", null, ReceiveDecodeState.Completed);
         var newer = new ReceiveHistoryEntry("newer", DateTimeOffset.Now, "robot36", "/tmp/newer.png", null, ReceiveDecodeState.Completed);
         var historyStore = new FakeReceiveHistoryStore { EntriesToReturn = [older, newer] };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
 
         vm.SelectLatestCommand.Execute(null);
@@ -1539,7 +1542,7 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_SelectLatestCommand_DisabledWhenNoEntries()
     {
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(vm.SelectLatestCommand.CanExecute(null));
@@ -1560,7 +1563,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "sked 2nd frame", IsFlagged: true)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -1585,7 +1588,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1609,7 +1612,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1635,7 +1638,7 @@ public sealed class PaneViewModelTests
             ],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -1667,7 +1670,7 @@ public sealed class PaneViewModelTests
             ],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -1705,7 +1708,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [entry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1749,7 +1752,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [entry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
 
         var listBox = new ListBox { ItemsSource = vm.Entries };
@@ -1792,7 +1795,7 @@ public sealed class PaneViewModelTests
             ],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         Dispatcher.UIThread.RunJobs();
 
         var listBox = new ListBox { ItemsSource = vm.Entries };
@@ -1826,7 +1829,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [entry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1861,7 +1864,7 @@ public sealed class PaneViewModelTests
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
         historyStore.SetFlaggedCallDelays.Enqueue(TimeSpan.FromMilliseconds(200));
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1885,7 +1888,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -1912,7 +1915,7 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = new RxHistoryPaneViewModel(historyStore, new FakeLocalizationService(), NullLogger<RxHistoryPaneViewModel>.Instance, new FakeLogbookSessionService(), NullLogger<QsoLinkWindowViewModel>.Instance);
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -1937,6 +1940,212 @@ public sealed class PaneViewModelTests
 
         Assert.Equal("qso-42", vm.SelectedEntry!.Entry.LinkedQsoId);
         Assert.Equal("qso-42", vm.Entries[0].Entry.LinkedQsoId);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ExportFrameCommand_DisabledWithNoSelection_EnabledOnceSelected_DisabledAgainAfterDeselect()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.ExportFrameCommand.CanExecute(null));
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.ExportFrameCommand.CanExecute(null));
+
+        vm.SelectedEntry = null;
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.ExportFrameCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ExportFrameCommand_CanExecuteChangedFiresWhenSelectionChanges()
+    {
+        // Deliberately does NOT use ExportFrameCommand.CanExecute(null) to verify this -- that method
+        // isn't cached, it re-evaluates CanExportFrame() fresh on every call regardless of whether
+        // NotifyCanExecuteChanged() ever fired, so it can't discriminate a missing
+        // ExportFrameCommand.NotifyCanExecuteChanged() call from a correct one (confirmed by
+        // mutation-testing: removing that call left the CanExecute-based test above still green).
+        // Subscribing to the real CanExecuteChanged event is what Avalonia's own Button binding
+        // relies on to know when to re-query CanExecute -- this is the only way to actually prove the
+        // notify wiring itself, not just the predicate it wraps.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var fireCount = 0;
+        vm.ExportFrameCommand.CanExecuteChanged += (_, _) => fireCount++;
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(fireCount > 0, "Expected CanExecuteChanged to fire when SelectedEntry became non-null.");
+
+        fireCount = 0;
+        vm.SelectedEntry = null;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(fireCount > 0, "Expected CanExecuteChanged to fire when SelectedEntry was cleared.");
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ExportFrameAsync_HappyPath_CallsExporterWithClampedSettingsQualityAndSetsStatus()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var frameExporter = new FakeReceivedFrameExporter();
+        var filePicker = new FakeFilePickerService { SaveImagePathToReturn = ("/tmp/exported.jpg", ImageExportFormat.Jpeg) };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(ImageExportSettings.SectionKey, new ImageExportSettings { JpegQuality = 42 }, ImageExportSettingsJsonContext.Default.ImageExportSettings),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, frameExporter, filePicker, settingsStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ExportFrameCommand.ExecuteAsync(null);
+
+        var call = Assert.Single(frameExporter.Calls);
+        Assert.Equal("/tmp/a.png", call.SourcePath);
+        Assert.Equal("/tmp/exported.jpg", call.DestinationPath);
+        Assert.Equal(42, call.JpegQuality);
+        Assert.Equal("a.png", filePicker.LastSuggestedImageFileName);
+        Assert.NotNull(vm.ExportStatusMessage);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ExportFrameAsync_NoQualitySettingConfigured_DefaultsTo85()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var frameExporter = new FakeReceivedFrameExporter();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, frameExporter);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ExportFrameCommand.ExecuteAsync(null);
+
+        Assert.Equal(85, Assert.Single(frameExporter.Calls).JpegQuality);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ExportFrameAsync_OutOfRangeSettingsQuality_IsClamped()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var frameExporter = new FakeReceivedFrameExporter();
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(ImageExportSettings.SectionKey, new ImageExportSettings { JpegQuality = 500 }, ImageExportSettingsJsonContext.Default.ImageExportSettings),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, frameExporter, settingsStore: settingsStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ExportFrameCommand.ExecuteAsync(null);
+
+        // JpegEncoder.Quality's own setter throws outside 1..100 -- a hand-edited settings.json value
+        // of 500 must never reach the exporter unclamped.
+        Assert.Equal(100, Assert.Single(frameExporter.Calls).JpegQuality);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ExportFrameAsync_PickerCancelled_DoesNotCallTheExporter()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var frameExporter = new FakeReceivedFrameExporter();
+        var filePicker = new FakeFilePickerService { SaveImagePathToReturn = null };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, frameExporter, filePicker);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ExportFrameCommand.ExecuteAsync(null);
+
+        Assert.Empty(frameExporter.Calls);
+        Assert.Null(vm.ExportStatusMessage);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ExportFrameAsync_ExporterThrows_SetsErrorMessageNotStatus()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var frameExporter = new FakeReceivedFrameExporter { ExceptionToThrow = new IOException("disk full") };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, frameExporter);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ExportFrameCommand.ExecuteAsync(null);
+
+        Assert.NotNull(vm.ErrorMessage);
+        Assert.Null(vm.ExportStatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ExportFrameAsync_SwitchingSelectionAfterward_ClearsStaleExportStatusMessage()
+    {
+        // Code-review finding: without this, "Exported to /tmp/exported.jpg." from selection A kept
+        // showing under the Selected-frame panel after switching to selection B.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow.AddMinutes(-1), "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
+            ],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "1");
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ExportFrameCommand.ExecuteAsync(null);
+        Assert.NotNull(vm.ExportStatusMessage);
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "2");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.ExportStatusMessage);
     }
 
     /// <summary>QsoLinkWindowViewModel.Linked has no public raise method (by design -- only its own
@@ -1964,6 +2173,21 @@ public sealed class PaneViewModelTests
             new FakeSstvSessionService { AvailableModes = [TestMode] },
             new FakeLocalizationService(),
             NullLogger<LogbookPaneViewModel>.Instance);
+
+    private static RxHistoryPaneViewModel CreateRxHistoryPaneViewModel(
+        FakeReceiveHistoryStore historyStore,
+        FakeReceivedFrameExporter? frameExporter = null,
+        FakeFilePickerService? filePicker = null,
+        FakeSettingsStore? settingsStore = null) =>
+        new(
+            historyStore,
+            new FakeLocalizationService(),
+            NullLogger<RxHistoryPaneViewModel>.Instance,
+            new FakeLogbookSessionService(),
+            NullLogger<QsoLinkWindowViewModel>.Instance,
+            frameExporter ?? new FakeReceivedFrameExporter(),
+            filePicker ?? new FakeFilePickerService(),
+            settingsStore ?? new FakeSettingsStore());
 
     [AvaloniaFact]
     public void LogbookPaneViewModel_Constructed_LoadsEntriesFromSearchAsync()

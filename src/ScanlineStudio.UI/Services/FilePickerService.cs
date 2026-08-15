@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
@@ -75,6 +76,87 @@ public sealed partial class FilePickerService : IFilePickerService
         });
 
         return file?.TryGetLocalPath();
+    }
+
+    // Public (not private): code-review finding -- ResolveDestination below needs to reference the
+    // EXACT SAME instances a real picker would echo back via SelectedFileType, and tests need to
+    // construct that same realistic scenario without needing Application.Current/MainWindow (which
+    // ResolveDestination itself deliberately doesn't touch).
+    public static readonly FilePickerFileType PngFileType = new("PNG image")
+    {
+        Patterns = ["*.png"],
+    };
+
+    public static readonly FilePickerFileType JpegFileType = new("JPEG image")
+    {
+        Patterns = ["*.jpg", "*.jpeg"],
+    };
+
+    public async Task<(string Path, ImageExportFormat Format)?> PickSaveImageFileAsync(string suggestedFileName)
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        var result = await mainWindow.StorageProvider.SaveFilePickerWithResultAsync(new FilePickerSaveOptions
+        {
+            SuggestedFileName = suggestedFileName,
+            FileTypeChoices = [PngFileType, JpegFileType],
+        });
+
+        if (result.File?.TryGetLocalPath() is not { } path)
+        {
+            return null;
+        }
+
+        return ResolveDestination(path, result.SelectedFileType);
+    }
+
+    /// <summary>Code-review finding: extracted from <see cref="PickSaveImageFileAsync"/> so this
+    /// branching logic (the only real logic in that method) is independently unit-testable -- the
+    /// rest of that method needs a live <c>Application.Current</c>/<c>MainWindow</c> and can't be.
+    /// <paramref name="selectedType"/> is the source of truth for which encoder to use --
+    /// confirmed via real-window testing on this app's Linux/GTK backend (see
+    /// `export-frame-jpeg-quality.md`'s own verification log) that a plain
+    /// <c>SaveFilePickerAsync</c>'s returned path does NOT get its extension rewritten when the
+    /// user switches the type dropdown -- <paramref name="path"/> alone is not trustworthy.
+    /// <b>Reference-equality comparison</b> (<paramref name="selectedType"/> against
+    /// <see cref="PngFileType"/>/<see cref="JpegFileType"/>, not a value/pattern comparison --
+    /// <see cref="FilePickerFileType"/> declares no <c>Equals</c>/<c>==</c> override) relies on
+    /// each platform backend echoing back the SAME instance passed into <c>FileTypeChoices</c>;
+    /// confirmed true on Linux/GTK, NOT independently verified on Windows/macOS. Falls back to
+    /// sniffing <paramref name="path"/>'s own extension only if <paramref name="selectedType"/> is
+    /// null (documented case, "or null if not supported") OR — on an unverified platform where the
+    /// echoed-back instance turns out not to be reference-equal — always, silently taking the
+    /// sniff path instead of throwing; bounded blast radius either way, since Win32's own
+    /// documented behavior is to rewrite the path's extension itself, which the sniff path already
+    /// handles correctly.</summary>
+    public static (string Path, ImageExportFormat Format) ResolveDestination(string path, FilePickerFileType? selectedType)
+    {
+        ImageExportFormat format;
+        if (selectedType == JpegFileType)
+        {
+            format = ImageExportFormat.Jpeg;
+        }
+        else if (selectedType == PngFileType)
+        {
+            format = ImageExportFormat.Png;
+        }
+        else
+        {
+            var sniffedExtension = Path.GetExtension(path).ToLowerInvariant();
+            format = sniffedExtension is ".jpg" or ".jpeg" ? ImageExportFormat.Jpeg : ImageExportFormat.Png;
+        }
+
+        var desiredExtension = format == ImageExportFormat.Jpeg ? ".jpg" : ".png";
+        var currentExtension = Path.GetExtension(path);
+        var extensionAlreadyMatches = currentExtension.Equals(desiredExtension, StringComparison.OrdinalIgnoreCase)
+            || (format == ImageExportFormat.Jpeg && currentExtension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase));
+        var normalizedPath = extensionAlreadyMatches ? path : Path.ChangeExtension(path, desiredExtension);
+
+        return (normalizedPath, format);
     }
 
     private static partial class Log
