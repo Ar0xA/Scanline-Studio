@@ -3,27 +3,41 @@
 A ground-up rewrite of [YONIQ](https://github.com/w0eeemst/YONIQ) (a fork of MMSSTV) into a modern,
 cross-platform amateur radio SSTV application — .NET 8 + Avalonia UI, targeting Windows, Linux, and macOS.
 
-This repository is currently **spec-first**: the design is written down in full before implementation,
-one document per concern, so the build proceeds step by step against an agreed plan rather than as one
-giant undifferentiated effort.
+Design is written down in full before implementation, one document per concern
+(`spec/`), so the build proceeds step by step against an agreed plan rather than as one giant
+undifferentiated effort — the spec docs remain the design reference as implementation continues.
 
 ## Status
 
-**Phase 0 — walking skeleton.** The solution scaffold builds cleanly (0 warnings, `TreatWarningsAsErrors`
-enabled) and `ScanlineStudio.Host` boots a DI container and shows a blank Avalonia window. See
-[spec/14-roadmap.md](spec/14-roadmap.md) for what's next (Phase 1: audio capture/playback and the SSTV
-encode/decode round-trip).
+**Core loop working end-to-end**: receive an SSTV picture over a real audio device, send one (with
+crop/rotate/overlay-text editing before transmit), and control a radio via Hamlib or rigctld for
+frequency and PTT. Also built: RX history + logbook (SQLite, ADIF export, ADIF UDP forwarding to
+GridTracker2/N1MM/Log4OM), QRZ lookup, a waterfall/spectrum display, and an Options dialog covering
+audio devices, CAT backends, and station identification (CW-ID/FSK, NR/RST).
+
+Only English ships as a locale today — the runtime language-switching infrastructure is in place
+(see [spec/10-localization.md](spec/10-localization.md)) but no second translation has been written
+yet.
+
+See [spec/18-path-to-1.0.md](spec/18-path-to-1.0.md) for the current priority-tiered list of what's
+left before a 1.0 tag (this supersedes `spec/14-roadmap.md`'s older phase-based status, which is now
+historical).
 
 ## Start here
 
-- [CLAUDE.md](CLAUDE.md) — project rules and guardrails (also doubles as agent instructions).
 - [spec/00-project-overview.md](spec/00-project-overview.md) — vision, goals, non-goals, license.
 - [spec/01-architecture.md](spec/01-architecture.md) through [spec/15-template-designer.md](spec/15-template-designer.md) — one document per subsystem (radio/CAT layer, rigctld, audio, SSTV DSP, imaging, logbook, UI, localization, plugins, settings, testing).
-- [spec/14-roadmap.md](spec/14-roadmap.md) — phased delivery plan tying every spec document together.
+- [spec/18-path-to-1.0.md](spec/18-path-to-1.0.md) — current priority-tiered list of what's left
+  before 1.0. [spec/14-roadmap.md](spec/14-roadmap.md) is the older phased delivery plan tying every
+  spec document together; its Tier 2+ backlog (UI placeholders, CAT protocol work, localization,
+  etc.) is still valid, only its Tier 0/1 "done" status is superseded.
 - [docs/removed-features.md](docs/removed-features.md) — legacy capabilities dropped or only partially
   replaced in the rewrite, and why.
 - [LICENSES.md](LICENSES.md) — why this project is LGPL-3.0-or-later, and what legacy assets were
   deliberately excluded from the port.
+
+Project rules/agent instructions live in `CLAUDE.md` at the repo root — not linked above since it's
+gitignored (project-local, not checked in) and won't resolve for anyone browsing a clone on GitHub.
 
 ## Building
 
