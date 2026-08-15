@@ -113,26 +113,23 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
 
 ### Tier 2 — road to 1.0 (real gaps, correct to ship 0.9 beta without)
 
-- RX buffer Phase 9 (**Phases 7 and 8 — disk-backed Extended mode, and the "Correct Slant" one-shot
-  search — both DONE, 2026-08-14/15**, each through multiple rounds of auditor code-review plus 2
-  full rounds of mandatory plan-review before Phase 8 implementation started; full history
-  `PROJECT_BRIEF.md` + `/home/artien/.claude/plans/wise-riding-hearth.md`). Remaining: Options UI
-  wiring (Phase 9, per the original plan's own written scope — un-stub the `RxBufferMode` radio
-  group in `OptionsWindowView.axaml:364-368`, add `IsEnabled` gating to the Auto-Slant checkbox row,
-  settings/localization, real-window verification; also closes the Tier-0 "RX buffer shown
-  hardcoded-Off" stub above). **Correction, 2026-08-15**: an earlier version of this entry wrongly
-  folded in "a real Correct Slant button/menu item calling `RequestCorrectSlant()`" as part of
-  Phase 9 — the original 9-phase plan's own Phase 9 section does not include that; it's a genuinely
-  separate, currently unscoped gap (Phase 8 ships the decoder-side method with no UI trigger for it
-  at all yet) — logged here as its own item, not conflated with Phase 9's real scope. Migrated from
-  PROJECT_BRIEF (still duplicated there until its next prune): Auto-Slant's convergence characteristic changed
-  materially at Phase 6d (`SlantTracker.ResetBaseline()` now actually runs in production) with
-  nothing measuring whether that's better or worse, and `SlantTests.cs`'s "bitmask permanently
-  latches" doc comment is now stale for the default path; a bounded one-line
-  `_suppressNextSlantProcessLine` bookkeeping loss when a manual-ReSync suppression and an automatic
-  replay land in the same per-line iteration; `DrainPendingSkip`'s own staging-buffer-discontinuity
-  gap (currently unreachable, but **documented as must-resolve before any future manual-redraw UI
-  trigger** — a real precondition on a not-yet-built feature, not just a nice-to-have).
+- ~~RX buffer Phases 7-9~~ — **DONE, all 9 phases complete as of 2026-08-15.** Disk-backed Extended
+  mode (Phase 7), the "Correct Slant" one-shot search (Phase 8), and Options dialog UI wiring
+  (Phase 9, un-stubbed `RxBufferMode` radio group + Auto-Slant `IsEnabled` gating — also closes the
+  Tier-0 "RX buffer shown hardcoded-Off" stub) all shipped, each through auditor code-review (Phase 8
+  additionally through 2 full plan-review rounds per CLAUDE.md §7's decode-path rule). Full history:
+  `git log --oneline` (search "RX buffer subsystem Phase"), `PROJECT_BRIEF.md`,
+  `/home/artien/.claude/plans/coppery-staging-heron.md`/`wise-riding-hearth.md`. Real follow-up gaps
+  this work surfaced, still open (not the same as the phases above, don't conflate): Auto-Slant's
+  convergence characteristic changed materially at Phase 6d (`SlantTracker.ResetBaseline()` now
+  actually runs in production) with nothing measuring whether that's better or worse, and
+  `SlantTests.cs`'s "bitmask permanently latches" doc comment is now stale for the default path; a
+  bounded one-line `_suppressNextSlantProcessLine` bookkeeping loss when a manual-ReSync suppression
+  and an automatic replay land in the same per-line iteration; `DrainPendingSkip`'s own
+  staging-buffer-discontinuity gap (currently unreachable, but **documented as must-resolve before
+  any future manual-redraw UI trigger** — a real precondition on a not-yet-built feature); the two
+  items below (Correct Slant's own missing UI trigger, and the logging-coverage audit) surfaced
+  during Phase 9's own real-window verification.
 - **"Correct Slant" UI trigger** (2026-08-15) — `ISstvDecoder.RequestCorrectSlant()` (RX buffer
   Phase 8, shipped) has no real UI caller anywhere in this port yet; legacy's own trigger is a
   toolbar button/popup-menu item (`KRCS`, `Main.cpp`), matching manual ReSync's own already-real
