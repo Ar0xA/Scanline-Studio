@@ -80,7 +80,15 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <summary>Guards against a second pick starting while an editor is already open/loading --
     /// simpler than a cancel-and-replace token for what's a single, short-lived, user-driven
     /// sequence (the view is expected to disable picking while an editor is open; this is the
-    /// view-model-level backstop).</summary>
+    /// view-model-level backstop). Also gates every <see cref="SelectedMode"/> mutation path
+    /// (spec/18-path-to-1.0.md High item 2, the stale-mode transmit crash): the open
+    /// <see cref="TxImageEditorPaneViewModel"/> captures its target mode once at construction and
+    /// never re-targets, so letting <see cref="SelectedMode"/> change underneath it lets Apply
+    /// hand back an image sized for a mode that's no longer selected -- <see cref="TransmitAsync"/>
+    /// then pairs the NEW <see cref="SelectedMode"/> with that stale-sized image and the encoder
+    /// throws a dimension-mismatch exception. An <see cref="ObservableProperty"/> (not a plain
+    /// field) so the View can bind the mode ComboBox's <c>IsEnabled</c> to it directly.</summary>
+    [ObservableProperty]
     private bool _isEditorOpen;
 
     [ObservableProperty]
@@ -564,15 +572,47 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        Dispatcher.UIThread.Post(() => SelectedMode = mode);
+        // IsEditorOpen is re-checked INSIDE the posted lambda, not before Post -- this method runs
+        // on the audio drain thread (this method's own doc comment above) but IsEditorOpen is only
+        // ever written on the UI thread, so a bare pre-Post read here has no guaranteed visibility
+        // of a UI-thread editor-open that raced it (code-review finding on spec/18-path-to-1.0.md
+        // High item 2: a stale "not open yet" read could let this slip through right as the editor
+        // opens, reintroducing the exact crash this whole fix targets). Checking again once already
+        // marshalled onto the UI thread is race-free.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (IsEditorOpen)
+            {
+                return;
+            }
+
+            SelectedMode = mode;
+        });
     }
 
-    [RelayCommand]
+    private bool CanSelectFavoriteMode() => !IsEditorOpen;
+
+    [RelayCommand(CanExecute = nameof(CanSelectFavoriteMode))]
     private void SelectFavoriteMode(SstvModeDefinition mode)
     {
+        // CanExecute alone isn't a hard gate -- CommunityToolkit's RelayCommand<T>.Execute doesn't
+        // consult it, only Avalonia's Button.OnClick does (code-review finding). This body-level
+        // check is the real backstop, matching the doctrine IsEditorOpen's own doc comment already
+        // states ("the view is expected to disable picking while an editor is open; this is the
+        // view-model-level backstop") and OpenEditorForSourceAsync already honors.
+        if (IsEditorOpen)
+        {
+            return;
+        }
+
         Log.SelectFavoriteModeInvoked(_logger, mode.Id);
         SelectedMode = mode;
     }
+
+    /// <summary>Keeps the favorite-mode buttons' enabled state in sync with <see cref="IsEditorOpen"/>
+    /// -- <see cref="CanSelectFavoriteMode"/> alone only re-evaluates when something explicitly
+    /// requests it.</summary>
+    partial void OnIsEditorOpenChanged(bool value) => SelectFavoriteModeCommand.NotifyCanExecuteChanged();
 
     [RelayCommand]
     private async Task RefreshStockLibraryAsync()
@@ -653,12 +693,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// this VM does not touch Dock/window placement itself.</summary>
     private async Task OpenEditorForSourceAsync(object source, string fileName)
     {
-        if (_isEditorOpen || SelectedMode is not { })
+        if (IsEditorOpen || SelectedMode is not { })
         {
             return;
         }
 
-        _isEditorOpen = true;
+        IsEditorOpen = true;
         IImageSource original;
         try
         {
@@ -672,7 +712,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.LoadTxSourceImageFailed(_logger, fileName, ex);
-            _isEditorOpen = false;
+            IsEditorOpen = false;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             return;
         }
@@ -681,20 +721,35 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // mode is current NOW, not the one in effect when the pick started.
         if (SelectedMode is not { } mode)
         {
-            _isEditorOpen = false;
+            IsEditorOpen = false;
             return;
         }
 
-        // Loaded fresh here rather than cached at construction -- the operator may have edited
-        // Options (Callsign/Name/Grid) at any point before opening the editor.
-        var operatorSettings = (await _settingsStore.LoadAsync())
-            .GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
-            ?? new OperatorSettings();
+        // Code-review finding on spec/18-path-to-1.0.md High item 2: this whole block used to sit
+        // outside any try/catch. Since IsEditorOpen now also gates the mode ComboBox/favorite
+        // buttons/RX auto-follow (not just re-entrant picking), an unhandled throw here (a corrupt
+        // settings file, an oversized image blowing up BuildWorkingCopy/ToBitmap inside the editor's
+        // own constructor) would leave IsEditorOpen stuck true forever -- with no editor ever having
+        // opened, there is no Cancel button to recover with.
+        try
+        {
+            // Loaded fresh here rather than cached at construction -- the operator may have edited
+            // Options (Callsign/Name/Grid) at any point before opening the editor.
+            var operatorSettings = (await _settingsStore.LoadAsync())
+                .GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
+                ?? new OperatorSettings();
 
-        var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _macroTextResolver, operatorSettings, _imageEditorLogger);
-        editor.Applied += final => OnEditorApplied(fileName, original, editor, final);
-        editor.Cancelled += OnEditorCancelled;
-        EditorOpened?.Invoke(editor);
+            var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _macroTextResolver, operatorSettings, _imageEditorLogger);
+            editor.Applied += final => OnEditorApplied(fileName, original, editor, final);
+            editor.Cancelled += OnEditorCancelled;
+            EditorOpened?.Invoke(editor);
+        }
+        catch (Exception ex)
+        {
+            Log.OpenTxEditorFailed(_logger, fileName, ex);
+            IsEditorOpen = false;
+            ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
+        }
     }
 
     private void OnEditorApplied(string fileName, IImageSource original, TxImageEditorPaneViewModel editor, IImageSource final)
@@ -704,17 +759,26 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
         SelectedFileName = fileName;
         ErrorMessage = null;
-        _isEditorOpen = false;
+        IsEditorOpen = false;
         TransmitCommand.NotifyCanExecuteChanged();
         EditorClosed?.Invoke();
     }
 
     private void OnEditorCancelled()
     {
-        _isEditorOpen = false;
+        IsEditorOpen = false;
         EditorClosed?.Invoke();
     }
 
+    /// <summary>Deliberately does NOT also require <c>!IsEditorOpen</c> -- confirmed sound (code
+    /// review, spec/18-path-to-1.0.md High item 2), not just assumed: <see cref="_loadedImage"/> is
+    /// only ever written sized to whatever <see cref="SelectedMode"/> was at that moment
+    /// (<see cref="OnEditorApplied"/> uses the editor's own target mode; <see cref="OnSelectedModeChanged"/>
+    /// re-flows to the new mode), and <see cref="IsEditorOpen"/> now freezes <see cref="SelectedMode"/>
+    /// for its whole lifetime -- so <c>_loadedImage</c>'s dimensions can never diverge from
+    /// <c>SelectedMode</c>'s while an editor is open, even mid-edit. This invariant is load-bearing:
+    /// don't let <see cref="SelectedMode"/> become mutable again while <see cref="IsEditorOpen"/>
+    /// without re-checking it.</summary>
     private bool CanTransmit() => _loadedImage is not null && !IsTransmitting;
 
     [RelayCommand(CanExecute = nameof(CanTransmit))]
@@ -858,6 +922,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX source image failed: {FileName}")]
         public static partial void LoadTxSourceImageFailed(ILogger logger, string fileName, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Opening the TX image editor failed: {FileName}")]
+        public static partial void OpenTxEditorFailed(ILogger logger, string fileName, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Transmit invoked: mode={ModeId}")]
         public static partial void TransmitInvoked(ILogger logger, string modeId);

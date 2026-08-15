@@ -66,6 +66,7 @@
                 </UniformGrid>
                 <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}"
                           SelectedItem="{Binding SelectedMode}"
+                          IsEnabled="{Binding !IsEditorOpen}"
                           HorizontalAlignment="Stretch">
                     <ComboBox.ItemTemplate>
                         <DataTemplate x:DataType="sstv:SstvModeDefinition">
