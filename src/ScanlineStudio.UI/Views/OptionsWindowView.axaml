@@ -416,11 +416,12 @@
                 <!-- ID method (CW/FSK) is real (CW-ID/FSK station-ID subsystem, Phase 6). Sound-file
                      ID, VOX, and the satellite-tune trigger stay disabled: none of those exist
                      yet. Tune frequency/duration themselves are real (header's Tune row) and
-                     intentionally NOT duplicated here. NR/RST TX enable/text have no control here
-                     at all (no mockup row exists for them yet: StationIdSettings.NrRstEnabled/
-                     NrRstText are real, tested backend settings, preserved as-is by this dialog's
-                     Save the same way SstvDecoderSettings.AfcEnabled is; see OptionsSnapshot's
-                     own doc comment). -->
+                     intentionally NOT duplicated here. NR/RST TX enable/text (wired 2026-08-15,
+                     Tier 2) is a static, user-typed value, not a live "current QSO" exchange field:
+                     StationIdSettings.NrRstText's own doc comment already made that call, not a
+                     new decision here. The RX-side decoded-NR/RST display
+                     (RxImagePaneViewModel.DecodedNrRst) is a separate, still-unbound gap, not
+                     fixed by this change. -->
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Identification.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
@@ -464,6 +465,13 @@
                                               IsChecked="{Binding FskIdTxEnabled}" />
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.FskDecode}"
                                               IsChecked="{Binding FskIdRxEnabled}" />
+
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.NrRstEnabled}"
+                                              IsChecked="{Binding NrRstEnabled}" />
+                                    <StackPanel IsVisible="{Binding NrRstEnabled}" Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Identification.NrRstText}" />
+                                        <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Identification.NrRstTextWatermark}" Text="{Binding NrRstText}" />
+                                    </StackPanel>
                                 </StackPanel>
                             </HeaderedContentControl>
 

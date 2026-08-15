@@ -894,6 +894,11 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(1000.0, vm.CwToneFrequencyHz);
         Assert.False(vm.FskIdTxEnabled);
         Assert.False(vm.FskIdRxEnabled);
+        // StationIdSettings.DefaultNrRstEnabled is true (LogFile.cpp:378's real legacy default,
+        // the one field on that record whose default is "on") -- unlike every CW-ID/FSK-ID field
+        // above, which default to Off/false.
+        Assert.True(vm.NrRstEnabled);
+        Assert.Null(vm.NrRstText);
     }
 
     [AvaloniaFact]
@@ -959,6 +964,8 @@ public sealed class OptionsWindowViewModelTests
         vm.CwToneFrequencyHz = 600;
         vm.FskIdTxEnabled = true;
         vm.FskIdRxEnabled = true;
+        vm.NrRstEnabled = false;
+        vm.NrRstText = "599123";
 
         vm.ResetIdentificationToDefaultCommand.Execute(null);
 
@@ -968,6 +975,8 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(1000.0, vm.CwToneFrequencyHz);
         Assert.False(vm.FskIdTxEnabled);
         Assert.False(vm.FskIdRxEnabled);
+        Assert.True(vm.NrRstEnabled);
+        Assert.Null(vm.NrRstText);
     }
 
     [AvaloniaFact]
@@ -982,6 +991,8 @@ public sealed class OptionsWindowViewModelTests
         vm.CwToneFrequencyHz = 700;
         vm.FskIdTxEnabled = true;
         vm.FskIdRxEnabled = true;
+        vm.NrRstEnabled = false;
+        vm.NrRstText = "599123";
 
         await vm.SaveCommand.ExecuteAsync(null);
 
@@ -994,14 +1005,19 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(700.0, reloaded.CwToneFrequencyHz);
         Assert.True(reloaded.FskIdTxEnabled);
         Assert.True(reloaded.FskIdRxEnabled);
+        Assert.False(reloaded.NrRstEnabled);
+        Assert.Equal("599123", reloaded.NrRstText);
     }
 
+    /// <summary>Unlike <see cref="SaveAsync_PersistsIdentificationFields_ReloadedCorrectlyOnNextConstruction"/>'s
+    /// non-empty round-trip, this specifically pins the "no trap" claim in
+    /// `OptionsSettingsService.SaveAsync`'s own comment: <see cref="StationIdSettings.NrRstText"/>
+    /// has no "?? DefaultXxx" fallback at the `LoadAsync` read site the way <see cref="CwText"/>
+    /// does, so clearing the TextBox to <see langword="null"/> and saving must persist an actually
+    /// empty value, not silently resurrect old text on the next load.</summary>
     [AvaloniaFact]
-    public async Task SaveAsync_NrRstFieldsWithNoUiControl_ArePreservedNotResetToDefault()
+    public async Task SaveAsync_ClearedNrRstText_PersistsAsNullNotResurrectedOnReload()
     {
-        // OptionsSnapshot's own doc comment: StationIdSettings.NrRstEnabled/NrRstText have no
-        // Options-dialog control yet -- a Save from this dialog must not silently reset them
-        // (same "preserve previous" contract as SstvDecoderSettings.AfcEnabled).
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
@@ -1011,14 +1027,17 @@ public sealed class OptionsWindowViewModelTests
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
-        vm.FskIdTxEnabled = true;
+        Assert.Equal("599123", vm.NrRstText); // loaded correctly before the clear
 
+        vm.NrRstText = null;
         await vm.SaveCommand.ExecuteAsync(null);
 
         var stationId = settingsStore.Settings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings);
-        Assert.True(stationId!.NrRstEnabled);
-        Assert.Equal("599123", stationId.NrRstText);
-        Assert.True(stationId.FskIdTxEnabled);
+        Assert.Null(stationId!.NrRstText);
+
+        var reloaded = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(reloaded.NrRstText);
     }
 
     [AvaloniaFact]
@@ -1098,8 +1117,8 @@ public sealed class OptionsWindowViewModelTests
     public async Task SaveCommand_PersistsAdifUdpDestinations_AndPreservesClientIdWithNoDialogControl()
     {
         // ClientId has no dialog control (same "preserve previous" contract as
-        // SstvDecoderSettings.AfcEnabled / StationIdSettings.NrRstEnabled above) -- a naive
-        // full-section overwrite on Save would silently null a hand-set ClientId.
+        // SstvDecoderSettings.AfcEnabled above) -- a naive full-section overwrite on Save would
+        // silently null a hand-set ClientId.
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(

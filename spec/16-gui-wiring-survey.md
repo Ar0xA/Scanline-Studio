@@ -516,15 +516,15 @@ of those exist as features at all).
 | ID method: Sound file | STUB | `OptionsWindowView.axaml:431` | Individually `IsEnabled="False"`, not part of the live radio group — `CwIdMode.SoundFile` is explicitly "out of v1 scope" per `AnalogFmSstvEncoder.cs:274-277` (silently transmits nothing, matching legacy's own unconfigured-sound-file behavior). |
 | CW text / CW frequency / CW speed | REAL | `OptionsWindowView.axaml:436,440,444` | `CwText`/`CwToneFrequencyHz`/`CwWpm`, only visible while CW is selected. |
 | Sound-file path + Browse | STUB | `OptionsWindowView.axaml:453-454` | `IsEnabled="False"` on both — no sound-file ID feature exists (see ID method row above). |
-| FSK encode / FSK decode | REAL | `OptionsWindowView.axaml:458,460` | `FskIdTxEnabled`/`FskIdRxEnabled`. |
-| VOX Off/On + Edit tone | STUB | `OptionsWindowView.axaml:469-473` | Whole `WrapPanel` `IsEnabled="False"` (`:469`) — no VOX backend exists anywhere in this port. |
+| FSK encode / FSK decode | REAL | `OptionsWindowView.axaml:464,466` | `FskIdTxEnabled`/`FskIdRxEnabled`. |
+| NR/RST enable + text | REAL | `OptionsWindowView.axaml:469-473` | Wired 2026-08-15 (Tier 2 residual, `NrRstEnabled`/`NrRstText`), only visible while enabled. |
+| VOX Off/On + Edit tone | STUB | `OptionsWindowView.axaml:475-479` | Whole `WrapPanel` `IsEnabled="False"` — no VOX backend exists anywhere in this port. |
 | Tune-satellite trigger | STUB | `OptionsWindowView.axaml:479` | `IsEnabled="False"` — no satellite-tune feature exists. Real Tune frequency/duration fields live on `RadioStatusViewModel` (`TuneFrequencyHz`/`TuneDurationSeconds`/`TuneCommand`) and are intentionally NOT duplicated here; they're just unmapped to any control anywhere in the current UI. |
 
-**Not on this tab, real anyway**: NR/RST sub-packet enable/text (`StationIdSettings.NrRstEnabled`/
-`NrRstText`) has no control here at all — no mockup row exists for it, though the backend settings
-are real, tested, and preserved as-is by this dialog's Save (per the source's own comment,
-`OptionsWindowView.axaml:410-417`). Tracked in `spec/14-roadmap.md` Tier 2 as a real residual, not
-rediscovered here.
+~~**Not on this tab, real anyway**~~ — **DONE 2026-08-15** (see the NR/RST row in the table above).
+NR/RST sub-packet enable/text (`StationIdSettings.NrRstEnabled`/`NrRstText`) previously had no
+control at all despite the backend settings being real and tested; now wired, matching the
+`CwText`/`FskIdTxEnabled` sibling controls' own pattern.
 
 **Historical note (pre-implementation, kept for citation)**: before this subsystem was built, this
 survey investigated `WriteCWID`/`WriteFSK` (`sstv.cpp:2942-2990+`) directly and found them real,

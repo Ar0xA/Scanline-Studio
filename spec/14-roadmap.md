@@ -178,13 +178,15 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   `QthDisplay`/`GridDisplay` all real. This was already shipped 2026-08-11/12 (`spec/16-gui-wiring-
   survey.md`'s QRZ.com tab entry), predating this Tier list — carried forward as open by mistake.
 - CW-ID/FSK residuals (subsystem itself shipped 2026-08-12, these are real leftovers, not "done"):
-  NR/RST sub-packet has real backend settings but zero Options UI (`OptionsWindowView.axaml:
-  413-417`); `MacroTextResolver` still only covers `%m`/`%D`/`%T`, not his-callsign/name/QTH/RST
+  ~~NR/RST sub-packet has real backend settings but zero Options UI~~ — **DONE 2026-08-15**
+  (`OptionsWindowView.axaml:469-473`, `NrRstEnabled`/`NrRstText`, mirrors the `CwText`/
+  `FskIdTxEnabled` sibling controls' pattern; 1 round auditor code-review, 2 doc-only nits fixed).
+  Still open: `MacroTextResolver` only covers `%m`/`%D`/`%T`, not his-callsign/name/QTH/RST
   tokens (`%c`/`%n`/`%q`/`%r`/`%s`/`%R`/`%N`) since those need a "current QSO" context concept that
   doesn't exist; the FSK-decoded-callsign auto-fill is half-built (`RxImagePaneViewModel.cs:564`
   writes to `OverrideCallsign`, but no logbook pane reads it yet, per that file's own :516 note).
   VOX and Sound-file ID (`.mmv` playback) are explicitly **not built** — `OptionsWindowView.axaml:
-  469-473` (VOX disabled), `AnalogFmSstvEncoder.cs:274-277` ("out of v1 scope," silently transmits
+  475-479` (VOX disabled), `AnalogFmSstvEncoder.cs:274-277` ("out of v1 scope," silently transmits
   nothing today, matching legacy's own unconfigured-sound-file behavior — a benign no-op, not a
   lie, but not done either). Correction: an earlier `PROJECT_BRIEF.md` note claiming these were
   "bundled into CW-ID/FSK, done" was wrong, verified against source 2026-08-13.

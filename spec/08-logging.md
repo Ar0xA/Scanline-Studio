@@ -89,7 +89,7 @@ merely empty — an explicitly-saved empty destination list must stay empty, nev
 `ClientId` (the WSJT-X protocol's own "who is this" field, one value shared by every destination)
 has no dedicated Options-dialog control and is preserved across saves via read-modify-write, the
 same "no dialog control yet, preserve as-is" pattern this project already uses for
-`SstvDecoderSettings.AfcEnabled`/`StationIdSettings.NrRstEnabled`.
+`SstvDecoderSettings.AfcEnabled`.
 
 Deliberately NOT in scope: per-service branded settings or auto-detection (the destination list is
 generic on purpose — see `IAdifUdpStreamer`'s own doc comment), retrying a failed send, or
