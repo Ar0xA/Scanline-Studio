@@ -4716,8 +4716,9 @@ gaps found while doing this pass, not previously tracked anywhere:
   metadata above (that one covers OCR too); legacy's own QRZ integration also hardcoded a personal
   account password, which is not being resurrected in any form — a real implementation needs its
   own API-key configuration, not a straight port.
-- JPEG save quality (0-100) — received images are saved as PNG (lossless) today; this setting has
-  no format to apply to unless/until a JPEG save path is added. Trivial once/if that happens.
+- ~~JPEG save quality (0-100)~~ — **DONE 2026-08-15**, see the Tier 2 entry above. Automatic
+  RX-history save is still PNG-only by design (unchanged); the quality setting now applies to the
+  Gallery pane's manual "Export frame" action, not automatic save.
 - Legacy's `WinFont`/Japanese-English font-switch buttons and the Windows-only "always use DIB"
   rendering toggle are **not tracked here at all** — see `docs/removed-features.md`'s new
   "Legacy UI font switching" entry (superseded by the design system, not a gap) and the
@@ -5019,12 +5020,11 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   concept already fully superseded; see that doc's "Raw-serial RTS-pin PTT keying" entry.
 - [ ] **Sound-file ID** — second TX station-ID method (play a recorded clip instead of CW), blocked
   on CW-ID's own subsystem landing first.
-- [ ] **JPEG save quality setting** — **re-scoped 2026-08-12**: not blocked on "images are PNG-only"
-  in the sense originally written — legacy's real `m_JPEGQuality` applies to the manual "Save Image
-  As..." dialog (`SaveBitmapMenu`/`SaveImage`, `Main.cpp:10059-10084`), not the automatic RX-history
-  save this port already does differently (always PNG, by design, not a gap). Real scope is bundled
-  with the Gallery's still-STUB "Export frame" button (a manual save-as flow this port doesn't have
-  yet), not a standalone Options control — build together with Export frame, not independently.
+- [x] **JPEG save quality setting** — **DONE 2026-08-15**. Re-scoped 2026-08-12: not blocked on
+  "images are PNG-only" in the sense originally written — legacy's real `m_JPEGQuality` applies to
+  the manual "Save Image As..." dialog (`SaveBitmapMenu`/`SaveImage`, `Main.cpp:10059-10084`), not
+  the automatic RX-history save this port already does differently (always PNG, by design, not a
+  gap). Built together with the Gallery's "Export frame" button (now real, not a stub) as planned.
 
 **Not on this list, and why** (checked directly, not assumed — corrections to two items an earlier
 automated survey pass flagged as still-open when they're actually already shipped):
