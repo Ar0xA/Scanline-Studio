@@ -147,6 +147,46 @@ public class CorrectSlantTests
     }
 
     [Fact]
+    public void TryCorrectSlant_HasWriteFailed_ReturnsFalseWithoutSearching()
+    {
+        // spec/18-path-to-1.0.md High item 6. Defense-in-depth, not a bug-reproduction test:
+        // TryCorrectSlant's own existing HasHeadroomForSamples checks (entry and pre-commit)
+        // already fully protect correctness on a failed buffer -- RxDiskLineStagingBuffer's own
+        // HasHeadroomForSamples is `=> !_hasWriteFailed`, so this test's own assertions would pass
+        // identically with the new explicit HasWriteFailed guard removed. It documents the explicit
+        // early-exit's own behavior (skip the search entirely once already known-failed) -- see
+        // TryCorrectSlant's own doc comment on that guard, and
+        // /home/artien/.claude/plans/rx-buffer-write-failure-guard.md's Fix section, for the full
+        // reasoning on why it's kept anyway.
+        using var decoder = LockedDecoder(RxBufferMode.Extended);
+        var buffer = decoder.RxLineStagingBufferForTests!;
+        const int rows = 25;
+        for (var row = 0; row < rows; row++)
+        {
+            var truePosition = 2.0 + 0.2 * row;
+            AppendLine(buffer, NominalLineWidth, (int)Math.Round(truePosition));
+        }
+
+        var staging = (RxDiskLineStagingBuffer)buffer;
+        staging.CorruptWriteStreamForTests();
+
+        // Whether THIS specific append is admitted before the consumer observes the corruption is
+        // itself a race (RxDiskLineStagingBufferTests.cs's own established precedent) -- deliberately
+        // not asserted either way, only staged so SOMETHING is guaranteed to hit the corrupted
+        // stream once the background consumer catches up.
+        _ = buffer.TryAppendLine(new double[NominalLineWidth], new double[NominalLineWidth]);
+
+        _ = buffer.DemodulatedAt(0); // forces a drain -- guarantees HasWriteFailed is observed from here on
+        Assert.True(buffer.HasWriteFailed, "Test setup problem: write failure never latched.");
+
+        var startWidth = decoder.EffectiveSamplesPerLineForTests;
+        var result = decoder.TryCorrectSlantForTests();
+
+        Assert.False(result);
+        Assert.Equal(startWidth, decoder.EffectiveSamplesPerLineForTests);
+    }
+
+    [Fact]
     public void TryCorrectSlant_NoRealDrift_ConvergesWithoutARealCommit()
     {
         // Baseline: every line's sync peak sits at the SAME position -- the true signal already

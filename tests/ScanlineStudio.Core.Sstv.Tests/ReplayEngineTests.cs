@@ -73,6 +73,65 @@ public class ReplayEngineTests
         Assert.True(replayLineCount > 0, "PerformReplay never fired LineDecoded -- expected it to redraw at least the rows already staged.");
     }
 
+    [Fact]
+    public void PerformReplay_HasWriteFailed_IsASafeNoOp_NeverRedrawsFromCorruptedData()
+    {
+        // spec/18-path-to-1.0.md High item 6. PerformReplay has two write-failure checkpoints (see
+        // its own doc comments): an entry guard, and a second one immediately after ComputeOrigin
+        // returns (the pass's own first staging-buffer read -- the last point a NEW latch can surface
+        // before the redraw loop runs, whether from that read itself or from the background writer
+        // task latching HasWriteFailed independently, which can happen at any moment -- the flag is
+        // volatile precisely because of that). This test exercises checkpoint 1 deterministically
+        // (the failure is already latched before PerformReplayForTests is even called). Checkpoint 2
+        // is not independently exercised by a dedicated test: doing so needs HasWriteFailed to read
+        // false at checkpoint 1 and then true a few statements later at checkpoint 2, but there is no
+        // test hook to force that exact interleaving deterministically (the buffer field this method
+        // reads is decoder-private, no injection seam exists) -- see
+        // /home/artien/.claude/plans/rx-buffer-write-failure-guard.md for why that gap is accepted,
+        // not chased, rather than attempting a flaky test.
+        var mode = SstvModeRegistry.Robot36;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        var samples = Encode(mode, sourceImage, SampleRate);
+
+        using var decoder = new AnalogFmSstvDecoder(SampleRate, rxBufferMode: RxBufferMode.Extended);
+
+        // Isolates the manual PerformReplayForTests() call below from any AUTOMATIC replay pass,
+        // which would Clear() the staging buffer first -- making Count==0 (the pre-existing early
+        // return) the reason for a no-op instead of the new guard under test here.
+        decoder.SuppressAutomaticReplayForTests = true;
+
+        var liveLineCount = 0;
+        decoder.LineDecoded += _ => liveLineCount++;
+        const int chunkSize = 256;
+        var offset = 0;
+        while (offset < samples.Length && liveLineCount < 12)
+        {
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            offset += length;
+        }
+
+        Assert.True(liveLineCount >= 12, "Test setup problem: never decoded 12 lines live before attempting replay.");
+        var staging = (RxDiskLineStagingBuffer)decoder.RxLineStagingBufferForTests!;
+        Assert.True(staging.Count > 0 && staging.LineCount > 0, "Test setup problem: nothing staged yet.");
+
+        staging.CorruptWriteStreamForTests();
+
+        // Deliberately not asserted either way -- same established race as
+        // CorrectSlantTests.cs's sibling test; only staged so something is guaranteed to hit the
+        // corrupted stream once the background consumer catches up.
+        _ = staging.TryAppendLine([0.0], [0.0]);
+
+        _ = staging.DemodulatedAt(0); // forces a drain -- guarantees HasWriteFailed is observed
+        Assert.True(staging.HasWriteFailed, "Test setup problem: write failure never latched.");
+
+        var replayLineCount = 0;
+        decoder.LineDecoded += _ => replayLineCount++;
+        decoder.PerformReplayForTests();
+
+        Assert.Equal(0, replayLineCount);
+    }
+
     [Theory]
     [InlineData(RxBufferMode.On)]
     [InlineData(RxBufferMode.Extended)]
