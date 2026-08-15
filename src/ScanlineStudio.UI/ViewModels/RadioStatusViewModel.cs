@@ -89,6 +89,21 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private bool _catLinked;
 
+    /// <summary>spec/18-path-to-1.0.md High item 10: real, rig-REPORTED PTT/keyed state --
+    /// <see cref="RadioState.IsTransmitting"/>, refreshed every successful poll
+    /// (<see cref="OnStateChanged"/>) and cleared whenever <see cref="CatLinked"/> drops
+    /// (<see cref="OnConnectionEvent"/>), so it can never stay stuck showing "keyed" once the link
+    /// itself is gone. NOT the same thing as <c>TxControlsPaneViewModel.IsTransmitting</c> (this
+    /// app's own "a TransmitAsync call is currently in flight" flag) -- this one is the RIG'S OWN
+    /// readback of whether it's actually keyed, true regardless of the reason (a real transmit, a
+    /// manual <see cref="ISstvSessionService.SetPttLockAsync"/> lock, or an external Tune), false
+    /// whenever the connected rig doesn't support PTT readback at all (VOX/DTR-only keying --
+    /// see this indicator's own tooltip). Lags the rig's real key-down/key-up by roughly one poll
+    /// interval (<see cref="RadioConnectionSpec.PollInterval"/>, ~250ms default) plus rig
+    /// round-trip -- not instantaneous.</summary>
+    [ObservableProperty]
+    private bool _isKeyed;
+
     /// <summary>VFO card's UTC clock -- real, ticking, zero backend dependency
     /// (spec/17-rx-telemetry-feasibility.md).</summary>
     [ObservableProperty]
@@ -185,6 +200,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             _suppressModeCommand = true;
             SelectedRadioMode = state.Mode;
             _suppressModeCommand = false;
+
+            IsKeyed = state.IsTransmitting;
         });
     }
 
@@ -195,7 +212,25 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             return;
         }
 
-        Dispatcher.UIThread.Post(() => CatLinked = evt.State == RadioConnectionState.Connected);
+        Dispatcher.UIThread.Post(() =>
+        {
+            CatLinked = evt.State == RadioConnectionState.Connected;
+
+            // spec/18-path-to-1.0.md High item 10, round-1 plan-review blocker: IsKeyed is only
+            // ever refreshed by a SUCCESSFUL poll (OnStateChanged above) -- a transport failure
+            // publishes only a connection event with no new RadioState, so without this, a rig
+            // that was keyed when the link dropped would stay showing "keyed" indefinitely with
+            // nothing behind it. A CommandFailed-only failure (a single command failed, connection
+            // itself still healthy -- see CatLinked's own established reasoning a few lines up)
+            // deliberately does NOT reach this method at all (the early return above), so it does
+            // NOT clear IsKeyed either -- accepted, documented residual gap: polling continues, the
+            // next good poll self-heals it; a staleness timer for that narrower case is
+            // disproportionate to this item's scope.
+            if (!CatLinked)
+            {
+                IsKeyed = false;
+            }
+        });
     }
 
     /// <summary>Unguarded fire-and-forget from the constructor before this wrap was added -- a
