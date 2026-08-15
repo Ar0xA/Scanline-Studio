@@ -144,6 +144,29 @@ public partial class MainWindow : Window
                     }
                 };
 
+                // Deliberately synchronous, unlike QsoLinkRequested's handler above -- no dialog,
+                // no ShowDialog to await. Safe to read vm.RxImage's properties directly here: every
+                // writer of OverrideCallsign/DetectedMode/StartedAt already routes through
+                // Dispatcher.UIThread.Post, and this handler itself only ever runs on the UI
+                // thread (LogQsoCommand is a button click), so there is no interleaving window
+                // between "user clicked Log QSO" and this read.
+                vm.RxImage.LogQsoRequested += () =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.LogQsoRequested(logger);
+                    }
+
+                    vm.Logbook.PrefillForNewEntry(
+                        vm.RxImage.OverrideCallsign,
+                        vm.RxImage.DetectedMode?.Id,
+                        vm.RxImage.StartedAt ?? DateTimeOffset.UtcNow,
+                        vm.RxImage.LookupName,
+                        vm.RxImage.LookupQth,
+                        vm.RxImage.LookupGrid);
+                    vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
+                };
+
                 vm.ExitRequested += () =>
                 {
                     if (logger is not null)
@@ -179,5 +202,8 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QsoLinkWindowView failed to open or show")]
         public static partial void QsoLinkWindowFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Log QSO requested from the RX pane; switching to the Logbook tab")]
+        public static partial void LogQsoRequested(ILogger logger);
     }
 }

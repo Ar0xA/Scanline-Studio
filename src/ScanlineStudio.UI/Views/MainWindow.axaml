@@ -144,7 +144,7 @@
              later by the Options window's own unrelated TabControl would otherwise inherit this
              row bound against the wrong DataContext). -->
         <Grid Grid.Row="2">
-        <TabControl Classes="Industry">
+        <TabControl Classes="Industry" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
             <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Receive}">
                 <!-- Phase 3: 236,*,312 columns, gap 9, padding 9,11,9,8 (LAYOUT-SPEC §5 Band 4a /
                      PADDING-NORMALIZATION.md), was 258,*,330 / gap 4 / uniform 4. -->
@@ -455,10 +455,11 @@
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxImage.CardHeader}" />
                             </HeaderedContentControl.Header>
                             <DockPanel LastChildFill="True">
-                                <!-- Bottom action bar: literal/no-op. RxImagePaneViewModel has
-                                     no Save/Abort/Re-decode/Copy-to-TX/Log-QSO commands today
-                                     (spec/14-roadmap.md backlog); progress bar/count are likewise
-                                     literal. DockPanel (not StackPanel): buttons left, count
+                                <!-- Bottom action bar: Save/Abort/Re-decode/Copy-to-TX are still
+                                     literal/no-op (spec/14-roadmap.md backlog); Log QSO is real
+                                     (wired 2026-08-15, see the inner comment below). Progress
+                                     bar/count are likewise literal. DockPanel (not StackPanel):
+                                     buttons left, count
                                      pinned far right (no "Ln" prefix - just the raw x/y count),
                                      progress bar fills the middle gap between them - matches
                                      mock2's own bar-fills-the-row shape while keeping the frame
@@ -466,16 +467,19 @@
                                      header caption (same value, different spot) was dropped. -->
                                 <DockPanel DockPanel.Dock="Bottom" Margin="0,4,0,0">
                                     <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingSnug}">
-                                        <!-- No Save/Abort/Re-decode/Copy-to-TX/Log-QSO commands exist on
+                                        <!-- No Save/Abort/Re-decode/Copy-to-TX commands exist on
                                              RxImagePaneViewModel today — disabled rather than left
                                              clickable-but-dead (auto-save already happens silently
                                              elsewhere, so a live "Save Frame" button that does nothing
-                                             would read as data loss). -->
+                                             would read as data loss). Log QSO is real (wired 2026-08-15,
+                                             CW-ID/FSK residual) — this DockPanel's own DataContext is
+                                             MainViewModel, not RxImage, so the binding is explicitly
+                                             qualified, not a bare {Binding LogQsoCommand}. -->
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Content="{loc:Translate Panes.RxImage.SaveFrame}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.Abort}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.RedecodeAction}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.CopyToTx}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.LogQso}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.LogQso}" Command="{Binding RxImage.LogQsoCommand}" />
                                     </StackPanel>
                                     <TextBlock DockPanel.Dock="Right" Classes="IndustryRowValue" VerticalAlignment="Center" Margin="12,0,0,0" Text="{loc:Translate Panes.RxImage.FrameLineCount}" />
                                     <ProgressBar Classes="Industry" VerticalAlignment="Center" Margin="12,0,0,0" Minimum="0" Maximum="100" Value="0" />

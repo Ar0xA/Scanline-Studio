@@ -14,12 +14,27 @@ namespace ScanlineStudio.UI.ViewModels;
 /// built by a factory.</summary>
 public partial class MainViewModel : ViewModelBase
 {
+    /// <summary>Index of the Logbook tab in `MainWindow.axaml`'s main `TabControl` (source order:
+    /// Receive=0, Transmit=1, Gallery=2, Logbook=3) -- named so a future tab reorder is at least
+    /// grep-able, and guarded by a test asserting the 4th `TabItem`'s header key is
+    /// `MainWindow.Tabs.Logbook` (a silent reorder would otherwise switch to the wrong tab with no
+    /// compile-time or obvious runtime signal).</summary>
+    public const int LogbookTabIndex = 3;
+
     private readonly IServiceProvider _services;
     private readonly OptionsSettingsService _optionsSettingsService;
     private readonly ILogger<MainViewModel> _logger;
 
     [ObservableProperty]
     private TxImageEditorPaneViewModel? _activeEditor;
+
+    /// <summary>Backs the main `TabControl`'s `SelectedIndex` (`Mode=TwoWay` -- both directions are
+    /// load-bearing: the user's own manual tab clicks must flow back here, and "Log QSO" on the RX
+    /// pane needs to programmatically switch to <see cref="LogbookTabIndex"/>). The app's first
+    /// VM-driven tab switch -- previously this TabControl had no binding at all, pure click-driven
+    /// default behavior.</summary>
+    [ObservableProperty]
+    private int _selectedTabIndex;
 
     /// <summary>Operator's own callsign (spec/09-ui.md menu-row chip, mock2's own top-right
     /// "DL2QSK" green pill) -- real, loaded from <see cref="OptionsSettingsService"/> the same
