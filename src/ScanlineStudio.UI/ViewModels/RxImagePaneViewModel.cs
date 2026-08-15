@@ -487,6 +487,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
     private void OnModeDetected(SstvModeDefinition mode)
     {
+        Log.ModeDetected(_logger, mode.Id);
         Dispatcher.UIThread.Post(() =>
         {
             DetectedMode = mode;
@@ -749,6 +750,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured RX capture device name failed")]
         public static partial void LoadCaptureDeviceNameFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Mode detected: {ModeId}")]
+        public static partial void ModeDetected(ILogger logger, string modeId);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the just-saved RX image's file size failed")]
         public static partial void ReadSavedFileSizeFailed(ILogger logger, Exception ex);

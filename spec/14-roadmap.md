@@ -138,15 +138,28 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   left untouched — `spec/17-rx-telemetry-feasibility.md`'s own warning). Real-window verified,
   including catching a real column-width truncation bug before it shipped. 1 round of code-review
   (GO), pushed as `3d4d151`.
-- **Audit INFO/DEBUG logging coverage across the app** (2026-08-15, user request) — `docs/logging-guidelines.md`'s
-  mandatory `[LoggerMessage]` pattern is in place project-wide (`project_logging_infrastructure`
-  memory), but its actual COVERAGE has never been swept end-to-end: confirm the right log lines
-  exist at the right call sites for UI actions, TX, and RX specifically, and that each one actually
-  fires when its own triggering action happens (not just that a `[LoggerMessage]` method exists
-  somewhere unreachable) — i.e. verify by exercising the real code path and checking the log output,
-  the same technique that caught the Phase 9 real-window Save-button-miss this session (the app's
-  own `SaveInvoked`/`Settings saved to <path>` log lines were what exposed two silently-missed
-  simulated clicks). A real gap-finding pass, not a re-confirmation that the pattern itself exists.
+- ~~**Audit INFO/DEBUG logging coverage across the app**~~ — **survey DONE 2026-08-15, fixes DONE
+  2026-08-15** (user request). Static survey of all 51 `[RelayCommand]`s across 9 ViewModels + 9
+  `SstvSessionService` state-changing methods + RX event subscribers found: 40/51 UI commands
+  already logged, TX lifecycle (`TransmitAsync`→`PlayWithPttAsync`) fully covered, but 4 real gaps —
+  `LogbookPaneViewModel.New()`, `RxHistoryPaneViewModel.OpenInLog()`, `TxImageEditorPaneViewModel`
+  (zero logging infra in the whole file — `Apply()`/`Cancel()` now covered, required threading a new
+  `ILogger<TxImageEditorPaneViewModel>` through `TxControlsPaneViewModel`), and the
+  `ISstvSessionService.ModeDetected` event (logged once now, at `RxImagePaneViewModel` as the
+  canonical subscriber, of its 3 UI-layer subscribers). All 4 fixed, build clean, 246/246 UI tests
+  pass, single-round auditor code-review per CLAUDE.md §7's mechanical-work tier. **Two gaps found
+  but NOT fixed, carried forward separately below**: `DecodeRestarted` (needs an `ISstvSessionService`
+  API addition first, bigger than a logging fix) and Auto-Sync/Auto-Slant/Auto-Stop commit logging
+  (no event exists to hook a log call onto at all — these are polled properties, not events; would
+  need a new `ISstvDecoder`-level event, a design question, not a logging pass).
+- **`DecodeRestarted` has no trace anywhere** (found by the logging audit above, 2026-08-15) —
+  `AnalogFmSstvDecoder.DecodeRestarted` (mode restart / Auto-Stop abandonment, legacy-significant)
+  is never forwarded by `ISstvSessionService` to the UI layer at all
+  (`RxImagePaneViewModel.cs:86`'s own comment already documents this gap). The two Core-layer
+  subscribers that do exist (`ReceiveHistoryRecorder`, `ReceivedImageBuffer`) use it for state
+  bookkeeping only, no logging either. A real "why did my last image fail" debugging blind spot.
+  Needs `ISstvSessionService.DecodeRestarted` added (API surface change) before a log call can be
+  hung on it anywhere — scope this as its own small piece, not bundled into a future logging pass.
 - Advanced tab: PLL/Zero-crossing tuning-parameter UI (backend already real, demod-type subsystem),
   TX BPF/LPF toggle (the filter already applies unconditionally — this is a bypass switch only, not
   core), Loopback/calibration wizards (fully unbuilt).

@@ -236,6 +236,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     [RelayCommand]
     private void New()
     {
+        Log.NewInvoked(_logger);
         ResetForm();
         StatusMessage = null;
     }
@@ -444,6 +445,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh invoked: callsign={Callsign}")]
         public static partial void RefreshInvoked(ILogger logger, string? callsign);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "New invoked")]
+        public static partial void NewInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SearchAsync failed; logbook list stays as-is")]
         public static partial void SearchFailed(ILogger logger, Exception ex);
