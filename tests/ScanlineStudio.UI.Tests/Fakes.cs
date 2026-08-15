@@ -506,6 +506,10 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
 
     public List<ImageOverlay> Overlays { get; } = [];
 
+    public int RotateCallCount { get; private set; }
+
+    public List<IImageSource> RotateSources { get; } = [];
+
     public IImageSource Crop(IImageSource source, NormalizedRect region)
     {
         CropCallCount++;
@@ -525,6 +529,17 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
         ApplyOverlayCallCount++;
         Overlays.Add(overlay);
         return source;
+    }
+
+    /// <summary>Unlike Crop/ApplyOverlay's identity-return, this returns a genuinely new,
+    /// dimension-swapped <see cref="ArrayImageSource"/> -- VM-level rotate tests depend on
+    /// WorkingCopyWidth/Height actually swapping, same reasoning as <see cref="Resize"/>
+    /// above.</summary>
+    public IImageSource Rotate(IImageSource source)
+    {
+        RotateCallCount++;
+        RotateSources.Add(source);
+        return new ArrayImageSource(source.Height, source.Width, new Rgb24[source.Width * source.Height]);
     }
 }
 

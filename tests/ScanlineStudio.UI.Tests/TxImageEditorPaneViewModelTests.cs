@@ -235,6 +235,176 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(overlayCountBefore, preparer.ApplyOverlayCallCount);
     }
 
+    // spec/18-path-to-1.0.md High item 3. All rotate tests below use a non-square 6x4 source
+    // within SmallMode's 8x8 working-copy budget (so _workingCopy IS _originalSource, the common
+    // small-image case) unless a test specifically needs the two to be distinct instances.
+
+    [AvaloniaFact]
+    public void Rotate_SwapsWorkingCopyDimensions()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.Equal(6, vm.WorkingCopyWidth);
+        Assert.Equal(4, vm.WorkingCopyHeight);
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.Equal(4, vm.WorkingCopyWidth);
+        Assert.Equal(6, vm.WorkingCopyHeight);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_TransformsCropRectPerTheClockwiseFormula()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
+
+        vm.RotateCommand.Execute(null);
+
+        // (x,y,w,h) -> (1-y-h, x, h, w).
+        AssertClose(0.4, vm.CropRect.X);
+        AssertClose(0.1, vm.CropRect.Y);
+        AssertClose(0.4, vm.CropRect.Width);
+        AssertClose(0.3, vm.CropRect.Height);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_BeforeAnyCropEdit_StillRecomputesPreview()
+    {
+        // CommunityToolkit's generated CropRect setter skips OnCropRectChanged entirely for a
+        // same-value assignment (record struct equality) -- the initial (0,0,1,1) transforms to
+        // itself under the clockwise formula, so this specifically catches a regression where
+        // Rotate() relied on that hook instead of calling the shared notify method unconditionally.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        var overlayCountBefore = preparer.ApplyOverlayCallCount;
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.Equal(overlayCountBefore + 1, preparer.ApplyOverlayCallCount);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_TransformsOverlayElementPosition_AndUpdatesImageDimensions()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        element.X = 0.2;
+        element.Y = 0.3;
+
+        vm.RotateCommand.Execute(null);
+
+        // (x,y) -> (1-y, x), same point transform as the crop rect.
+        AssertClose(0.7, element.X);
+        AssertClose(0.2, element.Y);
+        AssertClose(4, element.ImageWidth);
+        AssertClose(6, element.ImageHeight);
+        AssertClose(element.X * element.ImageWidth, element.LeftPixels);
+        AssertClose(element.Y * element.ImageHeight, element.TopPixels);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_FourTimes_RoundTripsCropRectAndOverlayPositionsWithinTolerance()
+    {
+        // Floating-point subtraction in the transform means this isn't bit-exact -- AssertClose's
+        // 1e-9 tolerance, not exact struct/double equality, per round-1 plan-review.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        element.X = 0.15;
+        element.Y = 0.65;
+
+        // Deliberately off-canvas (Y > 1) -- code-review finding: this element's own drag handler
+        // (TxImageEditorPaneView.axaml.cs) allows free overflow past the image bounds, clipped only
+        // at render time, so Rotate() must NOT clamp overlay positions to [0,1] the way it clamps
+        // the crop rect (which has a real invariant to protect). Round-tripping this pins that.
+        vm.AddOverlayElementCommand.Execute(null);
+        var offCanvasElement = vm.OverlayElements[1];
+        offCanvasElement.X = 0.5;
+        offCanvasElement.Y = 1.2;
+
+        for (var i = 0; i < 4; i++)
+        {
+            vm.RotateCommand.Execute(null);
+        }
+
+        AssertClose(0.1, vm.CropRect.X);
+        AssertClose(0.2, vm.CropRect.Y);
+        AssertClose(0.3, vm.CropRect.Width);
+        AssertClose(0.4, vm.CropRect.Height);
+        AssertClose(0.15, element.X);
+        AssertClose(0.65, element.Y);
+        AssertClose(0.5, offCanvasElement.X);
+        AssertClose(1.2, offCanvasElement.Y);
+        Assert.Equal(6, vm.WorkingCopyWidth);
+        Assert.Equal(4, vm.WorkingCopyHeight);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_WithAnOverlayElementAndANonIdentityCropRect_RecomputesPreviewExactlyOnce()
+    {
+        // Code-review finding: _suspendPreview (suppressing RecomputePreview() while Rotate() is
+        // mid-update) was entirely untested -- every existing Rotate test used either zero overlay
+        // elements or asserted no call counts, so deleting the suppression left the suite green.
+        // With one element and a CropRect that actually changes under rotation, an unsuppressed
+        // Rotate() would fire ~6 RecomputePreview calls (4 from the element's own X/Y/ImageWidth/
+        // ImageHeight PropertyChanged cascades, 1 from the CropRect reassignment, 1 final) instead
+        // of exactly 1 -- discriminating enough to catch a regression here.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, preparer);
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.OverlayElements[0].X = 0.2;
+        vm.OverlayElements[0].Y = 0.3;
+        var overlayCountBefore = preparer.ApplyOverlayCallCount;
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.Equal(overlayCountBefore + 1, preparer.ApplyOverlayCallCount);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_WorkingCopySharesTheOriginalInstance_RotatesOnlyOnce()
+    {
+        // Within budget -- BuildWorkingCopy returns the source instance itself (see
+        // Constructor_OriginalWithinWorkingCopyBudget_UsesOriginalDirectlyAsWorkingCopy above), so
+        // Rotate() must not call the preparer's Rotate twice on what's really the same object.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.Equal(1, preparer.RotateCallCount);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_WorkingCopyIsADistinctDownsampledInstance_RotatesBoth()
+    {
+        // Exceeds budget -- BuildWorkingCopy downsamples, so _originalSource and _workingCopy are
+        // genuinely different instances and each needs its own Rotate call.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(20, 20), SmallMode, preparer);
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.Equal(2, preparer.RotateCallCount);
+    }
+
+    [AvaloniaFact]
+    public void CurrentSource_ReflectsRotate_NotJustTheConstructorArgument()
+    {
+        var original = CreateSource(6, 4);
+        var vm = CreateEditor(original, SmallMode, new FakeTransmitImagePreparer());
+        Assert.Same(original, vm.CurrentSource);
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.NotSame(original, vm.CurrentSource);
+        Assert.Equal(4, vm.CurrentSource.Width);
+        Assert.Equal(6, vm.CurrentSource.Height);
+    }
+
     private static ArrayImageSource CreateSource(int width, int height)
         => new(width, height, new Rgb24[width * height]);
 

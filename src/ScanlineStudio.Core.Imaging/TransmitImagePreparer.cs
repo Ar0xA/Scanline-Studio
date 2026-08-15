@@ -89,6 +89,13 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         return FromImageSharp(image);
     }
 
+    public IImageSource Rotate(IImageSource source)
+    {
+        using var image = ToImageSharp(source);
+        image.Mutate(ctx => ctx.Rotate(RotateMode.Rotate90));
+        return FromImageSharp(image);
+    }
+
     private static Image<SixLabors.ImageSharp.PixelFormats.Rgb24> ToImageSharp(IImageSource source)
     {
         var image = new Image<SixLabors.ImageSharp.PixelFormats.Rgb24>(source.Width, source.Height);

@@ -97,6 +97,35 @@ public sealed class TransmitImagePreparerTests
         }
     }
 
+    [Fact]
+    public async Task Rotate_SwapsDimensions_AndMovesTheTopLeftPixelToTheTopRight()
+    {
+        // spec/18-path-to-1.0.md High item 3. A 4x2 source, top-left pixel red, everything else
+        // blue. This is the ONLY test that pins RotateMode.Rotate90 as actually clockwise (not
+        // counter-clockwise) -- TxImageEditorPaneViewModel's own crop-rect/overlay coordinate
+        // transforms are derived assuming clockwise, and would be wrong-by-mirror otherwise.
+        var path = await WriteFixturePngAsync(4, 2, (x, y) => x == 0 && y == 0
+            ? new ImageSharpRgb24(255, 0, 0)
+            : new ImageSharpRgb24(0, 0, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 4, 2);
+            var preparer = new TransmitImagePreparer(FontPath);
+
+            var rotated = preparer.Rotate(source);
+
+            Assert.Equal(2, rotated.Width);
+            Assert.Equal(4, rotated.Height);
+            // Old top-left (0,0) -> new top-right (W-1, 0) under a clockwise rotation.
+            AssertPixel(rotated, 1, 0, r: 255, g: 0, b: 0);
+            AssertPixel(rotated, 0, 0, r: 0, g: 0, b: 255);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     // Span-typed locals (ReadOnlySpan<Rgb24> from IImageSource.GetScanline) cannot be declared
     // inside an async method body at all -- a C# language restriction, not an ambiguity issue --
     // so every scanline-touching assertion is a plain synchronous helper called after all

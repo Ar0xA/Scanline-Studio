@@ -37,13 +37,22 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     // interactive drag-frame recompute runs against this small copy, never the original.
     private const int WorkingCopyScaleFactor = 2;
 
-    private readonly IImageSource _originalSource;
-    private readonly IImageSource _workingCopy;
+    // Mutable (not readonly) since spec/18-path-to-1.0.md High item 3's Rotate command reassigns
+    // both in place -- see RotateCommand's own doc comment for why (and why it's still safe: this
+    // VM is UI-thread-only, same as every other mutable field here).
+    private IImageSource _originalSource;
+    private IImageSource _workingCopy;
     private readonly SstvModeDefinition _targetMode;
     private readonly ITransmitImagePreparer _preparer;
     private readonly IMacroTextResolver _macroTextResolver;
     private readonly OperatorSettings _operatorSettings;
     private readonly ILogger<TxImageEditorPaneViewModel> _logger;
+
+    // Suppresses RecomputePreview() while RotateCommand is mid-update (rotated working copy but
+    // not-yet-transformed CropRect/overlay positions) -- without this, each overlay element's own
+    // ImageWidth/ImageHeight PropertyChanged (now real notifications, see OverlayElementViewModel)
+    // would each trigger a full Crop+Resize+ApplyOverlay against transiently inconsistent state.
+    private bool _suspendPreview;
 
     [ObservableProperty]
     private NormalizedRect _cropRect = new(0, 0, 1, 1);
@@ -81,6 +90,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     }
 
     public ObservableCollection<OverlayElementViewModel> OverlayElements { get; } = [];
+
+    /// <summary>The live, current-orientation source -- reflects any <see cref="RotateCommand"/>
+    /// calls so far. Round-1 plan-review finding on spec/18-path-to-1.0.md High item 3: a host
+    /// (<see cref="TxControlsPaneViewModel"/>) that captured the ORIGINAL constructor argument
+    /// instead of reading this property would silently revert a rotate the next time it re-derives
+    /// from that stale reference (e.g. on a later mode change) -- see
+    /// <c>TxControlsPaneViewModel.OpenEditorForSourceAsync</c>'s own use of this property.</summary>
+    public IImageSource CurrentSource => _originalSource;
 
     /// <summary>Pixel-space dimensions of the interactive canvas's background image -- the View
     /// binds crop-handle/overlay-element positions directly to these (rather than a converter doing
@@ -204,7 +221,84 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         Cancelled?.Invoke();
     }
 
-    partial void OnCropRectChanged(NormalizedRect value)
+    /// <summary>Rotates the source 90° clockwise (always -- no direction parameter, matching the
+    /// View's single Rotate button; 4 clicks returns to the original orientation), transforming
+    /// (not resetting) the current crop rect and every overlay element's position along with it --
+    /// round-1 plan-review's own explicit design call: resetting would silently destroy deliberate
+    /// framing/text work on the common "rotate after already cropping" case, and would break the
+    /// 4-clicks-returns-to-start property the single-button UX depends on. <see cref="FontSizeRelative"/>
+    /// is deliberately left untouched (see <see cref="OverlayElementViewModel.FontSizeRelative"/>'s
+    /// own reasoning) -- <c>TransmitImagePreparer.ApplyOverlay</c> computes rendered size against
+    /// the FINAL mode-sized output's height, never the source's own orientation, so rotation has no
+    /// effect on what it means; "fixing" it here would be a real regression, not an improvement.</summary>
+    [RelayCommand]
+    private void Rotate()
+    {
+        Log.RotateInvoked(_logger);
+
+        // BuildWorkingCopy's own small-image fast path can return the source instance itself
+        // (already covered by Constructor_OriginalWithinWorkingCopyBudget_UsesOriginalDirectlyAsWorkingCopy)
+        // -- captured BEFORE reassigning _originalSource below, so a shared instance stays shared
+        // (one Rotate call, not two independent copies where one used to be the same object).
+        var wasShared = ReferenceEquals(_workingCopy, _originalSource);
+        _originalSource = _preparer.Rotate(_originalSource);
+        _workingCopy = wasShared ? _originalSource : _preparer.Rotate(_workingCopy);
+
+        _suspendPreview = true;
+        try
+        {
+            WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
+            OnPropertyChanged(nameof(WorkingCopyWidth));
+            OnPropertyChanged(nameof(WorkingCopyHeight));
+
+            foreach (var element in OverlayElements)
+            {
+                // Same underlying point transform as the crop rect below: (x,y) -> (1-y, x) for a
+                // 90° clockwise rotation (verified against this codebase's own top-left-origin,
+                // Y-grows-downward convention -- TransmitImagePreparer.Crop/ApplyOverlay's pixel
+                // math -- not assumed from a generic formula). Deliberately NOT clamped to [0,1]
+                // (unlike the crop rect below) -- code-review finding: TxImageEditorPaneView.axaml.cs's
+                // own drag handler explicitly allows free overflow past the image bounds ("clipped
+                // at render time only", spec/07-image-pipeline.md), so clamping here would silently
+                // relocate an element the user deliberately dragged off-canvas and break the
+                // 4-clicks-returns-to-start property for it.
+                var (x, y) = (element.X, element.Y);
+                element.X = 1 - y;
+                element.Y = x;
+                element.ImageWidth = WorkingCopyWidth;
+                element.ImageHeight = WorkingCopyHeight;
+            }
+
+            CropRect = TransformCropRectClockwise(CropRect);
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        NotifyCropRectDerivedPropertiesAndRecomputePreview();
+    }
+
+    /// <summary>(x,y,w,h) -&gt; (1-y-h, x, h, w) -- exact for 90°-multiple rotations (bounding box
+    /// of the four corner points under the same (x,y) -&gt; (1-y,x) transform <see cref="Rotate"/>
+    /// applies to overlay positions). Clamped to [0,1]: the subtraction can land a hair outside due
+    /// to floating-point rounding (e.g. -1e-17), which would violate ApplyCropMove/ApplyCropResize's
+    /// own x ∈ [0, 1-w] invariant.</summary>
+    private static NormalizedRect TransformCropRectClockwise(NormalizedRect rect) => new(
+        X: Math.Clamp(1 - rect.Y - rect.Height, 0, 1),
+        Y: Math.Clamp(rect.X, 0, 1),
+        Width: rect.Height,
+        Height: rect.Width);
+
+    partial void OnCropRectChanged(NormalizedRect value) => NotifyCropRectDerivedPropertiesAndRecomputePreview();
+
+    /// <summary>Split out from <see cref="OnCropRectChanged"/> so <see cref="Rotate"/> can call it
+    /// unconditionally -- CommunityToolkit's generated <see cref="CropRect"/> setter skips this
+    /// partial hook entirely when the new value structurally equals the old one (record struct
+    /// equality), which a rotate performed before any crop edit hits every time (the initial
+    /// <c>(0,0,1,1)</c> transforms to itself). Relying on the hook alone would leave the preview and
+    /// pixel-derived properties stale after such a rotate.</summary>
+    private void NotifyCropRectDerivedPropertiesAndRecomputePreview()
     {
         RecomputePreview();
         OnPropertyChanged(nameof(CropLeftPixels));
@@ -249,6 +343,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// mode dimensions, or a non-aspect-preserving stretch would smear already-drawn glyphs).</summary>
     private void RecomputePreview()
     {
+        // See _suspendPreview's own doc comment -- RotateCommand sets this while multiple overlay
+        // elements' cascading PropertyChanged events (via OnOverlayElementPropertyChanged) and the
+        // CropRect reassignment would otherwise each trigger this full pipeline against transiently
+        // half-updated (rotated working copy, not-yet-transformed crop/overlay) state.
+        if (_suspendPreview)
+        {
+            return;
+        }
+
         var cropped = _preparer.Crop(_workingCopy, CropRect);
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
         var overlaid = _preparer.ApplyOverlay(resized, BuildOverlay());
@@ -281,5 +384,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Cancel invoked")]
         public static partial void CancelInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Rotate invoked")]
+        public static partial void RotateInvoked(ILogger logger);
     }
 }

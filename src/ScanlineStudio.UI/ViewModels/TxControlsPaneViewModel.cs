@@ -740,7 +740,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 ?? new OperatorSettings();
 
             var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _macroTextResolver, operatorSettings, _imageEditorLogger);
-            editor.Applied += final => OnEditorApplied(fileName, original, editor, final);
+            editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             EditorOpened?.Invoke(editor);
         }
@@ -752,9 +752,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void OnEditorApplied(string fileName, IImageSource original, TxImageEditorPaneViewModel editor, IImageSource final)
+    private void OnEditorApplied(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
     {
-        _editState = new EditState(original, editor.CropRect, editor.PreserveAspect, editor.Overlay);
+        // editor.CurrentSource, NOT the pre-rotation IImageSource this method used to receive as
+        // its own "original" parameter -- round-1 plan-review finding on spec/18-path-to-1.0.md
+        // High item 3: capturing the closure's original pre-rotation reference here meant a
+        // rotate performed in the editor was silently discarded the next time OnSelectedModeChanged
+        // re-derived _loadedImage from this EditState on a later mode change -- Apply's own
+        // immediate output was correct (used the editor's own live rotated source), but the
+        // re-derivation reverted to the unrotated image while still applying the ROTATED crop
+        // rect/overlay coordinates to it. CurrentSource always reflects every Rotate call so far.
+        _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Overlay);
         _loadedImage = final;
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
         SelectedFileName = fileName;

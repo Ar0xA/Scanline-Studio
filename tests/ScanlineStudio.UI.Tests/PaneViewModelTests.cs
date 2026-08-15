@@ -1256,6 +1256,34 @@ public sealed class PaneViewModelTests
         Assert.Equal((modeB.ImageWidth, modeB.ImageHeight), (ExtractLoadedImage(vm)!.Width, ExtractLoadedImage(vm)!.Height));
     }
 
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_RotateThenApplyThenModeChange_UsesTheRotatedSource_NotTheStaleOriginal()
+    {
+        // spec/18-path-to-1.0.md High item 3, round-1 plan-review blocker: OnEditorApplied used to
+        // capture the closure's pre-rotation IImageSource instead of the editor's own live
+        // CurrentSource, so a rotate performed in the editor was silently discarded the next time
+        // OnSelectedModeChanged re-derived the loaded image on a later mode change -- Apply's own
+        // immediate output was correct, but the re-derivation reverted to the unrotated image
+        // while still applying the ROTATED crop rect/overlay coordinates to it.
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        vm.SelectedMode = modeA;
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.RotateCommand.Execute(null);
+        var rotatedSource = editor.CurrentSource;
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedMode = modeB;
+
+        Assert.Same(rotatedSource, preparer.CropSources[^1]);
+    }
+
     // spec/18-path-to-1.0.md High item 2: the stale-mode transmit crash. The open editor captures
     // its target mode once at construction and never re-targets, so SelectedMode must be frozen
     // for the whole time an editor is open -- otherwise Apply hands back an image sized for a mode
