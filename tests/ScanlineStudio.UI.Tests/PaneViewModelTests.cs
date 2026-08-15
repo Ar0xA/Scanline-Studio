@@ -1256,6 +1256,133 @@ public sealed class PaneViewModelTests
         Assert.Equal((modeB.ImageWidth, modeB.ImageHeight), (ExtractLoadedImage(vm)!.Width, ExtractLoadedImage(vm)!.Height));
     }
 
+    // spec/18-path-to-1.0.md High item 2: the stale-mode transmit crash. The open editor captures
+    // its target mode once at construction and never re-targets, so SelectedMode must be frozen
+    // for the whole time an editor is open -- otherwise Apply hands back an image sized for a mode
+    // that's no longer selected, and Transmit later pairs the mismatch with the encoder throwing.
+    // Three tests below cover the three real SelectedMode-mutation paths this fix gates.
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_EditorOpen_DisablesTheFavoriteModeCommand()
+    {
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeB));
+
+        // CanExecute alone would still pass this test even if OnIsEditorOpenChanged's
+        // NotifyCanExecuteChanged() call were deleted (CanExecute always re-evaluates live) --
+        // subscribing to CanExecuteChanged is what actually proves the button's bound IsEnabled
+        // would visually update without something else forcing a re-query (code-review nit).
+        var canExecuteChangedCount = 0;
+        vm.SelectFavoriteModeCommand.CanExecuteChanged += (_, _) => canExecuteChangedCount++;
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+
+        Assert.True(vm.IsEditorOpen);
+        Assert.False(vm.SelectFavoriteModeCommand.CanExecute(modeB));
+        Assert.True(canExecuteChangedCount > 0);
+
+        // Also exercises SelectFavoriteMode's own body-level IsEditorOpen guard (code-review
+        // finding: CanExecute isn't a hard gate -- RelayCommand<T>.Execute doesn't consult it,
+        // only Avalonia's Button.OnClick does) by force-invoking through ICommand.Execute directly.
+        vm.SelectFavoriteModeCommand.Execute(modeB);
+        Assert.Equal("test", vm.SelectedMode?.Id);
+
+        editor.CancelCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsEditorOpen);
+        Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeB));
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ModeDetected_WhileEditorOpen_DoesNotChangeSelectedMode()
+    {
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                TxPaneUiSettings.SectionKey,
+                new TxPaneUiSettings { AutoFollowRxMode = true },
+                TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings),
+        };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), settingsStore, new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedMode = modeA;
+
+        await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        Assert.True(vm.IsEditorOpen);
+        Assert.True(vm.AutoFollowRxMode); // otherwise this test would pass vacuously through the
+                                           // guard's OTHER half even if the IsEditorOpen check were deleted
+
+        // An RX-driven auto-follow firing while the TX editor is open is a real, easy-to-hit repro
+        // of the stale-mode crash -- no manual mode-change interaction needed at all.
+        sstvSession.RaiseModeDetected(modeB);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("test", vm.SelectedMode?.Id);
+    }
+
+    /// <summary>Covers <see cref="TxControlsPaneViewModel.IsEditorOpen"/>'s own open/close lifecycle
+    /// only -- NOT the actual XAML <c>IsEnabled="{Binding !IsEditorOpen}"</c> binding on the mode
+    /// ComboBox in <c>TxControlsPaneView.axaml</c> (code-review nit; still not exercised by any
+    /// automated test here). That binding sits directly under this view's own root
+    /// <c>x:DataType="vm:TxControlsPaneViewModel"</c>, so Avalonia compiles and type-checks it at
+    /// build time -- a path typo would be a build error, not a silent runtime failure. Real-window
+    /// verified: the mode ComboBox visibly greys out the moment the TX editor opens (Browse -&gt;
+    /// pick an image) and re-enables on Cancel.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_IsEditorOpen_TracksTheEditorOpenCloseLifecycle()
+    {
+        var modeA = TestMode;
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        Assert.False(vm.IsEditorOpen);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        Assert.True(vm.IsEditorOpen);
+
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsEditorOpen);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SettingsLoadThrowsWhileOpeningTheEditor_ResetsIsEditorOpen_InsteadOfStayingStuckOpen()
+    {
+        // Code-review finding on spec/18-path-to-1.0.md High item 2: the settings-load-and-construct
+        // block used to sit outside any try/catch. Since IsEditorOpen now also gates the mode
+        // ComboBox/favorite buttons/RX auto-follow (not just re-entrant picking), an unhandled throw
+        // here would previously have left the whole pane's mode-selection permanently disabled, with
+        // no editor ever open to Cancel out of.
+        var modeA = TestMode;
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var settingsStore = new FakeSettingsStore { LoadAsyncException = new InvalidOperationException("simulated corrupt settings file") };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), settingsStore, new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        var editorOpenedCount = 0;
+        vm.EditorOpened += _ => editorOpenedCount++;
+
+        await vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, editorOpenedCount);
+        Assert.False(vm.IsEditorOpen);
+        Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeA));
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
     /// <summary>Drives a pick command to the point where <see cref="TxControlsPaneViewModel.EditorOpened"/>
     /// fires, then returns the editor instance -- every "pick a source" test needs this same
     /// choreography now that picking opens an editor instead of loading directly.</summary>
