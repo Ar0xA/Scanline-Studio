@@ -90,6 +90,8 @@ public sealed partial class OptionsSettingsService
         CwToneFrequencyHz: new StationIdSettings().CwToneFrequencyHz ?? StationIdSettings.DefaultCwToneFrequencyHz,
         FskIdTxEnabled: new StationIdSettings().FskIdTxEnabled,
         FskIdRxEnabled: new StationIdSettings().FskIdRxEnabled,
+        NrRstEnabled: new StationIdSettings().NrRstEnabled ?? StationIdSettings.DefaultNrRstEnabled,
+        NrRstText: new StationIdSettings().NrRstText,
         // Immutable empty, never a shared mutable List<T> -- this property is static, so a mutable
         // default would be a single shared instance every caller could accidentally mutate.
         AdifUdpDestinations: []);
@@ -146,6 +148,8 @@ public sealed partial class OptionsSettingsService
             CwToneFrequencyHz: stationId.CwToneFrequencyHz ?? StationIdSettings.DefaultCwToneFrequencyHz,
             FskIdTxEnabled: stationId.FskIdTxEnabled,
             FskIdRxEnabled: stationId.FskIdRxEnabled,
+            NrRstEnabled: stationId.NrRstEnabled ?? StationIdSettings.DefaultNrRstEnabled,
+            NrRstText: stationId.NrRstText,
             AdifUdpDestinations: adifUdp.Destinations ?? []);
     }
 
@@ -234,8 +238,6 @@ public sealed partial class OptionsSettingsService
                 QrzLookupSettingsJsonContext.Default.QrzLookupSettings)
             .WithSection(
                 StationIdSettings.SectionKey,
-                // NrRstEnabled/NrRstText are preserved as-is -- same reasoning as AfcEnabled above,
-                // this dialog has no control for either yet (see OptionsSnapshot's own doc comment).
                 previousStationId with
                 {
                     CwIdMode = snapshot.CwIdMode,
@@ -248,12 +250,19 @@ public sealed partial class OptionsSettingsService
                     CwToneFrequencyHz = snapshot.CwToneFrequencyHz,
                     FskIdTxEnabled = snapshot.FskIdTxEnabled,
                     FskIdRxEnabled = snapshot.FskIdRxEnabled,
+                    // No "?? string.Empty" trap here unlike CwText above: LoadAsync reads
+                    // NrRstText raw with no "?? DefaultXxx" fallback (StationIdSettings.NrRstText's
+                    // own doc comment -- null/empty both mean "nothing to send," no first-run hint
+                    // text exists to accidentally resurrect), so persisting the raw snapshot value
+                    // verbatim is correct.
+                    NrRstEnabled = snapshot.NrRstEnabled,
+                    NrRstText = snapshot.NrRstText,
                 },
                 StationIdSettingsJsonContext.Default.StationIdSettings)
             .WithSection(
                 AdifUdpStreamingSettings.SectionKey,
-                // ClientId is preserved as-is -- same reasoning as AfcEnabled/NrRstEnabled above,
-                // this dialog has no control for it (see OptionsSnapshot's own doc comment).
+                // ClientId is preserved as-is -- same reasoning as AfcEnabled above, this dialog
+                // has no control for it (see OptionsSnapshot's own doc comment).
                 previousAdifUdp with { Destinations = snapshot.AdifUdpDestinations },
                 AdifUdpStreamingSettingsJsonContext.Default.AdifUdpStreamingSettings);
 

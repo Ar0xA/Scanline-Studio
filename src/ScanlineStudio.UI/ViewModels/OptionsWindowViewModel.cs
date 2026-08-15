@@ -234,6 +234,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _fskIdRxEnabled;
 
+    /// <summary>Real, tested backend setting (<c>StationIdSettings.NrRstEnabled</c>, default
+    /// <see langword="true"/> per that record's own doc comment) previously had no Options-dialog
+    /// control at all -- see <c>OptionsSnapshot</c>'s own doc comment, which this closes out. Static,
+    /// user-typed text, not a live "current QSO" exchange field -- that design decision was already
+    /// made on <c>StationIdSettings.NrRstText</c>'s own doc comment, not new here.</summary>
+    [ObservableProperty]
+    private bool _nrRstEnabled = true;
+
+    [ObservableProperty]
+    private string? _nrRstText;
+
     public OptionsWindowViewModel(
         OptionsSettingsService optionsSettingsService,
         ILocalizationService localization,
@@ -685,6 +696,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         CwToneFrequencyHz = snapshot.CwToneFrequencyHz;
         FskIdTxEnabled = snapshot.FskIdTxEnabled;
         FskIdRxEnabled = snapshot.FskIdRxEnabled;
+        NrRstEnabled = snapshot.NrRstEnabled;
+        NrRstText = snapshot.NrRstText;
 
         AdifUdpDestinations.Clear();
         foreach (var destination in snapshot.AdifUdpDestinations)
@@ -746,6 +759,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             CwToneFrequencyHz: CwToneFrequencyHz,
             FskIdTxEnabled: FskIdTxEnabled,
             FskIdRxEnabled: FskIdRxEnabled,
+            NrRstEnabled: NrRstEnabled,
+            NrRstText: NrRstText,
             AdifUdpDestinations: AdifUdpDestinations.Select(row => row.ToDestination()).ToList());
 
         try
@@ -868,6 +883,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         CwToneFrequencyHz = defaults.CwToneFrequencyHz;
         FskIdTxEnabled = defaults.FskIdTxEnabled;
         FskIdRxEnabled = defaults.FskIdRxEnabled;
+        NrRstEnabled = defaults.NrRstEnabled;
+        NrRstText = defaults.NrRstText;
     }
 
     [RelayCommand]

@@ -14,14 +14,14 @@ namespace ScanlineStudio.Application;
 /// not on <c>StationIdSettings</c> alongside the rest of that record's fields), so reusing it
 /// directly here doesn't violate that rule.
 ///
-/// <c>StationIdSettings.NrRstEnabled</c>/<c>NrRstText</c> deliberately have NO fields here -- no
-/// Options-dialog mockup row exists for them yet (the CW-ID/FSK station-ID subsystem's Phase 5 left
-/// the RX-side equivalent, <c>RxImagePaneViewModel.DecodedNrRst</c>, unbound for the same reason).
-/// <see cref="OptionsSettingsService.SaveAsync"/> preserves whatever those two fields already were
-/// (same pattern as <c>SstvDecoderSettings.AfcEnabled</c>, which also has no dialog control),
-/// they're never silently reset by a Save from this dialog. <c>AdifUdpStreamingSettings.ClientId</c>
-/// is the same shape (no dialog control, preserved as-is on Save) -- only <see cref="AdifUdpDestinations"/>
-/// (the first list-valued field here) is dialog-editable.</summary>
+/// <c>AdifUdpStreamingSettings.ClientId</c> has NO field here -- no dialog control exists for it
+/// (only <see cref="AdifUdpDestinations"/>, the list-valued field, is dialog-editable);
+/// <see cref="OptionsSettingsService.SaveAsync"/> preserves it as-is (same pattern as
+/// <c>SstvDecoderSettings.AfcEnabled</c>), never silently reset by a Save from this dialog.
+/// <c>StationIdSettings.NrRstEnabled</c>/<c>NrRstText</c> WERE the same shape until 2026-08-15 (see
+/// <see cref="NrRstEnabled"/>/<see cref="NrRstText"/> below) -- the RX-side equivalent,
+/// <c>RxImagePaneViewModel.DecodedNrRst</c>, is a display-only decoded value with no settings
+/// section at all, a separate and still-open gap, not fixed by this change.</summary>
 public sealed record OptionsSnapshot(
     string? CultureCode,
     string? CaptureDeviceId,
@@ -54,6 +54,8 @@ public sealed record OptionsSnapshot(
     double CwToneFrequencyHz,
     bool FskIdTxEnabled,
     bool FskIdRxEnabled,
+    bool NrRstEnabled,
+    string? NrRstText,
     DemodType DemodType,
     RxBpfPreset RxBpfPreset,
     RxBufferMode RxBufferMode,
