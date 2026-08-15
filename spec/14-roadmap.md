@@ -10,6 +10,12 @@ Order is chosen so that at the end of every phase there is a **runnable, demoabl
 
 ## Path to 0.9 beta / road to 1.0 — priority tiers (2026-08-13)
 
+**Superseded 2026-08-15 by `[[18-path-to-1.0]]`** for Tier 0/Tier 1's "DONE" status specifically —
+a full milestone audit (`docs/audit-playbook.md`, 8 parallel `auditor` passes) found the core TX
+loop broken with the default radio backend, a core-loop regression that postdates the "DONE"
+marking below. This section's Tier 2 backlog remains valid and unaffected; see `[[18-path-to-1.0]]`
+for the current priority list to work from.
+
 Supersedes ad-hoc prioritization scattered across "Must-implement backlog," "Explicitly deferred
 beyond v1," "Release gates," "Open items requiring a decision," and "Phase 4+ backlog" below —
 those sections are kept in place (banners added at each, nothing deleted) for their research/
