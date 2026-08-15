@@ -37,6 +37,18 @@ public interface ISstvSessionService : IAsyncDisposable
 
     event Action<SstvModeDefinition>? ModeDetected;
 
+    /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.DecodeRestarted"/>
+    /// -- same synchronous, audio-drain-thread concurrency contract as <see cref="ModeDetected"/>.
+    /// Not exposed until 2026-08-15 (logging-coverage audit finding): a mid-reception restart -- a
+    /// stronger/cleaner sync lock found on a new transmission, a user-forced mode change
+    /// (<see cref="ForceMode"/>), or Auto-Stop abandonment -- previously had no reachable subscriber
+    /// in <c>ScanlineStudio.UI</c> at all (a separate Core.Logbook subscriber,
+    /// <c>ReceiveHistoryRecorder</c>, already existed and is unaffected by this addition). See
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.DecodeRestarted"/>'s own doc comment
+    /// for the underlying event's full semantics: the argument is the *abandoned* mode, not the new
+    /// one, and ordering relative to a following <see cref="ModeDetected"/> is not fixed.</summary>
+    event Action<SstvModeDefinition>? DecodeRestarted;
+
     /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.StationIdDecoded"/>
     /// -- same synchronous, decode-thread concurrency contract as that event (see its own doc
     /// comment), NOT gated on a call to <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> being

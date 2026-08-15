@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Logbook;
@@ -170,6 +171,38 @@ public sealed class PaneViewModelTests
         Assert.Equal("Scottie 1", vm.DetectedModeText);
         Assert.Equal("138.2 ms", vm.LineTimeText);
         Assert.Equal("256", vm.LinesText);
+    }
+
+    /// <summary>Logging-coverage audit (2026-08-15): <see cref="ISstvSessionService.DecodeRestarted"/>
+    /// previously had no reachable subscriber anywhere in <c>ScanlineStudio.UI</c>. This VM now
+    /// subscribes purely to log it -- deliberately no bound state changes -- so this asserts both
+    /// that raising the event doesn't disturb unrelated state (a still-current
+    /// <see cref="RxImagePaneViewModel.DetectedMode"/> from an earlier <c>ModeDetected</c> survives a
+    /// subsequent <c>DecodeRestarted</c> for the same mode) AND, via a recording <see cref="FakeLogger{T}"/>
+    /// (auditor round-1 finding: a prior version of this test would have passed identically even if
+    /// the event subscription were deleted), that the subscription actually took and the real log
+    /// call fired -- not just that nothing threw.</summary>
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_DecodeRestartedEvent_LogsAndDoesNotDisturbDetectedMode()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var logger = new FakeLogger<RxImagePaneViewModel>();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), logger);
+
+        var mode = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        sstvSession.RaiseDecodeRestarted(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Scottie 1", vm.DetectedModeText);
+        Assert.Contains(
+            logger.Entries,
+            e => e.Level == LogLevel.Information && e.Message.Contains("restarted", StringComparison.OrdinalIgnoreCase) && e.Message.Contains("sc1", StringComparison.Ordinal));
     }
 
     [AvaloniaFact]

@@ -209,6 +209,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
         remove => _decoder.ModeDetected -= value;
     }
 
+    public event Action<SstvModeDefinition>? DecodeRestarted
+    {
+        add => _decoder.DecodeRestarted += value;
+        remove => _decoder.DecodeRestarted -= value;
+    }
+
     public event Action<FskStationIdDecodedInfo>? StationIdDecoded
     {
         add => _decoder.StationIdDecoded += value;
