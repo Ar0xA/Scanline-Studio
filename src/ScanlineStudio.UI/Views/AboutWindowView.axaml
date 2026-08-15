@@ -1,0 +1,52 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.AboutWindowView"
+        x:DataType="vm:AboutWindowViewModel"
+        Title="{loc:Translate About.Title}"
+        Width="440" Height="360"
+        MinWidth="380" MinHeight="320"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Modeled on QsoLinkWindowView.axaml (Industry atoms, Grid RowDefinitions="*,Auto" content/
+         footer split, RequestClose event wired in the code-behind). No mockup exists for this
+         dialog: spec/18-path-to-1.0.md High item 5 is new scope, not a legacy MMSSTV screen. -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="*,Auto">
+
+            <ScrollViewer Grid.Row="0">
+                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+
+                    <TextBlock Classes="IndustryGbTitle" Text="{Binding ApplicationName}" FontSize="18" HorizontalAlignment="Center" />
+
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate About.VersionLabel}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding VersionDisplay}" TextWrapping="Wrap" />
+                    </Grid></Border>
+
+                    <TextBlock Classes="IndustryRowValue" Text="{Binding Copyright}" HorizontalAlignment="Center" />
+
+                    <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap"
+                               Text="{loc:Translate About.Derivative}" />
+
+                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                        <HeaderedContentControl.Header>
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate About.LicenseHeader}" />
+                        </HeaderedContentControl.Header>
+                        <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                            <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap" Text="{loc:Translate About.LicenseBody}" />
+                        </StackPanel>
+                    </HeaderedContentControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="{StaticResource IndustryPaddingGroup}">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate About.CloseButton}" Command="{Binding CloseCommand}" IsDefault="True" IsCancel="True" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

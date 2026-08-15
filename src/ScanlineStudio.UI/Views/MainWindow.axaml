@@ -104,7 +104,9 @@
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.RedecodeFromWav}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.ExportSessionLog}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
             </MenuItem>
-            <MenuItem Header="{loc:Translate MainWindow.Menu.Help}" />
+            <MenuItem Header="{loc:Translate MainWindow.Menu.Help}">
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Help.About}" Command="{Binding OpenAboutCommand}" />
+            </MenuItem>
             <MenuItem Header="{loc:Translate MainWindow.OptionsMenuItem}" Command="{Binding OpenOptionsCommand}" />
         </Menu>
 

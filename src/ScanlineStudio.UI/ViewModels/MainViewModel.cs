@@ -110,11 +110,25 @@ public partial class MainViewModel : ViewModelBase
     /// <see cref="OptionsRequested"/>; the code-behind owns the actual <c>Close()</c> call.</summary>
     public event Action? ExitRequested;
 
+    /// <summary>Help &gt; About (spec/18-path-to-1.0.md High item 5) -- same
+    /// view-model-never-touches-a-Window reasoning as <see cref="OptionsRequested"/>. Not
+    /// DI-resolved, unlike <see cref="OptionsWindowViewModel"/> -- <see cref="AboutWindowViewModel"/>
+    /// has no injectable dependencies (see its own doc comment), so a plain <c>new</c> here is
+    /// simpler than registering it in the container for a single caller.</summary>
+    public event Action<AboutWindowViewModel>? AboutRequested;
+
     [RelayCommand]
     private void OpenOptions()
     {
         Log.OpenOptionsInvoked(_logger);
         OptionsRequested?.Invoke(_services.GetRequiredService<OptionsWindowViewModel>());
+    }
+
+    [RelayCommand]
+    private void OpenAbout()
+    {
+        Log.OpenAboutInvoked(_logger);
+        AboutRequested?.Invoke(new AboutWindowViewModel());
     }
 
     [RelayCommand]
@@ -141,6 +155,9 @@ public partial class MainViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOptions command invoked")]
         public static partial void OpenOptionsInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "OpenAbout command invoked")]
+        public static partial void OpenAboutInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit command invoked")]
         public static partial void ExitInvoked(ILogger logger);
