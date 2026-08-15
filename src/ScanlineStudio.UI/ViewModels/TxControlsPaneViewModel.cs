@@ -37,6 +37,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private readonly IRadioSessionService _radioSession;
     private readonly IMacroTextResolver _macroTextResolver;
     private readonly ILogger<TxControlsPaneViewModel> _logger;
+    private readonly ILogger<TxImageEditorPaneViewModel> _imageEditorLogger;
 
     private const int SwrCutoffConsecutiveSamplesRequired = 2;
 
@@ -246,7 +247,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         ISettingsStore settingsStore,
         IRadioSessionService radioSession,
         IMacroTextResolver macroTextResolver,
-        ILogger<TxControlsPaneViewModel> logger)
+        ILogger<TxControlsPaneViewModel> logger,
+        ILogger<TxImageEditorPaneViewModel> imageEditorLogger)
     {
         _sstvSession = sstvSession;
         _imageFileLoader = imageFileLoader;
@@ -258,6 +260,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _radioSession = radioSession;
         _macroTextResolver = macroTextResolver;
         _logger = logger;
+        _imageEditorLogger = imageEditorLogger;
 
         AvailableModes = sstvSession.AvailableModes;
         _selectedMode = AvailableModes.Count > 0 ? AvailableModes[0] : null;
@@ -684,7 +687,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             .GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
             ?? new OperatorSettings();
 
-        var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _macroTextResolver, operatorSettings);
+        var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _macroTextResolver, operatorSettings, _imageEditorLogger);
         editor.Applied += final => OnEditorApplied(fileName, original, editor, final);
         editor.Cancelled += OnEditorCancelled;
         EditorOpened?.Invoke(editor);

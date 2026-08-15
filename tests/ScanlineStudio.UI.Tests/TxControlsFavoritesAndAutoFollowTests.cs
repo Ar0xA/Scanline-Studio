@@ -28,7 +28,8 @@ public sealed class TxControlsFavoritesAndAutoFollowTests
             settingsStore,
             new FakeRadioSessionService(),
             new MacroTextResolver(),
-            NullLogger<TxControlsPaneViewModel>.Instance);
+            NullLogger<TxControlsPaneViewModel>.Instance,
+            NullLogger<TxImageEditorPaneViewModel>.Instance);
 
     [AvaloniaFact]
     public void Constructor_LoadsFavoritesAndAutoFollowFromPersistedSettings()

@@ -1,4 +1,5 @@
 using Avalonia.Headless.XUnit;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
@@ -25,7 +26,7 @@ public sealed class TxImageEditorPaneViewModelTests
         CreateEditor(original, mode, preparer, new OperatorSettings());
 
     private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, OperatorSettings operatorSettings) =>
-        new(original, mode, preparer, new MacroTextResolver(), operatorSettings);
+        new(original, mode, preparer, new MacroTextResolver(), operatorSettings, NullLogger<TxImageEditorPaneViewModel>.Instance);
 
     [AvaloniaFact]
     public void Constructor_OriginalLargerThanWorkingCopyBudget_DownsamplesBeforeUse()
