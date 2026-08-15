@@ -19,6 +19,18 @@ public sealed class TxImageEditorPaneViewModelTests
         ColorEncoding: ColorEncoding.RgbSequential,
         LineSegments: []);
 
+    // spec/18-path-to-1.0.md High item 4 (aspect-locked crop) -- deliberately non-square (2:1) so
+    // a test can distinguish "the crop rect matches the MODE's aspect" from "the crop rect happens
+    // to be square like SmallMode is."
+    private static readonly SstvModeDefinition WideMode = new(
+        Id: "wide",
+        DisplayName: "Wide",
+        VisCode: 0,
+        ImageWidth: 8,
+        ImageHeight: 4,
+        ColorEncoding: ColorEncoding.RgbSequential,
+        LineSegments: []);
+
     // Real MacroTextResolver + blank OperatorSettings -- none of these tests exercise macro
     // resolution itself (that's MacroTextResolverTests' job), so a real-but-inert resolver is
     // simpler than a fake with nothing to configure.
@@ -403,6 +415,164 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotSame(original, vm.CurrentSource);
         Assert.Equal(4, vm.CurrentSource.Width);
         Assert.Equal(6, vm.CurrentSource.Height);
+    }
+
+    // spec/18-path-to-1.0.md High item 4 (aspect-locked crop). All tests below use an 8x8 (square)
+    // working copy against WideMode's 2:1 target aspect -- deliberately mismatched, so a passing
+    // test proves the PIXEL aspect matches the mode, not just that the working copy happens to
+    // already be that shape.
+
+    [AvaloniaFact]
+    public void LockAspectToMode_DefaultsToFalse()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.LockAspectToMode);
+    }
+
+    [AvaloniaFact]
+    public void LockAspectToMode_TurnedOn_ImmediatelyRefitsTheExistingCropRect()
+    {
+        // Legacy's own SBRatioClick (PicRect.cpp:653-662) re-fits on click, not on the next drag.
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        Assert.Equal(new NormalizedRect(0, 0, 1, 1), vm.CropRect);
+
+        vm.LockAspectToMode = true;
+
+        AssertClose(0, vm.CropRect.X);
+        AssertClose(0, vm.CropRect.Y);
+        AssertClose(1.0, vm.CropRect.Width);
+        AssertClose(0.5, vm.CropRect.Height);
+    }
+
+    [AvaloniaFact]
+    public void DragCropResize_WithLockOn_ProducesACropRectMatchingTheModesPixelAspect()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.LockAspectToMode = true; // auto-refits to (0,0,1.0,0.5)
+
+        vm.DragCropResize(-0.25, 0);
+
+        AssertClose(0.75, vm.CropRect.Width);
+        AssertClose(0.375, vm.CropRect.Height);
+        var pixelAspect = (vm.CropRect.Width * vm.WorkingCopyWidth) / (vm.CropRect.Height * vm.WorkingCopyHeight);
+        AssertClose(2.0, pixelAspect);
+    }
+
+    [AvaloniaFact]
+    public void DragCropResize_WithLockOn_OverflowingWidth_ShrinksBothAxesProportionally_NotIndependently()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.7, 0, 0.2, 0.1); // already aspect-matching, near the right edge
+        vm.LockAspectToMode = true; // no-op refit -- already valid
+
+        // Raw drag would grow to a 4.0x3.2px box (still aspect-fit-able down to 4.0x2.0), but the
+        // available width here is only 2.4px (maxWidthPixels = (1-0.7)*8) -- an independent per-axis
+        // clamp would produce width=2.4,height=2.0 (aspect 1.2, wrong); shrinking height along with
+        // width instead preserves the target 2:1 aspect exactly.
+        vm.DragCropResize(0.3, 0.3);
+
+        AssertClose(0.3, vm.CropRect.Width);
+        AssertClose(0.15, vm.CropRect.Height);
+        var pixelAspect = (vm.CropRect.Width * vm.WorkingCopyWidth) / (vm.CropRect.Height * vm.WorkingCopyHeight);
+        AssertClose(2.0, pixelAspect);
+    }
+
+    [AvaloniaFact]
+    public void ApplyCropResizeAspectLocked_WhenNoValidAspectCorrectBoxFitsBounds_RejectsTheResize_LeavingCropRectUnchanged()
+    {
+        // Round-1 plan-review blocker repro (a real, deterministic case -- not pathological): a
+        // tiny crop pinned near the right edge, then the lock engages. The available width
+        // (maxWidthPixels) equals the minimum floor exactly, but deriving height from that width via
+        // the mode's own WIDE (2:1) aspect ratio pushes height BELOW its own floor -- there is no
+        // valid aspect-correct box, so the fix rejects the resize entirely instead of emitting an
+        // aspect-violating rect (the original draft's bug).
+        var vm = CreateEditor(CreateSource(100, 100), WideMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.98, 0, 0.02, 0.02);
+
+        vm.LockAspectToMode = true;
+
+        Assert.Equal(new NormalizedRect(0.98, 0, 0.02, 0.02), vm.CropRect);
+    }
+
+    [AvaloniaFact]
+    public void NudgeCropResize_ClearsLockAspectToMode_MatchingHowItAlreadyClearsPreserveAspect()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.LockAspectToMode = true;
+
+        vm.NudgeCropResize(NudgeDirection.Right);
+
+        Assert.False(vm.LockAspectToMode);
+        Assert.False(vm.PreserveAspect); // pre-existing behavior, unaffected by this change
+    }
+
+    [AvaloniaFact]
+    public void LockAspectToMode_WhenRawBoxIsWiderThanTarget_ShrinksWidthToMatchHeight()
+    {
+        // Code-review finding: none of the other tests reach the ratio-fit's OTHER branch
+        // (rawWidth/rawHeight > targetAspect, i.e. the raw dragged box is even wider than the
+        // target itself, so WIDTH -- not height -- has to shrink) -- they all happened to land in
+        // the opposite branch.
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0, 0, 0.9, 0.3); // raw pixel ratio 7.2/2.4 = 3.0 > targetAspect 2.0
+
+        vm.LockAspectToMode = true;
+
+        AssertClose(0.6, vm.CropRect.Width);
+        AssertClose(0.3, vm.CropRect.Height);
+        var pixelAspect = (vm.CropRect.Width * vm.WorkingCopyWidth) / (vm.CropRect.Height * vm.WorkingCopyHeight);
+        AssertClose(2.0, pixelAspect);
+    }
+
+    [AvaloniaFact]
+    public void DragCropResize_WithLockOn_OverflowingHeight_ShrinksBothAxesProportionally()
+    {
+        // Code-review finding: no existing test reaches the height-overflow branch -- only the
+        // width-overflow branch (DragCropResize_WithLockOn_OverflowingWidth_...) was covered.
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0, 0.85, 0.1, 0.1); // tight vertical room: maxHeightPixels = 1.2px
+        vm.LockAspectToMode = true;
+
+        // Raw fit from here would be 6.4x3.2px, taller than the available 1.2px of vertical room.
+        vm.DragCropResize(0.7, 0.6);
+
+        AssertClose(0.3, vm.CropRect.Width);
+        AssertClose(0.15, vm.CropRect.Height);
+        var pixelAspect = (vm.CropRect.Width * vm.WorkingCopyWidth) / (vm.CropRect.Height * vm.WorkingCopyHeight);
+        AssertClose(2.0, pixelAspect);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_WithLockOn_RefitsToTheSameUnchangedTargetAspect_NotItsReciprocal()
+    {
+        // Round-2 code-review blocker: Rotate's own crop-rect transform swaps width/height along
+        // with the working copy's own dimension swap -- for an already-aspect-locked rect, that
+        // left the PIXEL aspect at the RECIPROCAL of _targetMode's own (unchanged) aspect while
+        // LockAspectToMode still read true. A non-square working copy (6x4, unlike the 8x8 used
+        // elsewhere in this file) is essential here -- a square working copy's own aspect doesn't
+        // change under rotation, which would silently hide this exact bug.
+        var vm = CreateEditor(CreateSource(6, 4), WideMode, new FakeTransmitImagePreparer());
+        vm.LockAspectToMode = true; // auto-refits to pixel aspect 2.0 against the 6x4 working copy
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.True(vm.LockAspectToMode); // rotate does not disengage the lock
+        var pixelAspect = (vm.CropRect.Width * vm.WorkingCopyWidth) / (vm.CropRect.Height * vm.WorkingCopyHeight);
+        AssertClose(2.0, pixelAspect); // still WideMode's own 2:1 -- NOT the reciprocal 0.5
+    }
+
+    [AvaloniaFact]
+    public void DragCropResize_WithLockOff_StillIndependentlyClampsEachAxis()
+    {
+        // Regression coverage that the default-off free-form path is genuinely unchanged by this
+        // feature -- each axis clamps independently, unlike the locked path.
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.LockAspectToMode);
+
+        vm.DragCropResize(-0.3, 0.1);
+
+        AssertClose(0.7, vm.CropRect.Width);
+        AssertClose(1.0, vm.CropRect.Height); // clamped independently to 1-Y=1, not aspect-derived
     }
 
     private static ArrayImageSource CreateSource(int width, int height)
