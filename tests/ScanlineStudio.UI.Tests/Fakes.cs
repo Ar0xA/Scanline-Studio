@@ -23,9 +23,17 @@ internal sealed class FakeSettingsStore : ISettingsStore, IDisposable
 
     public AppSettings Settings { get; set; } = new();
 
+    /// <summary>When set, <see cref="LoadAsync"/> throws this instead of returning
+    /// <see cref="Settings"/> -- lets a test simulate a corrupt/locked settings file without a real
+    /// filesystem, e.g. TxControlsPaneViewModel_OpenEditorForSourceAsync_SettingsLoadThrows_
+    /// ResetsIsEditorOpen_InsteadOfStayingStuckOpen (spec/18-path-to-1.0.md High item 2 code
+    /// review).</summary>
+    public Exception? LoadAsyncException { get; set; }
+
     public IObservable<AppSettings> Changes => _changes;
 
-    public Task<AppSettings> LoadAsync(CancellationToken ct = default) => Task.FromResult(Settings);
+    public Task<AppSettings> LoadAsync(CancellationToken ct = default) =>
+        LoadAsyncException is { } ex ? Task.FromException<AppSettings>(ex) : Task.FromResult(Settings);
 
     public Task SaveAsync(AppSettings settings, CancellationToken ct = default)
     {
