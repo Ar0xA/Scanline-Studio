@@ -63,17 +63,18 @@ not to be one:
 
 - **7 fake-live/dead controls inside the core loop** (`TxImageEditorPaneView.axaml:46-72,119-126,
   139-166,252-267` — tool strip, dead Transmit/Tune/Preview/Halt row + progress bar, 6 unbound
-  adjustment sliders, decorative callsign/report-plate overlay; `MainWindow.axaml:178-179,436-440` —
-  Mode card "Locked" toggle, 5 dead Incoming-frame buttons):
+  adjustment sliders, decorative callsign/report-plate overlay; `MainWindow.axaml:178-179,477-480` —
+  Mode card "Locked" toggle, 4 dead Incoming-frame buttons):
   TX editor's dead Transmit/Tune/Preview/Halt button row + progress bar (real Transmit lives in the
   left column); the 9-icon tool strip (Move/Crop/Scale/Rotate/Text/Box/Line/Mask/Pick — "Crop"/
   "Text" actively mislead since the real controls are the always-on canvas drag + separate "Add
   text" button); 6 unbound Brightness/Contrast/Saturation/Gamma/Sharpen/Denoise sliders; the
   decorative safe-area/callsign/report-plate canvas overlay (not load-bearing — a real overlay path
-  already exists via "Add text," so this is a delete/rebind, not a build); Receive's 5 dead
-  Incoming-frame buttons (Save Frame/Abort/Re-decode/Copy to TX/Log QSO — "Save Frame" is worst,
-  since auto-save already happened silently and a click-with-no-effect reads as data loss); Receive
-  Mode card's "Locked" toggle (no mode-lock feature exists at all).
+  already exists via "Add text," so this is a delete/rebind, not a build); Receive's 4 remaining dead
+  Incoming-frame buttons (Save Frame/Abort/Re-decode/Copy to TX — "Save Frame" is worst, since
+  auto-save already happened silently and a click-with-no-effect reads as data loss; Log QSO shipped
+  2026-08-15, no longer in this list); Receive Mode card's "Locked" toggle (no mode-lock feature
+  exists at all).
 - **Auto-start shown hardcoded-On** — `OptionsWindowView.axaml:377` (the feature doesn't exist at
   all). Unlike the RX-buffer default below, this one is NOT superseded by anything — its Tier-2 item
   is a scoping pass for a feature that may not land before 0.9b, while the dialog keeps lying in the
@@ -183,8 +184,9 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   `FskIdTxEnabled` sibling controls' pattern; 1 round auditor code-review, 2 doc-only nits fixed).
   Still open: `MacroTextResolver` only covers `%m`/`%D`/`%T`, not his-callsign/name/QTH/RST
   tokens (`%c`/`%n`/`%q`/`%r`/`%s`/`%R`/`%N`) since those need a "current QSO" context concept that
-  doesn't exist; the FSK-decoded-callsign auto-fill is half-built (`RxImagePaneViewModel.cs:564`
-  writes to `OverrideCallsign`, but no logbook pane reads it yet, per that file's own :516 note).
+  doesn't exist. The FSK-decoded-callsign auto-fill gap is now closed — `RxImagePaneViewModel.cs`
+  writes to `OverrideCallsign`, and "Log QSO" (**DONE 2026-08-15**, see below) now reads it into a
+  real logbook entry via `PrefillForNewEntry`.
   VOX and Sound-file ID (`.mmv` playback) are explicitly **not built** — `OptionsWindowView.axaml:
   475-479` (VOX disabled), `AnalogFmSstvEncoder.cs:274-277` ("out of v1 scope," silently transmits
   nothing today, matching legacy's own unconfigured-sound-file behavior — a benign no-op, not a
@@ -213,6 +215,18 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   (UI). See `spec/08-logging.md`'s own "ADIF UDP forwarding" section for the settings-migration
   contract (legacy single-destination config auto-seeds one row on first load, `ClientId`
   preserved across saves with no dialog control of its own).
+- ~~**"Log QSO" from the RX pane**~~ — **DONE 2026-08-15.** Un-stubbed the RX pane's Log QSO
+  button (enabled once a mode has ever been detected this reception); switches to the Logbook tab
+  (app's first VM-driven `TabControl.SelectedIndex` binding) with a fresh entry pre-filled from
+  the RX pane's live callsign/mode/start-time plus any QRZ lookup already done there. 2-round
+  plan-review found 2 real blockers (a latent `OverrideCallsign`/lookup-field staleness bug this
+  feature would have turned data-corrupting, and a wrong AXAML binding-path assumption), both fixed
+  before implementation; 1 round code-review found no blockers, 1 real nit (Name/QTH/Grid weren't
+  carried into the prefill) fixed. Full plan `/home/artien/.claude/plans/rx-log-qso.md`, commit
+  `321146f`. One accepted, documented risk left open: a manually-typed `OverrideCallsign` can be
+  wiped by a mid-reception `DecodeRestarted`/`ModeDetected` refire (forced-mode-change/Auto-Stop
+  case) — no "user-edited" flag exists to distinguish that from stale auto-fill; not fixed here,
+  would need new state tracking beyond this feature's scope.
 - JPEG save quality — bundled with the Gallery's still-stub "Export frame" button, not standalone.
 - Transmit tab Queue/TX-log/Recently-sent — 100% stub, no such feature exists yet.
 - Receive tab Sync&Slant/Input-chain/Signal-quality cards — real new DSP work (no live audio-chain
@@ -4540,9 +4554,10 @@ wired everything real, these had no real data behind them today):
   paired-line/RowsPerTransmissionLine problem. Backend-only — no ETA/remaining-time computation or
   UI binding yet; a future ViewModel can derive "remaining time" from `Progress` + its own elapsed-
   time tracking with no further backend change needed.
-- RX frame actions (Abort/Re-decode/Copy-to-TX/Log QSO) and a completion progress bar — no
-  abandon-current-frame, re-decode, or QSO-log-linking primitive exists yet. Medium-large,
-  several independent features.
+- RX frame actions (Abort/Re-decode/Copy-to-TX) and a completion progress bar — no
+  abandon-current-frame or re-decode primitive exists yet. Medium-large, several independent
+  features. (Log QSO **DONE 2026-08-15** — see `spec/16-gui-wiring-survey.md`'s Incoming-frame-card
+  row.)
 - ~~Sync/slant correction readouts and controls (ppm, offset px, ReSync/Reset, advanced timing)~~
   — **readouts' backend done** (2026-08-08, see the root-cause map above's `SlantPpm`/
   `SyncOffsetSamples` entry); the ReSync/Reset control's own backend (`RequestReSync`) was already
