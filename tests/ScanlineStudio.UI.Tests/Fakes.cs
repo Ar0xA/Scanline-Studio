@@ -412,7 +412,11 @@ internal sealed class FakeFilePickerService : IFilePickerService
 
     public string? SaveAdifPathToReturn { get; set; } = "/tmp/fake.adi";
 
+    public (string Path, ImageExportFormat Format)? SaveImagePathToReturn { get; set; } = ("/tmp/fake-export.png", ImageExportFormat.Png);
+
     public string? LastSuggestedFileName { get; private set; }
+
+    public string? LastSuggestedImageFileName { get; private set; }
 
     public Task<string?> PickImageFileAsync() => Task.FromResult(PathToReturn);
 
@@ -422,6 +426,30 @@ internal sealed class FakeFilePickerService : IFilePickerService
     {
         LastSuggestedFileName = suggestedFileName;
         return Task.FromResult(SaveAdifPathToReturn);
+    }
+
+    public Task<(string Path, ImageExportFormat Format)?> PickSaveImageFileAsync(string suggestedFileName)
+    {
+        LastSuggestedImageFileName = suggestedFileName;
+        return Task.FromResult(SaveImagePathToReturn);
+    }
+}
+
+internal sealed class FakeReceivedFrameExporter : IReceivedFrameExporter
+{
+    public List<(string SourcePath, string DestinationPath, int JpegQuality)> Calls { get; } = [];
+
+    public Exception? ExceptionToThrow { get; set; }
+
+    public Task ExportAsync(string sourcePath, string destinationPath, int jpegQuality, CancellationToken ct = default)
+    {
+        if (ExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
+        Calls.Add((sourcePath, destinationPath, jpegQuality));
+        return Task.CompletedTask;
     }
 }
 
