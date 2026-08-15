@@ -271,7 +271,19 @@
                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.StockLabel}" />
             </HeaderedContentControl.Header>
             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120">
+                <!-- spec/18-path-to-1.0.md Medium item 5: OpenEditorForSourceAsync already guards
+                     against picking a new image while the editor is open (a silent no-op). These
+                     IsEnabled bindings are the missing visual half, matching the mode
+                     ComboBox's/quick-mode-grid's own established !IsEditorOpen XAML binding
+                     pattern (code-review correction: the FAVORITES row gates via CanExecute in the
+                     ViewModel instead, no XAML IsEnabled binding of its own; not the same
+                     mechanism, don't cite it as a third precedent). Disabling the ListBox itself
+                     (not each item) disables every generated child Button too: a DataTemplate
+                     ancestor-binding would be both more fragile and unnecessary here, since each
+                     item's own DataContext is StockEntryViewModel, which has no IsEditorOpen at
+                     all. The File > Open image menu item (Ctrl+O, MainWindow.axaml) reaches this
+                     same SelectImageCommand and needs the identical gate, fixed there too. -->
+                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120" IsEnabled="{Binding !IsEditorOpen}">
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
                             <WrapPanel />
@@ -295,7 +307,7 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
                 <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.SelectImage}"
-                        Command="{Binding SelectImageCommand}"
+                        Command="{Binding SelectImageCommand}" IsEnabled="{Binding !IsEditorOpen}"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                 <TextBlock Classes="IndustryRowLabel" Text="{Binding SelectedFileName}"
                            IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
