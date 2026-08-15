@@ -227,7 +227,18 @@ in Tier 2 (build real measurement long-term) — deliberate two-step, not a dupl
   wiped by a mid-reception `DecodeRestarted`/`ModeDetected` refire (forced-mode-change/Auto-Stop
   case) — no "user-edited" flag exists to distinguish that from stale auto-fill; not fixed here,
   would need new state tracking beyond this feature's scope.
-- JPEG save quality — bundled with the Gallery's still-stub "Export frame" button, not standalone.
+- ~~**"Export frame" from the Gallery pane + JPEG save quality**~~ — **DONE 2026-08-15.**
+  Un-stubbed the Gallery's "Export" button (saves the selected received image to a user-chosen
+  location via a real Avalonia save dialog, optionally re-encoded as JPEG) together with the
+  Options dialog's previously-label-only `JpegQuality` control, as this entry's own original note
+  said they should be built. 1-round plan-review found the picker needed to resolve format from
+  `SaveFilePickerResult.SelectedFileType` (not path-extension-sniffing — confirmed platform-split
+  behavior), a missing `CanExportFrame` notify-wiring gap, and a settings.json quality value
+  needing clamping. Code-review found the picker's format-resolution logic had zero test coverage
+  despite being the exact piece real-window testing confirmed necessary — extracted and covered by
+  6 new unit tests. Full plan `/home/artien/.claude/plans/export-frame-jpeg-quality.md`, commit
+  `90e2881`. Real-window verified end-to-end (seeded test data, real GTK save dialog, confirmed
+  extension-normalization empirically necessary and working, verified the saved JPEG via PIL).
 - Transmit tab Queue/TX-log/Recently-sent — 100% stub, no such feature exists yet.
 - Receive tab Sync&Slant/Input-chain/Signal-quality cards — real new DSP work (no live audio-chain
   measurement exists for most of these), long-term counterpart to Tier 1's short-term grey-out.
