@@ -207,30 +207,71 @@ superseded.
     frame). All four matched the automated suite's own predictions. Undo history intentionally does
     NOT persist across an editor re-open (a fresh session starts empty).
   - **TX image editor cluster: fully closed.**
-- Waterfall range caption is a stale literal ("1000…2600 Hz," `MainWindow.axaml:376-378`,
-  `en.json:118`) that silently lies once the real Start/Span steppers are touched; those same
-  steppers only window the spectrum half, not the waterfall (`WaterfallControl.cs:25-32` has no
-  Start/Span params) — the two plots visibly disagree after any adjustment.
-- TX golden-vector fixtures are stale/non-discriminating for the *current* encoder —
-  `TxCaptureFixturesTests.cs` self-decodes checked-in `.mmv` files without ever invoking
-  `AnalogFmSstvEncoder`, so "TX is golden-vector validated" is currently an overstated claim (each
-  individual TX change was independently source-verified, but there's no chain-level regression
-  net). Re-capture the 11 `TxCapture/*.mmv` fixtures against the current encoder.
-- No TX send-progress feedback during transmit — a multi-minute PD290 send shows only the red
-  toggle button, no percentage/time-remaining.
+- ✅ **DONE** (commit `9f6ea47`): waterfall range caption's own stale-literal half —
+  `WaterfallPaneViewModel.RangeCaptionDisplay` is now computed live from `StartHz`/`SpanHz`
+  (`NotifyPropertyChangedFor` on both), not a static "1000…2600 Hz" localized literal. Real-window
+  verified (Start stepper "+" x3 updated the caption live, no other action needed).
+  - **Remaining (deliberately scoped separately, per that commit's own note — "a much larger
+    feature")**: the Start/Span steppers only window the SPECTRUM plot; `WaterfallControl.cs:25-32`
+    has no Start/Span params at all, so the waterfall plot itself still shows its own full range
+    regardless of the steppers — the two plots visibly disagree after any adjustment, only the
+    caption text was fixed.
+- ✅ **DONE** (commit `8a9089e`): TX golden-vector fixtures re-captured against the current encoder
+  and made discriminating — a new opt-in `TxCaptureFixtureGenerator.cs`
+  (`SCANLINE_REGENERATE_TX_FIXTURES=1`) re-runs the current `AnalogFmSstvEncoder` and overwrites all
+  11 checked-in `.mmv` fixtures; a new load-bearing
+  `LiveEncoderOutput_MatchesCheckedInFixture_WithinQuantizationTolerance` test live-encodes each
+  mode and asserts against the checked-in fixture (both sides round-tripped through the real `.mmv`
+  format for an apples-to-apples comparison) — a future encoder regression now fails loudly on the
+  next ordinary test run instead of silently drifting. Two rounds of plan-review, one code-review,
+  4-way mutation-tested. **Follow-up, human-dependent** (tracked in the 🔵 tier below): the
+  `*_TX_RX.bmp` legacy-Wine-decoded companion files no longer pair with the freshly re-captured
+  `.mmv`s and need a human with a real legacy install to refresh.
+- ✅ **DONE** (commit `cffd4b5`): TX send-progress feedback during transmit —
+  `AnalogFmSstvEncoder.EstimateSampleCount` computes the exact total sample count up front (mirrors
+  `EncodeAsyncCore`'s own accumulator, not a duration-sum-then-multiply that floating-point
+  non-associativity doesn't guarantee to agree), threaded through a new `TransmitProgressChanged`
+  event; `TxControlsPaneViewModel` exposes `TransmitProgress`/`TransmitProgressText`, bound below
+  the Transmit/Stop TX buttons. Plan-review + code-review, mutation-tested. Real-window testing
+  caught a real layout-overlap bug the review passes didn't (fixed, reverified 0%→29%→82%→done).
 - ✅ **DONE** (commit `963f16d`): editor-open guard's visual half — `OpenEditorForSourceAsync`
   already blocked a second pick while the editor is open (silent no-op, already tested); added the
   missing `IsEnabled="{Binding !IsEditorOpen}"` bindings (Browse button, stock-image ListBox) plus a
   third ungated entry point code-review found (File > Open image, Ctrl+O).
-- CI doesn't enforce the ≥80% line-coverage gate `spec/13-testing.md:25,56` requires — no coverage
-  collection in `.github/workflows/ci.yml` at all.
-- `README.md` is badly stale (still describes "Phase 0 — walking skeleton," links a gitignored
-  `CLAUDE.md`). Only English locale ships (infra is ready, `assets/locale/locales.json` has 1
-  entry). Default log level ships at `Debug`, not `Information` (`Program.cs:51`, already commented
-  as "flip before the first release tag" — just needs actually flipping then). No log-file
-  rotation. `Avalonia.Diagnostics` (DevTools) is referenced unconditionally, shipping in Release
-  builds too.
-- Default Avalonia template icon still in use (`MainWindow.axaml:15`, `avalonia-logo.ico`).
+- ✅ **DONE** (commit `7bb8fe0`): CI now enforces a per-project line-coverage gate — a new `coverage`
+  CI job (Ubuntu-only; per-OS platform-conditional code makes one threshold unsafe across all 3
+  legs) collects Cobertura reports and `scripts/check-coverage.py` fails the build below each
+  project's own threshold in `coverage-thresholds.json`. Thresholds set a few points below each
+  project's own *currently-measured* coverage (spec's own "configurable per-project" allowance),
+  not a blanket 80% — catches regressions from today's baseline, not a retroactive demand.
+  `ScanlineStudio.Core.Sstv.Tests` excluded (2 separate coverage-instrumented runs each took
+  45-90+ min uninstrumented; still runs fully in the existing fast matrix). Plan-review + code-review
+  (caught real CI-vs-dev-machine coverage gaps — MiniAudio/Hamlib/Rigctld thresholds re-measured
+  with the real hardware/daemons unavailable, not assumed). Mutation-tested 3 ways.
+- ✅ **DONE** (commit `29651a7`): `README.md` brought up to date — replaced the stale "Phase 0"
+  status with an accurate summary of what's shipped, repointed the roadmap link to this file,
+  removed the dead gitignored-`CLAUDE.md` link, and stated the single-locale status honestly.
+- ✅ **DONE** (commit `e18023a`): file logger now rotates by size (default 10 MB, 5 backups) instead
+  of growing `app.log` unbounded — code-review found and fixed 2 real defects (a failed rotation
+  left every subsequent log call throwing `ObjectDisposedException`; `Dispose()` raced with an
+  in-flight write). New `ScanlineStudio.Host.Tests` project (15 tests), both fixes mutation-tested.
+- ✅ **DONE** (commit `59ccaee`): `Avalonia.Diagnostics` (DevTools) package reference is now
+  conditioned on `Configuration == Debug`, matching the `#if DEBUG` gate its own `AttachDevTools()`
+  call already had — the DLL no longer ships in Release output. Also fixed a CI Restore-step bug
+  (missing `Configuration`, defaulting to Debug) that would have hidden this fix from CI entirely.
+- ✅ **DONE** (commit `b8e2aea`): default Avalonia template icon replaced with a real app icon — a
+  4-bar mark built from the established "Industry" brand palette, embedded at 7 standard resolutions
+  (16-256px), wired as both the in-app window icon and the Windows EXE's `ApplicationIcon`.
+  Real-window verified via the X11 `_NET_WM_ICON` property.
+- **Remaining, deliberately deferred, not oversights**: default log level still ships at `Debug`
+  (`Program.cs:51`), explicitly commented as a one-line flip reserved for the actual first release
+  tag, not this milestone. Only English locale ships — infra is ready
+  (`spec/10-localization.md`), but writing a second translation is a content task, not something to
+  invent.
+
+**🟡 Medium tier: fully closed** (except the two explicitly-deferred/non-code items just above,
+which are gated on a release-tag event and on translation content respectively, not agent-completable
+right now).
 
 ---
 
@@ -259,6 +300,11 @@ superseded.
   Blocks the Tier-2 offline callsign/country lookup only; not itself release-blocking.
 - **Chilkat/FastReport license status** — needs running the legacy binary directly to confirm
   actual usage (not verifiable from source alone); currently assumed unused/orphaned.
+- **TX golden-vector `*_TX_RX.bmp` companion files are stale** (surfaced by commit `8a9089e`,
+  re-capturing the `TxCapture/*.mmv` fixtures against the current encoder): the `_TX_RX.bmp` files
+  in the same directory were decoded from the *previous* `.mmv` set via a real legacy Wine install
+  and no longer pair with the freshly re-captured ones. Needs a human with that real legacy install
+  to refresh; not reproducible in this sandbox.
 
 ---
 
