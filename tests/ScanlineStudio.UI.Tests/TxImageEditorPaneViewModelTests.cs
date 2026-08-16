@@ -38,7 +38,7 @@ public sealed class TxImageEditorPaneViewModelTests
         CreateEditor(original, mode, preparer, new OperatorSettings());
 
     private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, OperatorSettings operatorSettings) =>
-        new(original, mode, preparer, new MacroTextResolver(), operatorSettings, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        new(original, mode, preparer, new MacroTextResolver(), operatorSettings, new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance);
 
     [AvaloniaFact]
     public void Constructor_OriginalLargerThanWorkingCopyBudget_DownsamplesBeforeUse()
@@ -573,6 +573,55 @@ public sealed class TxImageEditorPaneViewModelTests
 
         AssertClose(0.7, vm.CropRect.Width);
         AssertClose(1.0, vm.CropRect.Height); // clamped independently to 1-Y=1, not aspect-derived
+    }
+
+    [AvaloniaFact]
+    public void HeaderText_ReflectsTheActualTargetModesDimensionsAndName_NotAHardcodedLiteral()
+    {
+        // spec/18-path-to-1.0.md Medium item: the header used to be a static locale string reading
+        // "640x496 - PD120" regardless of which mode was actually being edited. WideMode (8x4,
+        // DisplayName "Wide") is deliberately NOT 640x496/PD120, so this fails loudly if the fix
+        // regresses back to a hardcoded literal.
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance);
+
+        _ = vm.HeaderText;
+
+        Assert.Equal("Panes.TxImageEditor.CardHeaderFormat", localization.LastKey);
+        Assert.Equal(new object[] { 8, 4, "Wide" }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public void DimensionsChipText_ReflectsTheActualTargetModesDimensions_NotAHardcodedLiteral()
+    {
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance);
+
+        _ = vm.DimensionsChipText;
+
+        Assert.Equal("Panes.TxImageEditor.DimensionsChipFormat", localization.LastKey);
+        Assert.Equal(new object[] { 8, 4 }, localization.LastArgs);
+    }
+
+    [Fact]
+    public void HeaderAndDimensionsChipLocaleFormats_MatchEnJsonsRealValues()
+    {
+        // Code-review finding: the HeaderText/DimensionsChipText tests above go through
+        // FakeLocalizationService, which returns the raw key and can't catch a placeholder-order
+        // or -count drift in the real assets/locale/en.json format strings -- same pattern as
+        // PaneViewModelTests' own RxTelemetryLocaleFormats_MatchEnJsonsRealValues test. Literal
+        // format strings copied from en.json; a drift there should be caught by updating this
+        // test, not silently diverging.
+        Assert.Equal(
+            "EDITOR — OUTGOING FRAME · 320×240 · Robot 36",
+            string.Format(System.Globalization.CultureInfo.InvariantCulture, "EDITOR — OUTGOING FRAME · {0}×{1} · {2}", 320, 240, "Robot 36"));
+        Assert.Equal(
+            "320×240",
+            string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}×{1}", 320, 240));
     }
 
     private static ArrayImageSource CreateSource(int width, int height)

@@ -13,8 +13,11 @@
          the Receive tab's Incoming-frame card, MainWindow.axaml — same
          Classes="Industry blueprint"/Theme={StaticResource IndustryGroupBoxTheme}/
          Padding={StaticResource IndustryGbPaddingWideDeep} pattern, reused here for consistency).
-         Header merges the old split Title+right-aligned-Caption TextBlocks into ONE string (new
-         Panes.TxImageEditor.CardHeader key, replacing HeaderLabel/HeaderCaption): the title-notch
+         Header merges the old split Title+right-aligned-Caption TextBlocks into ONE string (now
+         bound to HeaderText, a computed VM property formatted from the real target mode's own
+         dimensions/name — spec/18-path-to-1.0.md Medium item; originally a static
+         Panes.TxImageEditor.CardHeader locale key hardcoding "640×496 · PD120" regardless of the
+         actual mode being edited): the title-notch
          template only has room for a single Left-aligned ContentPresenter, matching every other
          ported card's own single-title-string precedent (RxImage.CardHeader etc.) and mock2's own
          single `<span class="gbt">` for this exact card. -->
@@ -27,7 +30,7 @@
          root Margin. -->
     <HeaderedContentControl Classes="Industry blueprint" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWideDeep}" ClipToBounds="False" Margin="0,6,0,0">
         <HeaderedContentControl.Header>
-            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.CardHeader}" />
+            <TextBlock Classes="IndustryGbTitle" Text="{Binding HeaderText}" />
         </HeaderedContentControl.Header>
         <Grid RowDefinitions="Auto,*">
 
@@ -75,7 +78,7 @@
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="True" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{loc:Translate Panes.TxImageEditor.DimensionsChip}" /></Border>
+                <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{Binding DimensionsChipText}" /></Border>
 
                 <!-- Real, wired: aspect toggle + add-text + apply/cancel. PreserveAspect has no
                      mockup equivalent (mock2's own row ends at the dimensions chip) — reuses
