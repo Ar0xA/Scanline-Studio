@@ -176,6 +176,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// mode change, without re-deriving it from <see cref="OverlayElements"/> itself.</summary>
     public ImageOverlay Overlay => BuildOverlay();
 
+    /// <summary>Same reasoning as <see cref="Overlay"/>, for the 6 adjustment sliders — without
+    /// this, a host capturing edit-state for mode-change reflow would silently drop
+    /// Brightness/Contrast/etc. on the next mode change (a real gap found and fixed in
+    /// <see cref="TxControlsPaneViewModel"/>'s own <c>EditState</c>/<c>OnSelectedModeChanged</c>,
+    /// spec/18-path-to-1.0.md Medium item).</summary>
+    public ImageAdjustments Adjustments => BuildAdjustments();
+
     public event Action<IImageSource>? Applied;
 
     public event Action? Cancelled;
