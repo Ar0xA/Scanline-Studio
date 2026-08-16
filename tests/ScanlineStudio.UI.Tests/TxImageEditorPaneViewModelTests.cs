@@ -141,7 +141,7 @@ public sealed class TxImageEditorPaneViewModelTests
     [AvaloniaFact]
     public void Overlay_BakesResolvedTextIntoTheAppliedImage_NotTheRawTemplate()
     {
-        // ToImageOverlayElement (what actually reaches ApplyOverlay/the TX'd image) must use
+        // BuildImageOverlayElement (what actually reaches ApplyOverlay/the TX'd image) must use
         // ResolvedText, not the raw template -- otherwise the transmitted picture would show the
         // literal "%m" token instead of the operator's callsign.
         var preparer = new FakeTransmitImagePreparer();
@@ -622,6 +622,144 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(
             "320×240",
             string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}×{1}", 320, 240));
+    }
+
+    [AvaloniaFact]
+    public void BuildOverlay_StretchMode_NonIdentityCrop_ReprojectsPositionCropRelative_NoPadding()
+    {
+        // Stretch mode (PreserveAspect = false) never letterboxes -- content always fills the
+        // target exactly on both axes -- so the crop-relative re-projection reduces to the simple
+        // (X-CropRect.X)/CropRect.Width form, with no pad term. Hand-computed: crop (0.25, 0.0,
+        // 0.5, 1.0) on an 8x8 working copy, element at (0.625, 0.75) -> relX=(0.625-0.25)/0.5=0.75,
+        // relY=0.75/1.0=0.75 -- both axes stretch independently to WideMode's 8x4, so no padding
+        // shifts either coordinate; final X/Y equal relX/relY exactly.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.PreserveAspect = false;
+        vm.CropRect = new NormalizedRect(0.25, 0.0, 0.5, 1.0);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.OverlayElements[0].X = 0.625;
+        vm.OverlayElements[0].Y = 0.75;
+
+        var overlay = Assert.Single(preparer.Overlays[^1].Elements);
+
+        AssertClose(0.75, overlay.X);
+        AssertClose(0.75, overlay.Y);
+    }
+
+    [AvaloniaFact]
+    public void BuildOverlay_LetterboxMode_AspectMismatchedCrop_ReprojectsPositionWithPadding()
+    {
+        // Round-1 auditor plan-review's own highest-severity finding on this fix: PreserveAspect =
+        // true (the default) uses ResizeMode.Pad, so the naive (X-CropRect.X)/CropRect.Width
+        // re-projection is WRONG here -- the letterbox pad term must shift the padded axis.
+        // Hand-computed: crop (0.25, 0.0, 0.5, 1.0) on an 8x8 working copy -> cropW=4px, cropH=8px
+        // (working-copy pixel space). Target WideMode is 8x4 (2:1). scale = min(8/4, 4/8) =
+        // min(2, 0.5) = 0.5 (height-constrained) -> contentW=4*0.5=2, contentH=8*0.5=4=targetH (no
+        // vertical padding). padX=(8-2)/2=3, padY=0. Element at (0.625, 0.75) -> relX=0.75,
+        // relY=0.75 -> finalX=(3+0.75*2)/8=4.5/8=0.5625 (differs from the naive relX=0.75 -- this
+        // is the discriminating assertion), finalY=(0+0.75*4)/4=0.75 (unaffected, no Y padding here).
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.CropRect = new NormalizedRect(0.25, 0.0, 0.5, 1.0);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.OverlayElements[0].X = 0.625;
+        vm.OverlayElements[0].Y = 0.75;
+
+        var overlay = Assert.Single(preparer.Overlays[^1].Elements);
+
+        AssertClose(0.5625, overlay.X);
+        AssertClose(0.75, overlay.Y);
+    }
+
+    [AvaloniaFact]
+    public void BuildOverlay_ElementOutsideCropAfterReprojection_DoesNotThrow()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.CropRect = new NormalizedRect(0.4, 0.4, 0.2, 0.2);
+        vm.AddOverlayElementCommand.Execute(null);
+        // Far outside the crop -- re-projects to a coordinate well outside [0,1].
+        vm.OverlayElements[0].X = 0.0;
+        vm.OverlayElements[0].Y = 0.0;
+
+        var overlay = Assert.Single(preparer.Overlays[^1].Elements);
+
+        Assert.True(overlay.X < 0 || overlay.Y < 0);
+    }
+
+    [AvaloniaFact]
+    public void BuildOverlay_DegenerateCropRect_FallsBackToUnprojectedPosition_DoesNotThrow()
+    {
+        // Round-1 plan-review finding: CropRect is directly settable and not clamped away from
+        // zero-size outside the drag handlers -- the re-projection must guard against dividing by
+        // a zero-width/height crop rather than propagating NaN into the pipeline.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.OverlayElements[0].X = 0.3;
+        vm.OverlayElements[0].Y = 0.4;
+        vm.CropRect = new NormalizedRect(0.5, 0.5, 0, 0);
+
+        var overlay = Assert.Single(preparer.Overlays[^1].Elements);
+
+        Assert.False(double.IsNaN(overlay.X));
+        Assert.False(double.IsNaN(overlay.Y));
+        AssertClose(0.3, overlay.X);
+        AssertClose(0.4, overlay.Y);
+    }
+
+    [AvaloniaFact]
+    public void CanvasFontSize_ReflectsFontSizeRelativeAndCropDimensions_RecomputedAfterCropRectChange()
+    {
+        // Deliberately WIDTH-constrained (crop aspect 8:2=4:1, wider than WideMode's own 8:4=2:1) --
+        // a height-constrained crop (like BuildOverlay_LetterboxMode_*'s 4:8 crop) makes scaleY
+        // reduce to exactly targetHeight/cropHeightPixels, which happens to make the naive
+        // "FontSizeRelative * cropHeightPixels" formula coincide with the correct one and silently
+        // not discriminate a regression back to it -- caught via mutation testing. Crop
+        // (0.0, 0.375, 1.0, 0.25) on an 8x8 working copy -> cropW=8, cropH=2. scaleY =
+        // min(targetW/cropW, targetH/cropH) = min(8/8, 4/2) = min(1, 2) = 1 (width-constrained, NOT
+        // targetHeight/cropHeightPixels=2). FontSizeRelative defaults to 0.1 -> canvasFontSize =
+        // 0.1*4/1 = 0.4 (the naive formula would instead give 0.1*2=0.2).
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+
+        vm.CropRect = new NormalizedRect(0.0, 0.375, 1.0, 0.25);
+
+        AssertClose(0.4, element.CanvasFontSize);
+    }
+
+    [AvaloniaFact]
+    public void CanvasFontSize_DoesNotTriggerAPreviewRecompute_OnlyFontSizeRelativeAndCropChangesDo()
+    {
+        // CanvasFontSize is canvas-chrome-only (never feeds BuildOverlay/the real pipeline) --
+        // OnOverlayElementPropertyChanged must exclude it, or every crop-drag frame would fire one
+        // redundant extra RecomputePreview per overlay element on top of the one already required.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        var countBeforeDirectSet = preparer.ApplyOverlayCallCount;
+
+        element.CanvasFontSize = 12.34;
+
+        Assert.Equal(countBeforeDirectSet, preparer.ApplyOverlayCallCount);
+    }
+
+    [AvaloniaFact]
+    public void AddOverlayElement_SeedsPositionAtCropCenter_NotPhotoCenter()
+    {
+        // Round-1 plan-review finding: OverlayElementViewModel's own raw field default (0.5, 0.5)
+        // is the PHOTO center -- under a tight, off-center crop that lands outside the visible/
+        // transmitted frame. AddOverlayElement must seed the CROP's center instead.
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.6, 0.1, 0.2, 0.2);
+
+        vm.AddOverlayElementCommand.Execute(null);
+
+        AssertClose(0.7, vm.OverlayElements[0].X);
+        AssertClose(0.2, vm.OverlayElements[0].Y);
     }
 
     private static ArrayImageSource CreateSource(int width, int height)

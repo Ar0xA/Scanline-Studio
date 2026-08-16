@@ -192,13 +192,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [RelayCommand]
     private void AddOverlayElement()
     {
+        // Seeded at the CROP's center (not the raw photo-center 0.5/0.5 that
+        // OverlayElementViewModel's own X/Y field defaults would otherwise leave in place) -- a
+        // tight, off-center crop would otherwise place brand-new text outside the visible/
+        // transmitted frame immediately. See ProjectToCropRelative's own doc comment for why X/Y
+        // are stored relative to the full working copy, not the crop, despite this.
         var element = new OverlayElementViewModel
         {
+            X = CropRect.X + (CropRect.Width / 2),
+            Y = CropRect.Y + (CropRect.Height / 2),
             ImageWidth = WorkingCopyWidth,
             ImageHeight = WorkingCopyHeight,
             RemoveCommand = RemoveOverlayElementCommand,
             ResolveMacros = text => _macroTextResolver.Resolve(text, _operatorSettings),
         };
+        element.CanvasFontSize = ComputeCanvasFontSize(element.FontSizeRelative);
         element.PropertyChanged += OnOverlayElementPropertyChanged;
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
@@ -354,9 +362,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         OnPropertyChanged(nameof(CropHeightPixels));
         OnPropertyChanged(nameof(CropRightPixels));
         OnPropertyChanged(nameof(CropBottomPixels));
+
+        // Pushed AFTER RecomputePreview() above, not before: CanvasFontSize is filtered out of
+        // OnOverlayElementPropertyChanged's own RecomputePreview trigger (it's canvas-chrome-only,
+        // never feeds the real pipeline), so ordering here doesn't cause a redundant second
+        // recompute -- see CanvasFontSize's own doc comment.
+        RefreshOverlayElementCanvasFontSizes();
     }
 
-    partial void OnPreserveAspectChanged(bool value) => RecomputePreview();
+    partial void OnPreserveAspectChanged(bool value)
+    {
+        RecomputePreview();
+        RefreshOverlayElementCanvasFontSizes();
+    }
 
     /// <summary>Re-fits the CURRENT crop rect the instant the lock engages, rather than waiting for
     /// the next drag -- legacy's own `SBRatioClick` (`PicRect.cpp:653-662`) does the same on click.
@@ -370,7 +388,46 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
     }
 
-    private void OnOverlayElementPropertyChanged(object? sender, PropertyChangedEventArgs e) => RecomputePreview();
+    /// <summary>Every element property EXCEPT the five below feeds
+    /// <see cref="BuildImageOverlayElement"/>/the real pipeline, so those five (purely canvas-
+    /// chrome display state -- see each one's own doc comment) are excluded here to avoid firing a
+    /// full Crop-&gt;Resize-&gt;ApplyOverlay recompute for a change that can't affect its output; that
+    /// matters concretely during a crop drag, where <see cref="RefreshOverlayElementCanvasFontSizes"/>
+    /// pushes a new <see cref="OverlayElementViewModel.CanvasFontSize"/> to every element on every
+    /// mouse-move frame (<see cref="NotifyCropRectDerivedPropertiesAndRecomputePreview"/>) -- without
+    /// this filter, that would fire N additional redundant recomputes per frame instead of the one
+    /// already performed. Code-review finding: <c>LeftPixels</c>/<c>TopPixels</c> must be filtered
+    /// too, not just their own drivers (<c>ImageWidth</c>/<c>ImageHeight</c>) -- both
+    /// <c>OnImageWidthChanged</c>/<c>OnImageHeightChanged</c> AND <c>OnXChanged</c>/<c>OnYChanged</c>
+    /// re-raise them as a cascade (<see cref="OverlayElementViewModel"/>'s own partial hooks), so
+    /// filtering only the drivers left a real gap: any future direct <c>ImageWidth</c>/<c>ImageHeight</c>
+    /// write outside <see cref="Rotate"/>'s <see cref="_suspendPreview"/> guard would still trigger a
+    /// recompute via the unfiltered <c>LeftPixels</c> cascade, silently defeating the filter above it.
+    /// Filtering the cascade itself closes that gap without weakening X/Y's own trigger (X/Y are NOT
+    /// filtered -- they feed the pipeline directly and still recompute on their own PropertyChanged,
+    /// the LeftPixels/TopPixels re-raise that follows is now just a redundant second signal for the
+    /// same edit, correctly suppressed). <see cref="OverlayElementViewModel.FontSizeRelative"/> DOES
+    /// feed the pipeline, so its change still triggers a full recompute below; it also needs this one
+    /// element's own <c>CanvasFontSize</c> refreshed inline (cheap, single-element) since it's the
+    /// property that determines the canvas display size to begin with.</summary>
+    private void OnOverlayElementPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(OverlayElementViewModel.ImageWidth)
+            or nameof(OverlayElementViewModel.ImageHeight)
+            or nameof(OverlayElementViewModel.CanvasFontSize)
+            or nameof(OverlayElementViewModel.LeftPixels)
+            or nameof(OverlayElementViewModel.TopPixels))
+        {
+            return;
+        }
+
+        if (e.PropertyName == nameof(OverlayElementViewModel.FontSizeRelative) && sender is OverlayElementViewModel element)
+        {
+            element.CanvasFontSize = ComputeCanvasFontSize(element.FontSizeRelative);
+        }
+
+        RecomputePreview();
+    }
 
     private void ApplyCropMove(double dx, double dy)
     {
@@ -490,7 +547,114 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(overlaid);
     }
 
-    private ImageOverlay BuildOverlay() => new(OverlayElements.Select(e => e.ToImageOverlayElement()).ToList());
+    private ImageOverlay BuildOverlay() => new(OverlayElements.Select(BuildImageOverlayElement).ToList());
+
+    /// <summary>Builds the real, pipeline-bound overlay element from an on-canvas
+    /// <see cref="OverlayElementViewModel"/>. Cannot just forward its raw X/Y as-is -- those are
+    /// normalized against the FULL working copy (what the canvas drags against, so text stays
+    /// anchored to the same photo content across crop changes -- see
+    /// <see cref="ProjectToCropRelative"/>'s own doc comment), but <c>ApplyOverlay</c> interprets its
+    /// input X/Y as normalized against the CROPPED+RESIZED image
+    /// (<c>TransmitImagePreparer.cs</c>'s own <c>origin = (X * source.Width, Y * source.Height)</c>,
+    /// where <c>source</c> is already post-Crop-and-Resize) -- re-project here, at the one call site
+    /// both <see cref="RecomputePreview"/> and <see cref="Apply"/> share, so the side preview panel
+    /// and the actually-transmitted image always agree (spec/18-path-to-1.0.md Medium item: TX image
+    /// editor overlay text WYSIWYG).</summary>
+    private ImageOverlayElement BuildImageOverlayElement(OverlayElementViewModel element)
+    {
+        var (x, y) = ProjectToCropRelative(element.X, element.Y);
+        return new ImageOverlayElement(element.ResolvedText, x, y, element.FontSizeRelative, element.Color);
+    }
+
+    /// <summary>Re-projects an overlay element's X/Y from full-working-copy-normalized space into
+    /// the CROPPED+RESIZED image's own normalized space, matching the Crop-&gt;Resize letterbox/
+    /// stretch math <c>TransmitImagePreparer</c> actually applies. Design choice (round-1 auditor
+    /// plan-review, tx-editor-overlay-wysiwyg.md): overlay elements stay anchored to source-PHOTO
+    /// content, not to the crop frame -- dragging text onto a subject's face keeps it there as the
+    /// crop is adjusted later (clipped/hidden if the crop no longer includes that point), matching
+    /// ordinary photo-editor behavior and requiring no new UI. The letterbox-pad term below is not
+    /// optional: <c>Resize(preserveAspect: true)</c> (the default) uses <c>ResizeMode.Pad</c>
+    /// (centered black bars on the constrained axis), so a naive `(X-CropRect.X)/CropRect.Width`
+    /// re-projection (correct ONLY for stretch mode or a crop whose aspect exactly matches the
+    /// target mode's) silently mis-places text under the default configuration -- round-1's own
+    /// highest-severity finding on this fix.
+    /// Pixel-space note: <see cref="CropWidthPixels"/>/<see cref="CropHeightPixels"/> are in
+    /// WORKING-COPY pixel space (not the original source's), but the result is pixel-space-invariant
+    /// -- it depends only on the crop's aspect ratio, which <see cref="BuildWorkingCopy"/> preserves
+    /// exactly from the original, so this is safe to use from both <see cref="RecomputePreview"/>
+    /// (working copy) and <see cref="Apply"/> (original source) without drift.</summary>
+    private (double X, double Y) ProjectToCropRelative(double x, double y)
+    {
+        if (CropRect.Width <= 0 || CropRect.Height <= 0)
+        {
+            return (x, y);
+        }
+
+        var relX = (x - CropRect.X) / CropRect.Width;
+        var relY = (y - CropRect.Y) / CropRect.Height;
+
+        var cropWidthPixels = CropWidthPixels;
+        var cropHeightPixels = CropHeightPixels;
+        if (cropWidthPixels <= 0 || cropHeightPixels <= 0)
+        {
+            return (relX, relY);
+        }
+
+        var targetWidth = (double)_targetMode.ImageWidth;
+        var targetHeight = (double)_targetMode.ImageHeight;
+
+        double scaleX, scaleY;
+        if (PreserveAspect)
+        {
+            scaleX = scaleY = Math.Min(targetWidth / cropWidthPixels, targetHeight / cropHeightPixels);
+        }
+        else
+        {
+            scaleX = targetWidth / cropWidthPixels;
+            scaleY = targetHeight / cropHeightPixels;
+        }
+
+        var contentWidth = cropWidthPixels * scaleX;
+        var contentHeight = cropHeightPixels * scaleY;
+        var padX = (targetWidth - contentWidth) / 2;
+        var padY = (targetHeight - contentHeight) / 2;
+
+        return ((padX + (relX * contentWidth)) / targetWidth, (padY + (relY * contentHeight)) / targetHeight);
+    }
+
+    /// <summary>Font size in CANVAS DISPLAY pixels for the given <c>FontSizeRelative</c> -- the
+    /// counterpart to <see cref="ProjectToCropRelative"/> for size rather than position. The real
+    /// pipeline's <c>fontSize = FontSizeRelative * targetHeight</c> (fixed, regardless of letterbox
+    /// vs. stretch -- <c>ApplyOverlay</c> always runs against the already-Resize()'d, exactly-
+    /// target-dimensioned image). One final-image pixel of vertical extent corresponds to
+    /// <c>1/scaleY</c> working-copy-canvas pixels, so <c>canvasFontSize = FontSizeRelative *
+    /// targetHeight / scaleY</c> -- the two <c>targetHeight</c> factors do NOT cancel here (unlike
+    /// the stretch-mode special case) because <c>scaleY</c> itself depends on <c>PreserveAspect</c>.</summary>
+    private double ComputeCanvasFontSize(double fontSizeRelative)
+    {
+        var cropWidthPixels = CropWidthPixels;
+        var cropHeightPixels = CropHeightPixels;
+        if (cropWidthPixels <= 0 || cropHeightPixels <= 0)
+        {
+            return 0;
+        }
+
+        var targetWidth = (double)_targetMode.ImageWidth;
+        var targetHeight = (double)_targetMode.ImageHeight;
+        var scaleY = PreserveAspect
+            ? Math.Min(targetWidth / cropWidthPixels, targetHeight / cropHeightPixels)
+            : targetHeight / cropHeightPixels;
+
+        return scaleY <= 0 ? 0 : fontSizeRelative * targetHeight / scaleY;
+    }
+
+    private void RefreshOverlayElementCanvasFontSizes()
+    {
+        foreach (var element in OverlayElements)
+        {
+            element.CanvasFontSize = ComputeCanvasFontSize(element.FontSizeRelative);
+        }
+    }
 
     private static IImageSource BuildWorkingCopy(IImageSource source, SstvModeDefinition mode, ITransmitImagePreparer preparer)
     {

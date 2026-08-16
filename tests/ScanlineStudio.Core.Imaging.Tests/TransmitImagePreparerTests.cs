@@ -98,6 +98,39 @@ public sealed class TransmitImagePreparerTests
     }
 
     [Fact]
+    public async Task ApplyOverlay_FarOutOfBoundsPosition_DoesNotThrowAndLeavesImageUnchanged()
+    {
+        // TxImageEditorPaneViewModel's crop-relative re-projection (spec/18-path-to-1.0.md Medium
+        // item: overlay-text WYSIWYG) can legitimately produce X/Y far outside [0,1] for an element
+        // positioned outside a tight crop -- a 2%-wide crop can re-project to relX magnitudes around
+        // 50, i.e. an Origin thousands of pixels off-canvas. Code-review finding: this was asserted
+        // at the view-model level (against a fake preparer) but never against the REAL ImageSharp
+        // DrawText call this actually reaches -- confirm directly that a far-out-of-bounds Origin is
+        // a silent no-op, not a throw.
+        var path = await WriteFixturePngAsync(16, 16, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 16, 16);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var overlay = new ImageOverlay([
+                new ImageOverlayElement("W", -50, -50, FontSizeRelative: 0.5, new Rgb24(255, 0, 0)),
+            ]);
+
+            var result = preparer.ApplyOverlay(source, overlay);
+
+            Assert.Equal(16, result.Width);
+            Assert.Equal(16, result.Height);
+            AssertPixel(result, 0, 0, r: 255, g: 255, b: 255);
+            AssertPixel(result, 8, 8, r: 255, g: 255, b: 255);
+            AssertPixel(result, 15, 15, r: 255, g: 255, b: 255);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task Rotate_SwapsDimensions_AndMovesTheTopLeftPixelToTheTopRight()
     {
         // spec/18-path-to-1.0.md High item 3. A 4x2 source, top-left pixel red, everything else
