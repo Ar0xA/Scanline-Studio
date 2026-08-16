@@ -42,11 +42,13 @@
                  rectangle and a separate real "Add text" button already exist elsewhere in this
                  file) — disabled with the app's standard NotImplemented tooltip rather than removed,
                  since removing Move's siblings would leave an orphan single radio with no group
-                 context. Undo/Redo/Fit/100%/Snap-grid/Safe-area/dimensions: Undo/Redo/Fit/100% and
-                 Snap-grid have no Command/binding, disabled+tooltipped; Safe-area's ToggleButton
-                 isn't wired to the canvas guide below (that guide is unconditionally visible), so
-                 it's disabled too but keeps IsChecked="True" to match the guide's always-on state.
-                 Dimensions chip is a plain (non-interactive) label, left as-is. Real wired
+                 context. Undo/Redo now real (spec/18-path-to-1.0.md Medium item, undo/redo
+                 sub-piece — CanExecute-gated via UndoCommand/RedoCommand, no IsEnabled="False"/
+                 NotImplemented tooltip needed). Fit/100%/Snap-grid have no Command/binding,
+                 disabled+tooltipped; Safe-area's ToggleButton isn't wired to the canvas guide below
+                 (that guide is unconditionally visible), so it's disabled too but keeps
+                 IsChecked="True" to match the guide's always-on state. Dimensions chip is a plain
+                 (non-interactive) label, left as-is. Real wired
                  PreserveAspect/AddText/Apply/Cancel on the right — ALL in one WrapPanel (not a fixed
                  non-wrapping StackPanel/Grid), matching the old design's own stated intent
                  ("collapsed from 2 rows into 1 to match mock2's single tool-strip row") while fixing
@@ -72,8 +74,8 @@
                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
                              Content="{loc:Translate Panes.TxImageEditor.ToolPick}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <Border Width="1" Height="16" Margin="0,0,4,4" Background="{StaticResource IndustryDivider}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Undo}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding UndoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
+                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding RedoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />

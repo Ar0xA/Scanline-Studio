@@ -186,7 +186,27 @@ superseded.
     intact, not the baked-in resolved value) via a new `EditorInitialState`/`RawOverlayElements`
     mechanism. Real-window verified (Brightness=44 + a non-default crop survived a full
     Apply→Edit round trip).
-  - Remaining: no undo/redo — the largest sub-piece, deliberately saved for last.
+  - ✅ **DONE** (undo/redo, the last sub-piece — see `PROJECT_BRIEF.md` for full history): snapshot-
+    based (not command-pattern) undo/redo across CropRect/PreserveAspect/LockAspectToMode/all 6
+    adjustment sliders/overlay add-remove-position/Rotate. Two push mechanisms: View-level
+    drag-gesture push for crop move/resize (lazy, on the first real pointer move, never a no-op
+    click); VM-level `On*Changing` + dispatcher-idle coalescing for sliders/toggles and (per a
+    code-review finding on the first draft) overlay element X/Y, which a drag-only push would have
+    left completely untracked for the sidebar TextBox path. Rotation reconciled via a
+    `RotationCount`-plus-delta-replay (no per-snapshot image bytes). Auditor code-review: GO WITH
+    CHANGES, no blockers — the one real finding (overlay X/Y untracked) and three defensive/test
+    fixes were folded in and mutation-tested; a few low-severity nits (a `_pendingCoalesceProperty`
+    edge case, `Undo`/`Redo`'s own un-trimmed opposite-stack push, no test for the View's
+    once-per-gesture flag itself) were deliberately left as documented, low-risk gaps. No `xdotool`/
+    `ydotool`/`xte` in this sandbox and no passwordless `sudo` to install one, but a system-available
+    `pyautogui`+`mss`+`pillow` combo (per this file's own screenshot-toolchain note) worked instead
+    — real-window verified end-to-end: dragged Brightness to 46 and clicked Undo (reverted to 0,
+    preview darkened back), clicked Redo (reapplied), Rotated (canvas visibly went portrait) and
+    clicked Undo (visually un-rotated back to landscape, Brightness=46 correctly untouched by that
+    Undo), and dragged the crop-resize handle then clicked Undo (crop rect reverted to the full
+    frame). All four matched the automated suite's own predictions. Undo history intentionally does
+    NOT persist across an editor re-open (a fresh session starts empty).
+  - **TX image editor cluster: fully closed.**
 - Waterfall range caption is a stale literal ("1000…2600 Hz," `MainWindow.axaml:376-378`,
   `en.json:118`) that silently lies once the real Start/Span steppers are touched; those same
   steppers only window the spectrum half, not the waterfall (`WaterfallControl.cs:25-32` has no
