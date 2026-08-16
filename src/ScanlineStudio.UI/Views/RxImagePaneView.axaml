@@ -5,7 +5,16 @@
              x:Class="ScanlineStudio.UI.Views.RxImagePaneView"
              x:DataType="vm:RxImagePaneViewModel">
 
-    <Border Classes="Industry IndustryPlot">
+    <!-- §7.4 fixed exception: this is the live received-frame pane, so it needs
+         ControlBorder (#A0A0A0) not the shared Border.IndustryPlot chrome default
+         (#B9B9B9) — a local override, not a retarget of IndustryPlot itself, since that
+         style is also shared with the spectrum/waterfall instrument canvases (§7.3),
+         which legitimately stay chrome. The override wins on plain Avalonia priority
+         (LocalValue > Style setter) — this is this codebase's first site where a local
+         attribute deliberately shadows a Style setter of the same property, not an
+         existing in-repo pattern being reused, so don't go looking for a precedent
+         elsewhere in this file. -->
+    <Border Classes="Industry IndustryPlot" BorderBrush="{StaticResource IndustryControlBorder}">
         <Panel>
             <TextBlock Text="{loc:Translate Panes.RxImage.NoImageYet}"
                        Foreground="{StaticResource IndustryBg}"

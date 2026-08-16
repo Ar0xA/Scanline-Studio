@@ -51,19 +51,34 @@
                    New IndustryTxLed (#D42A2A) is the spec's own separate, deliberately-brighter red
                    for LED dots specifically (§2.2's "do not unify" rule) — was previously a bare
                    literal on Ellipse.IndustryLed.alert in Atoms.axaml, not a token; consolidated here.
-                 The 5-step muted-text ramp, Accent100/600/700/800/900, and IndustryDivider/Surface
-                 are LEFT AS-IS in this pass (not deleted) — Phase B/C remaps each of their real
-                 consumers onto the new precise tokens below (Label/MutedText/DisabledText,
-                 ChromeBorder/ControlBorder, Hover/Press) per-usage, since collapsing a 5-step ramp
-                 or splitting one border color into two requires knowing what each specific consumer
-                 actually means, not just a value swap. Old tokens get deleted once nothing
+                 The 5-step muted-text ramp, Accent100/600/700/800/900, and IndustrySurface are LEFT
+                 AS-IS in this pass (not deleted) — Phase B/C remaps each of their real consumers
+                 onto the new precise tokens below (Label/MutedText/DisabledText, Hover/Press)
+                 per-usage, since collapsing a 5-step ramp requires knowing what each specific
+                 consumer actually means, not just a value swap. Old tokens get deleted once nothing
                  references them, not before (this project's own established migration pattern —
-                 see this file's header comment on how AtomsTokens.axaml itself replaced Tokens.axaml). -->
+                 see this file's header comment on how AtomsTokens.axaml itself replaced Tokens.axaml).
+                 IndustryDivider (the single pre-spec #D0D0D1 border/separator color) was the one
+                 already fully swept: every remaining real consumer resolves to
+                 IndustryChromeBorder (card border/band separator/tab border, #B9B9B9, per spec
+                 §2) or IndustryControlBorder (button/field/segment border, #A0A0A0, per spec §2
+                 — also the §7.4 fixed-exception value for image thumbnails/the received-frame
+                 pane, which override §2's card-border default) per its own role — the old
+                 IndustryDivider/IndustryDividerColor tokens are deleted below since nothing
+                 references them anymore. One consumer (the table-header rule) needed neither
+                 role and got its own spec-exact IndustryTableHeaderBorderColor (§6: "#E4E4E4
+                 on #C8C8C8") instead of a "close enough" substitute. The §7.4 exception covers
+                 both received-frame sites (RX-history preview AND the live Incoming-frame pane,
+                 RxImagePaneView.axaml — the latter via a local BorderBrush override rather than
+                 retargeting Border.IndustryPlot itself, since that style is shared with the
+                 legitimately-chrome spectrum/waterfall canvases, §7.3) and both halves of the
+                 thumbnail figure (Border.IndustryThumbnail + its IndustryThumbnailCaption
+                 divider, kept consistent as one composed content object rather than two
+                 independently-classified borders). -->
             <Color x:Key="IndustryBgColor">#F0F0F0</Color>
             <Color x:Key="IndustrySurfaceColor">#E9E9EA</Color>
             <Color x:Key="IndustryTextColor">#101010</Color>
             <Color x:Key="IndustryAccentColor">#0F62A8</Color>
-            <Color x:Key="IndustryDividerColor">#D0D0D1</Color>
             <Color x:Key="IndustryTextMuted42Color">#99999A</Color>
             <Color x:Key="IndustryTextMuted50Color">#88898A</Color>
             <Color x:Key="IndustryTextMuted55Color">#7D7E7F</Color>
@@ -72,6 +87,13 @@
             <Color x:Key="IndustryRowRule7Color">#E3E3E4</Color>
             <Color x:Key="IndustryRowRule6Color">#E5E5E6</Color>
             <Color x:Key="IndustryTableRule8Color">#E1E1E2</Color>
+            <!-- Spec §6: "Header row #E4E4E4 on #C8C8C8" — its own value, distinct from
+                 both border roles (§2 ChromeBorder #B9B9B9 / ControlBorder #A0A0A0).
+                 Named "...Border..." rather than "...Rule..." (round-2 auditor nit) to
+                 avoid shadowing the Border.IndustryTableHeaderRule STYLE CLASS name below
+                 that consumes it — they're separate resource namespaces so it would have
+                 built fine, but the name collision invited misreading. -->
+            <Color x:Key="IndustryTableHeaderBorderColor">#C8C8C8</Color>
             <Color x:Key="IndustryNeutral200Color">#E7E7EA</Color>
             <Color x:Key="IndustryNeutral300Color">#D4D4D7</Color>
             <Color x:Key="IndustryAccent100Color">#EEF6FF</Color>
@@ -146,7 +168,6 @@
             <SolidColorBrush x:Key="IndustrySurface" Color="{StaticResource IndustrySurfaceColor}" />
             <SolidColorBrush x:Key="IndustryText" Color="{StaticResource IndustryTextColor}" />
             <SolidColorBrush x:Key="IndustryAccent" Color="{StaticResource IndustryAccentColor}" />
-            <SolidColorBrush x:Key="IndustryDivider" Color="{StaticResource IndustryDividerColor}" />
             <SolidColorBrush x:Key="IndustryTextMuted42" Color="{StaticResource IndustryTextMuted42Color}" />
             <SolidColorBrush x:Key="IndustryTextMuted50" Color="{StaticResource IndustryTextMuted50Color}" />
             <SolidColorBrush x:Key="IndustryTextMuted55" Color="{StaticResource IndustryTextMuted55Color}" />
@@ -155,6 +176,7 @@
             <SolidColorBrush x:Key="IndustryRowRule7" Color="{StaticResource IndustryRowRule7Color}" />
             <SolidColorBrush x:Key="IndustryRowRule6" Color="{StaticResource IndustryRowRule6Color}" />
             <SolidColorBrush x:Key="IndustryTableRule8" Color="{StaticResource IndustryTableRule8Color}" />
+            <SolidColorBrush x:Key="IndustryTableHeaderBorder" Color="{StaticResource IndustryTableHeaderBorderColor}" />
             <SolidColorBrush x:Key="IndustryNeutral200" Color="{StaticResource IndustryNeutral200Color}" />
             <SolidColorBrush x:Key="IndustryNeutral300" Color="{StaticResource IndustryNeutral300Color}" />
             <SolidColorBrush x:Key="IndustryAccent100" Color="{StaticResource IndustryAccent100Color}" />
