@@ -222,6 +222,49 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
+    public async Task ApplyTemplate_ImageWithOversizedBounds_ClampsResizeToTheDestinationInsteadOfAllocatingUnbounded()
+    {
+        // Code-review finding (Scanline Studio TX template designer Phase 2): an image element's
+        // Bounds is normalized against the CROP rect
+        // (TxImageEditorPaneViewModel.ProjectRectToCropRelative), so a full-frame element ("set as
+        // background") combined with a small crop rect -- or simply a manually resized element
+        // bigger than the working copy -- can project to a Bounds many times larger than 0..1.
+        // Resizing the source to that raw (unclamped) pixel size would try to allocate gigabytes.
+        // This pins that DrawTemplateImage completes without throwing/hanging and clamps the
+        // resize target to the destination's own resolution regardless of how oversized Bounds is.
+        var basePath = await WriteFixturePngAsync(8, 8, (_, _) => new ImageSharpRgb24(0, 255, 0));
+        var elementPath = await WriteFixturePngAsync(2, 2, (_, _) => new ImageSharpRgb24(255, 0, 0));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(basePath, 8, 8);
+            var elementSource = await new ImageFileLoader().LoadAsync(elementPath, 2, 2);
+            var preparer = new TransmitImagePreparer(FontPath);
+            // Width=50/Height=50 on an 8x8 base is a 400x400px resize target unclamped -- clamped,
+            // it must stay at 8x8 (the destination's own size) and complete instantly.
+            var document = new TemplateDocument(null, [
+                new TemplateImageElement(new NormalizedRect(0, 0, 50, 50), Z: 0, elementSource, ImageFitMode.Stretch),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            // The whole 8x8 destination is covered by the (clamped, still oversized-in-intent)
+            // element -- every pixel red, none of the green base showing through.
+            for (var y = 0; y < 8; y++)
+            {
+                for (var x = 0; x < 8; x++)
+                {
+                    AssertPixel(result, x, y, 255, 0, 0);
+                }
+            }
+        }
+        finally
+        {
+            File.Delete(basePath);
+            File.Delete(elementPath);
+        }
+    }
+
+    [Fact]
     public async Task ApplyTemplate_ImageCoverFit_CropsAwayContentAStretchWouldHaveKept()
     {
         // Code-review round-2 finding: the original fixture (uniform-per-row stripes) was
