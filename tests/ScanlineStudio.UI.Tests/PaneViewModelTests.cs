@@ -1438,17 +1438,18 @@ public sealed class PaneViewModelTests
         // this particular crop+element), not the real 0.25/0.75 set below.
         firstEditor.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
         firstEditor.AddOverlayElementCommand.Execute(null);
-        firstEditor.OverlayElements[0].Text = "DE %m";
-        firstEditor.OverlayElements[0].X = 0.25;
-        firstEditor.OverlayElements[0].Y = 0.75;
-        firstEditor.OverlayElements[0].FontSizeRelative = 0.15;
-        firstEditor.OverlayElements[0].Color = new Rgb24(10, 20, 30);
+        var firstElement = (OverlayElementViewModel)firstEditor.OverlayElements[0];
+        firstElement.Text = "DE %m";
+        firstElement.X = 0.25;
+        firstElement.Y = 0.75;
+        firstElement.FontSizeRelative = 0.15;
+        firstElement.Color = new Rgb24(10, 20, 30);
         firstEditor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
         var reopenedEditor = await OpenEditorAsync(vm, () => vm.EditCurrentImageCommand.ExecuteAsync(null));
 
-        var element = Assert.Single(reopenedEditor.OverlayElements);
+        var element = (OverlayElementViewModel)Assert.Single(reopenedEditor.OverlayElements);
         Assert.Equal("DE %m", element.Text);
         Assert.Equal(0.25, element.X);
         Assert.Equal(0.75, element.Y);
@@ -1459,7 +1460,7 @@ public sealed class PaneViewModelTests
         // exact regression the deferred-restoration draft would have introduced.
         reopenedEditor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
-        Assert.Single(preparer.Overlays[^1].Elements);
+        Assert.Single(preparer.TemplateDocuments[^1].Elements);
     }
 
     [AvaloniaFact]

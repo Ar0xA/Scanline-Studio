@@ -57,23 +57,12 @@
                  clip; WrapPanel degrades to extra lines instead (containment over an exact 1-line
                  match, this project's #1 priority). -->
             <WrapPanel Grid.Row="0" Margin="0,0,0,6">
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsChecked="True" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolMove}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolCrop}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolScale}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolText}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolBox}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolLine}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolMask}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
-                             Content="{loc:Translate Panes.TxImageEditor.ToolPick}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <Border Width="1" Height="16" Margin="0,0,4,4" Background="{StaticResource IndustryControlBorder}" />
+                <!-- Phase 1 (spec/15-template-designer.md): the old EditorTool RadioButton group
+                     (Move/Crop/Scale/Text/Box/Line/Mask/Pick) removed outright — 7 of its 8
+                     members were already dead stubs implying tool-switching that doesn't exist, and
+                     the 8th (Move) had no distinct behavior of its own to keep (drag always works
+                     regardless of any "tool" selection) — a lone surviving radio with no group
+                     siblings would look broken, not minimal. -->
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding UndoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding RedoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
@@ -112,6 +101,12 @@
                 <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.AddText}"
                         Command="{Binding AddOverlayElementCommand}" />
+                <!-- Phase 1: reuses the ToolBox locale key freed up by the tool-strip removal above
+                     (same reuse pattern ToolRotate's own comment already established for this
+                     card). -->
+                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
+                        Content="{loc:Translate Panes.TxImageEditor.ToolBox}"
+                        Command="{Binding AddBoxElementCommand}" />
                 <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.Apply}"
                         Command="{Binding ApplyCommand}" />
@@ -231,39 +226,122 @@
                                     Background="{StaticResource IndustryAccent}"
                                     PointerPressed="OnCropHandlePointerPressed" />
 
-                            <ItemsControl ItemsSource="{Binding OverlayElements}">
+                            <!-- Width/Height bound explicitly (real-window code-review finding, via
+                                 Avalonia DevTools): a Canvas ItemsPanel does NOT auto-size to its
+                                 children's Canvas.Left/Top-positioned content — with neither an
+                                 explicit size NOR content-driven sizing, this ItemsControl's own
+                                 Bounds/DesiredSize measured to (0,0,0,0) (directly observed on the live
+                                 instance in DevTools' property inspector, ClipToBounds reading true on
+                                 that instance too — its default control theme, not Visual's own
+                                 documented false default). With zero size and clipping, nothing inside
+                                 ever rendered regardless of Canvas.Left/Top/ZIndex on the elements
+                                 themselves. This was a total rendering failure (not just a z-order or
+                                 border-thickness issue); the fix (explicit size) is confirmed via a real
+                                 running window, not inferred — round-3 code-review flagged the exact
+                                 causal mechanism above as unverifiable from static docs alone, which is
+                                 fair; treat it as "what DevTools showed," not a documented contract. -->
+                            <ItemsControl ItemsSource="{Binding OverlayElements}"
+                                          Width="{Binding WorkingCopyWidth}" Height="{Binding WorkingCopyHeight}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <Canvas />
                                     </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:OverlayElementViewModel">
-                                        <!-- FontSize/FontFamily bound so the canvas chrome actually
-                                             matches what TransmitImagePreparer.ApplyOverlay bakes
-                                             into the transmitted image (spec/18-path-to-1.0.md
-                                             Medium item, overlay-text WYSIWYG). CanvasFontSize is
-                                             computed by the parent VM (not a converter here, since
-                                             it depends on the crop rect, PreserveAspect, and the
-                                             target mode's own dimensions, none of which this
-                                             DataTemplate's own DataContext, the element itself,
-                                             has access to), and IndustryMonoFontFamily is the same
-                                             DejaVu Sans Mono file ApplyOverlay itself loads. -->
-                                        <TextBlock Text="{Binding ResolvedText}"
-                                                   FontSize="{Binding CanvasFontSize}"
-                                                   FontFamily="{StaticResource IndustryMonoFontFamily}"
-                                                   Foreground="White"
-                                                   Background="#66000000"
-                                                   Canvas.Left="{Binding LeftPixels}"
-                                                   Canvas.Top="{Binding TopPixels}"
-                                                   PointerPressed="OnOverlayElementPointerPressed">
-                                            <TextBlock.RenderTransform>
-                                                <TranslateTransform X="{Binding Bounds.Width, RelativeSource={RelativeSource Self}, Converter={x:Static conv:NegativeHalfConverter.Instance}}"
-                                                                     Y="{Binding Bounds.Height, RelativeSource={RelativeSource Self}, Converter={x:Static conv:NegativeHalfConverter.Instance}}" />
-                                            </TextBlock.RenderTransform>
-                                        </TextBlock>
+                                <!-- Phase 1 (spec/15-template-designer.md): polymorphic per-type
+                                     DataTemplates (ItemsControl.DataTemplates, NOT a single
+                                     ItemTemplate — Avalonia selects by the item's own runtime type)
+                                     replace the pre-Phase-1 text-only ItemTemplate. Each template's
+                                     ROOT is itself a Canvas positioned via Canvas.Left/Top at the
+                                     element's own LeftPixels/TopPixels (real top-left corner, not
+                                     the pre-Phase-1 NegativeHalfConverter self-centering transform —
+                                     Phase 1 gave elements a real Width/Height box, so LeftPixels/
+                                     TopPixels already account for the center-to-corner conversion
+                                     themselves); its CHILDREN position within that inner Canvas's own
+                                     coordinate space, same nested-Canvas technique the crop
+                                     body/handle pair above already uses one level up. Single
+                                     bottom-right resize handle per element (Phase 1 plan-review
+                                     finding: mirrors the crop rect's OWN existing single-corner-
+                                     handle convention — PicRect.cpp real legacy precedent, see the
+                                     crop handle above — deliberately not a 4-corner/8-handle
+                                     system), hidden while Locked (code-behind is the real gate;
+                                     this is the visual cue). -->
+                                <ItemsControl.DataTemplates>
+                                    <DataTemplate DataType="vm:OverlayElementViewModel">
+                                        <!-- No ZIndex binding here (real-window code-review finding, via
+                                             Avalonia DevTools: a ZIndex bound on this DataTemplate root had
+                                             NO effect — Avalonia wraps each ItemsControl item in its own
+                                             container and doesn't forward the attached property to reorder
+                                             those containers). Draw order instead comes from plain Canvas
+                                             child order, which TxImageEditorPaneViewModel keeps in sync with
+                                             Z itself (MoveElementUp/Down physically move the item within
+                                             OverlayElements, not just its Z value) — see that method's own
+                                             doc comment. -->
+                                        <Canvas Canvas.Left="{Binding LeftPixels}" Canvas.Top="{Binding TopPixels}"
+                                                Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}">
+                                            <!-- FontSize/FontFamily bound so the canvas chrome
+                                                 actually matches what TransmitImagePreparer.
+                                                 ApplyTemplate bakes into the transmitted image
+                                                 (spec/18-path-to-1.0.md Medium item, overlay-text
+                                                 WYSIWYG; Phase 1 generalized the underlying fit
+                                                 computation to real shrink-to-fit). CanvasFontSize
+                                                 is computed by the parent VM (not a converter here,
+                                                 since it depends on the crop rect, PreserveAspect,
+                                                 the element's own box, and the target mode's own
+                                                 dimensions, none of which this DataTemplate's own
+                                                 DataContext has access to). Foreground bound to the
+                                                 element's own Color (Phase 1 fix: this was hardcoded
+                                                 White pre-Phase-1 despite Color being a real,
+                                                 editable, undo-tracked property — same fix class as
+                                                 the box fill/border below, not a separate concern). -->
+                                            <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
+                                                    Background="#33FFFFFF"
+                                                    BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
+                                                    PointerPressed="OnOverlayElementPointerPressed">
+                                                <TextBlock Text="{Binding ResolvedText}"
+                                                           FontSize="{Binding CanvasFontSize}"
+                                                           FontFamily="{StaticResource IndustryMonoFontFamily}"
+                                                           Foreground="{Binding Color, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                           TextWrapping="NoWrap"
+                                                           IsHitTestVisible="False" />
+                                            </Border>
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                        </Canvas>
                                     </DataTemplate>
-                                </ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="vm:BoxElementViewModel">
+                                        <!-- No ZIndex binding here either — see the text DataTemplate's own
+                                             comment above; same non-effect, same fix (collection order). -->
+                                        <Canvas Canvas.Left="{Binding LeftPixels}" Canvas.Top="{Binding TopPixels}"
+                                                Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}">
+                                            <!-- BorderThickness bound to CanvasBorderThicknessPixels via
+                                                 DoubleToThicknessConverter (round-3 code-review finding: a bare
+                                                 double->Thickness value binding has no implicit conversion path
+                                                 in Avalonia and fails silently, leaving BorderThickness at 0 —
+                                                 see that converter's own doc comment; this was hardcoded to a
+                                                 literal 1 before that, which also ignored the element's own
+                                                 normalized BorderThickness). A null BorderColor yields a null
+                                                 brush, which Avalonia treats as "no border" — matching
+                                                 TemplateBoxElement's own BorderColor==null="no border" contract. -->
+                                            <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
+                                                    Background="{Binding FillColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
+                                                    BorderBrush="{Binding BorderColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
+                                                    BorderThickness="{Binding CanvasBorderThicknessPixels, Converter={x:Static conv:DoubleToThicknessConverter.Instance}}"
+                                                    Opacity="{Binding Opacity}"
+                                                    PointerPressed="OnOverlayElementPointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                        </Canvas>
+                                    </DataTemplate>
+                                </ItemsControl.DataTemplates>
                             </ItemsControl>
 
                         </Canvas>
@@ -313,14 +391,36 @@
                          WITHOUT Classes="blueprint" is exactly this ("plain bordered, no title
                          notch"), matching the old design's own untitled "cardInner" semantic. -->
                     <ItemsControl ItemsSource="{Binding OverlayElements}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="vm:OverlayElementViewModel">
+                        <!-- Phase 1: polymorphic per-type DataTemplates (same technique as the
+                             canvas ItemsControl above), each row now also exposing Width/Height
+                             (Phase 1's real resizable box, not just a point), Lock, and layer-order
+                             (Up/Down) — this row list IS the "element list panel" Phase 1 called
+                             for, not a separate new panel (this one already existed pre-Phase-1;
+                             extending it is the reuse). Box rows expose geometry/lock/reorder only
+                             for now — fill/border COLOR editing is Phase 4's "real style panel"
+                             scope, not front-run here. -->
+                        <ItemsControl.DataTemplates>
+                            <DataTemplate DataType="vm:OverlayElementViewModel">
                                 <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Margin="0,0,0,4" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                                     <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                        <TextBox Classes="Industry IndustryInput" Text="{Binding Text}" />
+                                        <TextBox Classes="Industry IndustryInput" Text="{Binding Text}" IsEnabled="{Binding !Locked}" />
                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding X}" Width="55" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Y}" Width="55" />
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding X}" Width="50" IsEnabled="{Binding !Locked}" />
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Y}" Width="50" IsEnabled="{Binding !Locked}" />
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Width}" Width="50" IsEnabled="{Binding !Locked}" />
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Height}" Width="50" IsEnabled="{Binding !Locked}" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                            <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}"
+                                                          IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.MoveUp}"
+                                                    Command="{Binding MoveUpCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.MoveDown}"
+                                                    Command="{Binding MoveDownCommand}"
+                                                    CommandParameter="{Binding}" />
                                             <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.Remove}"
                                                     Command="{Binding RemoveCommand}"
@@ -329,7 +429,35 @@
                                     </StackPanel>
                                 </ContentControl>
                             </DataTemplate>
-                        </ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="vm:BoxElementViewModel">
+                                <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Margin="0,0,0,4" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
+                                    <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding X}" Width="50" IsEnabled="{Binding !Locked}" />
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Y}" Width="50" IsEnabled="{Binding !Locked}" />
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Width}" Width="50" IsEnabled="{Binding !Locked}" />
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Height}" Width="50" IsEnabled="{Binding !Locked}" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                            <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}"
+                                                          IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.MoveUp}"
+                                                    Command="{Binding MoveUpCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.MoveDown}"
+                                                    Command="{Binding MoveDownCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
+                                                    Content="{loc:Translate Panes.TxImageEditor.Remove}"
+                                                    Command="{Binding RemoveCommand}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </ContentControl>
+                            </DataTemplate>
+                        </ItemsControl.DataTemplates>
                     </ItemsControl>
 
                     <!-- Insert-field token chips. Only the 5 backed by real data this pass (MY CALL/MY

@@ -32,17 +32,28 @@ public enum NudgeDirection
 /// headlessly without simulating real pointer events.</summary>
 public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 {
-    /// <summary>Raw (photo-anchored, un-macro-resolved) snapshot of one overlay element -- the
-    /// counterpart to <see cref="ImageOverlayElement"/>, which <see cref="Overlay"/> exposes
-    /// already crop-projected AND with <see cref="OverlayElementViewModel.ResolvedText"/> baked in.
-    /// Deliberately a SEPARATE type, not a reuse of <see cref="ImageOverlayElement"/> with different
-    /// semantics depending on which property produced it -- <see cref="TxControlsPaneViewModel"/>'s
+    /// <summary>Raw (photo-anchored, un-macro-resolved) snapshot of one canvas element -- the
+    /// counterpart to <see cref="TemplateElement"/>, which <see cref="Document"/> exposes already
+    /// crop-projected AND (for text) with <see cref="OverlayElementViewModel.ResolvedText"/> baked
+    /// in. Deliberately a SEPARATE hierarchy, not a reuse of <see cref="TemplateElement"/> with
+    /// different semantics depending on which property produced it -- <see cref="TxControlsPaneViewModel"/>'s
     /// own EditState needs this exact, unprojected, unresolved form to faithfully re-seed a
     /// re-opened editor (round-1 plan-review finding on spec/18-path-to-1.0.md's re-open/re-edit
-    /// sub-piece: restoring from the crop-projected <see cref="Overlay"/> instead would silently
-    /// misplace existing overlay text AND permanently bake macro templates like <c>"DE %m"</c> into
-    /// their currently-resolved value).</summary>
-    public sealed record RawOverlayElementSnapshot(string Text, double X, double Y, double FontSizeRelative, Rgb24 Color);
+    /// sub-piece: restoring from the crop-projected <see cref="Document"/> instead would silently
+    /// misplace existing content AND permanently bake macro templates like <c>"DE %m"</c> into
+    /// their currently-resolved value). Polymorphic as of Phase 1 (spec/15-template-designer.md) --
+    /// one subtype per <see cref="ITemplateElementViewModel"/> concrete type.</summary>
+    public abstract record RawElementSnapshot(double X, double Y, double Width, double Height, int Z, bool Locked);
+
+    public sealed record RawTextElementSnapshot(
+        double X, double Y, double Width, double Height, int Z, bool Locked,
+        string Text, double FontSizeRelative, Rgb24 Color)
+        : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
+
+    public sealed record RawBoxElementSnapshot(
+        double X, double Y, double Width, double Height, int Z, bool Locked,
+        Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity)
+        : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Prior edit state to seed a re-opened editor with (spec/18-path-to-1.0.md Medium
     /// item: re-open/re-edit after Apply) -- everything genuinely mode/crop-independent.
@@ -52,7 +63,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// see <see cref="CurrentSource"/>'s own doc comment).</summary>
     public sealed record EditorInitialState(
         NormalizedRect CropRect, bool PreserveAspect, ImageAdjustments Adjustments,
-        IReadOnlyList<RawOverlayElementSnapshot> OverlayElements);
+        IReadOnlyList<RawElementSnapshot> OverlayElements);
 
     /// <summary>One undo/redo step -- the editor's FULL editable state, captured wholesale rather
     /// than as a per-operation command/inverse (spec/18-path-to-1.0.md Medium item, undo/redo
@@ -68,7 +79,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// with no resampling.</summary>
     private sealed record EditorSnapshot(
         int RotationCount, NormalizedRect CropRect, bool PreserveAspect, bool LockAspectToMode,
-        ImageAdjustments Adjustments, IReadOnlyList<RawOverlayElementSnapshot> OverlayElements);
+        ImageAdjustments Adjustments, IReadOnlyList<RawElementSnapshot> OverlayElements);
 
     private const double MinNormalizedCropSize = 0.02;
 
@@ -135,7 +146,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private Bitmap? _previewImage;
 
     [ObservableProperty]
-    private OverlayElementViewModel? _selectedOverlayElement;
+    private ITemplateElementViewModel? _selectedOverlayElement;
 
     // Adjustment sliders (spec/18-path-to-1.0.md Medium item) -- 0 is each one's own no-op
     // default (see ImageAdjustments' own doc comment for the exact per-field mapping). Applied
@@ -201,9 +212,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 // SelectedOverlayElement deliberately stays null (code-review nit) -- unlike
                 // AddOverlayElement, which always selects the ONE element it just created, there is
                 // no obviously-correct choice among N restored elements to auto-select.
-                foreach (var snapshot in initial.OverlayElements)
+                //
+                // Sorted by Z before seeding (round-3 code-review finding): MoveElementUp/Down assume
+                // OverlayElements' own collection order always matches Z order (that's what lets a
+                // plain Canvas.Move()-based reorder keep the canvas's draw order in sync with Z --
+                // see that method's own doc comment). Every other mutation site upholds this
+                // invariant already; this is the one entry point (an externally-supplied
+                // EditorInitialState, e.g. a future template-load path) that could hand in elements
+                // out of Z order and silently desync it -- sorting here closes that gap at the root
+                // instead of every reorder call needing to defend against it.
+                foreach (var snapshot in initial.OverlayElements.OrderBy(s => s.Z))
                 {
-                    OverlayElements.Add(CreateOverlayElement(snapshot.Text, snapshot.X, snapshot.Y, snapshot.FontSizeRelative, snapshot.Color));
+                    OverlayElements.Add(CreateElementFromSnapshot(snapshot));
                 }
             }
             finally
@@ -215,7 +235,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         RecomputePreview();
     }
 
-    public ObservableCollection<OverlayElementViewModel> OverlayElements { get; } = [];
+    public ObservableCollection<ITemplateElementViewModel> OverlayElements { get; } = [];
 
     /// <summary>spec/18-path-to-1.0.md Medium item: the card header used to be a static locale
     /// string ("EDITOR — OUTGOING FRAME · 640×496 · PD120") regardless of the actual mode/image
@@ -260,26 +280,35 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     public double CropBottomPixels => (CropRect.Y + CropRect.Height) * WorkingCopyHeight;
 
-    /// <summary>Snapshot of the current overlay elements as the immutable
-    /// <see cref="ImageOverlay"/> the pipeline actually consumes — lets a host (e.g.
+    /// <summary>Snapshot of the current canvas elements as the immutable <see cref="TemplateDocument"/>
+    /// the pipeline actually consumes (Phase 1 -- supersedes the pre-Phase-1 <c>Overlay</c>/
+    /// <c>ImageOverlay</c> property, which only ever covered text) — lets a host (e.g.
     /// <see cref="TxControlsPaneViewModel"/>) capture the edit-state it needs to reflow on a later
     /// mode change, without re-deriving it from <see cref="OverlayElements"/> itself.</summary>
-    public ImageOverlay Overlay => BuildOverlay();
+    public TemplateDocument Document => BuildTemplateDocument();
 
-    /// <summary>Same reasoning as <see cref="Overlay"/>, for the 6 adjustment sliders — without
+    /// <summary>Same reasoning as <see cref="Document"/>, for the 6 adjustment sliders — without
     /// this, a host capturing edit-state for mode-change reflow would silently drop
     /// Brightness/Contrast/etc. on the next mode change (a real gap found and fixed in
     /// <see cref="TxControlsPaneViewModel"/>'s own <c>EditState</c>/<c>OnSelectedModeChanged</c>,
     /// spec/18-path-to-1.0.md Medium item).</summary>
     public ImageAdjustments Adjustments => BuildAdjustments();
 
-    /// <summary>Raw (photo-anchored, un-macro-resolved) snapshot of every current overlay element
-    /// -- the counterpart to <see cref="Overlay"/> for callers that need to faithfully RE-SEED an
+    /// <summary>Raw (photo-anchored, un-macro-resolved) snapshot of every current canvas element
+    /// -- the counterpart to <see cref="Document"/> for callers that need to faithfully RE-SEED an
     /// editor later rather than feed the real transmit pipeline. See
-    /// <see cref="RawOverlayElementSnapshot"/>'s own doc comment for why this can't just reuse
-    /// <see cref="Overlay"/>'s already-projected, already-macro-resolved elements.</summary>
-    public IReadOnlyList<RawOverlayElementSnapshot> RawOverlayElements =>
-        OverlayElements.Select(e => new RawOverlayElementSnapshot(e.Text, e.X, e.Y, e.FontSizeRelative, e.Color)).ToList();
+    /// <see cref="RawElementSnapshot"/>'s own doc comment for why this can't just reuse
+    /// <see cref="Document"/>'s already-projected, already-macro-resolved elements.</summary>
+    public IReadOnlyList<RawElementSnapshot> RawOverlayElements => OverlayElements.Select(BuildRawSnapshot).ToList();
+
+    private static RawElementSnapshot BuildRawSnapshot(ITemplateElementViewModel element) => element switch
+    {
+        OverlayElementViewModel text => new RawTextElementSnapshot(
+            text.X, text.Y, text.Width, text.Height, text.Z, text.Locked, text.Text, text.FontSizeRelative, text.Color),
+        BoxElementViewModel box => new RawBoxElementSnapshot(
+            box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
+        _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
+    };
 
     public event Action<IImageSource>? Applied;
 
@@ -338,8 +367,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// because gesture start/end is only observable at the View layer (pointer events), unlike the
     /// scalar sliders' own VM-level <c>On*Changing</c> hooks. Overlay-element drags do NOT use this
     /// method (code-review finding, folded in) -- they push via
-    /// <see cref="OverlayElementViewModel.PushUndoSnapshotForPositionChange"/> instead, a path that
-    /// also covers typed X/Y TextBox edits, which this drag-only method never would.</summary>
+    /// <see cref="ITemplateElementViewModel.PushUndoSnapshotForGeometryChange"/> instead, a path
+    /// that also covers typed X/Y/Width/Height TextBox edits, which this drag-only method never
+    /// would.</summary>
     public void PushUndoSnapshotForDragGesture() => PushUndoSnapshot();
 
     public void DragCropMove(double dxNormalized, double dyNormalized) => ApplyCropMove(dxNormalized, dyNormalized);
@@ -352,57 +382,150 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         // Seeded at the CROP's center (not the raw photo-center 0.5/0.5 that
         // OverlayElementViewModel's own X/Y field defaults would otherwise leave in place) -- a
         // tight, off-center crop would otherwise place brand-new text outside the visible/
-        // transmitted frame immediately. See ProjectToCropRelative's own doc comment for why X/Y
-        // are stored relative to the full working copy, not the crop, despite this.
+        // transmitted frame immediately. See ProjectRectToCropRelative's own doc comment for why
+        // X/Y are stored relative to the full working copy, not the crop, despite this.
         PushUndoSnapshot();
         var element = CreateOverlayElement(
             text: "Text",
             x: CropRect.X + (CropRect.Width / 2),
             y: CropRect.Y + (CropRect.Height / 2),
-            fontSizeRelative: 0.1,
-            color: new Rgb24(255, 255, 255));
+            width: DefaultElementWidth,
+            height: DefaultTextElementHeight,
+            fontSizeRelative: DefaultFontSizeRelative,
+            color: new Rgb24(255, 255, 255),
+            z: NextZ(),
+            locked: false);
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
         RecomputePreview();
     }
 
+    /// <summary>New in Phase 1 (spec/15-template-designer.md) -- mirrors
+    /// <see cref="AddOverlayElement"/> exactly (crop-centered seed, same undo/select/recompute
+    /// shape), just for the box element type instead of text.</summary>
+    [RelayCommand]
+    private void AddBoxElement()
+    {
+        PushUndoSnapshot();
+        var element = CreateBoxElement(
+            x: CropRect.X + (CropRect.Width / 2),
+            y: CropRect.Y + (CropRect.Height / 2),
+            width: DefaultElementWidth,
+            height: DefaultBoxElementHeight,
+            fillColor: new Rgb24(64, 64, 64),
+            borderColor: null,
+            borderThickness: 0,
+            opacity: 1.0,
+            z: NextZ(),
+            locked: false);
+        OverlayElements.Add(element);
+        SelectedOverlayElement = element;
+        RecomputePreview();
+    }
+
+    // Phase 1 defaults. DefaultTextElementHeight is deliberately well above DefaultFontSizeRelative
+    // (~1.8x), not flush to it -- plan-review finding: TextMeasurer's own line height (ascender +
+    // descender + gap) exceeds a bare em size, so a box sized tight to the font fraction would
+    // shrink-to-fit immediately on creation, making "Add text" a visible regression from day one.
+    private const double DefaultElementWidth = 0.3;
+    private const double DefaultTextElementHeight = 0.18;
+    private const double DefaultBoxElementHeight = 0.2;
+    private const double DefaultFontSizeRelative = 0.1;
+
+    /// <summary>New elements default to drawing on top of everything already on the canvas --
+    /// existing max Z + 1, or 0 for the first element.</summary>
+    private int NextZ() => OverlayElements.Count == 0 ? 0 : OverlayElements.Max(e => e.Z) + 1;
+
     /// <summary>Shared element-construction wiring for <see cref="AddOverlayElement"/> and
-    /// <see cref="EditorInitialState"/>-based restoration (round-1 plan-review finding on
-    /// spec/18-path-to-1.0.md's re-open/re-edit sub-piece: keep this in exactly one place, not
-    /// duplicated between "new blank element" and "restored element" call sites).</summary>
-    private OverlayElementViewModel CreateOverlayElement(string text, double x, double y, double fontSizeRelative, Rgb24 color)
+    /// restoration (<see cref="CreateElementFromSnapshot"/>) -- round-1 plan-review finding on
+    /// spec/18-path-to-1.0.md's re-open/re-edit sub-piece, still the right call in Phase 1: keep
+    /// this in exactly one place, not duplicated between "new blank element" and "restored element"
+    /// call sites.</summary>
+    private OverlayElementViewModel CreateOverlayElement(
+        string text, double x, double y, double width, double height, double fontSizeRelative, Rgb24 color, int z, bool locked)
     {
         var element = new OverlayElementViewModel
         {
             Text = text,
             X = x,
             Y = y,
+            Width = width,
+            Height = height,
             FontSizeRelative = fontSizeRelative,
             Color = color,
+            Z = z,
+            Locked = locked,
             ImageWidth = WorkingCopyWidth,
             ImageHeight = WorkingCopyHeight,
             RemoveCommand = RemoveOverlayElementCommand,
+            MoveUpCommand = MoveElementUpCommand,
+            MoveDownCommand = MoveElementDownCommand,
             ResolveMacros = macroText => _macroTextResolver.Resolve(macroText, _operatorSettings),
-            // Set AFTER X/Y above -- an object initializer assigns in listed order, so X/Y's own
-            // construction-time assignment fires OnXChanging/OnYChanging while this is still null,
+            // Set AFTER X/Y/Width/Height above -- an object initializer assigns in listed order, so
+            // their own construction-time assignment fires On*Changing while this is still null,
             // avoiding a spurious push from element creation itself (AddOverlayElement already
             // pushes explicitly before calling this; ApplyState's own restore is separately guarded
             // by _suspendPreview inside PushUndoSnapshotCoalesced regardless of ordering here).
-            PushUndoSnapshotForPositionChange = () => PushUndoSnapshotCoalesced("OverlayPosition"),
+            PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
-        element.CanvasFontSize = ComputeCanvasFontSize(element.FontSizeRelative);
+        element.CanvasFontSize = ComputeCanvasFontSize(element);
         element.PropertyChanged += OnOverlayElementPropertyChanged;
         return element;
     }
 
+    /// <summary>Box counterpart to <see cref="CreateOverlayElement"/> -- same wiring shape, no
+    /// CanvasFontSize (boxes don't shrink-to-fit).</summary>
+    private BoxElementViewModel CreateBoxElement(
+        double x, double y, double width, double height, Rgb24 fillColor, Rgb24? borderColor, double borderThickness, double opacity, int z, bool locked)
+    {
+        var element = new BoxElementViewModel
+        {
+            X = x,
+            Y = y,
+            Width = width,
+            Height = height,
+            FillColor = fillColor,
+            BorderColor = borderColor,
+            BorderThickness = borderThickness,
+            Opacity = opacity,
+            Z = z,
+            Locked = locked,
+            ImageWidth = WorkingCopyWidth,
+            ImageHeight = WorkingCopyHeight,
+            RemoveCommand = RemoveOverlayElementCommand,
+            MoveUpCommand = MoveElementUpCommand,
+            MoveDownCommand = MoveElementDownCommand,
+            PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
+        };
+        element.PropertyChanged += OnOverlayElementPropertyChanged;
+        return element;
+    }
+
+    /// <summary>Shared by the constructor's <see cref="EditorInitialState"/>-seeding block and
+    /// <see cref="ApplyState"/> -- one place that knows how to turn a <see cref="RawElementSnapshot"/>
+    /// back into a live element, rather than duplicating the type switch at both call sites.</summary>
+    private ITemplateElementViewModel CreateElementFromSnapshot(RawElementSnapshot snapshot) => snapshot switch
+    {
+        RawTextElementSnapshot text => CreateOverlayElement(
+            text.Text, text.X, text.Y, text.Width, text.Height, text.FontSizeRelative, text.Color, text.Z, text.Locked),
+        RawBoxElementSnapshot box => CreateBoxElement(
+            box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked),
+        _ => throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {snapshot.GetType()}."),
+    };
+
+    private bool CanInsertField() => SelectedOverlayElement is OverlayElementViewModel;
+
     /// <summary>Backs the overlay editor's "Insert field" chips -- appends a macro token (e.g.
-    /// <c>%m</c>, <c>{grid}</c>) to the currently selected overlay element's raw <see cref="OverlayElementViewModel.Text"/>.
-    /// A no-op with nothing selected, matching every other selection-dependent action in this
-    /// editor (no error, no auto-select).</summary>
-    [RelayCommand]
+    /// <c>%m</c>, <c>{grid}</c>) to the currently selected TEXT element's raw
+    /// <see cref="OverlayElementViewModel.Text"/>. Gated by <see cref="CanInsertField"/> (Phase 1
+    /// plan-review finding: with a box element selected, appending to nothing was a silent no-op --
+    /// disabling the chips is better UX than a click that visibly does nothing) rather than a no-op
+    /// body -- see <see cref="OnSelectedOverlayElementChanged"/> for the CanExecute re-evaluation
+    /// hook.</summary>
+    [RelayCommand(CanExecute = nameof(CanInsertField))]
     private void InsertField(string? token)
     {
-        if (string.IsNullOrEmpty(token) || SelectedOverlayElement is not { } element)
+        if (string.IsNullOrEmpty(token) || SelectedOverlayElement is not OverlayElementViewModel element)
         {
             return;
         }
@@ -410,8 +533,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         element.Text += token;
     }
 
+    partial void OnSelectedOverlayElementChanged(ITemplateElementViewModel? value) => InsertFieldCommand.NotifyCanExecuteChanged();
+
     [RelayCommand]
-    private void RemoveOverlayElement(OverlayElementViewModel? element)
+    private void RemoveOverlayElement(ITemplateElementViewModel? element)
     {
         if (element is null)
         {
@@ -429,6 +554,70 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         RecomputePreview();
     }
 
+    /// <summary>Layer-order reorder (Phase 1) -- discrete actions (element-list up/down buttons),
+    /// pushed as a single non-coalesced undo step each, same shape as Rotate/Add/Remove.
+    /// <para>Swaps Z with the adjacent element in actual DRAW order (<c>OrderBy(Z)</c>, the same
+    /// stable sort <see cref="BuildTemplateDocument"/>/<c>ApplyTemplate</c> use, which breaks Z ties
+    /// by <see cref="OverlayElements"/>'s own list index) -- code-review finding: a bare
+    /// <c>element.Z += 1</c> is a no-op whenever the neighbour already holds that Z (the default
+    /// state for every freshly-added element, since <see cref="NextZ"/> hands out consecutive
+    /// integers with no gaps), because the stable sort's tie-break then still draws them in the
+    /// same relative order.</para>
+    /// <para>ALSO moves the element within <see cref="OverlayElements"/> itself, not just its Z value
+    /// (real-window code-review finding, via Avalonia DevTools): the editor canvas's
+    /// <c>ItemsControl</c> binds <c>ZIndex="{Binding Z}"</c> on each DataTemplate root, but Avalonia
+    /// wraps each item in its own container and does not forward that attached property to reorder
+    /// containers within the panel -- confirmed empirically (the mini preview, driven by the real
+    /// <c>ApplyTemplate</c> pipeline, showed the correct new stacking after a swap; the interactive
+    /// canvas did not). A plain <c>Canvas</c> draws children in CHILD order with no other z-ordering
+    /// signal available, so keeping <see cref="OverlayElements"/> itself always sorted by Z (an
+    /// invariant every other mutation site already upholds -- <see cref="NextZ"/> always appends the
+    /// new max at the collection's own end) makes the canvas's natural draw order agree with the
+    /// pipeline's Z-based order, without depending on any attached-property forwarding.</para></summary>
+    [RelayCommand]
+    private void MoveElementUp(ITemplateElementViewModel? element)
+    {
+        if (element is null)
+        {
+            return;
+        }
+
+        var ordered = OverlayElements.OrderBy(e => e.Z).ToList();
+        var index = ordered.IndexOf(element);
+        if (index < 0 || index == ordered.Count - 1)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        var neighbor = ordered[index + 1];
+        (element.Z, neighbor.Z) = (neighbor.Z, element.Z);
+        OverlayElements.Move(OverlayElements.IndexOf(element), OverlayElements.IndexOf(neighbor));
+        RecomputePreview();
+    }
+
+    [RelayCommand]
+    private void MoveElementDown(ITemplateElementViewModel? element)
+    {
+        if (element is null)
+        {
+            return;
+        }
+
+        var ordered = OverlayElements.OrderBy(e => e.Z).ToList();
+        var index = ordered.IndexOf(element);
+        if (index <= 0)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        var neighbor = ordered[index - 1];
+        (element.Z, neighbor.Z) = (neighbor.Z, element.Z);
+        OverlayElements.Move(OverlayElements.IndexOf(element), OverlayElements.IndexOf(neighbor));
+        RecomputePreview();
+    }
+
     [RelayCommand]
     private void Apply()
     {
@@ -436,7 +625,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         var cropped = _preparer.Crop(_originalSource, CropRect);
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
         var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());
-        var final = _preparer.ApplyOverlay(adjusted, BuildOverlay());
+        var final = _preparer.ApplyTemplate(adjusted, BuildTemplateDocument());
         Applied?.Invoke(final);
     }
 
@@ -449,14 +638,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     /// <summary>Rotates the source 90° clockwise (always -- no direction parameter, matching the
     /// View's single Rotate button; 4 clicks returns to the original orientation), transforming
-    /// (not resetting) the current crop rect and every overlay element's position along with it --
-    /// round-1 plan-review's own explicit design call: resetting would silently destroy deliberate
-    /// framing/text work on the common "rotate after already cropping" case, and would break the
-    /// 4-clicks-returns-to-start property the single-button UX depends on. <see cref="FontSizeRelative"/>
-    /// is deliberately left untouched (see <see cref="OverlayElementViewModel.FontSizeRelative"/>'s
-    /// own reasoning) -- <c>TransmitImagePreparer.ApplyOverlay</c> computes rendered size against
-    /// the FINAL mode-sized output's height, never the source's own orientation, so rotation has no
-    /// effect on what it means; "fixing" it here would be a real regression, not an improvement.</summary>
+    /// (not resetting) the current crop rect and every canvas element's position/size along with it
+    /// -- round-1 plan-review's own explicit design call: resetting would silently destroy
+    /// deliberate framing/text work on the common "rotate after already cropping" case, and would
+    /// break the 4-clicks-returns-to-start property the single-button UX depends on.
+    /// <see cref="OverlayElementViewModel.FontSizeRelative"/> is deliberately left untouched (same
+    /// reasoning as before Phase 1 -- <c>TransmitImagePreparer</c> computes the shrink-to-fit
+    /// STARTING size against the FINAL mode-sized output's height, never the source's own
+    /// orientation). **Phase 1 correction to this comment's own pre-Phase-1 claim**: rotation is no
+    /// longer guaranteed to have zero effect on the RENDERED font size -- swapping a non-square
+    /// element's Width/Height (below) changes what shrink-to-fit's search actually has to fit into,
+    /// so a wide-short text box that rotates into a tall-narrow one can end up smaller. The
+    /// 4-clicks-returns-to-start property still holds exactly regardless (W/H swap back after 4
+    /// rotations, same as X/Y).</summary>
     [RelayCommand]
     private void Rotate()
     {
@@ -472,16 +666,20 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             {
                 // Same underlying point transform as the crop rect below: (x,y) -> (1-y, x) for a
                 // 90° clockwise rotation (verified against this codebase's own top-left-origin,
-                // Y-grows-downward convention -- TransmitImagePreparer.Crop/ApplyOverlay's pixel
+                // Y-grows-downward convention -- TransmitImagePreparer.Crop/ApplyTemplate's pixel
                 // math -- not assumed from a generic formula). Deliberately NOT clamped to [0,1]
                 // (unlike the crop rect below) -- code-review finding: TxImageEditorPaneView.axaml.cs's
                 // own drag handler explicitly allows free overflow past the image bounds ("clipped
                 // at render time only", spec/07-image-pipeline.md), so clamping here would silently
                 // relocate an element the user deliberately dragged off-canvas and break the
-                // 4-clicks-returns-to-start property for it.
+                // 4-clicks-returns-to-start property for it. Width/Height swap alongside the point
+                // transform (Phase 1 addition) -- exactly the same swap TransformCropRectClockwise
+                // already applies to the crop rect's own Width/Height below, for the same reason (a
+                // 90° rotation of a box swaps which axis is "wide").
                 var (x, y) = (element.X, element.Y);
                 element.X = 1 - y;
                 element.Y = x;
+                (element.Width, element.Height) = (element.Height, element.Width);
             }
 
             CropRect = TransformCropRectClockwise(CropRect);
@@ -632,42 +830,54 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Every element property EXCEPT the five below feeds
-    /// <see cref="BuildImageOverlayElement"/>/the real pipeline, so those five (purely canvas-
-    /// chrome display state -- see each one's own doc comment) are excluded here to avoid firing a
-    /// full Crop-&gt;Resize-&gt;ApplyOverlay recompute for a change that can't affect its output; that
-    /// matters concretely during a crop drag, where <see cref="RefreshOverlayElementCanvasFontSizes"/>
-    /// pushes a new <see cref="OverlayElementViewModel.CanvasFontSize"/> to every element on every
+    /// <summary>Every element property EXCEPT the ones filtered below feeds
+    /// <see cref="BuildTemplateElement"/>/the real pipeline (Phase 1 widened this from the
+    /// pre-Phase-1 text-only version, see each filtered name's own reasoning), so those are
+    /// excluded here to avoid firing a full Crop-&gt;Resize-&gt;ApplyTemplate recompute for a change
+    /// that can't affect its output; that matters concretely during a crop drag, where
+    /// <see cref="RefreshOverlayElementCanvasFontSizes"/> pushes a new
+    /// <see cref="OverlayElementViewModel.CanvasFontSize"/> to every TEXT element on every
     /// mouse-move frame (<see cref="NotifyCropRectDerivedPropertiesAndRecomputePreview"/>) -- without
     /// this filter, that would fire N additional redundant recomputes per frame instead of the one
-    /// already performed. Code-review finding: <c>LeftPixels</c>/<c>TopPixels</c> must be filtered
-    /// too, not just their own drivers (<c>ImageWidth</c>/<c>ImageHeight</c>) -- both
-    /// <c>OnImageWidthChanged</c>/<c>OnImageHeightChanged</c> AND <c>OnXChanged</c>/<c>OnYChanged</c>
-    /// re-raise them as a cascade (<see cref="OverlayElementViewModel"/>'s own partial hooks), so
-    /// filtering only the drivers left a real gap: any future direct <c>ImageWidth</c>/<c>ImageHeight</c>
-    /// write outside <see cref="Rotate"/>'s <see cref="_suspendPreview"/> guard would still trigger a
-    /// recompute via the unfiltered <c>LeftPixels</c> cascade, silently defeating the filter above it.
-    /// Filtering the cascade itself closes that gap without weakening X/Y's own trigger (X/Y are NOT
-    /// filtered -- they feed the pipeline directly and still recompute on their own PropertyChanged,
-    /// the LeftPixels/TopPixels re-raise that follows is now just a redundant second signal for the
-    /// same edit, correctly suppressed). <see cref="OverlayElementViewModel.FontSizeRelative"/> DOES
-    /// feed the pipeline, so its change still triggers a full recompute below; it also needs this one
-    /// element's own <c>CanvasFontSize</c> refreshed inline (cheap, single-element) since it's the
-    /// property that determines the canvas display size to begin with.</summary>
+    /// already performed. <c>LeftPixels</c>/<c>TopPixels</c>/<c>CanvasWidthPixels</c>/
+    /// <c>CanvasHeightPixels</c> are filtered for the same "cascade, not a driver" reason the
+    /// pre-Phase-1 code-review already established for LeftPixels/TopPixels: both
+    /// <c>ImageWidth</c>/<c>ImageHeight</c> AND <c>X</c>/<c>Y</c>/<c>Width</c>/<c>Height</c> re-raise
+    /// them (each concrete VM's own partial hooks), so filtering only the drivers would leave a real
+    /// gap. X/Y/Width/Height themselves are NOT filtered -- they feed the pipeline directly (both
+    /// element types) and still recompute on their own PropertyChanged; the pixel-cascade that
+    /// follows is now just a redundant second signal for the same edit, correctly suppressed.
+    /// <see cref="ITemplateElementViewModel.Z"/> is likewise NOT filtered (Phase 1 plan-review
+    /// finding: layer order genuinely changes the rendered output, unlike <c>Locked</c> below).
+    /// <see cref="ITemplateElementViewModel.Locked"/> IS filtered -- pure interaction state, can
+    /// never affect the pipeline. TEXT-only properties that need this one element's own
+    /// <c>CanvasFontSize</c> refreshed inline (Phase 1 widened this from FontSizeRelative-only: the
+    /// rendered size is now a real shrink-to-fit result of content AND box, not a closed-form
+    /// function of FontSizeRelative alone) are handled after the filter, before the shared
+    /// recompute.</summary>
     private void OnOverlayElementPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(OverlayElementViewModel.ImageWidth)
-            or nameof(OverlayElementViewModel.ImageHeight)
+        if (e.PropertyName is nameof(ITemplateElementViewModel.ImageWidth)
+            or nameof(ITemplateElementViewModel.ImageHeight)
             or nameof(OverlayElementViewModel.CanvasFontSize)
-            or nameof(OverlayElementViewModel.LeftPixels)
-            or nameof(OverlayElementViewModel.TopPixels))
+            or nameof(OverlayElementViewModel.ResolvedText)
+            or nameof(ITemplateElementViewModel.LeftPixels)
+            or nameof(ITemplateElementViewModel.TopPixels)
+            or nameof(ITemplateElementViewModel.CanvasWidthPixels)
+            or nameof(ITemplateElementViewModel.CanvasHeightPixels)
+            or nameof(BoxElementViewModel.CanvasBorderThicknessPixels)
+            or nameof(ITemplateElementViewModel.Locked))
         {
             return;
         }
 
-        if (e.PropertyName == nameof(OverlayElementViewModel.FontSizeRelative) && sender is OverlayElementViewModel element)
+        if (sender is OverlayElementViewModel textElement
+            && e.PropertyName is nameof(OverlayElementViewModel.FontSizeRelative)
+                or nameof(ITemplateElementViewModel.Width)
+                or nameof(ITemplateElementViewModel.Height)
+                or nameof(OverlayElementViewModel.Text))
         {
-            element.CanvasFontSize = ComputeCanvasFontSize(element.FontSizeRelative);
+            textElement.CanvasFontSize = ComputeCanvasFontSize(textElement);
         }
 
         RecomputePreview();
@@ -772,8 +982,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// <summary>Realtime preview: the REAL <see cref="ITransmitImagePreparer"/> pipeline output
     /// against the small working copy (not a separately-drawn approximation) -- see
     /// spec/07-image-pipeline.md's "what 'TX-accurate' actually means this pass" note. Crop -&gt;
-    /// Resize -&gt; ApplyOverlay, that exact order (overlay text must be rasterized at the FINAL
-    /// mode dimensions, or a non-aspect-preserving stretch would smear already-drawn glyphs).</summary>
+    /// Resize -&gt; ApplyAdjustments -&gt; ApplyTemplate, that exact order (element content must be
+    /// rasterized at the FINAL mode dimensions, or a non-aspect-preserving stretch would smear
+    /// already-drawn content). Phase 1: migrated from <c>ApplyOverlay</c>/<c>ImageOverlay</c> (text
+    /// only) onto <c>ApplyTemplate</c>/<c>TemplateDocument</c> (polymorphic) -- <c>ApplyOverlay</c>
+    /// itself is NOT deleted (Phase 0 had marked it for Phase-1 deletion, but it's still the
+    /// regression-test anchor for the shared <c>DrawGlyphs</c> no-clip/wrapping-length=width path
+    /// <c>ApplyTemplate</c>'s own text rendering reuses -- deletion deferred to a later cleanup,
+    /// not part of Phase 1's real goal).</summary>
     private void RecomputePreview()
     {
         // See _suspendPreview's own doc comment -- RotateCommand sets this while multiple overlay
@@ -788,11 +1004,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         var cropped = _preparer.Crop(_workingCopy, CropRect);
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
         var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());
-        var overlaid = _preparer.ApplyOverlay(adjusted, BuildOverlay());
-        PreviewImage = ImageSourceBitmapConverter.ToBitmap(overlaid);
+        var composited = _preparer.ApplyTemplate(adjusted, BuildTemplateDocument());
+        PreviewImage = ImageSourceBitmapConverter.ToBitmap(composited);
     }
 
-    private ImageOverlay BuildOverlay() => new(OverlayElements.Select(BuildImageOverlayElement).ToList());
+    private TemplateDocument BuildTemplateDocument() => new(Name: null, OverlayElements.Select(BuildTemplateElement).ToList());
 
     private ImageAdjustments BuildAdjustments() => new(Brightness, Contrast, Saturation, Gamma, Sharpen, Denoise);
 
@@ -971,7 +1187,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             Denoise = snapshot.Adjustments.Denoise;
             foreach (var raw in snapshot.OverlayElements)
             {
-                OverlayElements.Add(CreateOverlayElement(raw.Text, raw.X, raw.Y, raw.FontSizeRelative, raw.Color));
+                OverlayElements.Add(CreateElementFromSnapshot(raw));
             }
         }
         finally
@@ -982,55 +1198,79 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         NotifyCropRectDerivedPropertiesAndRecomputePreview();
     }
 
-    /// <summary>Builds the real, pipeline-bound overlay element from an on-canvas
-    /// <see cref="OverlayElementViewModel"/>. Cannot just forward its raw X/Y as-is -- those are
-    /// normalized against the FULL working copy (what the canvas drags against, so text stays
-    /// anchored to the same photo content across crop changes -- see
-    /// <see cref="ProjectToCropRelative"/>'s own doc comment), but <c>ApplyOverlay</c> interprets its
-    /// input X/Y as normalized against the CROPPED+RESIZED image
-    /// (<c>TransmitImagePreparer.cs</c>'s own <c>origin = (X * source.Width, Y * source.Height)</c>,
-    /// where <c>source</c> is already post-Crop-and-Resize) -- re-project here, at the one call site
-    /// both <see cref="RecomputePreview"/> and <see cref="Apply"/> share, so the side preview panel
-    /// and the actually-transmitted image always agree (spec/18-path-to-1.0.md Medium item: TX image
-    /// editor overlay text WYSIWYG).</summary>
-    private ImageOverlayElement BuildImageOverlayElement(OverlayElementViewModel element)
+    /// <summary>Builds the real, pipeline-bound element from an on-canvas
+    /// <see cref="ITemplateElementViewModel"/>. Cannot just forward its raw X/Y/Width/Height as-is --
+    /// those are normalized against the FULL working copy (what the canvas drags against, so content
+    /// stays anchored to the same photo content across crop changes -- see
+    /// <see cref="ProjectRectToCropRelative"/>'s own doc comment), but <c>ApplyTemplate</c>
+    /// interprets its input <see cref="TemplateElement.Bounds"/> as normalized against the
+    /// CROPPED+RESIZED image -- re-project here, at the one call site both
+    /// <see cref="RecomputePreview"/> and <see cref="Apply"/> share, so the side preview panel and
+    /// the actually-transmitted image always agree (spec/18-path-to-1.0.md Medium item: TX image
+    /// editor overlay text WYSIWYG; Phase 1 generalized this from text-only to every element type).</summary>
+    private TemplateElement BuildTemplateElement(ITemplateElementViewModel element)
     {
-        var (x, y) = ProjectToCropRelative(element.X, element.Y);
-        return new ImageOverlayElement(element.ResolvedText, x, y, element.FontSizeRelative, element.Color);
+        var bounds = ProjectRectToCropRelative(element.X, element.Y, element.Width, element.Height);
+        return element switch
+        {
+            OverlayElementViewModel text => new TemplateTextElement(
+                bounds, text.Z, text.ResolvedText, new FontSpec(string.Empty, text.FontSizeRelative), text.Color),
+            BoxElementViewModel box => new TemplateBoxElement(
+                bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
+            _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
+        };
     }
 
-    /// <summary>Re-projects an overlay element's X/Y from full-working-copy-normalized space into
-    /// the CROPPED+RESIZED image's own normalized space, matching the Crop-&gt;Resize letterbox/
-    /// stretch math <c>TransmitImagePreparer</c> actually applies. Design choice (round-1 auditor
-    /// plan-review, tx-editor-overlay-wysiwyg.md): overlay elements stay anchored to source-PHOTO
-    /// content, not to the crop frame -- dragging text onto a subject's face keeps it there as the
-    /// crop is adjusted later (clipped/hidden if the crop no longer includes that point), matching
-    /// ordinary photo-editor behavior and requiring no new UI. The letterbox-pad term below is not
-    /// optional: <c>Resize(preserveAspect: true)</c> (the default) uses <c>ResizeMode.Pad</c>
-    /// (centered black bars on the constrained axis), so a naive `(X-CropRect.X)/CropRect.Width`
-    /// re-projection (correct ONLY for stretch mode or a crop whose aspect exactly matches the
-    /// target mode's) silently mis-places text under the default configuration -- round-1's own
-    /// highest-severity finding on this fix.
+    /// <summary>Re-projects an element's CENTER-anchored X/Y/Width/Height from
+    /// full-working-copy-normalized space into the CROPPED+RESIZED image's own top-left-anchored
+    /// <see cref="NormalizedRect"/>, matching the Crop-&gt;Resize letterbox/stretch math
+    /// <c>TransmitImagePreparer</c> actually applies. Design choice (round-1 auditor plan-review,
+    /// tx-editor-overlay-wysiwyg.md, still the right call in Phase 1): elements stay anchored to
+    /// source-PHOTO content, not to the crop frame -- dragging an element onto a subject's face
+    /// keeps it there as the crop is adjusted later (clipped/hidden if the crop no longer includes
+    /// that point), matching ordinary photo-editor behavior and requiring no new UI. The
+    /// letterbox-pad term below is not optional: <c>Resize(preserveAspect: true)</c> (the default)
+    /// uses <c>ResizeMode.Pad</c> (centered black bars on the constrained axis), so a naive
+    /// `(X-CropRect.X)/CropRect.Width` re-projection (correct ONLY for stretch mode or a crop whose
+    /// aspect exactly matches the target mode's) silently mis-places content under the default
+    /// configuration -- round-1's own highest-severity finding on the pre-Phase-1 version of this
+    /// fix. WIDTH/HEIGHT project the same way position does (Phase 1 addition, verified during
+    /// Phase-1 plan-review): for two points <c>x</c> and <c>x+w</c>, the <c>padX</c>/<c>CropRect.X</c>
+    /// terms cancel identically, leaving <c>finalW = (w/CropRect.Width) * contentWidth/targetWidth</c>
+    /// -- the SAME <c>scaleX</c>/<c>contentWidth</c> machinery this method already computes for
+    /// position, just applied to a size delta instead of an absolute coordinate. The final
+    /// center-to-top-left conversion subtracts half the PROJECTED width/height, not half the raw
+    /// one (Phase 1 plan-review blocker: these differ substantially under a mismatched-aspect
+    /// letterboxed crop, and using the wrong one is exactly the kind of bug that looks plausible
+    /// while being wrong). Both early-return branches below mirror each other's assumptions
+    /// (degenerate CropRect vs. degenerate crop-pixel-size) so position and size are never projected
+    /// under different assumptions from one another -- this replaces the pre-Phase-1
+    /// position-only <c>ProjectToCropRelative</c> entirely (its only caller was this method's own
+    /// predecessor) rather than keeping two methods that could drift apart.
     /// Pixel-space note: <see cref="CropWidthPixels"/>/<see cref="CropHeightPixels"/> are in
     /// WORKING-COPY pixel space (not the original source's), but the result is pixel-space-invariant
-    /// -- it depends only on the crop's aspect ratio, which <see cref="BuildWorkingCopy"/> preserves
-    /// exactly from the original, so this is safe to use from both <see cref="RecomputePreview"/>
-    /// (working copy) and <see cref="Apply"/> (original source) without drift.</summary>
-    private (double X, double Y) ProjectToCropRelative(double x, double y)
+    /// up to <see cref="BuildWorkingCopy"/>'s own integer rounding (code-review nit: it depends only
+    /// on the crop's aspect ratio, which is preserved from the original only up to that rounding, not
+    /// bit-exactly) -- close enough for both <see cref="RecomputePreview"/> (working copy) and
+    /// <see cref="Apply"/> (original source) to agree in practice, but not a hard guarantee for
+    /// source dimensions that don't scale to round pixel counts.</summary>
+    private NormalizedRect ProjectRectToCropRelative(double x, double y, double width, double height)
     {
         if (CropRect.Width <= 0 || CropRect.Height <= 0)
         {
-            return (x, y);
+            return new NormalizedRect(x - (width / 2), y - (height / 2), width, height);
         }
 
         var relX = (x - CropRect.X) / CropRect.Width;
         var relY = (y - CropRect.Y) / CropRect.Height;
+        var relWidth = width / CropRect.Width;
+        var relHeight = height / CropRect.Height;
 
         var cropWidthPixels = CropWidthPixels;
         var cropHeightPixels = CropHeightPixels;
         if (cropWidthPixels <= 0 || cropHeightPixels <= 0)
         {
-            return (relX, relY);
+            return new NormalizedRect(relX - (relWidth / 2), relY - (relHeight / 2), relWidth, relHeight);
         }
 
         var targetWidth = (double)_targetMode.ImageWidth;
@@ -1052,18 +1292,30 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         var padX = (targetWidth - contentWidth) / 2;
         var padY = (targetHeight - contentHeight) / 2;
 
-        return ((padX + (relX * contentWidth)) / targetWidth, (padY + (relY * contentHeight)) / targetHeight);
+        var finalCenterX = (padX + (relX * contentWidth)) / targetWidth;
+        var finalCenterY = (padY + (relY * contentHeight)) / targetHeight;
+        var finalWidth = relWidth * contentWidth / targetWidth;
+        var finalHeight = relHeight * contentHeight / targetHeight;
+
+        return new NormalizedRect(finalCenterX - (finalWidth / 2), finalCenterY - (finalHeight / 2), finalWidth, finalHeight);
     }
 
-    /// <summary>Font size in CANVAS DISPLAY pixels for the given <c>FontSizeRelative</c> -- the
-    /// counterpart to <see cref="ProjectToCropRelative"/> for size rather than position. The real
-    /// pipeline's <c>fontSize = FontSizeRelative * targetHeight</c> (fixed, regardless of letterbox
-    /// vs. stretch -- <c>ApplyOverlay</c> always runs against the already-Resize()'d, exactly-
-    /// target-dimensioned image). One final-image pixel of vertical extent corresponds to
-    /// <c>1/scaleY</c> working-copy-canvas pixels, so <c>canvasFontSize = FontSizeRelative *
-    /// targetHeight / scaleY</c> -- the two <c>targetHeight</c> factors do NOT cancel here (unlike
-    /// the stretch-mode special case) because <c>scaleY</c> itself depends on <c>PreserveAspect</c>.</summary>
-    private double ComputeCanvasFontSize(double fontSizeRelative)
+    /// <summary>Font size in CANVAS DISPLAY pixels for the given TEXT element -- the counterpart to
+    /// <see cref="ProjectRectToCropRelative"/> for size rather than position. Phase 1: no longer a
+    /// closed-form function of <c>FontSizeRelative</c> alone -- calls the real
+    /// <see cref="ITransmitImagePreparer.MeasureFittedFontSize"/> (added in Phase 0 specifically so
+    /// this method could mirror the pipeline's own shrink-to-fit search instead of reimplementing
+    /// it) against the element's own crop-projected pixel bounds, matching what <c>ApplyTemplate</c>
+    /// will actually render. The final division by <c>scaleY</c> is unchanged from the pre-Phase-1
+    /// version: one final-image pixel of vertical extent corresponds to <c>1/scaleY</c>
+    /// working-copy-canvas pixels, so <c>canvasFontSize = fittedFinalSizePx / scaleY</c> -- <c>scaleY</c>
+    /// itself still depends on <c>PreserveAspect</c>, same reasoning as before. Bounds-to-pixel
+    /// rounding uses <c>Math.Max(1, (int)Math.Round(...))</c> (double, not <c>MathF.Round</c>) on
+    /// the same quantity <c>DrawTemplateText</c> rounds in <c>float</c> -- stated rule (Phase 1
+    /// plan-review nit), not guaranteed byte-identical near a .5 boundary, but the transmitted
+    /// preview image itself always comes from the real pipeline regardless, so this is a
+    /// canvas-display-only approximation.</summary>
+    private double ComputeCanvasFontSize(OverlayElementViewModel element)
     {
         var cropWidthPixels = CropWidthPixels;
         var cropHeightPixels = CropHeightPixels;
@@ -1078,14 +1330,29 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             ? Math.Min(targetWidth / cropWidthPixels, targetHeight / cropHeightPixels)
             : targetHeight / cropHeightPixels;
 
-        return scaleY <= 0 ? 0 : fontSizeRelative * targetHeight / scaleY;
+        if (scaleY <= 0)
+        {
+            return 0;
+        }
+
+        var bounds = ProjectRectToCropRelative(element.X, element.Y, element.Width, element.Height);
+        var boundsWidthPx = Math.Max(1, (int)Math.Round(bounds.Width * targetWidth));
+        var boundsHeightPx = Math.Max(1, (int)Math.Round(bounds.Height * targetHeight));
+        var fittedFinalSizePx = _preparer.MeasureFittedFontSize(
+            element.ResolvedText, new FontSpec(string.Empty, element.FontSizeRelative), (int)Math.Round(targetHeight), boundsWidthPx, boundsHeightPx);
+
+        return fittedFinalSizePx / scaleY;
     }
 
+    /// <summary>TEXT elements only -- boxes have no font/shrink-to-fit concept.</summary>
     private void RefreshOverlayElementCanvasFontSizes()
     {
         foreach (var element in OverlayElements)
         {
-            element.CanvasFontSize = ComputeCanvasFontSize(element.FontSizeRelative);
+            if (element is OverlayElementViewModel text)
+            {
+                text.CanvasFontSize = ComputeCanvasFontSize(text);
+            }
         }
     }
 
