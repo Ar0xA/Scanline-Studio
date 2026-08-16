@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.UI.Imaging;
@@ -46,6 +47,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private readonly ITransmitImagePreparer _preparer;
     private readonly IMacroTextResolver _macroTextResolver;
     private readonly OperatorSettings _operatorSettings;
+    private readonly ILocalizationService _localization;
     private readonly ILogger<TxImageEditorPaneViewModel> _logger;
 
     // Suppresses RecomputePreview() while RotateCommand is mid-update (rotated working copy but
@@ -84,6 +86,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         ITransmitImagePreparer preparer,
         IMacroTextResolver macroTextResolver,
         OperatorSettings operatorSettings,
+        ILocalizationService localization,
         ILogger<TxImageEditorPaneViewModel> logger)
     {
         _originalSource = originalSource;
@@ -91,6 +94,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
         _operatorSettings = operatorSettings;
+        _localization = localization;
         _logger = logger;
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
@@ -99,6 +103,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     }
 
     public ObservableCollection<OverlayElementViewModel> OverlayElements { get; } = [];
+
+    /// <summary>spec/18-path-to-1.0.md Medium item: the card header used to be a static locale
+    /// string ("EDITOR — OUTGOING FRAME · 640×496 · PD120") regardless of the actual mode/image
+    /// being edited. <see cref="_targetMode"/> is fixed for this editor instance's whole lifetime
+    /// (frozen at construction, spec/18-path-to-1.0.md High item 2's own stale-mode-transmit-crash
+    /// fix), so this never needs to react to a mode change mid-edit -- a plain computed property,
+    /// not an <see cref="ObservableProperty"/>.</summary>
+    public string HeaderText => _localization.GetString(
+        "Panes.TxImageEditor.CardHeaderFormat", _targetMode.ImageWidth, _targetMode.ImageHeight, _targetMode.DisplayName);
+
+    /// <summary>Same real-dimensions fix as <see cref="HeaderText"/>, for the separate dimensions
+    /// chip lower in the tool strip (mock2's own layout keeps both -- the chip is a compact
+    /// at-a-glance readout next to the aspect/text/apply controls, not a duplicate of the header).</summary>
+    public string DimensionsChipText => _localization.GetString(
+        "Panes.TxImageEditor.DimensionsChipFormat", _targetMode.ImageWidth, _targetMode.ImageHeight);
 
     /// <summary>The live, current-orientation source -- reflects any <see cref="RotateCommand"/>
     /// calls so far. Round-1 plan-review finding on spec/18-path-to-1.0.md High item 3: a host
