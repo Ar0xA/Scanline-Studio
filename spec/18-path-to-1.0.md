@@ -170,7 +170,7 @@ superseded.
       composition-across-modes comments at `:74-75`/`:948-950` now overclaim. Fix needs `EditState`
       to carry raw (un-projected) positions + `CropRect` + `PreserveAspect`, re-projected fresh at
       the new mode via a shared helper.
-  - ✅ **DONE**: 6 brightness/contrast/saturation/gamma/sharpen/denoise sliders implemented (not
+  - ✅ **DONE** (commit `bcf8504`): 6 brightness/contrast/saturation/gamma/sharpen/denoise sliders implemented (not
     removed) against a new `ITransmitImagePreparer.ApplyAdjustments` — real ImageSharp-backed
     Brightness/Contrast/Saturate + a hand-rolled gamma curve (ImageSharp has no `GammaCorrection`
     operation) + conditionally-skipped Gaussian sharpen/denoise, applied between Resize and
