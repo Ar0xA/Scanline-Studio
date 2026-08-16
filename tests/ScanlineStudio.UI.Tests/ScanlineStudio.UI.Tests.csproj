@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ScanlineStudio.UI\ScanlineStudio.UI.csproj" />
+    <ProjectReference Include="..\..\src\ScanlineStudio.Core.Imaging\ScanlineStudio.Core.Imaging.csproj" />
   </ItemGroup>
 
 </Project>

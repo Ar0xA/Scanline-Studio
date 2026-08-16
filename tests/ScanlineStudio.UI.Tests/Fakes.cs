@@ -391,6 +391,53 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     }
 }
 
+internal sealed class FakeImageSourceWriter : IImageSourceWriter
+{
+    public List<(IImageSource Source, string Path)> Calls { get; } = [];
+
+    public Task WritePngAsync(IImageSource source, string path, CancellationToken ct = default)
+    {
+        Calls.Add((source, path));
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>In-memory <see cref="ITemplateStore"/> -- no real filesystem I/O, matching this
+/// project's own hand-rolled `Fake*` test-double convention (no mocking library anywhere in this
+/// codebase). <see cref="GetAssetPath"/> returns a deterministic fake path string; nothing ever
+/// reads it back as a real file since <see cref="FakeImageSourceWriter"/>/<see cref="FakeImageFileLoader"/>
+/// don't touch disk either.</summary>
+internal sealed class FakeTemplateStore : ITemplateStore
+{
+    private readonly Dictionary<string, (string Name, DateTimeOffset SavedAt, PersistedTemplateDocument Document)> _templates = [];
+
+    public List<string> DeletedIds { get; } = [];
+
+    public string CreateTemplateId(string name) => $"{name}_{Guid.NewGuid():N}";
+
+    public string GetAssetPath(string templateId, string assetFileName) => $"/fake/templates/{templateId}/assets/{assetFileName}";
+
+    public Task SaveAsync(string templateId, string name, PersistedTemplateDocument document, CancellationToken ct = default)
+    {
+        _templates[templateId] = (name, DateTimeOffset.Now, document);
+        return Task.CompletedTask;
+    }
+
+    public Task<PersistedTemplateDocument> LoadAsync(string templateId, CancellationToken ct = default)
+        => Task.FromResult(_templates[templateId].Document);
+
+    public Task<IReadOnlyList<TemplateMetadata>> ListAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<TemplateMetadata>>(
+            _templates.Select(kv => new TemplateMetadata(kv.Key, kv.Value.Name, kv.Value.SavedAt, $"/fake/templates/{kv.Key}/thumbnail.png")).ToList());
+
+    public Task DeleteAsync(string templateId, CancellationToken ct = default)
+    {
+        _templates.Remove(templateId);
+        DeletedIds.Add(templateId);
+        return Task.CompletedTask;
+    }
+}
+
 internal sealed class FakeImageFileLoader : IImageFileLoader
 {
     public IImageSource? ResultToReturn { get; set; }

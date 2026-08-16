@@ -147,6 +147,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private readonly IReceivedImageBuffer _receivedImageBuffer;
     private readonly IReceiveHistoryStore _receiveHistoryStore;
 
+    // Phase 5 (spec/15-template-designer.md) -- template persistence. IImageSourceWriter is used
+    // directly here (not just by ITemplateStore) since only THIS VM holds the live, resolved
+    // IImageSource pixels an image element's asset copy is written from -- ITemplateStore's own
+    // SaveAsync only ever writes template.json + thumbnail.png, never a per-element asset (see its
+    // own doc comment).
+    private readonly ITemplateStore _templateStore;
+    private readonly IImageSourceWriter _imageSourceWriter;
+
     // Phase 3 (spec/15-template-designer.md) -- named template variables. PERSISTENT value map, only
     // ever added to by user input via OnTemplateVariableValueChanged/ClearTemplateVariables -- never
     // pruned by RescanTemplateVariables, which only ever computes which keys currently have a VISIBLE
@@ -211,6 +219,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [ObservableProperty]
     private ITemplateElementViewModel? _selectedOverlayElement;
 
+    /// <summary>Phase 5 (spec/15-template-designer.md) -- bound to the Templates panel's name-entry
+    /// TextBox, backing <see cref="SaveTemplateAsync"/>'s <see cref="CanSaveTemplate"/> gate.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveTemplateCommand))]
+    private string _newTemplateName = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveTemplateCommand))]
+    private bool _isSavingTemplate;
+
     // Adjustment sliders (spec/18-path-to-1.0.md Medium item) -- 0 is each one's own no-op
     // default (see ImageAdjustments' own doc comment for the exact per-field mapping). Applied
     // between Resize and ApplyOverlay (never touching already-burned-in overlay text pixels) --
@@ -247,6 +265,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         IImageFileLoader imageFileLoader,
         IReceivedImageBuffer receivedImageBuffer,
         IReceiveHistoryStore receiveHistoryStore,
+        ITemplateStore templateStore,
+        IImageSourceWriter imageSourceWriter,
+        ReadyRackViewModel readyRack,
         EditorInitialState? initialState = null)
     {
         _originalSource = originalSource;
@@ -261,6 +282,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         _imageFileLoader = imageFileLoader;
         _receivedImageBuffer = receivedImageBuffer;
         _receiveHistoryStore = receiveHistoryStore;
+        _templateStore = templateStore;
+        _imageSourceWriter = imageSourceWriter;
+        ReadyRack = readyRack;
+        ReadyRack.TemplateSelected += OnReadyRackTemplateSelected;
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
         WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
@@ -318,6 +343,25 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
 
         RecomputePreview();
+    }
+
+    /// <summary>Phase 5 (spec/15-template-designer.md) -- the Templates panel's saved-template list
+    /// + 9-slot pinned rack. Constructed fresh per editor instance by the host
+    /// (<see cref="TxControlsPaneViewModel"/>), same "no DI singleton, no cross-editor-instance
+    /// leak" reasoning as the editor itself -- see <see cref="TemplateSelected"/>'s own subscription
+    /// in this constructor for why no unsubscribe/IDisposable is needed either (both die together).</summary>
+    public ReadyRackViewModel ReadyRack { get; }
+
+    private async void OnReadyRackTemplateSelected(string templateId)
+    {
+        try
+        {
+            await LoadTemplateAsync(templateId);
+        }
+        catch (Exception ex)
+        {
+            Log.LoadTemplateFailed(_logger, templateId, ex);
+        }
     }
 
     public ObservableCollection<ITemplateElementViewModel> OverlayElements { get; } = [];
@@ -910,6 +954,197 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked),
         _ => throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {snapshot.GetType()}."),
     };
+
+    private bool CanSaveTemplate() => !string.IsNullOrWhiteSpace(NewTemplateName) && !IsSavingTemplate;
+
+    /// <summary>Phase 5 (spec/15-template-designer.md) -- builds <see cref="PersistedTemplateElement"/>s
+    /// from the CURRENT live <see cref="OverlayElements"/> (via <see cref="RawOverlayElements"/>,
+    /// already exists), writing any image element's live <see cref="IImageSource"/> pixels to a real
+    /// file under the template's own <c>assets/</c> folder via <see cref="_imageSourceWriter"/>
+    /// BEFORE calling <see cref="ITemplateStore.SaveAsync"/> -- that store's own <c>SaveAsync</c>
+    /// only ever writes the manifest + thumbnail, never a per-element asset (see its own doc
+    /// comment), since only this VM holds the resolved pixels to write.</summary>
+    [RelayCommand(CanExecute = nameof(CanSaveTemplate))]
+    private async Task SaveTemplateAsync()
+    {
+        var name = NewTemplateName.Trim();
+        if (name.Length == 0)
+        {
+            return;
+        }
+
+        IsSavingTemplate = true;
+        var templateId = _templateStore.CreateTemplateId(name);
+        try
+        {
+            var elements = new List<PersistedTemplateElement>(OverlayElements.Count);
+            foreach (var raw in RawOverlayElements)
+            {
+                elements.Add(await BuildPersistedElementAsync(templateId, raw));
+            }
+
+            await _templateStore.SaveAsync(templateId, name, new PersistedTemplateDocument(elements));
+            NewTemplateName = string.Empty;
+            await ReadyRack.RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.SaveTemplateFailed(_logger, name, ex);
+
+            // Code-review finding: a failure partway through the foreach above (e.g. WritePngAsync
+            // throws on element 2 of 3) already wrote element 1's asset PNG under this freshly-minted
+            // templateId's own folder, with no template.json ever referencing it -- ListAsync skips
+            // manifest-less folders, so that asset is permanently invisible garbage, one new orphaned
+            // folder per failed save, with no way for the operator to ever reach it via this app's
+            // own UI. DeleteAsync is safe to call unconditionally here: it no-ops if nothing was ever
+            // written (directory doesn't exist), and removes the whole folder -- assets included --
+            // if something partial was. Best-effort: a cleanup failure here must not mask or replace
+            // the original save failure already logged above.
+            try
+            {
+                await _templateStore.DeleteAsync(templateId);
+            }
+            catch (Exception cleanupEx)
+            {
+                Log.SaveTemplateCleanupFailed(_logger, templateId, cleanupEx);
+            }
+        }
+        finally
+        {
+            IsSavingTemplate = false;
+        }
+    }
+
+    private async Task<PersistedTemplateElement> BuildPersistedElementAsync(string templateId, RawElementSnapshot raw)
+    {
+        switch (raw)
+        {
+            case RawTextElementSnapshot text:
+                return new PersistedTextElement(
+                    text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
+                    text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness);
+            case RawBoxElementSnapshot box:
+                return new PersistedBoxElement(
+                    box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
+                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity);
+            case RawImageElementSnapshot image:
+                // GUID-based, never index-derived (plan-review finding -- see PersistedImageElement's
+                // own doc comment): safe against any reordering/filtering between here and the manifest
+                // write, and against a partial/failed save leaving a stale name behind.
+                var assetFileName = $"{Guid.NewGuid():N}.png";
+                var assetPath = _templateStore.GetAssetPath(templateId, assetFileName);
+                // GetAssetPath is documented pure/no-I/O (its own doc comment: "safe to call before
+                // the template's directory exists") -- SaveAsync's own Directory.CreateDirectory only
+                // creates the template's ROOT folder, and only runs AFTER this write (code-review
+                // finding: assets are written before SaveAsync is ever called), so the "assets/"
+                // subdirectory itself is never created by anything else in time. Fixed inside the
+                // REAL ImageSourceWriter itself (Core.Imaging), not here -- this VM works against the
+                // ITemplateStore/IImageSourceWriter ABSTRACTIONS, which make no promise their own
+                // paths are real, creatable filesystem locations (FakeTemplateStore's own
+                // GetAssetPath deliberately returns a non-real "/fake/templates/..." path for exactly
+                // this reason); a blind Directory.CreateDirectory call here against ANY path either
+                // implementation hands back doesn't belong at this layer.
+                await _imageSourceWriter.WritePngAsync(image.Source, assetPath);
+                var (originKind, originPayload) = image.Origin.Kind switch
+                {
+                    ImageSourceKind.File => (PersistedImageSourceKind.File, image.Origin.Payload),
+                    ImageSourceKind.RxHistory => (PersistedImageSourceKind.RxHistory, image.Origin.Payload),
+                    ImageSourceKind.LastRx => (PersistedImageSourceKind.LastRx, image.Origin.Payload),
+                    _ => throw new NotSupportedException($"Unrecognized {nameof(ImageSourceKind)}: {image.Origin.Kind}."),
+                };
+                return new PersistedImageElement(
+                    image.X, image.Y, image.Width, image.Height, image.Z, image.Locked,
+                    assetFileName, image.Fit, originKind, originPayload);
+            default:
+                throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {raw.GetType()}.");
+        }
+    }
+
+    /// <summary>Phase 5 -- calls <see cref="ITemplateStore.LoadAsync"/>, reconstructs every image
+    /// element's <see cref="IImageSource"/> via the EXISTING <see cref="IImageFileLoader.LoadOriginalAsync"/>
+    /// (same loader Phase 2's file source already uses), maps back to <see cref="RawElementSnapshot"/>s,
+    /// and feeds them into <see cref="LoadTemplateIntoLiveEditor"/>.</summary>
+    private async Task LoadTemplateAsync(string templateId)
+    {
+        var document = await _templateStore.LoadAsync(templateId);
+        var snapshots = new List<RawElementSnapshot>(document.Elements.Count);
+        foreach (var element in document.Elements)
+        {
+            snapshots.Add(await ToRawElementSnapshotAsync(templateId, element));
+        }
+
+        LoadTemplateIntoLiveEditor(snapshots);
+    }
+
+    private async Task<RawElementSnapshot> ToRawElementSnapshotAsync(string templateId, PersistedTemplateElement element)
+    {
+        switch (element)
+        {
+            case PersistedTextElement text:
+                return new RawTextElementSnapshot(
+                    text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
+                    text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness);
+            case PersistedBoxElement box:
+                return new RawBoxElementSnapshot(
+                    box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
+                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity);
+            case PersistedImageElement image:
+                var assetPath = _templateStore.GetAssetPath(templateId, image.AssetFileName);
+                var source = await _imageFileLoader.LoadOriginalAsync(assetPath);
+                // Plan-review decision: a LOADED image element's Origin always points at its own
+                // copied asset file, never whatever Kind/Payload it originally had when first saved
+                // (a File/RxHistory/LastRx origin recorded on the persisted DTO is informational only
+                // -- see PersistedImageElement's own doc comment for why none of the three are safe
+                // to re-resolve from later).
+                var origin = new ImageSourceOrigin(ImageSourceKind.File, assetPath);
+                return new RawImageElementSnapshot(image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, source, image.Fit, origin);
+            default:
+                throw new NotSupportedException($"Unrecognized {nameof(PersistedTemplateElement)}: {element.GetType()}.");
+        }
+    }
+
+    /// <summary>Phase 5 -- loads a template into an ALREADY-LIVE editor. NOT a reuse of the
+    /// constructor's <see cref="EditorInitialState"/>-seeding block (which only ever ADDS into an
+    /// EMPTY <see cref="OverlayElements"/>) -- mirrors <see cref="ApplyState"/>'s own detach/clear/
+    /// re-add discipline instead (plan-review blocker 3): every existing element's
+    /// <see cref="OnOverlayElementPropertyChanged"/> handler is detached first, the collection
+    /// cleared, <see cref="SelectedOverlayElement"/> nulled, before the new elements are added.
+    /// Unlike <see cref="ApplyState"/>, deliberately does NOT touch <see cref="CropRect"/>/
+    /// adjustments/rotation/<see cref="_templateVariables"/> -- a template load replaces the
+    /// OVERLAY LAYOUT, not the photo being edited or the operator's already-typed fill-bar values
+    /// (Phase 5 plan: <c>TemplateVariables</c> are deliberately not persisted, and
+    /// <see cref="RescanTemplateVariables"/> -- run inside <see cref="RecomputePreview"/> below --
+    /// already re-derives which KEYS are referenced from the newly loaded elements' own text,
+    /// preserving whatever VALUES are already in <see cref="_templateVariables"/>). Preceded by a
+    /// real <see cref="PushUndoSnapshot"/> -- a template load must be undoable, like every other
+    /// structural change in this editor. DECIDED: load REPLACES the current document, never
+    /// merges.</summary>
+    private void LoadTemplateIntoLiveEditor(IReadOnlyList<RawElementSnapshot> snapshots)
+    {
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            foreach (var element in OverlayElements)
+            {
+                element.PropertyChanged -= OnOverlayElementPropertyChanged;
+            }
+
+            OverlayElements.Clear();
+            SelectedOverlayElement = null;
+
+            foreach (var snapshot in snapshots.OrderBy(s => s.Z))
+            {
+                OverlayElements.Add(CreateElementFromSnapshot(snapshot));
+            }
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        RecomputePreview();
+    }
 
     private bool CanInsertField() => SelectedOverlayElement is OverlayElementViewModel;
 
@@ -2094,5 +2329,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "AddImageFromRxHistory failed: entryId={EntryId}")]
         public static partial void AddImageFromRxHistoryFailed(ILogger logger, string entryId, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SaveTemplate failed: name={Name}")]
+        public static partial void SaveTemplateFailed(ILogger logger, string name, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "LoadTemplate failed: templateId={TemplateId}")]
+        public static partial void LoadTemplateFailed(ILogger logger, string templateId, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SaveTemplate cleanup of partially-written templateId={TemplateId} failed")]
+        public static partial void SaveTemplateCleanupFailed(ILogger logger, string templateId, Exception exception);
     }
 }
