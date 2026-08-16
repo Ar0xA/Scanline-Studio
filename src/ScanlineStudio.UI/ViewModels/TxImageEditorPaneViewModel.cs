@@ -80,6 +80,29 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [ObservableProperty]
     private OverlayElementViewModel? _selectedOverlayElement;
 
+    // Adjustment sliders (spec/18-path-to-1.0.md Medium item) -- 0 is each one's own no-op
+    // default (see ImageAdjustments' own doc comment for the exact per-field mapping). Applied
+    // between Resize and ApplyOverlay (never touching already-burned-in overlay text pixels) --
+    // see ITransmitImagePreparer.ApplyAdjustments' own doc comment for why that pipeline position,
+    // not before Crop/Resize.
+    [ObservableProperty]
+    private double _brightness;
+
+    [ObservableProperty]
+    private double _contrast;
+
+    [ObservableProperty]
+    private double _saturation;
+
+    [ObservableProperty]
+    private double _gamma;
+
+    [ObservableProperty]
+    private double _sharpen;
+
+    [ObservableProperty]
+    private double _denoise;
+
     public TxImageEditorPaneViewModel(
         IImageSource originalSource,
         SstvModeDefinition targetMode,
@@ -252,7 +275,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         Log.ApplyInvoked(_logger, _targetMode.Id);
         var cropped = _preparer.Crop(_originalSource, CropRect);
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
-        var final = _preparer.ApplyOverlay(resized, BuildOverlay());
+        var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());
+        var final = _preparer.ApplyOverlay(adjusted, BuildOverlay());
         Applied?.Invoke(final);
     }
 
@@ -375,6 +399,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         RecomputePreview();
         RefreshOverlayElementCanvasFontSizes();
     }
+
+    partial void OnBrightnessChanged(double value) => RecomputePreview();
+
+    partial void OnContrastChanged(double value) => RecomputePreview();
+
+    partial void OnSaturationChanged(double value) => RecomputePreview();
+
+    partial void OnGammaChanged(double value) => RecomputePreview();
+
+    partial void OnSharpenChanged(double value) => RecomputePreview();
+
+    partial void OnDenoiseChanged(double value) => RecomputePreview();
 
     /// <summary>Re-fits the CURRENT crop rect the instant the lock engages, rather than waiting for
     /// the next drag -- legacy's own `SBRatioClick` (`PicRect.cpp:653-662`) does the same on click.
@@ -543,11 +579,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         var cropped = _preparer.Crop(_workingCopy, CropRect);
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
-        var overlaid = _preparer.ApplyOverlay(resized, BuildOverlay());
+        var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());
+        var overlaid = _preparer.ApplyOverlay(adjusted, BuildOverlay());
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(overlaid);
     }
 
     private ImageOverlay BuildOverlay() => new(OverlayElements.Select(BuildImageOverlayElement).ToList());
+
+    private ImageAdjustments BuildAdjustments() => new(Brightness, Contrast, Saturation, Gamma, Sharpen, Denoise);
 
     /// <summary>Builds the real, pipeline-bound overlay element from an on-canvas
     /// <see cref="OverlayElementViewModel"/>. Cannot just forward its raw X/Y as-is -- those are
