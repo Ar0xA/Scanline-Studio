@@ -12,7 +12,7 @@
         mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600"
         x:Class="ScanlineStudio.UI.Views.MainWindow"
         x:DataType="vm:MainViewModel"
-        Icon="/Assets/avalonia-logo.ico"
+        Icon="/Assets/app-icon.ico"
         Title="{loc:Translate MainWindow.Title}"
         Width="1920" Height="1032"
         MinWidth="1920" MinHeight="1032"
