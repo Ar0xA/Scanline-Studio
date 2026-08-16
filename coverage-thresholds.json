@@ -1,0 +1,19 @@
+{
+  "_comment": "spec/13-testing.md:25,56's CI coverage gate. Reproduce locally: dotnet test <project> -c Release --collect:\"XPlat Code Coverage\" --results-directory ./coverage-results (once per in-scope project -- see .github/workflows/ci.yml's coverage job for the exact list), then python3 scripts/check-coverage.py ./coverage-results. Raising a threshold is always welcome; lowering one needs a stated reason in the commit message. Thresholds are set a few points below each project's own currently-measured coverage (spec's own 'configurable per-project' allowance), not a blanket 80% -- most of this codebase isn't there yet; this file's job is catching a REGRESSION from today's baseline, not retroactively demanding 80% everywhere in one PR.",
+  "_comment_hamlib_miniaudio": "Core.Radio.Hamlib and Core.Audio.MiniAudio thresholds were deliberately re-measured with the dev-machine-only dependencies their tests probe for (a running PulseAudio/PipeWire server reachable via pactl; a real libhamlib.so.4) made UNAVAILABLE, since a bare ubuntu-latest CI runner has neither -- a naive local measurement on a machine that happens to have both overstates real CI coverage substantially. Measured: MiniAudio 79.1% locally-with-audio vs 39.1% with pactl hidden (~29 of its 57 tests are [RequiresPipeWireFact]-gated); Hamlib 82.2% locally-with-libhamlib vs 75.6% with HamlibDummyRigIntegrationTests filtered out. Core.Radio.Rigctld was checked the same way (RigctldDummyRigIntegrationTests filtered) and barely moved (81.2%->83.2%), so its threshold needed no correction. Re-verify this way (not a plain local run) before ever raising either threshold.",
+  "thresholds": {
+    "ScanlineStudio.Core.Radio.Cat": 97,
+    "ScanlineStudio.Core.Imaging": 86,
+    "ScanlineStudio.Core.Radio.Rigctld": 80,
+    "ScanlineStudio.Core.Radio.Hamlib": 72,
+    "ScanlineStudio.Core.Logbook": 71,
+    "ScanlineStudio.Core.Audio": 68,
+    "ScanlineStudio.Core.Radio": 53,
+    "ScanlineStudio.Application": 51,
+    "ScanlineStudio.Core.Localization": 48,
+    "ScanlineStudio.Core.Audio.MiniAudio": 36
+  },
+  "excluded": {
+    "ScanlineStudio.Core.Sstv": "Coverage instrumentation is cost-prohibitive for this project's own test suite (922 tests, many DSP round-trip/exhaustive-mode-sweep tests with large sample-count inner loops) -- two separate measurement attempts each ran 45-90+ minutes without completing, even on a many-core dev machine; a standard 2-core CI runner would likely take proportionally longer, not shorter. The suite still runs fully, uninstrumented, in the regular 3-OS test matrix job -- it just isn't numerically coverage-gated. See spec/18-path-to-1.0.md's CI coverage gate item."
+  }
+}
