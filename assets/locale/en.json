@@ -307,6 +307,7 @@
   "Panes.TxControls.Error.TransmitFailed": "Transmission failed. Check your radio and audio device settings.",
   "Panes.TxControls.Error.SwrCutoff": "Transmission stopped automatically: SWR too high.",
   "Panes.TxControls.StopTransmit": "Stop TX",
+  "Panes.TxControls.TransmitProgressFormat": "{0}% · {1} remaining",
   "Panes.TxControls.OutputLabel": "OUTPUT",
   "Panes.TxControls.AutoManualAuto": "Auto",
   "Panes.TxControls.AutoManualManual": "Manual",
