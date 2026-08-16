@@ -3,6 +3,11 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- spec/18-path-to-1.0.md Medium item: the default Avalonia template icon was still in use.
+         This is the Windows EXE's own icon (Explorer/taskbar, shown before the app window ever
+         opens), separate from MainWindow.axaml's Icon property, which only sets the in-app
+         window icon. Was never set at all before this, not just defaulted. -->
+    <ApplicationIcon>..\ScanlineStudio.UI\Assets\app-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <!--
