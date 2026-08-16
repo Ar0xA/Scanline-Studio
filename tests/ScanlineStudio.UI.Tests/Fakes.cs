@@ -507,11 +507,23 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
 
     public int ApplyOverlayCallCount { get; private set; }
 
+    public int ApplyAdjustmentsCallCount { get; private set; }
+
     public List<IImageSource> CropSources { get; } = [];
 
     public List<(int Width, int Height, bool PreserveAspect)> ResizeCalls { get; } = [];
 
+    public List<IImageSource> ResizeResults { get; } = [];
+
     public List<ImageOverlay> Overlays { get; } = [];
+
+    public List<IImageSource> OverlaySources { get; } = [];
+
+    public List<ImageAdjustments> Adjustments { get; } = [];
+
+    public List<IImageSource> AdjustmentsSources { get; } = [];
+
+    public List<IImageSource> AdjustmentsResults { get; } = [];
 
     public int RotateCallCount { get; private set; }
 
@@ -528,13 +540,32 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
     {
         ResizeCallCount++;
         ResizeCalls.Add((width, height, preserveAspect));
-        return new ArrayImageSource(width, height, new Rgb24[width * height]);
+        var result = new ArrayImageSource(width, height, new Rgb24[width * height]);
+        ResizeResults.Add(result);
+        return result;
+    }
+
+    /// <summary>Unlike Crop/ApplyOverlay's identity-return, this returns a genuinely new instance
+    /// (code-review finding) -- an identity pass-through here would let a future Resize-&gt;
+    /// ApplyOverlay-&gt;ApplyAdjustments reordering bug pass every existing test silently, since
+    /// nothing would distinguish "ran between Resize and ApplyOverlay" from "never ran at all."
+    /// Same dimensions as the input (adjustments don't resize), same reasoning as
+    /// <see cref="Rotate"/>'s own dimension-swapped return.</summary>
+    public IImageSource ApplyAdjustments(IImageSource source, ImageAdjustments adjustments)
+    {
+        ApplyAdjustmentsCallCount++;
+        Adjustments.Add(adjustments);
+        AdjustmentsSources.Add(source);
+        var result = new ArrayImageSource(source.Width, source.Height, new Rgb24[source.Width * source.Height]);
+        AdjustmentsResults.Add(result);
+        return result;
     }
 
     public IImageSource ApplyOverlay(IImageSource source, ImageOverlay overlay)
     {
         ApplyOverlayCallCount++;
         Overlays.Add(overlay);
+        OverlaySources.Add(source);
         return source;
     }
 

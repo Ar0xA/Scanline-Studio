@@ -762,6 +762,98 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(0.2, vm.OverlayElements[0].Y);
     }
 
+    [AvaloniaTheory]
+    [InlineData(nameof(TxImageEditorPaneViewModel.Brightness))]
+    [InlineData(nameof(TxImageEditorPaneViewModel.Contrast))]
+    [InlineData(nameof(TxImageEditorPaneViewModel.Saturation))]
+    [InlineData(nameof(TxImageEditorPaneViewModel.Gamma))]
+    [InlineData(nameof(TxImageEditorPaneViewModel.Sharpen))]
+    [InlineData(nameof(TxImageEditorPaneViewModel.Denoise))]
+    public void ChangingAnyAdjustmentSlider_TriggersPreviewRecompute(string propertyName)
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        var countBefore = preparer.ApplyOverlayCallCount;
+
+        typeof(TxImageEditorPaneViewModel).GetProperty(propertyName)!.SetValue(vm, 25.0);
+
+        Assert.True(preparer.ApplyOverlayCallCount > countBefore);
+    }
+
+    [AvaloniaFact]
+    public void RecomputePreview_PassesCurrentSliderValues_ToApplyAdjustments()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+
+        vm.Brightness = 10;
+        vm.Contrast = -20;
+        vm.Saturation = 5;
+        vm.Gamma = -15;
+        vm.Sharpen = 40;
+        vm.Denoise = 60;
+
+        var adjustments = preparer.Adjustments[^1];
+        Assert.Equal(10, adjustments.Brightness);
+        Assert.Equal(-20, adjustments.Contrast);
+        Assert.Equal(5, adjustments.Saturation);
+        Assert.Equal(-15, adjustments.Gamma);
+        Assert.Equal(40, adjustments.Sharpen);
+        Assert.Equal(60, adjustments.Denoise);
+    }
+
+    [AvaloniaFact]
+    public void Apply_PassesCurrentSliderValues_ToApplyAdjustments()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        vm.Brightness = 30;
+        vm.Sharpen = 70;
+        IImageSource? applied = null;
+        vm.Applied += img => applied = img;
+        var countBeforeApply = preparer.ApplyAdjustmentsCallCount;
+
+        vm.ApplyCommand.Execute(null);
+
+        Assert.NotNull(applied);
+        Assert.True(preparer.ApplyAdjustmentsCallCount > countBeforeApply);
+        var adjustments = preparer.Adjustments[^1];
+        Assert.Equal(30, adjustments.Brightness);
+        Assert.Equal(70, adjustments.Sharpen);
+    }
+
+    [AvaloniaFact]
+    public void DefaultSliderValues_AreAllZero_AnIdentityImageAdjustments()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+
+        var adjustments = preparer.Adjustments[^1];
+
+        Assert.True(adjustments.IsIdentity);
+    }
+
+    [AvaloniaFact]
+    public void Apply_RunsPipelineInOrder_ResizeThenAdjustThenOverlay()
+    {
+        // Code-review finding: ITransmitImagePreparer.ApplyAdjustments' own doc comment declares
+        // "must run AFTER Resize and BEFORE ApplyOverlay" as a real contract, but nothing pinned
+        // it -- FakeTransmitImagePreparer's ApplyAdjustments used to identity-return its input, so
+        // a future Resize->ApplyOverlay->ApplyAdjustments reordering bug would have passed every
+        // existing test silently (nothing would distinguish "ran between Resize and ApplyOverlay"
+        // from "never ran at all"). Now that both Resize and ApplyAdjustments return genuinely new,
+        // distinct instances (same pattern as Rotate), this test asserts the real chain by
+        // reference identity: ApplyAdjustments must receive exactly what Resize returned, and
+        // ApplyOverlay must receive exactly what ApplyAdjustments returned.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), SmallMode, preparer);
+
+        vm.ApplyCommand.Execute(null);
+
+        Assert.Same(preparer.ResizeResults[^1], preparer.AdjustmentsSources[^1]);
+        Assert.Same(preparer.AdjustmentsResults[^1], preparer.OverlaySources[^1]);
+    }
+
     private static ArrayImageSource CreateSource(int width, int height)
         => new(width, height, new Rgb24[width * height]);
 

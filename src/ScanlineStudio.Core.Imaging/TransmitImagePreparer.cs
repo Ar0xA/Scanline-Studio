@@ -64,6 +64,88 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         return FromImageSharp(image);
     }
 
+    /// <summary>Brightness/Contrast/Saturation map the slider's -50..50 range to ImageSharp's own
+    /// 1.0-centered multiplier convention (0..2, 1.0 = identity). Gamma is hand-rolled via
+    /// <c>ProcessPixelRowsAsVector4</c> -- ImageSharp 3.1.12/4.0.0 have no <c>GammaCorrection</c>
+    /// operation at all (verified directly against the package's own API surface, not assumed) --
+    /// applying <c>MathF.Pow</c> per RGB channel directly against the already sRGB-encoded pixel
+    /// values (no linearization step: this is the GIMP/Photoshop midtone-gamma convention, not a
+    /// physically-correct display-gamma one). Exponent is negated relative to the raw
+    /// <c>out = in^gamma</c> formula (where an exponent above 1 DARKENS) so that positive slider
+    /// values brighten, consistent with Brightness/Contrast's own sign convention. Gamma and
+    /// Sharpen/Denoise are all conditionally SKIPPED at 0 rather than always invoked -- Gamma's
+    /// hand-rolled per-pixel loop is real synchronous work (code-review finding: skipping it
+    /// matters concretely since <c>RecomputePreview</c> calls this on every interactive
+    /// pointer-move frame, and the common case once a user touches ANY slider is that most of the
+    /// other five stay at 0); Sharpen/Denoise are skipped for a correctness reason instead --
+    /// ImageSharp's Gaussian operations are not documented to throw at <c>sigma=0</c>, but a zero
+    /// sigma collapses to a degenerate kernel (silent NaN/corrupted output, worse than a throw).
+    /// Denoise runs BEFORE Sharpen (not declaration order) so sharpening doesn't amplify noise
+    /// denoise was meant to remove. All non-skipped operations run in one <c>Mutate</c> chain (one
+    /// pipeline pass, not N). **Precondition, found while testing**: ImageSharp's Gaussian
+    /// convolution throws <see cref="ArgumentOutOfRangeException"/> when the kernel radius derived
+    /// from sigma (up to ~9px at Sharpen/Denoise=100's sigma=3.0) exceeds the SOURCE image's own
+    /// width/height -- not reachable via this app's real call site (only ever invoked on an
+    /// already-<see cref="Resize"/>d image at a target mode's exact dimensions; the smallest real
+    /// mode is 320x120), but a genuine constraint for any other caller passing a smaller
+    /// image.</summary>
+    public IImageSource ApplyAdjustments(IImageSource source, ImageAdjustments adjustments)
+    {
+        if (adjustments.IsIdentity)
+        {
+            return source;
+        }
+
+        using var image = ToImageSharp(source);
+
+        image.Mutate(ctx =>
+        {
+            ctx.Brightness(1.0f + (float)(adjustments.Brightness / 50.0));
+            ctx.Contrast(1.0f + (float)(adjustments.Contrast / 50.0));
+            ctx.Saturate(1.0f + (float)(adjustments.Saturation / 50.0));
+
+            // Code-review finding: unlike Brightness/Contrast/Saturate (genuinely cheap ImageSharp
+            // built-ins), this hand-rolled per-pixel loop is real synchronous work -- skipping it
+            // at Gamma=0 (same shape as the Sharpen/Denoise guards below, not just relying on
+            // MathF.Pow(x, 1f) being a mathematical identity) avoids ~950k MathF.Pow calls on every
+            // interactive preview frame (RecomputePreview fires on every pointer-move) whenever
+            // ANY other slider is non-zero, which is the common case once a user touches a slider
+            // at all.
+            if (adjustments.Gamma != 0)
+            {
+                var gammaExponent = MathF.Pow(10f, -(float)(adjustments.Gamma / 100.0));
+                ctx.ProcessPixelRowsAsVector4(row =>
+                {
+                    for (var i = 0; i < row.Length; i++)
+                    {
+                        var pixel = row[i];
+                        row[i] = new System.Numerics.Vector4(
+                            MathF.Pow(pixel.X, gammaExponent),
+                            MathF.Pow(pixel.Y, gammaExponent),
+                            MathF.Pow(pixel.Z, gammaExponent),
+                            pixel.W);
+                    }
+                });
+            }
+
+            // Denoise BEFORE Sharpen (code-review finding) -- conventional order, so a user
+            // adjusting both doesn't have Sharpen amplify noise that Denoise was meant to remove.
+            if (adjustments.Denoise > 0)
+            {
+                var denoiseSigma = (float)(adjustments.Denoise / 100.0) * 3.0f;
+                ctx.GaussianBlur(denoiseSigma);
+            }
+
+            if (adjustments.Sharpen > 0)
+            {
+                var sharpenSigma = 0.3f + ((float)(adjustments.Sharpen / 100.0) * 2.7f);
+                ctx.GaussianSharpen(sharpenSigma);
+            }
+        });
+
+        return FromImageSharp(image);
+    }
+
     public IImageSource ApplyOverlay(IImageSource source, ImageOverlay overlay)
     {
         using var image = ToImageSharp(source);
