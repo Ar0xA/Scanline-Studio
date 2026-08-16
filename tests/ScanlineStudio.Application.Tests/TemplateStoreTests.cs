@@ -74,9 +74,10 @@ public sealed class TemplateStoreTests : IDisposable
                 X: 0.5, Y: 0.5, Width: 1, Height: 1, Z: -1, Locked: true,
                 FillColor: new Rgb24(20, 20, 20), BorderColor: null, BorderThickness: 0, Opacity: 0.8),
             new PersistedImageElement(
-                X: 0.7, Y: 0.7, Width: 0.2, Height: 0.2, Z: 1, Locked: false,
+                X: 0.7, Y: 0.7, Width: 0.2, Height: 0.2, Z: 1, Locked: true,
                 AssetFileName: "asset1.png", Fit: ImageFitMode.Cover,
-                OriginKind: PersistedImageSourceKind.File, OriginPayload: "/some/original.png"),
+                OriginKind: PersistedImageSourceKind.File, OriginPayload: "/some/original.png",
+                IsBackground: true),
         ]);
 
         await store.SaveAsync(templateId, "Contest", document);
@@ -97,6 +98,10 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.Equal(ImageFitMode.Cover, image.Fit);
         Assert.Equal(PersistedImageSourceKind.File, image.OriginKind);
         Assert.Equal("/some/original.png", image.OriginPayload);
+        // Phase 6 (spec/15-template-designer.md): IsBackground IS persisted (plan-review blocker --
+        // Locked already round-trips, so leaving IsBackground unpersisted would round-trip a
+        // background element into a WORSE state than before Phase 6).
+        Assert.True(image.IsBackground);
     }
 
     [Fact]

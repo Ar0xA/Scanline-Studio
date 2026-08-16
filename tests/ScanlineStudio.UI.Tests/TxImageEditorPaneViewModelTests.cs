@@ -1693,6 +1693,250 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void SetAsBackground_SetsIsBackgroundAndAutoLocks()
+    {
+        // Phase 6 (spec/15-template-designer.md): both together are what let the crop rect
+        // underneath become click-reachable again (BlocksHitTesting = Locked && IsBackground).
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        Assert.False(image.IsBackground);
+        Assert.False(image.Locked);
+
+        vm.SetAsBackgroundCommand.Execute(image);
+
+        Assert.True(image.IsBackground);
+        Assert.True(image.Locked);
+        Assert.True(image.BlocksHitTesting);
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, true)]
+    public void BlocksHitTesting_TrueOnlyWhenBothLockedAndBackground(bool locked, bool isBackground, bool expected)
+    {
+        var element = new ImageElementViewModel(CreateSource(2, 2))
+        {
+            Locked = locked,
+            IsBackground = isBackground,
+            Origin = new TxImageEditorPaneViewModel.ImageSourceOrigin(TxImageEditorPaneViewModel.ImageSourceKind.File, null),
+        };
+
+        Assert.Equal(expected, element.BlocksHitTesting);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveThenLoadTemplate_BackgroundImageElement_RoundTripsIsBackground()
+    {
+        // Code-review-class regression guard for the plan-review blocker: IsBackground IS persisted
+        // (unlike most purely-interactive state) specifically because Locked already is -- leaving
+        // IsBackground unpersisted would round-trip a background element into a WORSE state than
+        // before Phase 6 (locked AND hit-blocking again, no easy way back).
+        var templateStore = new FakeTemplateStore();
+        var imageSourceWriter = new FakeImageSourceWriter();
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/bg.jpg" };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            templateStore, imageSourceWriter, readyRack);
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackgroundCommand.Execute(image);
+        vm.NewTemplateName = "Background Template";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var saved = Assert.Single(await templateStore.ListAsync());
+        var document = await templateStore.LoadAsync(saved.Id);
+        var persisted = Assert.IsType<PersistedImageElement>(Assert.Single(document.Elements));
+        Assert.True(persisted.IsBackground);
+
+        await readyRack.RefreshAsync();
+        readyRack.LoadCommand.Execute(Assert.Single(readyRack.AllTemplates));
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        var reloaded = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.True(reloaded.IsBackground);
+        Assert.True(reloaded.Locked);
+    }
+
+    [AvaloniaFact]
+    public void NudgeElement_NoSelection_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        var xBefore = element.X;
+        // AddBoxElementCommand itself selects the new element (Phase 1 code-review finding) -- this
+        // test is specifically about the "nothing selected" branch, so deselect explicitly, same as
+        // OnCanvasKeyDown's own new Escape handler does.
+        vm.SelectedOverlayElement = null;
+
+        vm.NudgeElement(NudgeDirection.Right, ctrl: false);
+
+        AssertClose(xBefore, element.X);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(NudgeDirection.Right, false, 1)]
+    [InlineData(NudgeDirection.Right, true, 16)]
+    [InlineData(NudgeDirection.Left, false, -1)]
+    public void NudgeElement_MovesSelectedElementByPixelDeltaOverWorkingCopyWidth(NudgeDirection direction, bool ctrl, int expectedPixels)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        vm.SelectedOverlayElement = element;
+        var xBefore = element.X;
+
+        vm.NudgeElement(direction, ctrl);
+
+        AssertClose(xBefore + ((double)expectedPixels / vm.WorkingCopyWidth), element.X);
+    }
+
+    [AvaloniaFact]
+    public void NudgeElement_OnLockedElement_ViewModelItselfDoesNotGuard_CallerIsResponsible()
+    {
+        // NudgeElement is deliberately self-contained about "is anything selected" but NOT about
+        // Locked (OnCanvasKeyDown's own SelectedOverlayElement is { Locked: false } check is the
+        // real gate, matching every other Locked check in this editor living at the call site, not
+        // duplicated inside the mutation method itself) -- this test pins that division of
+        // responsibility explicitly so it isn't "discovered" as a missing guard later.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        element.Locked = true;
+        vm.SelectedOverlayElement = element;
+        var xBefore = element.X;
+
+        vm.NudgeElement(NudgeDirection.Right, ctrl: false);
+
+        Assert.NotEqual(xBefore, element.X);
+    }
+
+    [AvaloniaFact]
+    public void IsFontUnavailable_SelectedTextElementFontNotInAvailableFamilies_ReturnsTrue()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = text;
+        Assert.False(vm.IsFontUnavailable);
+
+        text.FontFamily = "Comic Sans MS";
+
+        Assert.True(vm.IsFontUnavailable);
+        Assert.DoesNotContain("Comic Sans MS", vm.AvailableFontFamilies);
+    }
+
+    [AvaloniaFact]
+    public void FontFamilyPickerItems_UnavailableFont_IncludesItSoSelectedItemBindingCanNeverOverwriteIt()
+    {
+        // Plan-review risk: ComboBox.SelectedItem is two-way bound to FontFamily over an ItemsSource
+        // -- if the bound value isn't present in ItemsSource at all, a two-way binding can silently
+        // write back a no-match resolution, destroying the real (if unavailable) font name before
+        // the operator ever sees the warning. FontFamilyPickerItems must always contain the current
+        // value so that can't happen, regardless of the exact no-match binding behavior.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = text;
+        text.FontFamily = "Comic Sans MS";
+
+        Assert.Contains("Comic Sans MS", vm.FontFamilyPickerItems);
+        foreach (var family in vm.AvailableFontFamilies)
+        {
+            Assert.Contains(family, vm.FontFamilyPickerItems);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_TextElementWithUnavailableFont_NameSurvivesAndIsFontUnavailableIsTrue()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        var templateId = templateStore.CreateTemplateId("Unavailable Font");
+        await templateStore.SaveAsync(templateId, "Unavailable Font", new PersistedTemplateDocument([
+            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "hi", 0.1, new Rgb24(255, 255, 255), "Comic Sans MS", null, 0),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        var text = (OverlayElementViewModel)Assert.Single(vm.OverlayElements);
+        vm.SelectedOverlayElement = text;
+        Assert.Equal("Comic Sans MS", text.FontFamily);
+        Assert.True(vm.IsFontUnavailable);
+    }
+
+    [AvaloniaFact]
+    public void Duplicate_CanExecute_FalseWhenNothingSelected_TrueForAnyElementType()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.DuplicateCommand.CanExecute(null));
+
+        vm.AddBoxElementCommand.Execute(null);
+        vm.SelectedOverlayElement = vm.OverlayElements[0];
+        Assert.True(vm.DuplicateCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Duplicate_ClonesSelectedElement_OffsetInsertedAtTopOfStack_AndSelectsTheCopy()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var original = (OverlayElementViewModel)vm.OverlayElements[0];
+        original.Text = "Original";
+        vm.SelectedOverlayElement = original;
+
+        vm.DuplicateCommand.Execute(null);
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        var copy = Assert.IsType<OverlayElementViewModel>(vm.OverlayElements[1]);
+        Assert.Same(copy, vm.SelectedOverlayElement);
+        Assert.Equal("Original", copy.Text);
+        Assert.True(copy.Z > original.Z);
+        Assert.NotEqual(original.X, copy.X);
+        Assert.NotEqual(original.Y, copy.Y);
+
+        vm.UndoCommand.Execute(null);
+        Assert.Single(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void Duplicate_BackgroundImageElement_CloneIsNotBackgroundAndNotLocked()
+    {
+        // Plan-review risk: without clearing these, the clone would be a second full-frame, top-Z,
+        // locked, hit-test-passthrough copy -- covering the whole canvas and itself unreachable by
+        // canvas click.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackgroundCommand.Execute(image);
+        Assert.True(image.IsBackground);
+        Assert.True(image.Locked);
+
+        vm.DuplicateCommand.Execute(null);
+
+        var copy = Assert.IsType<ImageElementViewModel>(vm.OverlayElements[1]);
+        Assert.False(copy.IsBackground);
+        Assert.False(copy.Locked);
+    }
+
+    [AvaloniaFact]
     public void AddLastRxImage_WithNothingEverReceived_IsANoOp()
     {
         // Code-review finding: IReceivedImageBuffer.Current defaults to (and resets to, on decode
@@ -1943,6 +2187,112 @@ public sealed class TxImageEditorPaneViewModelTests
 
         Assert.True(width > 0);
         Assert.True(height > 0);
+    }
+
+    // Phase 6 (spec/15-template-designer.md): snap-ON-DROP grid math, computed in edge space.
+
+    [Fact]
+    public void SnapElementBoundsToGrid_EdgesSnapIndependently_WidthAndHeightAreDerivedNotRoundedDirectly()
+    {
+        // Plan-review blocker on an earlier draft: rounding center-X/Y and Width/Height
+        // INDEPENDENTLY puts edges on inconsistent half-grid multiples. This test picks values where
+        // that bug would produce a DIFFERENT (wrong) answer than edge-space snapping, so it actually
+        // discriminates between the two approaches rather than merely happening to agree.
+        // X=0.30, Width=0.24 -> left=0.18, right=0.42. Grid 0.05: left snaps to 0.20, right to 0.40.
+        var (x, y, width, height) = TxImageEditorPaneView.SnapElementBoundsToGrid(
+            x: 0.30, y: 0.30, width: 0.24, height: 0.24, gridSize: 0.05);
+
+        AssertClose(0.20, x - (width / 2));
+        AssertClose(0.40, x + (width / 2));
+        AssertClose(0.20, width);
+        AssertClose(0.30, x);
+        AssertClose(0.30, y);
+        AssertClose(0.20, height);
+    }
+
+    [Fact]
+    public void SnapElementBoundsToGrid_TwoDifferentlySizedElementsSharingAnEdge_SnapToTheSameLine()
+    {
+        // The entire point of a snap feature: elements whose real edges are close to the same grid
+        // line end up with IDENTICAL snapped edges, not just individually "close to a grid line."
+        var (leftX, _, leftWidth, _) = TxImageEditorPaneView.SnapElementBoundsToGrid(
+            x: 0.30, y: 0.5, width: 0.19, height: 0.1, gridSize: 0.05); // right edge = 0.395
+        var (rightX, _, rightWidth, _) = TxImageEditorPaneView.SnapElementBoundsToGrid(
+            x: 0.55, y: 0.5, width: 0.31, height: 0.1, gridSize: 0.05); // left edge = 0.395
+
+        AssertClose(leftX + (leftWidth / 2), rightX - (rightWidth / 2));
+    }
+
+    [Fact]
+    public void SnapElementBoundsToGrid_RoundingCollapsesWidthBelowFloor_ExpandsRightFromTheLeftEdge()
+    {
+        // A narrow element whose two edges both round to the SAME grid line would otherwise snap to
+        // zero width -- ApplyTemplate treats that as "skip this element," silently deleting it. The
+        // left edge is kept fixed and width is restored to the floor by expanding right/down (a
+        // deterministic choice; a post-hoc snap has no drag-direction context to prefer otherwise).
+        var (x, _, width, _) = TxImageEditorPaneView.SnapElementBoundsToGrid(
+            x: 0.301, y: 0.5, width: 0.01, height: 0.3, gridSize: 0.05); // edges 0.296/0.306, both round to 0.30
+
+        Assert.True(width >= 0.02); // MinNormalizedElementSize
+        AssertClose(0.30, x - (width / 2)); // left edge stayed fixed
+    }
+
+    [Fact]
+    public void SnapElementBoundsToGrid_AlreadyOnGridLines_IsUnchanged()
+    {
+        var (x, y, width, height) = TxImageEditorPaneView.SnapElementBoundsToGrid(
+            x: 0.30, y: 0.30, width: 0.20, height: 0.10, gridSize: 0.05);
+
+        AssertClose(0.30, x);
+        AssertClose(0.30, y);
+        AssertClose(0.20, width);
+        AssertClose(0.10, height);
+    }
+
+    [AvaloniaFact]
+    public void SnapToGrid_DefaultsToFalse_ExistingDragBehaviorUnchangedByDefault()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.SnapToGrid);
+    }
+
+    [AvaloniaFact]
+    public void ApplySnappedElementBounds_OneUndoFullyRevertsAllFourProperties()
+    {
+        // Code-review finding: the 4 individual property assignments a snap applies each carry
+        // their own coalesced-undo hook, but the coalescing window is virtually always already
+        // closed by the time a pointer-release (where a snap fires) is reached -- so applying them
+        // directly would need TWO Undos to revert a snapped drag (X/Y coalesced separately from
+        // Width/Height, or similar). ApplySnappedElementBounds wraps all 4 in one explicit push
+        // instead, matching this editor's own "one gesture, one undo step" convention (see
+        // SetAsBackground's own single-push test for the established pattern). If this regressed
+        // back to 2 steps, a SINGLE Undo below would leave some of X/Y/Width/Height still at their
+        // post-snap values instead of reverting all four together.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        element.X = 0.3;
+        element.Y = 0.3;
+        element.Width = 0.2;
+        element.Height = 0.2;
+
+        vm.ApplySnappedElementBounds(element, 0.35, 0.35, 0.25, 0.25);
+
+        Assert.Equal(0.35, element.X);
+        Assert.Equal(0.35, element.Y);
+        Assert.Equal(0.25, element.Width);
+        Assert.Equal(0.25, element.Height);
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        // Undo replaces OverlayElements wholesale (ApplyState's own established behavior) -- the
+        // pre-undo `element` reference is now detached, re-fetch the live one.
+        var restored = vm.OverlayElements[0];
+        Assert.Equal(0.3, restored.X);
+        Assert.Equal(0.3, restored.Y);
+        Assert.Equal(0.2, restored.Width);
+        Assert.Equal(0.2, restored.Height);
     }
 
     // Phase 3 (spec/15-template-designer.md): named template variables + fill bar.

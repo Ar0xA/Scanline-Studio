@@ -47,7 +47,8 @@ public enum PersistedImageSourceKind { File, RxHistory, LastRx }
 /// three origins are safe to re-resolve from days/weeks later).</summary>
 public sealed record PersistedImageElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,
-    string AssetFileName, ImageFitMode Fit, PersistedImageSourceKind OriginKind, string? OriginPayload)
+    string AssetFileName, ImageFitMode Fit, PersistedImageSourceKind OriginKind, string? OriginPayload,
+    bool IsBackground = false)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 /// <summary>What <see cref="ITemplateStore.SaveAsync"/> accepts and <see cref="ITemplateStore.LoadAsync"/>

@@ -68,8 +68,8 @@
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding RedoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="True" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="{Binding SnapToGrid}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SnapGrid.Help}" />
+                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="{Binding SafeAreaVisible}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" />
                 <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{Binding DimensionsChipText}" /></Border>
 
                 <!-- Real, wired: aspect toggle + add-text + apply/cancel. PreserveAspect has no
@@ -160,6 +160,11 @@
                         </Flyout>
                     </Button.Flyout>
                 </Button>
+                <!-- Phase 6 (spec/15-template-designer.md): acts on whatever is currently selected
+                     (any element type) — CanExecute-gated, not text-only like "Add plate" below. -->
+                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
+                        Content="{loc:Translate Panes.TxImageEditor.Duplicate}"
+                        Command="{Binding DuplicateCommand}" />
                 <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.Apply}"
                         Command="{Binding ApplyCommand}" />
@@ -424,8 +429,17 @@
                                                  to the SAME CanvasWidth/HeightPixels as the outer Border
                                                  (which is already inset by its own 1px BorderThickness)
                                                  made the image overflow the border by ~1px right/bottom. -->
+                                            <!-- IsHitTestVisible bound to !BlocksHitTesting (Phase 6,
+                                                 spec/15-template-designer.md): a LOCKED background
+                                                 element stops intercepting canvas clicks entirely, so
+                                                 the crop rect underneath it (drawn earlier in this
+                                                 canvas's own child order, hence normally occluded)
+                                                 becomes reachable again — see
+                                                 ImageElementViewModel.BlocksHitTesting's own doc
+                                                 comment for the full reasoning. -->
                                             <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
                                                     BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
+                                                    IsHitTestVisible="{Binding !BlocksHitTesting}"
                                                     PointerPressed="OnOverlayElementPointerPressed">
                                                 <Image Source="{Binding CanvasBitmap}"
                                                        Stretch="Fill"
@@ -456,7 +470,7 @@
                              Border, which has no dash support in Avalonia) with StrokeDashArray,
                              matching mock2's own "1px dashed" guide exactly rather than settling for
                              a solid-line concession. -->
-                        <Rectangle IsHitTestVisible="False" Margin="14"
+                        <Rectangle IsHitTestVisible="False" Margin="14" IsVisible="{Binding SafeAreaVisible}"
                                    Stroke="{StaticResource IndustryAccent}" Opacity="0.55"
                                    StrokeThickness="1" StrokeDashArray="4,2" />
                         </Panel>
@@ -702,11 +716,20 @@
                                        IsVisible="{Binding SelectedTextElement, Converter={x:Static ObjectConverters.IsNull}}" />
                             <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
                                         IsVisible="{Binding SelectedTextElement, Converter={x:Static ObjectConverters.IsNotNull}}">
-                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontFamilyLabel}" />
                                     <ComboBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch"
-                                              ItemsSource="{Binding AvailableFontFamilies}"
+                                              ItemsSource="{Binding FontFamilyPickerItems}"
                                               SelectedItem="{Binding SelectedTextElement.FontFamily}" />
+                                    <!-- Phase 6: warning glyph, visible only when the selected text
+                                         element's own FontFamily isn't one of this build's real
+                                         bundled families (see IsFontUnavailable's own doc comment) —
+                                         the transmitted image silently falls back to the default font
+                                         in this case, with nothing else in this panel indicating it. -->
+                                    <TextBlock Grid.Column="2" Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontUnavailableGlyph}" Margin="4,0,0,0"
+                                               Foreground="{StaticResource IndustryDanger}"
+                                               IsVisible="{Binding IsFontUnavailable}"
+                                               ToolTip.Tip="{loc:Translate Panes.TxImageEditor.FontUnavailableWarning}" />
                                 </Grid></Border>
                                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontSizeLabel}" />
