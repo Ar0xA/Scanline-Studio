@@ -255,8 +255,17 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     {
         // Defensive floor at 1px -- element.Bounds.Width/Height > 0 is already guaranteed by the
         // caller's skip check, but rounding a very thin bounds rect to pixels can still floor to 0.
-        var targetWidth = Math.Max(1, (int)MathF.Round(bounds.Width));
-        var targetHeight = Math.Max(1, (int)MathF.Round(bounds.Height));
+        // Also capped at the DESTINATION image's own dimensions (code-review finding, Scanline
+        // Studio TX template designer Phase 2): an image element's Bounds is normalized against the
+        // CROP rect (TxImageEditorPaneViewModel.ProjectRectToCropRelative), so a full-frame element
+        // ("set as background") combined with a small crop rect -- or simply a manually resized
+        // element bigger than the working copy -- can project to a Bounds many times larger than
+        // 0..1. Resizing the source to that raw pixel size would allocate gigabytes for content
+        // that's almost entirely off-canvas; nothing needs to be resolved above the destination's
+        // own resolution, since none of it is visible beyond that. A no-op in the normal case (a
+        // legitimately-sized element's Bounds is already <= the destination).
+        var targetWidth = Math.Clamp((int)MathF.Round(bounds.Width), 1, image.Width);
+        var targetHeight = Math.Clamp((int)MathF.Round(bounds.Height), 1, image.Height);
         var resized = GetOrCreateResizedImage(element.Source, targetWidth, targetHeight, element.Fit);
 
         using var resizedImage = ToImageSharp(resized);

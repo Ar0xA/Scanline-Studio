@@ -33,7 +33,7 @@ public sealed class TxControlsTransmitProgressTests
             new FakeRadioSessionService(),
             new MacroTextResolver(),
             NullLogger<TxControlsPaneViewModel>.Instance,
-            NullLogger<TxImageEditorPaneViewModel>.Instance);
+            NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
 
     private static async Task StartBlockingTransmitAsync(TxControlsPaneViewModel vm)
     {

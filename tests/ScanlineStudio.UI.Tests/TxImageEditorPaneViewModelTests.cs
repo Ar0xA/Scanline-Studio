@@ -5,6 +5,7 @@ using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
+using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.ViewModels;
 using ScanlineStudio.UI.Views;
 
@@ -40,7 +41,19 @@ public sealed class TxImageEditorPaneViewModelTests
         CreateEditor(original, mode, preparer, new OperatorSettings());
 
     private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, OperatorSettings operatorSettings) =>
-        new(original, mode, preparer, new MacroTextResolver(), operatorSettings, new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance);
+        new(original, mode, preparer, new MacroTextResolver(), operatorSettings, new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+    /// <summary>Phase 2 overload -- exposes the 4 new image-source fakes so a test can configure
+    /// them (e.g. <see cref="FakeFilePickerService.PathToReturn"/>) and inspect calls afterward,
+    /// unlike the other <see cref="CreateEditor"/> overloads which construct fresh, unobservable
+    /// fakes internally.</summary>
+    private static TxImageEditorPaneViewModel CreateEditor(
+        IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer,
+        IFilePickerService filePickerService, IImageFileLoader imageFileLoader,
+        IReceivedImageBuffer receivedImageBuffer, IReceiveHistoryStore receiveHistoryStore) =>
+        new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            filePickerService, imageFileLoader, receivedImageBuffer, receiveHistoryStore);
 
     [AvaloniaFact]
     public void Constructor_OriginalLargerThanWorkingCopyBudget_DownsamplesBeforeUse()
@@ -997,7 +1010,8 @@ public sealed class TxImageEditorPaneViewModelTests
         var localization = new FakeLocalizationService();
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
-            new OperatorSettings(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance);
+            new OperatorSettings(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
 
         _ = vm.HeaderText;
 
@@ -1011,7 +1025,8 @@ public sealed class TxImageEditorPaneViewModelTests
         var localization = new FakeLocalizationService();
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
-            new OperatorSettings(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance);
+            new OperatorSettings(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
 
         _ = vm.DimensionsChipText;
 
@@ -1195,6 +1210,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
             new OperatorSettings { Callsign = "W1AW" }, new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             initialState);
 
         AssertClose(0.1, vm.CropRect.X);
@@ -1246,6 +1262,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
             new OperatorSettings(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             initialState);
 
         Assert.Equal(["Z1", "Z3", "Z5"], vm.OverlayElements.Select(e => ((OverlayElementViewModel)e).Text));
@@ -1273,6 +1290,7 @@ public sealed class TxImageEditorPaneViewModelTests
         _ = new TxImageEditorPaneViewModel(
             CreateSource(8, 8), WideMode, preparer, new MacroTextResolver(),
             new OperatorSettings(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             initialState);
 
         // One from BuildWorkingCopy's own initial Resize + one RecomputePreview pass (Crop, Resize,
@@ -1421,6 +1439,290 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(new Rgb24(40, 50, 60), box.BorderColor);
         AssertClose(0.05, box.BorderThickness);
         AssertClose(0.5, box.Opacity);
+    }
+
+    // Phase 2 (spec/15-template-designer.md): image elements + set-as-background. 3 sources (file /
+    // last-RX / RX-history), all real precedent reuse -- see the plan's own scope-cut reasoning.
+
+    [AvaloniaFact]
+    public async Task AddImageFromFileAsync_LoadsThePickedFileAndAddsSelectsElement()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        var countBefore = preparer.ApplyTemplateCallCount;
+
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+
+        var element = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.Same(element, vm.SelectedOverlayElement);
+        Assert.True(preparer.ApplyTemplateCallCount > countBefore);
+        var image = Assert.IsType<TemplateImageElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
+        Assert.Same(loader.ResultToReturn, image.Source);
+        // Origin exists solely for Phase 5 persistence to tell a file-sourced image from an
+        // embedded/RX one apart -- a wrong Kind or null Payload here would pass every other
+        // assertion in this test while silently breaking that.
+        Assert.Equal(new TxImageEditorPaneViewModel.ImageSourceOrigin(TxImageEditorPaneViewModel.ImageSourceKind.File, "/tmp/picked.jpg"), element.Origin);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImageFromFileAsync_PickerReturnsNull_IsANoOp()
+    {
+        // A null path from the picker is a normal "user hit Cancel", not an error -- this must NOT
+        // add an element or throw trying to load a null path.
+        var picker = new FakeFilePickerService { PathToReturn = null };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void AddLastRxImage_InsertsReceivedImageBufferCurrentAsASnapshot()
+    {
+        // Snapshot-at-insert-time, not a live binding (plan-review-resolved open question) -- this
+        // pins that the element's Source is captured at CLICK time, not re-read from the buffer
+        // later.
+        var preparer = new FakeTransmitImagePreparer();
+        var rxSource = CreateSource(3, 3);
+        var receivedImage = new FakeReceivedImageBuffer { Current = rxSource };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, new FakeFilePickerService(), new FakeImageFileLoader(), receivedImage, new FakeReceiveHistoryStore());
+
+        vm.AddLastRxImageCommand.Execute(null);
+
+        var element = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.Same(element, vm.SelectedOverlayElement);
+        Assert.Same(rxSource, element.Source);
+        var image = Assert.IsType<TemplateImageElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
+        Assert.Same(rxSource, image.Source);
+        Assert.Equal(new TxImageEditorPaneViewModel.ImageSourceOrigin(TxImageEditorPaneViewModel.ImageSourceKind.LastRx, null), element.Origin);
+
+        // Changing Current afterward must NOT retroactively change the already-inserted element --
+        // that's exactly the live-binding behavior the plan-review explicitly rejected.
+        receivedImage.Current = CreateSource(5, 5);
+        Assert.Same(rxSource, element.Source);
+    }
+
+    [AvaloniaFact]
+    public async Task RefreshRxHistoryPickerAsync_PopulatesEntriesFromTheStoreWithThumbnails()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("entry-1", DateTimeOffset.UtcNow, "PD120", "/tmp/rx1.png", null, ReceiveDecodeState.Completed),
+            ],
+            ThumbnailToReturn = CreateSource(1, 1),
+        };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), historyStore);
+
+        await vm.RefreshRxHistoryPickerCommand.ExecuteAsync(null);
+
+        var entry = Assert.Single(vm.RxHistoryPickerEntries);
+        Assert.Equal("entry-1", entry.Id);
+        Assert.Equal("/tmp/rx1.png", entry.FilePath);
+        Assert.NotNull(entry.Thumbnail);
+        // SelectCommand is parent-pushed (same pattern as ITemplateElementViewModel.RemoveCommand)
+        // so the AXAML picker row can bind directly, not via a $parent[ItemsControl] path.
+        Assert.Same(vm.AddImageFromRxHistoryCommand, entry.SelectCommand);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImageFromRxHistoryAsync_LoadsFullResolutionAndAddsSelectsElement()
+    {
+        // IReceiveHistoryStore has no full-resolution loader (only thumbnails) -- this pins that the
+        // full-res load goes through IImageFileLoader.LoadOriginalAsync against the entry's own real
+        // FilePath, the same loader the file-picker source already uses.
+        var preparer = new FakeTransmitImagePreparer();
+        var fullResSource = CreateSource(6, 6);
+        var loader = new FakeImageFileLoader { ResultToReturn = fullResSource };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        var entry = new TxImageEditorPaneViewModel.RxHistoryPickerEntry("entry-1", "/tmp/rx1.png", null, null);
+
+        await vm.AddImageFromRxHistoryCommand.ExecuteAsync(entry);
+
+        var element = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.Same(fullResSource, element.Source);
+        Assert.Same(element, vm.SelectedOverlayElement);
+        Assert.Equal(new TxImageEditorPaneViewModel.ImageSourceOrigin(TxImageEditorPaneViewModel.ImageSourceKind.RxHistory, "entry-1"), element.Origin);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImageFromFileAsync_ThenUndoThenRedo_RestoresOriginNotJustSourceAndGeometry()
+    {
+        // Code-review finding: RawImageElementSnapshot carries Origin specifically so a future
+        // Phase 5 persisted-template load can tell a file-sourced image from an RX one apart -- if
+        // Undo/Redo's own snapshot round-trip (CreateElementFromSnapshot) ever dropped or
+        // mis-mapped it, every other test in this file would still pass (none of them touch
+        // Undo/Redo for an image element), so this is pinned separately.
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+        vm.UndoCommand.Execute(null);
+
+        vm.RedoCommand.Execute(null);
+
+        var restored = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.Equal(new TxImageEditorPaneViewModel.ImageSourceOrigin(TxImageEditorPaneViewModel.ImageSourceKind.File, "/tmp/picked.jpg"), restored.Origin);
+    }
+
+    [AvaloniaFact]
+    public void SetAsBackground_MovesElementToFullFrameBottomZAndCollectionIndexZero()
+    {
+        // Round-2-class finding, applied proactively here (Phase 1's own MoveElementUp/Down bug):
+        // setting Z alone is NOT enough -- the interactive canvas draws in OverlayElements' own
+        // COLLECTION order, so this also asserts collection identity/order, not just Z.
+        var preparer = new FakeTransmitImagePreparer();
+        var receivedImage = new FakeReceivedImageBuffer { Current = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, new FakeFilePickerService(), new FakeImageFileLoader(), receivedImage, new FakeReceiveHistoryStore());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = vm.OverlayElements[0];
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[1];
+
+        vm.SetAsBackgroundCommand.Execute(image);
+
+        AssertClose(0.5, image.X);
+        AssertClose(0.5, image.Y);
+        AssertClose(1, image.Width);
+        AssertClose(1, image.Height);
+        Assert.True(image.Z < text.Z);
+        Assert.Same(image, vm.OverlayElements[0]);
+        Assert.Same(text, vm.OverlayElements[1]);
+    }
+
+    [AvaloniaFact]
+    public void SetAsBackground_PushesExactlyOneUndoStep()
+    {
+        // Code-review-class finding, applied proactively (mirrors Rotate()'s own multi-element
+        // geometry loop): setting X/Y/Width/Height individually on an already-wired element would
+        // each independently trigger PushUndoSnapshotForGeometryChange's own coalesced push on top
+        // of this command's explicit PushUndoSnapshot, UNLESS wrapped in _suspendPreview.
+        //
+        // A redundant SECOND push here would capture the SAME pre-mutation state as the first
+        // (PushUndoSnapshotCoalesced's own dedup only kicks in from the SECOND geometry property
+        // onward within one call, not the first), so a single-Undo value-based assertion can't tell
+        // "1 push" from "2 identical pushes" apart -- mutation-tested by removing the
+        // _suspendPreview wrap and confirming this exact test still passed, which is why this counts
+        // total undo depth instead: push AddLastRxImage (1 action) then SetAsBackground (should be
+        // exactly 1 more), then Undo exactly twice and assert NOTHING is left. A stray extra push
+        // would leave one more Undo available after these two clicks.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+
+        vm.SetAsBackgroundCommand.Execute(image);
+
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.Empty(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void SetAsBackground_OnNullElement_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.SetAsBackgroundCommand.Execute(null);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void SetAsBackground_OnAnElementNoLongerInOverlayElements_DoesNotThrowAndIsANoOp()
+    {
+        // Code-review finding: a stale element reference (e.g. a queued click racing an Undo,
+        // which replaces every element wholesale via ApplyState) must not reach
+        // OverlayElements.Move(-1, 0) -- that throws ArgumentOutOfRangeException out of a command
+        // handler. This pins the guard without needing to actually race an Undo: add TWO elements
+        // (so OverlayElements stays non-empty -- Min(Z) must still succeed, isolating this from the
+        // separate "Min on an empty collection" failure mode), then RemoveOverlayElement detaches
+        // just the first one from OverlayElements while the reference itself stays valid,
+        // reproducing the same "not in the collection, but the collection isn't empty" state.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        vm.AddBoxElementCommand.Execute(null);
+        vm.RemoveOverlayElementCommand.Execute(element);
+        Assert.DoesNotContain(element, vm.OverlayElements);
+        Assert.NotEmpty(vm.OverlayElements);
+        var undoDepthBefore = vm.UndoCommand.CanExecute(null);
+
+        var exception = Record.Exception(() => vm.SetAsBackgroundCommand.Execute(element));
+
+        Assert.Null(exception);
+        // No bogus undo step left behind by the guarded-out call.
+        Assert.Equal(undoDepthBefore, vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void AddLastRxImage_WithNothingEverReceived_IsANoOp()
+    {
+        // Code-review finding: IReceivedImageBuffer.Current defaults to (and resets to, on decode
+        // restart) a 1x1 black placeholder, never null -- a click here with nothing ever received
+        // must not silently insert that placeholder as a visible-but-blank image element.
+        var receivedImage = new FakeReceivedImageBuffer(); // Current defaults to a 1x1 stub
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), receivedImage, new FakeReceiveHistoryStore());
+
+        vm.AddLastRxImageCommand.Execute(null);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task AddImageFromFileAsync_WithASourceLargerThanTheWorkingCopyBudget_DownsamplesBeforeInserting()
+    {
+        // Code-review finding: an inserted image element previously went straight from the loader's
+        // full native resolution into the element/WriteableBitmap/per-frame-pipeline with no cap,
+        // unlike the background image itself (BuildWorkingCopy). This pins that InsertImageElement
+        // applies the SAME WorkingCopyScaleFactor budget, preserving aspect.
+        var preparer = new FakeTransmitImagePreparer();
+        // SmallMode is a small target mode (see its own definition below); working copy budget is
+        // WorkingCopyWidth/Height * WorkingCopyScaleFactor (2x) -- an 8x8 original source is already
+        // within that budget for SmallMode's own tiny dimensions, so use a source far larger than
+        // any plausible mode to force the downsample path deterministically.
+        var oversizedSource = CreateSource(4000, 3000); // 4:3 aspect, deliberately huge
+        var loader = new FakeImageFileLoader { ResultToReturn = oversizedSource };
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/huge.jpg" };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+
+        var element = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.NotSame(oversizedSource, element.Source);
+        var budgetWidth = (int)(vm.WorkingCopyWidth * 2);
+        var budgetHeight = (int)(vm.WorkingCopyHeight * 2);
+        Assert.True(element.Source.Width <= budgetWidth, $"Expected downsampled width <= {budgetWidth}, got {element.Source.Width}.");
+        Assert.True(element.Source.Height <= budgetHeight, $"Expected downsampled height <= {budgetHeight}, got {element.Source.Height}.");
+        // Aspect preserved (4:3 source), not a flat stretch to the budget's own aspect.
+        AssertClose((double)oversizedSource.Width / oversizedSource.Height, (double)element.Source.Width / element.Source.Height);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImageFromFileAsync_WithASourceSmallerThanTheWorkingCopyBudget_InsertsItUnchanged()
+    {
+        // The no-op branch of the same downsample -- a small source must NOT be upscaled or
+        // otherwise mutated, same instance in and out (mirrors DownsampleToBudget/BuildWorkingCopy's
+        // own "targetWidth >= source.Width" early return).
+        var preparer = new FakeTransmitImagePreparer();
+        var smallSource = CreateSource(2, 2);
+        var loader = new FakeImageFileLoader { ResultToReturn = smallSource };
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/small.jpg" };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+
+        var element = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.Same(smallSource, element.Source);
     }
 
     [AvaloniaFact]
