@@ -299,7 +299,7 @@
                             <Button Command="{Binding SelectCommand}"
                                     CommandParameter="{Binding Entry}"
                                     ToolTip.Tip="{Binding Entry.FileName}"
-                                    Background="Transparent" BorderBrush="{StaticResource IndustryDivider}"
+                                    Background="Transparent" BorderBrush="{StaticResource IndustryControlBorder}"
                                     BorderThickness="1" CornerRadius="0" Padding="0" Margin="1">
                                 <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />
                             </Button>

@@ -331,7 +331,7 @@
              been missing entirely — added as a bottom-aligned divider rather than a Border
              BorderThickness on the outer Grid so it doesn't add its own extra pixel on top of the
              already-corrected 102px band height. -->
-        <Border Height="1" VerticalAlignment="Bottom" Background="{StaticResource IndustryDivider}" />
+        <Border Height="1" VerticalAlignment="Bottom" Background="{StaticResource IndustryChromeBorder}" />
 
         <!-- Overlay row, design doc §0's blocker-2 fix: real, live, visibility-gated messages that
              must coexist with the fixed 102px band without growing it. Bottom-aligned, only

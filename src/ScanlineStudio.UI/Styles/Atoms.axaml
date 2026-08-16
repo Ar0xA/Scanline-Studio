@@ -50,7 +50,7 @@
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Grid>
-                            <Border BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1"
+                            <Border BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
                                     CornerRadius="0" Padding="{TemplateBinding Padding}">
                                 <ContentPresenter Content="{TemplateBinding Content}"
                                                    ContentTemplate="{TemplateBinding ContentTemplate}" />
@@ -175,7 +175,7 @@
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Grid>
-                            <Border BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1"
+                            <Border BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
                                     CornerRadius="0" Padding="{TemplateBinding Padding}">
                                 <ContentPresenter Content="{TemplateBinding Content}"
                                                    ContentTemplate="{TemplateBinding ContentTemplate}" />
@@ -241,7 +241,7 @@
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Border Name="PART_Face" Background="Transparent"
-                                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0"
+                                BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter Content="{TemplateBinding Content}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -261,7 +261,7 @@
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Border Name="PART_Face" Background="Transparent"
-                                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0"
+                                BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter Content="{TemplateBinding Content}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -290,7 +290,7 @@
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Border Name="PART_Face" Background="Transparent"
-                                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0"
+                                BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter Content="{TemplateBinding Content}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -381,7 +381,7 @@
                                      18px column and overlap the value TextBox. -->
                                 <RepeatButton Name="PART_DecreaseButton" Grid.Column="0"
                                               Background="Transparent" BorderThickness="0,0,1,0"
-                                              BorderBrush="{StaticResource IndustryDivider}" CornerRadius="0"
+                                              BorderBrush="{StaticResource IndustryControlBorder}" CornerRadius="0"
                                               Padding="0" MinWidth="0" MinHeight="0"
                                               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                               IsVisible="{TemplateBinding ShowButtonSpinner}">
@@ -409,7 +409,7 @@
                                                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
                                 <RepeatButton Name="PART_IncreaseButton" Grid.Column="2"
                                               Background="Transparent" BorderThickness="1,0,0,0"
-                                              BorderBrush="{StaticResource IndustryDivider}" CornerRadius="0"
+                                              BorderBrush="{StaticResource IndustryControlBorder}" CornerRadius="0"
                                               Padding="0" MinWidth="0" MinHeight="0"
                                               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                               IsVisible="{TemplateBinding ShowButtonSpinner}">
@@ -448,7 +448,7 @@
                     <ControlTemplate>
                         <ButtonSpinner Name="PART_Spinner" Theme="{StaticResource IndustrySpinnerTheme}"
                                        AllowSpin="True" ShowButtonSpinner="True"
-                                       BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1">
+                                       BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1">
                             <!-- Classes="Industry" so old Cards.axaml/ChromeOverrides.axaml
                                  TextBox:not(.Industry) selectors (height 19, padding 4,0, Fluent's
                                  own hover tint on Border#PART_BorderElement) don't leak onto this
@@ -518,7 +518,7 @@
                     <ControlTemplate>
                         <Border Name="PART_Face" Margin="-1,0,0,0"
                                 Background="{StaticResource IndustrySurface}"
-                                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" CornerRadius="0"
+                                BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter Content="{TemplateBinding Content}" FontSize="11"
                                                FontFamily="{StaticResource IndustryBodyFontFamily}"
@@ -653,7 +653,7 @@
     <Style Selector="Border.IndustryMini">
         <Setter Property="Height" Value="17" />
         <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
@@ -1185,9 +1185,14 @@
              titles per the spec's §2.1 neutrals table. -->
         <Setter Property="Foreground" Value="{StaticResource IndustryLabel}" />
     </Style>
+    <!-- Spec §6: "Header row #E4E4E4 on #C8C8C8" — a dedicated value, not either border
+         role (#B9B9B9 chrome / #A0A0A0 control); IndustryTableHeaderBorderColor is its own
+         spec-exact token rather than a "close enough" substitute. Brush key deliberately
+         doesn't repeat this style class's own "TableHeaderRule" name (round-2 auditor nit
+         — avoids a resource-key/style-class name collision). -->
     <Style Selector="Border.IndustryTableHeaderRule">
         <Setter Property="BorderThickness" Value="0,0,0,1" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryTableHeaderBorder}" />
         <Setter Property="Padding" Value="{StaticResource IndustryTableCellPadding}" />
     </Style>
     <Style Selector="Border.IndustryTableHeaderRule.narrow">
@@ -1224,8 +1229,12 @@
          the MeasureOverride mechanism LAYOUT-SPEC §6 pitfall 4/5 already mandates for the Incoming-
          frame's own height-driven ratio — that mechanism's concrete implementation is a Phase 3+
          concern, reusing the same technique, not duplicated here). -->
+    <!-- §7.4 fixed exception: image thumbnails are content, not UI — ControlBorder
+         (#A0A0A0), not ChromeBorder, "no colored border for state" (state lives in the
+         caption lozenge instead; the :selected accent-border rule below predates this
+         exception and is a known pre-existing divergence, not fixed here). -->
     <Style Selector="Border.IndustryThumbnail">
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
@@ -1236,9 +1245,12 @@
         <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
         <Setter Property="BorderThickness" Value="2" />
     </Style>
+    <!-- ControlBorder, not ChromeBorder, matching Border.IndustryThumbnail's own §7.4 fix
+         above — the figure and its caption divider are one composed content object, not
+         two independently-classified borders (round-2 auditor finding). -->
     <Style Selector="Border.IndustryThumbnailCaption">
         <Setter Property="BorderThickness" Value="0,1,0,0" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
         <Setter Property="Padding" Value="{StaticResource IndustryThumbnailCaptionPadding}" />
     </Style>
     <Style Selector="Border.IndustryThumbnailCaption.gallery">
@@ -1275,7 +1287,7 @@
          tokens, not view-shaped like everything else in this file. This is just the bordered panel
          atom that hosts it. -->
     <Style Selector="Border.IndustryHatchPanel">
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryChromeBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
         <Setter Property="Background" Value="{StaticResource IndustryHatchStripeBrush}" />
@@ -1287,7 +1299,7 @@
          first consumer; the plot's OWN pixel content (waterfall gradient, spectrum trace, editor
          canvas) is unaffected — this is only the surrounding frame chrome. -->
     <Style Selector="Border.IndustryPlot">
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryChromeBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
         <Setter Property="Background" Value="{StaticResource IndustryAccent900}" />
@@ -1364,7 +1376,7 @@
          look, which the design doc explicitly said would clash — same descendant-selector,
          no-collision reasoning as the MenuItem rules above. -->
     <Style Selector="Menu.Industry Separator">
-        <Setter Property="Background" Value="{StaticResource IndustryDivider}" />
+        <Setter Property="Background" Value="{StaticResource IndustryChromeBorder}" />
         <Setter Property="Height" Value="1" />
         <Setter Property="Margin" Value="0,2" />
     </Style>
