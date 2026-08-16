@@ -44,7 +44,8 @@ public sealed class TxImageEditorPaneViewModelTests
 
     private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, OperatorSettings operatorSettings) =>
         new(original, mode, preparer, new MacroTextResolver(), operatorSettings, new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
-            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
 
     /// <summary>Phase 2 overload -- exposes the 4 new image-source fakes so a test can configure
     /// them (e.g. <see cref="FakeFilePickerService.PathToReturn"/>) and inspect calls afterward,
@@ -55,7 +56,8 @@ public sealed class TxImageEditorPaneViewModelTests
         IFilePickerService filePickerService, IImageFileLoader imageFileLoader,
         IReceivedImageBuffer receivedImageBuffer, IReceiveHistoryStore receiveHistoryStore) =>
         new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
-            filePickerService, imageFileLoader, receivedImageBuffer, receiveHistoryStore);
+            filePickerService, imageFileLoader, receivedImageBuffer, receiveHistoryStore,
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
 
     /// <summary>Phase 3 overload -- exposes <see cref="FakeRadioSessionService"/> so a test can set
     /// <see cref="FakeRadioSessionService.LastKnownState"/> before constructing, for
@@ -63,7 +65,20 @@ public sealed class TxImageEditorPaneViewModelTests
     private static TxImageEditorPaneViewModel CreateEditor(
         IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, FakeRadioSessionService radioSessionService) =>
         new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), radioSessionService, new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
-            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+
+    /// <summary>Phase 5 overload -- exposes <see cref="ITemplateStore"/>/<see cref="IImageSourceWriter"/>
+    /// so a save/load test can configure/inspect them directly.</summary>
+    private static TxImageEditorPaneViewModel CreateEditor(
+        IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer,
+        ITemplateStore templateStore, IImageSourceWriter imageSourceWriter, ReadyRackViewModel? readyRack = null) =>
+        new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            templateStore, imageSourceWriter, readyRack ?? CreateReadyRack(templateStore));
+
+    private static ReadyRackViewModel CreateReadyRack(ITemplateStore? templateStore = null) =>
+        new(templateStore ?? new FakeTemplateStore(), new FakeSettingsStore(), NullLogger<ReadyRackViewModel>.Instance);
 
     [AvaloniaFact]
     public void Constructor_OriginalLargerThanWorkingCopyBudget_DownsamplesBeforeUse()
@@ -1021,7 +1036,8 @@ public sealed class TxImageEditorPaneViewModelTests
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
             new OperatorSettings(), new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
-            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
 
         _ = vm.HeaderText;
 
@@ -1036,7 +1052,8 @@ public sealed class TxImageEditorPaneViewModelTests
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
             new OperatorSettings(), new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
-            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
 
         _ = vm.DimensionsChipText;
 
@@ -1221,6 +1238,7 @@ public sealed class TxImageEditorPaneViewModelTests
             CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
             new OperatorSettings { Callsign = "W1AW" }, new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(),
             initialState);
 
         AssertClose(0.1, vm.CropRect.X);
@@ -1273,6 +1291,7 @@ public sealed class TxImageEditorPaneViewModelTests
             CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
             new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(),
             initialState);
 
         Assert.Equal(["Z1", "Z3", "Z5"], vm.OverlayElements.Select(e => ((OverlayElementViewModel)e).Text));
@@ -1301,6 +1320,7 @@ public sealed class TxImageEditorPaneViewModelTests
             CreateSource(8, 8), WideMode, preparer, new MacroTextResolver(),
             new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(),
             initialState);
 
         // One from BuildWorkingCopy's own initial Resize + one RecomputePreview pass (Crop, Resize,
@@ -2194,6 +2214,7 @@ public sealed class TxImageEditorPaneViewModelTests
             CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
             new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(),
             initialState);
 
         var row = Assert.Single(vm.TemplateVariableRows);
@@ -2438,6 +2459,182 @@ public sealed class TxImageEditorPaneViewModelTests
 
         vm.AddOverlayElementCommand.Execute(null);
         Assert.Same(vm.OverlayElements[1], vm.SelectedTextElement);
+    }
+
+    [AvaloniaFact]
+    public void SaveTemplateCommand_CanExecute_FalseWhenNameBlank_TrueOnceNamed()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeTemplateStore(), new FakeImageSourceWriter());
+
+        Assert.False(vm.SaveTemplateCommand.CanExecute(null));
+
+        vm.NewTemplateName = "Contest card";
+        Assert.True(vm.SaveTemplateCommand.CanExecute(null));
+
+        vm.NewTemplateName = "   ";
+        Assert.False(vm.SaveTemplateCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task SaveTemplateAsync_TextAndBoxElementsOnly_CallsStoreSaveAsyncAndClearsName()
+    {
+        var templateStore = new FakeTemplateStore();
+        var imageSourceWriter = new FakeImageSourceWriter();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, imageSourceWriter);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.AddBoxElementCommand.Execute(null);
+        vm.NewTemplateName = "My Template";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+        var saved = Assert.Single(await templateStore.ListAsync());
+        Assert.Equal("My Template", saved.Name);
+        var document = await templateStore.LoadAsync(saved.Id);
+        Assert.Equal(2, document.Elements.Count);
+        Assert.Empty(imageSourceWriter.Calls); // no image elements -- nothing to write
+        Assert.Equal(string.Empty, vm.NewTemplateName);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveTemplateAsync_ImageElement_WritesItsAssetBeforeCallingStoreSaveAsync()
+    {
+        var templateStore = new FakeTemplateStore();
+        var imageSourceWriter = new FakeImageSourceWriter();
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+        var imageSource = CreateSource(2, 2);
+        var loader = new FakeImageFileLoader { ResultToReturn = imageSource };
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            templateStore, imageSourceWriter, CreateReadyRack(templateStore));
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+        vm.NewTemplateName = "With Photo";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+        var call = Assert.Single(imageSourceWriter.Calls);
+        Assert.Same(imageSource, call.Source);
+        var saved = Assert.Single(await templateStore.ListAsync());
+        var document = await templateStore.LoadAsync(saved.Id);
+        var image = Assert.IsType<PersistedImageElement>(Assert.Single(document.Elements));
+        Assert.Equal(call.Path, templateStore.GetAssetPath(saved.Id, image.AssetFileName));
+        Assert.Equal(PersistedImageSourceKind.File, image.OriginKind);
+        Assert.Equal("/tmp/picked.jpg", image.OriginPayload);
+    }
+
+    /// <summary>Code-review finding: every OTHER save test in this file uses
+    /// <see cref="FakeImageSourceWriter"/>/<see cref="FakeTemplateStore"/>, which cannot fail on a
+    /// missing directory since neither one touches real disk -- exactly why a real bug (the
+    /// template's own <c>assets/</c> subdirectory was never created before
+    /// <c>BuildPersistedElementAsync</c>'s own <c>WritePngAsync</c> call, so EVERY save of an
+    /// image-bearing template failed with <c>DirectoryNotFoundException</c>, silently, caught by
+    /// <c>SaveTemplateAsync</c>'s own catch block) went undetected by the full green suite. This
+    /// test wires the REAL <c>ScanlineStudio.Core.Imaging.ImageSourceWriter</c> and
+    /// <c>ScanlineStudio.Application.TemplateStore</c> against a real temp directory -- no fakes in
+    /// the write path at all -- specifically so this class of bug can't regress silently again.</summary>
+    [AvaloniaFact]
+    public async Task SaveTemplateAsync_ImageElement_CreatesTheAssetsDirectoryOnRealDisk_BeforeWritingTheAsset()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "scanlinestudio-vm-save-realfs-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var imageSourceWriter = new ImageSourceWriter();
+            // TemplateStore's OWN IImageFileLoader must be REAL here (not a fake, and a separate
+            // instance from the VM's own `loader` below) -- its RenderThumbnailAsync reads the
+            // just-written asset PNG back off real disk to build the thumbnail composite, which a
+            // dictionary-keyed fake has no way to satisfy.
+            var templateStore = new TemplateStore(imageSourceWriter, new ImageFileLoader(), new FakeTransmitImagePreparer(), root);
+            var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+            var imageSource = CreateSource(2, 2);
+            var loader = new FakeImageFileLoader { ResultToReturn = imageSource };
+            var vm = new TxImageEditorPaneViewModel(
+                CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+                new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+                picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+                templateStore, imageSourceWriter, CreateReadyRack(templateStore));
+            await vm.AddImageFromFileCommand.ExecuteAsync(null);
+            vm.NewTemplateName = "Real Disk Photo";
+
+            await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+            Assert.False(vm.IsSavingTemplate);
+            var saved = Assert.Single(await templateStore.ListAsync());
+            Assert.Equal("Real Disk Photo", saved.Name);
+            Assert.True(File.Exists(saved.ThumbnailPath), $"Expected a real thumbnail.png at '{saved.ThumbnailPath}'.");
+            var document = await templateStore.LoadAsync(saved.Id);
+            var image = Assert.IsType<PersistedImageElement>(Assert.Single(document.Elements));
+            var assetPath = templateStore.GetAssetPath(saved.Id, image.AssetFileName);
+            Assert.True(File.Exists(assetPath), $"Expected the real asset PNG to exist on disk at '{assetPath}'.");
+            // Save succeeding end to end (not silently swallowed into the catch block) is itself the
+            // real assertion here -- NewTemplateName is only ever cleared on the success path.
+            Assert.Equal(string.Empty, vm.NewTemplateName);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_ReplacesOverlayElements_AndIsUndoable()
+    {
+        var templateStore = new FakeTemplateStore();
+        var imageSourceWriter = new FakeImageSourceWriter();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, imageSourceWriter, readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        var originalElementCount = vm.OverlayElements.Count;
+
+        var templateId = templateStore.CreateTemplateId("Loadable");
+        await templateStore.SaveAsync(templateId, "Loadable", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+            new PersistedBoxElement(0.3, 0.3, 0.1, 0.1, 1, false, new Rgb24(4, 5, 6), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        Assert.All(vm.OverlayElements, e => Assert.IsType<BoxElementViewModel>(e));
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        Assert.Equal(originalElementCount, vm.OverlayElements.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_DoesNotClearAlreadyTypedTemplateVariableValues()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{his_call}";
+        vm.TemplateVariableRows[0].Value = "K1ABC";
+
+        var templateId = templateStore.CreateTemplateId("HasVariable");
+        await templateStore.SaveAsync(templateId, "HasVariable", new PersistedTemplateDocument([
+            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "{his_call}", 0.1, new Rgb24(255, 255, 255), "", null, 0.02),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        var reloadedRow = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("his_call", reloadedRow.Key);
+        Assert.Equal("K1ABC", reloadedRow.Value);
     }
 
     private static ArrayImageSource CreateSource(int width, int height)

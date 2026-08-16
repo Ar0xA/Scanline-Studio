@@ -1,0 +1,84 @@
+using ScanlineStudio.Abstractions.Imaging;
+
+namespace ScanlineStudio.Application.Tests;
+
+/// <summary>In-memory <see cref="IImageSourceWriter"/> -- writes go into <see cref="Files"/> instead
+/// of real disk, matching this project's own hand-rolled `Fake*` test-double convention.</summary>
+internal sealed class FakeImageSourceWriter : IImageSourceWriter
+{
+    public Dictionary<string, IImageSource> Files { get; } = [];
+
+    public Task WritePngAsync(IImageSource source, string path, CancellationToken ct = default)
+    {
+        Files[path] = source;
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>In-memory <see cref="IImageFileLoader"/> counterpart to <see cref="FakeImageSourceWriter"/>
+/// -- <see cref="LoadOriginalAsync"/> reads back whatever <see cref="Sources"/> has under the same
+/// path, so a save-then-load round trip in a test doesn't touch real disk at all.</summary>
+internal sealed class FakeImageFileLoader : IImageFileLoader
+{
+    public Dictionary<string, IImageSource> Sources { get; } = [];
+
+    public Task<IImageSource> LoadAsync(string path, int targetWidth, int targetHeight, CancellationToken ct = default)
+        => LoadOriginalAsync(path, ct);
+
+    public Task<IImageSource> LoadOriginalAsync(string path, CancellationToken ct = default)
+        => Task.FromResult(Sources.TryGetValue(path, out var source)
+            ? source
+            : throw new FileNotFoundException($"No fake source configured for '{path}'."));
+}
+
+/// <summary>Minimal real <see cref="IImageSource"/> -- a flat single-color image, enough for
+/// <see cref="TemplateStore"/>'s thumbnail-render call to have something real to composite.</summary>
+internal sealed class FakeImageSource : IImageSource
+{
+    private readonly Rgb24[] _row;
+
+    public FakeImageSource(int width, int height, Rgb24 color)
+    {
+        Width = width;
+        Height = height;
+        _row = Enumerable.Repeat(color, width).ToArray();
+    }
+
+    public int Width { get; }
+
+    public int Height { get; }
+
+    public ReadOnlySpan<Rgb24> GetScanline(int y) => _row;
+}
+
+/// <summary>Records <see cref="ApplyTemplate"/> calls instead of doing real compositing -- enough for
+/// <see cref="TemplateStore"/>'s thumbnail-render tests, which only need to confirm it was called with
+/// the right element count/shape, not exercise real ImageSharp drawing (that's
+/// <c>ApplyTemplateTests</c>' own job in <c>ScanlineStudio.Core.Imaging.Tests</c>).</summary>
+internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
+{
+    public List<TemplateDocument> ApplyTemplateDocuments { get; } = [];
+
+    public IImageSource Crop(IImageSource source, NormalizedRect region) => source;
+
+    public IImageSource Resize(IImageSource source, int width, int height, bool preserveAspect)
+        => new FakeImageSource(width, height, new Rgb24(0, 0, 0));
+
+    public IImageSource ApplyAdjustments(IImageSource source, ImageAdjustments adjustments) => source;
+
+    public IImageSource ApplyOverlay(IImageSource source, ImageOverlay overlay) => source;
+
+    public IImageSource ApplyTemplate(IImageSource existingBase, TemplateDocument document)
+    {
+        ApplyTemplateDocuments.Add(document);
+        return existingBase;
+    }
+
+    public double MeasureFittedFontSize(
+        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0)
+        => font.Size * imageHeightPx;
+
+    public IReadOnlyList<string> AvailableFontFamilies { get; } = ["DejaVu Sans Mono"];
+
+    public IImageSource Rotate(IImageSource source) => new FakeImageSource(source.Height, source.Width, new Rgb24(0, 0, 0));
+}

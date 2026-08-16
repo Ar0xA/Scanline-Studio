@@ -382,19 +382,31 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// MUST match <see cref="ComputeFittedFontSizePx"/>'s own measurement <see cref="HintingMode"/>
     /// exactly, or a fitted size can render larger than what was actually measured).</summary>
     /// <summary>Phase 4: <paramref name="strokeColor"/>/<paramref name="strokeThicknessPx"/>
-    /// (both optional, default none) add an outline via ImageSharp.Drawing 2.1.7's own
-    /// <c>DrawText(options, text, Brush, Pen)</c> overload -- confirmed present in the installed
-    /// package's own XML docs, not assumed. Deliberately NOT taken when no stroke is requested: the
-    /// no-stroke path keeps calling the plain <c>DrawText(options, text, Rgba32)</c> Color overload
-    /// completely unchanged, so <see cref="ApplyOverlay"/>'s own byte-for-byte behavior (its only
-    /// caller that never passes a stroke) stays untouched by this addition. A <see cref="Pen"/>
-    /// CENTERS its stroke on the glyph outline (grows ink by half the pen width on each side) --
-    /// deliberately NOT inset the way <see cref="DrawTemplateBox"/>'s own border fix insets a box's
-    /// stroke: outward growth is exactly what a legible text outline is supposed to look like;
-    /// insetting it would shrink the glyph itself. <see cref="DrawTemplateText"/>'s own caller is
-    /// responsible for shrinking the FIT BOX by the stroke width before calling this (a different,
-    /// separate correction from the no-inset decision here -- see that method's own doc
-    /// comment).</summary>
+    /// (both optional, default none) add an outline. Deliberately NOT taken when no stroke is
+    /// requested: the no-stroke path keeps calling the plain <c>DrawText(options, text, Rgba32)</c>
+    /// Color overload completely unchanged, so <see cref="ApplyOverlay"/>'s own byte-for-byte
+    /// behavior (its only caller that never passes a stroke) stays untouched by this addition.
+    /// <para><b>Two SEPARATE draw calls, stroke then fill -- NOT the combined
+    /// <c>DrawText(options, text, Brush, Pen)</c> overload.</b> That combined overload was the
+    /// first thing tried and looked correct on paper (it's a real, documented API,
+    /// ImageSharp.Drawing 2.1.7), but real-window verification (a Phase 5 ready-rack thumbnail
+    /// rendering as solid black with zero non-background pixels) traced back to it: at this
+    /// engine's usual proportions -- <see cref="TemplateTextElement.StrokeThickness"/> normalized to
+    /// image height the same as <see cref="FontSpec.Size"/>, e.g. the shipped default 0.02 stroke
+    /// vs. 0.1 font size -- the stroke pixel width ends up comparable to or larger than a normal-
+    /// weight glyph's own ink width. A <see cref="Pen"/> centers its stroke ON the glyph outline
+    /// (grows ink by half the pen width on EACH side, i.e. inward as well as outward), and in one
+    /// combined draw call that inward growth from a center-tracing stroke pass entirely overwrites
+    /// the interior fill for thin strokes -- confirmed empirically (isolated ImageSharp-only repro
+    /// against the exact installed package version): font=12px/stroke=2.4px produced ZERO non-
+    /// background pixels; the identical geometry via two passes recovered legible fill. Drawing the
+    /// STROKE first (Pen only, so its full centered width lands, inward portion included) and then
+    /// the FILL on top (Brush only, opaque, painted last) guarantees the fill always fully covers
+    /// its own glyph interior regardless of stroke width -- only the stroke's OUTWARD-extending
+    /// portion (the part not already covered by the fill pass) remains visible, which is what a
+    /// legible text outline is actually supposed to look like. <see cref="DrawTemplateText"/>'s own
+    /// caller is responsible for shrinking the FIT BOX by the stroke width before calling this (a
+    /// separate correction, still needed either way -- see that method's own doc comment).</para></summary>
     private static void DrawGlyphs(
         Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, string text, FontFamily fontFamily, float fontSizePx, PointF origin,
         Abstractions.Imaging.Rgb24 color,
@@ -421,7 +433,8 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             if (strokeColor is { } stroke && strokeThicknessPx > 0)
             {
                 var strokeRgba = new Rgba32(stroke.R, stroke.G, stroke.B, 255);
-                ctx.DrawText(options, text, Brushes.Solid(rgba), Pens.Solid(strokeRgba, strokeThicknessPx));
+                ctx.DrawText(options, text, Pens.Solid(strokeRgba, strokeThicknessPx));
+                ctx.DrawText(options, text, Brushes.Solid(rgba));
             }
             else
             {

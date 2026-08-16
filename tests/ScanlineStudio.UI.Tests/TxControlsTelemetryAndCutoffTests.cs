@@ -32,7 +32,8 @@ public sealed class TxControlsTelemetryAndCutoffTests
             radioSession,
             new MacroTextResolver(),
             NullLogger<TxControlsPaneViewModel>.Instance,
-            NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+            NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
 
     [AvaloniaFact]
     public void MeterVisibility_RefreshesFromLatestCapabilities_NotJustAtConstruction()

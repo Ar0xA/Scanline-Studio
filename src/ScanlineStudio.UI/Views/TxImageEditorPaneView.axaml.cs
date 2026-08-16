@@ -229,4 +229,45 @@ public partial class TxImageEditorPaneView : UserControl
 
         e.Handled = true;
     }
+
+    /// <summary>Ready rack number-key recall (spec/15-template-designer.md Phase 5) --
+    /// <c>Key.D1</c>..<c>Key.D9</c> AND <c>Key.NumPad1</c>..<c>Key.NumPad9</c> (plan-review-decided
+    /// plain <c>KeyDown</c> handler, no keybinding-registration service exists anywhere in this
+    /// codebase -- same pattern as <see cref="OnCanvasKeyDown"/>'s own arrow-key nudge). Wired on
+    /// the root <see cref="UserControl"/> itself, not a sub-control, so it fires regardless of which
+    /// child currently holds focus (routed KeyDown events bubble up the visual tree) -- EXCEPT a
+    /// focused <see cref="TextBox"/> (code-review finding): Avalonia's <see cref="TextBox"/> doesn't
+    /// mark a plain digit <c>KeyDown</c> as handled (character insertion happens on a separate
+    /// <c>TextInput</c> event), so without this guard typing an ordinary digit into this editor's own
+    /// name/X/Y/size/font-size/outline-width fields would bubble up and silently replace the entire
+    /// overlay layout mid-edit.</summary>
+    private void OnRootKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (ViewModel is not { } vm || e.Source is TextBox)
+        {
+            return;
+        }
+
+        var slot = e.Key switch
+        {
+            Key.D1 or Key.NumPad1 => 1,
+            Key.D2 or Key.NumPad2 => 2,
+            Key.D3 or Key.NumPad3 => 3,
+            Key.D4 or Key.NumPad4 => 4,
+            Key.D5 or Key.NumPad5 => 5,
+            Key.D6 or Key.NumPad6 => 6,
+            Key.D7 or Key.NumPad7 => 7,
+            Key.D8 or Key.NumPad8 => 8,
+            Key.D9 or Key.NumPad9 => 9,
+            _ => (int?)null,
+        };
+
+        if (slot is not { } slotNumber)
+        {
+            return;
+        }
+
+        vm.ReadyRack.RecallSlotCommand.Execute(slotNumber);
+        e.Handled = true;
+    }
 }
