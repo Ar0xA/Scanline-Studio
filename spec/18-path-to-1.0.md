@@ -167,9 +167,13 @@ superseded.
       (`TxControlsPaneViewModel.cs:850`), so switching TX mode mid-edit re-applies those same
       coordinates against the NEW mode's aspect (`:965-967`) — stale whenever the two modes' aspect
       ratios differ. Not a regression (pre-fix those coordinates were wrong at both modes), but the
-      composition-across-modes comments at `:74-75`/`:948-950` now overclaim. Fix needs `EditState`
-      to carry raw (un-projected) positions + `CropRect` + `PreserveAspect`, re-projected fresh at
-      the new mode via a shared helper.
+      composition-across-modes comments at `:74-75`/`:948-950` now overclaim. **Update (commit
+      `faeef61`)**: `EditState` now ALSO carries the raw (un-projected) positions
+      (`RawOverlay`, added for the re-open/re-edit sub-piece below) — the data this fix needs
+      already exists, but `OnSelectedModeChanged`'s own reflow was deliberately left unchanged
+      (still reads the crop-projected `Overlay`, per that sub-piece's own explicit scope
+      boundary). Wiring `RawOverlay` + a fresh `ProjectToCropRelative`-equivalent into the reflow
+      closes this for good — now a small, well-scoped fix, not a research question.
   - ✅ **DONE** (commit `bcf8504`): 6 brightness/contrast/saturation/gamma/sharpen/denoise sliders implemented (not
     removed) against a new `ITransmitImagePreparer.ApplyAdjustments` — real ImageSharp-backed
     Brightness/Contrast/Saturate + a hand-rolled gamma curve (ImageSharp has no `GammaCorrection`
@@ -177,8 +181,12 @@ superseded.
     ApplyOverlay so adjustments never touch already-burned-in overlay text. Real-window verified
     (Brightness slider dragged in the running app; side preview panel's pixel values measurably
     brightened).
-  - Remaining: no way to re-open/re-edit an image after Apply (`Applied`/`Cancelled` both null
-    `ActiveEditor`, no Edit button exists — `MainViewModel.cs:72-73`); no undo/redo.
+  - ✅ **DONE** (commit `faeef61`): "Edit..." button re-opens the TX image editor after Apply,
+    restoring crop/preserve-aspect/adjustments AND overlay text (with its raw macro template
+    intact, not the baked-in resolved value) via a new `EditorInitialState`/`RawOverlayElements`
+    mechanism. Real-window verified (Brightness=44 + a non-default crop survived a full
+    Apply→Edit round trip).
+  - Remaining: no undo/redo — the largest sub-piece, deliberately saved for last.
 - Waterfall range caption is a stale literal ("1000…2600 Hz," `MainWindow.axaml:376-378`,
   `en.json:118`) that silently lies once the real Start/Span steppers are touched; those same
   steppers only window the spectrum half, not the waterfall (`WaterfallControl.cs:25-32` has no
