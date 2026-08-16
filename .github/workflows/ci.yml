@@ -49,3 +49,73 @@ jobs:
 
       - name: Test
         run: dotnet test ScanlineStudio.sln --no-build --configuration Release /p:Platform="Any CPU" --logger "console;verbosity=normal"
+
+  coverage:
+    name: Coverage gate
+    runs-on: ubuntu-latest
+    # spec/13-testing.md:25,56's >=80%-per-project coverage requirement, enforced against
+    # coverage-thresholds.json by scripts/check-coverage.py -- see that file's own "_comment" for
+    # the full reproduction recipe and spec/18-path-to-1.0.md's CI-coverage-gate item for how the
+    # per-project threshold values were chosen. Deliberately a SEPARATE job from build-and-test
+    # above, on ubuntu-latest ONLY, not folded into that 3-OS matrix: coverage instrumentation
+    # overhead varies enough by platform-conditional code (ScanlineStudio.Core.Audio.MiniAudio's
+    # per-OS native-shim build targets, ScanlineStudio.Core.Radio.Hamlib's P/Invoke wrapper) that
+    # the SAME threshold enforced on Windows/macOS could spuriously fail against numbers measured
+    # on Linux; keeping this on one OS avoids that, and keeps the fast 3-OS matrix job fast.
+    # Code-review finding: 30min budgets the whole job (restore+build all 16 projects, plus 7
+    # instrumented test runs) against a 14s-3m9s per-project range measured on a ~20-core dev
+    # machine -- a standard 2-core GitHub-hosted runner could plausibly land close to that on its
+    # own. No default exists otherwise (GitHub's own default is 6 hours).
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # No /p:Platform="Any CPU" here (unlike build-and-test above) -- that override exists
+      # specifically to counter an ambient Platform=x64 env var msvc-dev-cmd sets on Windows
+      # runners (see build-and-test's own comment on its Restore step); this job runs on
+      # ubuntu-latest only and never runs that step, so the override doesn't apply, and real
+      # end-to-end local testing (this project's own established verification practice) found it
+      # actively BREAKS a per-project --no-build invocation here: it changes the resolved output
+      # path to bin/Any CPU/Release/net8.0/ (a literal "Any CPU" folder, not the plain
+      # bin/Release/net8.0/ the earlier solution-level build actually wrote to), and dotnet test
+      # then fails with "The argument ...Any CPU/.../Foo.Tests.dll is invalid" -- confirmed by
+      # reproducing the exact failure, then confirming it disappears once this flag is dropped.
+      - name: Restore
+        run: dotnet restore ScanlineStudio.sln /p:Configuration=Release
+
+      - name: Build (warnings as errors)
+        run: dotnet build ScanlineStudio.sln --no-restore --configuration Release
+
+      # One dotnet test invocation PER in-scope test project, not a single solution-wide
+      # `dotnet test ScanlineStudio.sln --collect`, and ScanlineStudio.Core.Sstv.Tests is
+      # deliberately NOT in this list at all -- see coverage-thresholds.json's "excluded" entry
+      # for why (a solution-wide invocation would still build and launch that project's test host,
+      # paying its cost-prohibitive instrumentation overhead for a result the gate then ignores).
+      # ScanlineStudio.Core.Radio.Tests alone produces per-package reports for FOUR gated modules
+      # (Core.Radio, Core.Radio.Cat, Core.Radio.Hamlib, Core.Radio.Rigctld -- the latter three have
+      # no dedicated test project of their own), so 7 invocations cover all 10 gated modules.
+      - name: Test with coverage collection
+        run: |
+          set -e
+          for project in \
+            tests/ScanlineStudio.Application.Tests \
+            tests/ScanlineStudio.Core.Audio.Tests \
+            tests/ScanlineStudio.Core.Audio.MiniAudio.Tests \
+            tests/ScanlineStudio.Core.Imaging.Tests \
+            tests/ScanlineStudio.Core.Localization.Tests \
+            tests/ScanlineStudio.Core.Logbook.Tests \
+            tests/ScanlineStudio.Core.Radio.Tests \
+          ; do
+            dotnet test "$project" --no-build --configuration Release \
+              --collect:"XPlat Code Coverage" --results-directory ./coverage-results \
+              --logger "console;verbosity=normal"
+          done
+
+      - name: Check coverage gate
+        run: python3 scripts/check-coverage.py ./coverage-results
