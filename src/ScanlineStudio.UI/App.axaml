@@ -26,6 +26,16 @@
 
     <Application.Styles>
         <FluentTheme />
+        <!-- Real-window code-review finding (Phase 4, spec/15-template-designer.md): referencing
+             FluentTheme alone does NOT register Avalonia.Controls.ColorPicker's own control themes
+             (a separate NuGet package with its own theme resource bundle) — without this include,
+             every ColorPicker/ColorView instance resolves Template=null/Theme=null and renders as an
+             invisible, zero-DesiredSize control (confirmed via Avalonia DevTools against a real
+             running window: Bounds had layout space from its parent Grid column, but DesiredSize was
+             exactly 0,0). Source path confirmed by inspecting the installed package's own embedded
+             resource names (`avares://Avalonia.Controls.ColorPicker/Themes/Fluent/Fluent.xaml`),
+             not assumed from general Avalonia documentation. -->
+        <StyleInclude Source="avares://Avalonia.Controls.ColorPicker/Themes/Fluent/Fluent.xaml" />
         <!-- "Industry" design system (mockups/guidance/LAYOUT-SPEC.md) — the only design system in
              the app as of Phase 7 of the UI redesign. The old "Aesthetic Directive" trio
              (Tokens.axaml/Cards.axaml/ChromeOverrides.axaml) and the DataGrid theme it needed

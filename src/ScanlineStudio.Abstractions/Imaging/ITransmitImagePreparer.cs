@@ -86,8 +86,17 @@ public abstract record TemplateElement(NormalizedRect Bounds, int Z);
 /// already fully resolved. Text is always drawn single-line, shrunk to fit
 /// <see cref="TemplateElement.Bounds"/> (down to an implementation-defined minimum size, below
 /// which it's clipped to <see cref="TemplateElement.Bounds"/> rather than overflowing), centered
-/// within it — matches <see cref="ImageOverlayElement"/>'s own center-anchor precedent.</summary>
-public sealed record TemplateTextElement(NormalizedRect Bounds, int Z, string Content, FontSpec Font, Rgb24 Color)
+/// within it — matches <see cref="ImageOverlayElement"/>'s own center-anchor precedent.
+/// <paramref name="StrokeColor"/> null means no outline (matches <see cref="TemplateBoxElement.BorderColor"/>'s
+/// own null-means-none convention) — Phase 4 (spec/15-template-designer.md, user-requested
+/// legibility mechanism for text against varying backgrounds). <paramref name="StrokeThickness"/>
+/// is relative to the target image's HEIGHT, same convention as <see cref="FontSpec.Size"/>/
+/// <see cref="TemplateBoxElement.BorderThickness"/>. No drop-shadow fields here — deliberately
+/// NOT staged for a later phase (Phase 0's own precedent: "add later if actually wanted, not
+/// speculatively now" — see the Phase 4 plan's own note on this).</summary>
+public sealed record TemplateTextElement(
+    NormalizedRect Bounds, int Z, string Content, FontSpec Font, Rgb24 Color,
+    Rgb24? StrokeColor = null, double StrokeThickness = 0)
     : TemplateElement(Bounds, Z);
 
 /// <summary><paramref name="Source"/> is an already-resolved <see cref="IImageSource"/>, not a
@@ -175,8 +184,24 @@ public interface ITransmitImagePreparer
     /// <c>ScanlineStudio.Abstractions</c> so the UI project never references the concrete package"
     /// reasoning as this whole file). Plain pixel dimensions, not a UI-framework size type — this
     /// project deliberately never references Avalonia types from
-    /// <c>ScanlineStudio.Abstractions</c> either.</summary>
-    double MeasureFittedFontSize(string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx);
+    /// <c>ScanlineStudio.Abstractions</c> either. <paramref name="strokeThicknessRelative"/>
+    /// (Phase 4, default 0) mirrors <see cref="TemplateTextElement.StrokeThickness"/>'s own
+    /// image-height-relative convention — a stroked glyph's ink grows past what
+    /// <c>TextMeasurer.MeasureSize</c> alone reports, so callers that render a stroke MUST pass
+    /// this or the canvas-side fitted size will disagree with what <see cref="ApplyTemplate"/>
+    /// actually renders (Phase 4 plan-review blocker: this is exactly the kind of silent
+    /// canvas/pipeline desync this method exists to prevent in the first place). Pass 0 (the
+    /// default) when the element has no stroke.</summary>
+    double MeasureFittedFontSize(
+        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0);
+
+    /// <summary>Font family names available for <see cref="FontSpec.Family"/>/
+    /// <see cref="TemplateTextElement.Font"/> — the TX template editor's font-family picker's
+    /// ItemsSource, so the UI layer doesn't need to hardcode what's actually bundled (Phase 4).
+    /// First entry is the default/fallback family <see cref="ApplyTemplate"/> uses when a
+    /// requested family isn't found — mirrors the existing <c>AvailableModes</c>
+    /// (SSTV mode picker) pattern.</summary>
+    IReadOnlyList<string> AvailableFontFamilies { get; }
 
     /// <summary>Rotates 90° clockwise, always -- no direction parameter. Matches the TX image
     /// editor's single-button UX (4 clicks returns to the original orientation); width/height are

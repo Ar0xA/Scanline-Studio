@@ -17,13 +17,30 @@ namespace ScanlineStudio.Core.Imaging;
 /// <c>Rgb24</c> types).</summary>
 public sealed class TransmitImagePreparer : ITransmitImagePreparer
 {
-    private readonly FontFamily _fontFamily;
+    private readonly FontCollection _fontCollection;
+    private readonly FontFamily _defaultFontFamily;
+
+    /// <summary>Phase 4 (spec/15-template-designer.md, "small bundled set that renders identically
+    /// everywhere") -- first entry is the default/fallback family, matching
+    /// <see cref="ResolveFontFamily"/>'s own fallback. Barlow is vendored a SECOND time into this
+    /// pipeline's own <c>assets/fonts/</c> tree (alongside its existing UI-chrome copy under
+    /// <c>src/ScanlineStudio.UI/Assets/Fonts/</c>) -- this project has zero Avalonia reference and
+    /// loads fonts by filesystem path, so the UI's own <c>avares://</c>-embedded copy isn't
+    /// reachable here (Phase 4 plan-review correction; see LICENSES.md's Barlow entry for the
+    /// dual-vendoring rationale, same precedent DejaVu Sans Mono already established).</summary>
+    public IReadOnlyList<string> AvailableFontFamilies { get; }
 
     public TransmitImagePreparer(string? fontFilePath = null)
     {
         var path = fontFilePath ?? Path.Combine(AppContext.BaseDirectory, "assets", "fonts", "DejaVuSansMono.ttf");
-        var collection = new FontCollection();
-        _fontFamily = collection.Add(path, System.Globalization.CultureInfo.InvariantCulture);
+        var fontDirectory = Path.GetDirectoryName(path) ?? AppContext.BaseDirectory;
+        _fontCollection = new FontCollection();
+        _defaultFontFamily = _fontCollection.Add(path, System.Globalization.CultureInfo.InvariantCulture);
+
+        var barlowPath = Path.Combine(fontDirectory, "Barlow", "Barlow-Regular.ttf");
+        var barlowFamily = _fontCollection.Add(barlowPath, System.Globalization.CultureInfo.InvariantCulture);
+
+        AvailableFontFamilies = [_defaultFontFamily.Name, barlowFamily.Name];
     }
 
     public IImageSource Crop(IImageSource source, NormalizedRect region)
@@ -167,7 +184,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             // hintingMode: null -- leaves TextOptions.HintingMode at its own pre-refactor default,
             // never touched by this call site (code-review round-1 finding: this must stay
             // completely unchanged from before the refactor, unlike DrawTemplateText's call below).
-            DrawGlyphs(image, element.Text, _fontFamily, fontSize, origin, element.Color, wrappingLength: source.Width, clip: null, hintingMode: null);
+            DrawGlyphs(image, element.Text, _defaultFontFamily, fontSize, origin, element.Color, wrappingLength: source.Width, clip: null, hintingMode: null);
         }
 
         return FromImageSharp(image);
@@ -218,13 +235,45 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         return FromImageSharp(image);
     }
 
-    public double MeasureFittedFontSize(string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx)
+    public double MeasureFittedFontSize(
+        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0)
     {
         var fontFamily = ResolveFontFamily(font.Family);
         var startingSizePx = MathF.Max((float)(font.Size * imageHeightPx), MinFontSizePx);
-        var boundedWidth = Math.Max(1, boundsWidthPx);
-        var boundedHeight = Math.Max(1, boundsHeightPx);
+        var strokeThicknessPx = (float)(strokeThicknessRelative * imageHeightPx);
+        var (boundedWidth, boundedHeight) = ShrinkFitBoxForStroke(boundsWidthPx, boundsHeightPx, strokeThicknessPx);
         return ComputeFittedFontSizePx(text, fontFamily, startingSizePx, MinFontSizePx, boundedWidth, boundedHeight);
+    }
+
+    /// <summary>Shared by <see cref="MeasureFittedFontSize"/> (canvas-side) and
+    /// <see cref="DrawTemplateText"/> (real pipeline) -- Phase 4 plan-review blocker: these two
+    /// MUST apply the identical stroke-allowance correction or the canvas silently desyncs from
+    /// the transmitted image (exactly the failure mode <see cref="MeasureFittedFontSize"/> exists
+    /// to prevent in general). Extracted into one method, not two independently-maintained copies
+    /// of the same arithmetic, specifically so they cannot drift apart.
+    /// <para>Why the shrink is needed: a <see cref="SixLabors.ImageSharp.Drawing.Processing.Pen"/>-
+    /// stroked glyph grows ink by <paramref name="strokeThicknessPx"/>/2 per side past whatever
+    /// <c>TextMeasurer.MeasureSize</c> reports for the fill alone -- without this correction the
+    /// fit search can pick a font size whose stroke ink extends past <c>Bounds</c>. In practice
+    /// that ink gets silently CLIPPED at the render-time clip rect (confirmed empirically: a
+    /// direct pixel dump showed zero stroke pixels ever land outside <c>Bounds</c> with or without
+    /// this correction, since <see cref="DrawTemplateText"/>'s clip is unconditional) rather than
+    /// visibly bleeding into the surrounding image -- so the observable defect is an
+    /// asymmetrically-clipped/incomplete-looking outline, not out-of-bounds pixels. This method's
+    /// own effect is verified directly (the returned FITTED SIZE shrinks with a stroke present),
+    /// not via a pixel-bleed assertion that the clip makes structurally unable to fail.</para></summary>
+    private static (int Width, int Height) ShrinkFitBoxForStroke(int boundsWidthPx, int boundsHeightPx, float strokeThicknessPx)
+    {
+        // Code-review finding: a negative strokeThicknessPx (nothing upstream validates the
+        // TextBox-bound StrokeThickness VM property) would GROW the fit box instead of shrinking
+        // it -- ComputeFittedFontSizePx then picks a size larger than Bounds, DrawGlyphs's own
+        // `strokeThicknessPx > 0` gate means no outline gets drawn to fill that extra allowance
+        // either, and the result is silently hard-clipped, oversized transmitted text with no
+        // outline. Clamped here (the one shared call path both sides use) rather than at each of
+        // the VM/AXAML boundary, so this can't regress if a future caller reaches this method a
+        // different way.
+        var strokeThicknessPxRounded = Math.Max(0, (int)MathF.Round(strokeThicknessPx));
+        return (Math.Max(1, boundsWidthPx - strokeThicknessPxRounded), Math.Max(1, boundsHeightPx - strokeThicknessPxRounded));
     }
 
     private void DrawTemplateText(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateTextElement element, PixelBounds bounds, int imageHeightPx)
@@ -233,7 +282,10 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var startingSizePx = MathF.Max((float)(element.Font.Size * imageHeightPx), MinFontSizePx);
         var boundsWidthPx = Math.Max(1, (int)MathF.Round(bounds.Width));
         var boundsHeightPx = Math.Max(1, (int)MathF.Round(bounds.Height));
-        var fittedSizePx = ComputeFittedFontSizePx(element.Content, fontFamily, startingSizePx, MinFontSizePx, boundsWidthPx, boundsHeightPx);
+
+        var strokeThicknessPx = element.StrokeColor is { } ? (float)(element.StrokeThickness * imageHeightPx) : 0f;
+        var (fitWidthPx, fitHeightPx) = ShrinkFitBoxForStroke(boundsWidthPx, boundsHeightPx, strokeThicknessPx);
+        var fittedSizePx = ComputeFittedFontSizePx(element.Content, fontFamily, startingSizePx, MinFontSizePx, fitWidthPx, fitHeightPx);
 
         var origin = new PointF(bounds.X + (bounds.Width / 2f), bounds.Y + (bounds.Height / 2f));
 
@@ -241,14 +293,17 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         // out at MinFontSizePx and the text STILL not fit Bounds -- clip to Bounds rather than
         // overflow or ellipsize. Clipping unconditionally (not just in the overflow case) is both
         // simpler and correct: when text already fits, nothing is outside the clip region, so it's
-        // a no-op.
+        // a no-op. Deliberately still exactly Bounds (not widened for the stroke) -- the fit-box
+        // shrink above is what keeps stroke ink inside this same clip rect.
         var clip = new SixLabors.ImageSharp.Drawing.RectangularPolygon(bounds.X, bounds.Y, bounds.Width, bounds.Height);
         // hintingMode: HintingMode.None -- code-review round-1 finding: must match
         // ComputeFittedFontSizePx's own measurement HintingMode exactly, or the fitted size this
         // method just computed can render slightly larger/smaller than what was actually measured
         // (hinting's grid-fitting quantization), silently reintroducing the overflow this whole
         // mechanism exists to prevent.
-        DrawGlyphs(image, element.Content, fontFamily, fittedSizePx, origin, element.Color, wrappingLength: -1f, clip, hintingMode: HintingMode.None);
+        DrawGlyphs(
+            image, element.Content, fontFamily, fittedSizePx, origin, element.Color, wrappingLength: -1f, clip, hintingMode: HintingMode.None,
+            element.StrokeColor, strokeThicknessPx);
     }
 
     private void DrawTemplateImage(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateImageElement element, PixelBounds bounds)
@@ -326,10 +381,25 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// passes <see cref="HintingMode.None"/> explicitly instead (code-review round-1 finding: it
     /// MUST match <see cref="ComputeFittedFontSizePx"/>'s own measurement <see cref="HintingMode"/>
     /// exactly, or a fitted size can render larger than what was actually measured).</summary>
+    /// <summary>Phase 4: <paramref name="strokeColor"/>/<paramref name="strokeThicknessPx"/>
+    /// (both optional, default none) add an outline via ImageSharp.Drawing 2.1.7's own
+    /// <c>DrawText(options, text, Brush, Pen)</c> overload -- confirmed present in the installed
+    /// package's own XML docs, not assumed. Deliberately NOT taken when no stroke is requested: the
+    /// no-stroke path keeps calling the plain <c>DrawText(options, text, Rgba32)</c> Color overload
+    /// completely unchanged, so <see cref="ApplyOverlay"/>'s own byte-for-byte behavior (its only
+    /// caller that never passes a stroke) stays untouched by this addition. A <see cref="Pen"/>
+    /// CENTERS its stroke on the glyph outline (grows ink by half the pen width on each side) --
+    /// deliberately NOT inset the way <see cref="DrawTemplateBox"/>'s own border fix insets a box's
+    /// stroke: outward growth is exactly what a legible text outline is supposed to look like;
+    /// insetting it would shrink the glyph itself. <see cref="DrawTemplateText"/>'s own caller is
+    /// responsible for shrinking the FIT BOX by the stroke width before calling this (a different,
+    /// separate correction from the no-inset decision here -- see that method's own doc
+    /// comment).</summary>
     private static void DrawGlyphs(
         Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, string text, FontFamily fontFamily, float fontSizePx, PointF origin,
         Abstractions.Imaging.Rgb24 color,
-        float wrappingLength, SixLabors.ImageSharp.Drawing.RectangularPolygon? clip, HintingMode? hintingMode)
+        float wrappingLength, SixLabors.ImageSharp.Drawing.RectangularPolygon? clip, HintingMode? hintingMode,
+        Abstractions.Imaging.Rgb24? strokeColor = null, float strokeThicknessPx = 0)
     {
         var font = fontFamily.CreateFont(fontSizePx);
         var rgba = new Rgba32(color.R, color.G, color.B, 255);
@@ -346,13 +416,26 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             options.HintingMode = mode;
         }
 
+        void Render(IImageProcessingContext ctx)
+        {
+            if (strokeColor is { } stroke && strokeThicknessPx > 0)
+            {
+                var strokeRgba = new Rgba32(stroke.R, stroke.G, stroke.B, 255);
+                ctx.DrawText(options, text, Brushes.Solid(rgba), Pens.Solid(strokeRgba, strokeThicknessPx));
+            }
+            else
+            {
+                ctx.DrawText(options, text, rgba);
+            }
+        }
+
         if (clip is { } clipPath)
         {
-            image.Mutate(ctx => ctx.Clip(clipPath, inner => inner.DrawText(options, text, rgba)));
+            image.Mutate(ctx => ctx.Clip(clipPath, Render));
         }
         else
         {
-            image.Mutate(ctx => ctx.DrawText(options, text, rgba));
+            image.Mutate(Render);
         }
     }
 
@@ -421,13 +504,17 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         return low;
     }
 
-    /// <summary>Always returns the single bundled font family regardless of
-    /// <paramref name="family"/> -- <see cref="TransmitImagePreparer"/> loads exactly one bundled
-    /// font today (constructor), so any requested family (including an unknown/unavailable one)
-    /// falls back to it. Stated Phase 0 fallback behavior, not yet a real per-family lookup -- a
-    /// real bundled cross-platform font SET is a tracked open question
-    /// (spec/15-template-designer.md's font-portability functional-scope item, Phase 4).</summary>
-    private FontFamily ResolveFontFamily(string family) => _fontFamily;
+    /// <summary>Phase 4: a real per-family lookup against <see cref="_fontCollection"/> (both
+    /// bundled families, see <see cref="AvailableFontFamilies"/>), falling back to
+    /// <see cref="_defaultFontFamily"/> on a miss (unknown/unavailable family, or an empty string
+    /// from a pre-Phase-4 call site that never set one). <c>CultureInfo.InvariantCulture</c>
+    /// explicitly, matching the constructor's own <c>Add</c> calls -- <see cref="FontCollection"/>
+    /// indexes by culture, so a mismatched culture argument would silently miss even a family that
+    /// really is loaded.</summary>
+    private FontFamily ResolveFontFamily(string family) =>
+        !string.IsNullOrEmpty(family) && _fontCollection.TryGet(family, System.Globalization.CultureInfo.InvariantCulture, out var found)
+            ? found
+            : _defaultFontFamily;
 
     private static PixelBounds ToPixelBounds(NormalizedRect bounds, int imageWidth, int imageHeight) => new(
         (float)(bounds.X * imageWidth), (float)(bounds.Y * imageHeight),

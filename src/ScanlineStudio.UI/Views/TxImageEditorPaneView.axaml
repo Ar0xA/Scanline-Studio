@@ -349,9 +349,18 @@
                                                     Background="#33FFFFFF"
                                                     BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
                                                     PointerPressed="OnOverlayElementPointerPressed">
+                                                <!-- Phase 4: FontFamily now bound to the element's own
+                                                     selected family (was hardcoded IndustryMonoFontFamily)
+                                                     via PipelineFontFamilyNameConverter, mapping the
+                                                     pipeline's plain family name to the matching bundled
+                                                     avares:// resource. Stroke is NOT shown here (Avalonia's
+                                                     plain TextBlock has no outline capability) — a stated,
+                                                     accepted scope decision (Phase 4 plan-review finding),
+                                                     not a silent gap; the mini-preview (real ApplyTemplate
+                                                     pipeline) shows the actual stroked result. -->
                                                 <TextBlock Text="{Binding ResolvedText}"
                                                            FontSize="{Binding CanvasFontSize}"
-                                                           FontFamily="{StaticResource IndustryMonoFontFamily}"
+                                                           FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
                                                            Foreground="{Binding Color, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center"
                                                            TextWrapping="NoWrap"
@@ -669,28 +678,57 @@
                         </StackPanel>
                     </HeaderedContentControl>
 
-                    <!-- Mock2 scaffolding: text style (literal, applies to the selected overlay
-                         element; no selection-tracking exists yet so nothing to bind to). 0.9-beta
-                         pass: disabled + NotImplemented-tooltipped per-row, since these literal
-                         values (font/size, fill/stroke, plate %) read as live style state for the
-                         selected overlay element but nothing tracks a selection to apply them to. -->
+                    <!-- Phase 4 (spec/15-template-designer.md): real, selection-tracking-driven
+                         controls replacing the 3 fake rows above (font/size, fill/stroke, plate).
+                         Bound via path bindings through SelectedTextElement (a computed property on
+                         THIS view's own DataContext, narrowed from SelectedOverlayElement) rather
+                         than a nested DataContext override — keeps every control reachable via a
+                         plain path binding, no $parent/DataContext-override complexity to fight the
+                         "$parent[ItemsControl].((vm:Type)DataContext)..." binding-path crash this
+                         codebase has already hit elsewhere (see ITemplateElementViewModel.RemoveCommand's
+                         own doc comment) — not the same shape here (this isn't inside an
+                         ItemsControl DataTemplate), but the same simpler-binding preference applies. -->
                     <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.TextStyleHeader}" />
                         </HeaderedContentControl.Header>
                         <StackPanel Classes="Industry IndustryRows">
-                            <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
-                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontSizeLabel}" />
-                                <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.FontSizeValue}" />
-                            </Grid></Border>
-                            <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
-                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FillStrokeLabel}" />
-                                <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.FillStrokeValue}" />
-                            </Grid></Border>
-                            <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
-                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.PlateLabel}" />
-                                <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.PlateValue}" />
-                            </Grid></Border>
+                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoTextSelected}"
+                                       IsVisible="{Binding SelectedTextElement, Converter={x:Static ObjectConverters.IsNull}}" />
+                            <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
+                                        IsVisible="{Binding SelectedTextElement, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontFamilyLabel}" />
+                                    <ComboBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch"
+                                              ItemsSource="{Binding AvailableFontFamilies}"
+                                              SelectedItem="{Binding SelectedTextElement.FontFamily}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontSizeLabel}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                             Text="{Binding SelectedTextElement.FontSizeRelative}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FillColorLabel}" />
+                                    <ColorPicker Grid.Column="1" HorizontalAlignment="Right"
+                                                 Color="{Binding SelectedTextElement.Color, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
+                                    <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.OutlineLabel}"
+                                              IsChecked="{Binding SelectedTextElement.HasStroke}" />
+                                    <ColorPicker Grid.Column="2" HorizontalAlignment="Right"
+                                                 IsEnabled="{Binding SelectedTextElement.HasStroke}"
+                                                 Color="{Binding SelectedTextElement.StrokeColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.HasStroke}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.OutlineThicknessLabel}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                             Text="{Binding SelectedTextElement.StrokeThickness}" />
+                                </Grid></Border>
+                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.AddPlate}"
+                                        Command="{Binding AddPlateBehindTextCommand}" />
+                            </StackPanel>
                         </StackPanel>
                     </HeaderedContentControl>
 

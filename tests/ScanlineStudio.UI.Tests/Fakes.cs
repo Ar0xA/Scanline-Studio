@@ -603,8 +603,14 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
         return new ArrayImageSource(existingBase.Width, existingBase.Height, new Rgb24[existingBase.Width * existingBase.Height]);
     }
 
-    public double MeasureFittedFontSize(string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx)
+    public double MeasureFittedFontSize(
+        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0)
         => font.Size * imageHeightPx;
+
+    // Phase 4: two plain names, no real font loading -- this fake never touches SixLabors.Fonts, so
+    // there's nothing to resolve; the VM/AXAML layer only needs a real, non-empty list to populate
+    // the font-family picker's ItemsSource against.
+    public IReadOnlyList<string> AvailableFontFamilies { get; } = ["DejaVu Sans Mono", "Barlow"];
 }
 
 internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore

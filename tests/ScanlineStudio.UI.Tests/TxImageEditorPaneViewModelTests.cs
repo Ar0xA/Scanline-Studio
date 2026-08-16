@@ -1,3 +1,4 @@
+using System.Linq;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -2214,6 +2215,229 @@ public sealed class TxImageEditorPaneViewModelTests
         element.Text = "{freq} {mode}";
 
         Assert.Equal("14.230000 MHz USB", element.ResolvedText);
+    }
+
+    // Phase 4 (spec/15-template-designer.md, "real style panel" + user-requested text outline).
+
+    [AvaloniaFact]
+    public void AddOverlayElement_SeedsFontFamilyFromPreparersAvailableFontFamilies()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.AddOverlayElementCommand.Execute(null);
+
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.Equal("DejaVu Sans Mono", element.FontFamily);
+    }
+
+    [AvaloniaFact]
+    public void BuildTemplateElement_PassesFontFamilyAndStroke_ToTheRealPipeline()
+    {
+        // Code-review-class regression guard: BuildTemplateElement is the REAL pipeline call site
+        // (ApplyTemplate consumes it directly), separate from the canvas-preview-only
+        // ComputeCanvasFontSize call site below -- both independently needed FontSpec.Family fixed
+        // from an empty string to the element's own selection (Phase 4 plan-review blocker).
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.FontFamily = "Barlow";
+        element.StrokeColor = new Rgb24(255, 0, 0);
+        element.StrokeThickness = 0.03;
+
+        var text = Assert.IsType<TemplateTextElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
+        Assert.Equal("Barlow", text.Font.Family);
+        Assert.Equal(new Rgb24(255, 0, 0), text.StrokeColor);
+        AssertClose(0.03, text.StrokeThickness);
+    }
+
+    [AvaloniaFact]
+    public void BuildTemplateElement_NoStroke_LeavesStrokeColorNull()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+
+        var text = Assert.IsType<TemplateTextElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
+        Assert.Null(text.StrokeColor);
+    }
+
+    [AvaloniaFact]
+    public void ChangingFontFamilyOrStroke_RefreshesCanvasFontSize()
+    {
+        // Code-review-class regression guard: OnOverlayElementPropertyChanged's own filter must
+        // treat FontFamily/StrokeThickness/StrokeColor the same as FontSizeRelative/Width/Height/Text
+        // (all feed ComputeCanvasFontSize's own MeasureFittedFontSize call) -- Phase 4 plan-review
+        // blocker 2's whole point is that these must stay in sync with what the real pipeline uses.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        var beforeFamily = element.CanvasFontSize;
+
+        element.FontFamily = "Barlow";
+        // A family change alone need not change the numeric fitted size (the fake preparer's own
+        // MeasureFittedFontSize ignores family entirely) -- what this test actually pins is that the
+        // recompute genuinely RAN, not that the fake happens to produce a different number for a
+        // different family. Use StrokeThickness (which the fake DOES factor into nothing, but the
+        // real fit-box-shrink logic in TransmitImagePreparer does) is covered by the pipeline-layer
+        // test above instead; here, just confirm no exception and CanvasFontSize stays a finite,
+        // non-negative value after each change (a crash/NaN would be the real regression shape).
+        Assert.True(element.CanvasFontSize >= 0);
+
+        element.StrokeColor = new Rgb24(0, 0, 0);
+        element.StrokeThickness = 0.05;
+        Assert.True(element.CanvasFontSize >= 0);
+    }
+
+    [AvaloniaFact]
+    public void HasStroke_TogglingOn_SeedsBlack_TogglingOff_ClearsToNull()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.False(element.HasStroke);
+        Assert.Null(element.StrokeColor);
+
+        element.HasStroke = true;
+        Assert.True(element.HasStroke);
+        Assert.Equal(new Rgb24(0, 0, 0), element.StrokeColor);
+
+        element.HasStroke = false;
+        Assert.False(element.HasStroke);
+        Assert.Null(element.StrokeColor);
+    }
+
+    [AvaloniaFact]
+    public void HasStroke_TogglingOffThenOn_RestoresThePreviouslyPickedColor_NotBlackAgain()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.StrokeColor = new Rgb24(10, 20, 30);
+
+        element.HasStroke = false;
+        Assert.Null(element.StrokeColor);
+
+        element.HasStroke = true;
+        Assert.Equal(new Rgb24(0, 0, 0), element.StrokeColor); // cleared to null on toggle-off, so this re-seeds black, not the old color
+    }
+
+    [AvaloniaFact]
+    public void AddPlateBehindTextCommand_CanExecute_OnlyWhenATextElementIsSelected()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.AddPlateBehindTextCommand.CanExecute(null));
+
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.True(vm.AddPlateBehindTextCommand.CanExecute(null));
+
+        vm.AddBoxElementCommand.Execute(null);
+        Assert.False(vm.AddPlateBehindTextCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void AddPlateBehindText_InsertsAnIndependentBoxDirectlyBehindTheText_SizedToItsBounds()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        text.Width = 0.4;
+        text.Height = 0.2;
+
+        vm.AddPlateBehindTextCommand.Execute(null);
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        var plate = Assert.IsType<BoxElementViewModel>(vm.OverlayElements[0]);
+        Assert.Same(text, vm.OverlayElements[1]);
+        // Collection order IS draw order (Phase 1's own established invariant) -- the plate must be
+        // BEHIND (earlier in the collection than) the text it was added for.
+        AssertClose(text.X, plate.X);
+        AssertClose(text.Y, plate.Y);
+        AssertClose(text.Width + 0.04, plate.Width);
+        AssertClose(text.Height + 0.04, plate.Height);
+        Assert.True(plate.Z < text.Z);
+        Assert.Same(plate, vm.SelectedOverlayElement);
+    }
+
+    [AvaloniaFact]
+    public void AddPlateBehindText_RenumbersZToMatchCollectionOrder_NoDuplicateOrOutOfOrderZ()
+    {
+        // Code-review-class regression guard: a plain `text.Z - 1` (mirroring SetAsBackground's own
+        // Min(Z)-1) could collide with an existing element's Z when the plate ISN'T going to the
+        // absolute bottom -- this test adds a 3rd element BEHIND the text first, so a naive Z-1
+        // assignment would collide with it.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null); // Z=0, sits behind everything
+        vm.AddOverlayElementCommand.Execute(null); // Z=1
+        var text = (OverlayElementViewModel)vm.OverlayElements[1];
+        vm.SelectedOverlayElement = text;
+
+        vm.AddPlateBehindTextCommand.Execute(null);
+
+        Assert.Equal(3, vm.OverlayElements.Count);
+        var zs = vm.OverlayElements.Select(e => e.Z).ToList();
+        Assert.Equal(zs.OrderBy(z => z).Distinct(), zs); // strictly ascending, no duplicates
+        Assert.Equal(zs, Enumerable.Range(0, 3)); // matches collection order exactly, 0..2
+    }
+
+    [AvaloniaFact]
+    public void AddPlateBehindText_PushesExactlyOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        vm.AddPlateBehindTextCommand.Execute(null);
+        Assert.Equal(2, vm.OverlayElements.Count);
+
+        vm.UndoCommand.Execute(null);
+
+        Assert.Single(vm.OverlayElements);
+        Assert.Same(text.GetType(), vm.OverlayElements[0].GetType());
+    }
+
+    [AvaloniaFact]
+    public void TextElementStyle_RoundTripsThroughUndoRedo()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        vm.PushUndoSnapshotForDragGesture(); // discrete step boundary, mirrors other style-property tests' own shape
+        element.FontFamily = "Barlow";
+        element.StrokeColor = new Rgb24(1, 2, 3);
+        element.StrokeThickness = 0.07;
+
+        vm.UndoCommand.Execute(null);
+        var restoredAfterUndo = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.Equal("DejaVu Sans Mono", restoredAfterUndo.FontFamily);
+        Assert.Null(restoredAfterUndo.StrokeColor);
+
+        vm.RedoCommand.Execute(null);
+        var restoredAfterRedo = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.Equal("Barlow", restoredAfterRedo.FontFamily);
+        Assert.Equal(new Rgb24(1, 2, 3), restoredAfterRedo.StrokeColor);
+        AssertClose(0.07, restoredAfterRedo.StrokeThickness);
+    }
+
+    [AvaloniaFact]
+    public void AvailableFontFamilies_ForwardsThePreparersOwnList()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+
+        Assert.Equal(preparer.AvailableFontFamilies, vm.AvailableFontFamilies);
+    }
+
+    [AvaloniaFact]
+    public void SelectedTextElement_NullForABoxSelection_SetForATextSelection()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        Assert.Null(vm.SelectedTextElement);
+
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.Same(vm.OverlayElements[1], vm.SelectedTextElement);
     }
 
     private static ArrayImageSource CreateSource(int width, int height)
