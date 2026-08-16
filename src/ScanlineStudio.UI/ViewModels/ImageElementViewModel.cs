@@ -33,6 +33,18 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     [ObservableProperty]
     private bool _locked;
 
+    /// <summary>Set by <see cref="TxImageEditorPaneViewModel.SetAsBackground"/> (Phase 6,
+    /// spec/15-template-designer.md) -- NOT inferred structurally from full-frame bounds (a manual
+    /// drag could coincidentally produce the same bounds without meaning "background"). Combined
+    /// with <see cref="Locked"/> via <see cref="BlocksHitTesting"/> to let a locked background
+    /// element stop intercepting canvas clicks, so the crop rect underneath becomes reachable again
+    /// -- see that property's own doc comment. Persisted (<c>PersistedImageElement.IsBackground</c>)
+    /// unlike most purely-interactive-editing state, because <see cref="Locked"/> already persists
+    /// and leaving this one unpersisted would round-trip a loaded background element into a WORSE
+    /// state than before this phase (locked AND hit-blocking again, with no easy way back).</summary>
+    [ObservableProperty]
+    private bool _isBackground;
+
     [ObservableProperty]
     private IImageSource _source;
 
@@ -72,6 +84,19 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     /// mutated after construction, so this is a plain init property, not an
     /// <c>[ObservableProperty]</c>.</summary>
     public required TxImageEditorPaneViewModel.ImageSourceOrigin Origin { get; init; }
+
+    /// <summary>Phase 6 (spec/15-template-designer.md): only a background element that's ALSO
+    /// locked stops intercepting canvas clicks -- an ordinary locked non-background element keeps
+    /// its existing click-to-select behavior untouched (only drag-start is gated by
+    /// <see cref="Locked"/> in code-behind, same as before this property existed). Unlocking a
+    /// background element restores normal click/drag on it, at the cost of it blocking the crop
+    /// rect underneath again -- an acceptable, discoverable tradeoff since the operator unlocked it
+    /// on purpose.</summary>
+    public bool BlocksHitTesting => Locked && IsBackground;
+
+    partial void OnLockedChanged(bool value) => OnPropertyChanged(nameof(BlocksHitTesting));
+
+    partial void OnIsBackgroundChanged(bool value) => OnPropertyChanged(nameof(BlocksHitTesting));
 
     public double LeftPixels => (X - (Width / 2)) * ImageWidth;
 

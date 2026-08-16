@@ -187,11 +187,71 @@ public partial class TxImageEditorPaneView : UserControl
         return (newWidth, newHeight, appliedDx / 2, appliedDy / 2);
     }
 
+    /// <summary>Phase 6 (spec/15-template-designer.md): snap-ON-DROP, not during the drag itself --
+    /// see <see cref="TxImageEditorPaneViewModel.SnapToGrid"/>'s own doc comment for why continuous
+    /// per-frame snapping is broken against this editor's incremental drag-delta model. Only element
+    /// drags/resizes snap (never the crop rect); a bare click that never moved does nothing extra
+    /// here beyond what already happens.</summary>
     private void OnCanvasPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        if (ViewModel is { SnapToGrid: true } vm && _dragMode is DragMode.Overlay or DragMode.ElementResize
+            && _draggedElement is { Locked: false } element)
+        {
+            var (x, y, width, height) = SnapElementBoundsToGrid(element.X, element.Y, element.Width, element.Height);
+            // Code-review finding: apply as one atomic undo step via the VM, not 4 direct property
+            // assignments here -- see ApplySnappedElementBounds' own doc comment for why 4 separate
+            // assignments would need two Undos to fully revert a snapped drag.
+            vm.ApplySnappedElementBounds(element, x, y, width, height);
+        }
+
         _dragMode = DragMode.None;
         _draggedElement = null;
         e.Pointer.Capture(null);
+    }
+
+    /// <summary>Pure grid-snap math (unit-testable without a real drag, same reasoning as
+    /// <see cref="ComputeElementResize"/> just above) -- computed in EDGE space
+    /// (left/top/right/bottom), NOT by rounding center-X/Y and Width/Height independently
+    /// (plan-review blocker on an earlier draft): elements are center-anchored, so rounding
+    /// center/size separately puts edges on inconsistent half-grid multiples and two differently-
+    /// sized snapped elements never actually align -- the entire point of a snap feature. Each edge
+    /// is rounded to the nearest <paramref name="gridSize"/> line independently, then width/height
+    /// are DERIVED from the snapped edges (not rounded on their own). If that derivation collapses
+    /// width or height below <see cref="MinNormalizedElementSize"/> (a real risk: an element sized
+    /// close to one grid cell can snap both edges to the SAME line), the LEFT/TOP edge is kept fixed
+    /// and the floor is restored by expanding right/down instead -- deterministic and simple, since a
+    /// post-hoc snap (unlike a live resize-from-a-handle) has no "which corner is the user dragging"
+    /// context to prefer a different anchor.</summary>
+    public static (double X, double Y, double Width, double Height) SnapElementBoundsToGrid(
+        double x, double y, double width, double height, double gridSize = 0.05)
+    {
+        var left = Round(x - (width / 2), gridSize);
+        var top = Round(y - (height / 2), gridSize);
+        var right = Round(x + (width / 2), gridSize);
+        var bottom = Round(y + (height / 2), gridSize);
+
+        var newWidth = right - left;
+        if (newWidth < MinNormalizedElementSize)
+        {
+            newWidth = MinNormalizedElementSize;
+            right = left + newWidth;
+        }
+
+        var newHeight = bottom - top;
+        if (newHeight < MinNormalizedElementSize)
+        {
+            newHeight = MinNormalizedElementSize;
+            bottom = top + newHeight;
+        }
+
+        return (left + (newWidth / 2), top + (newHeight / 2), newWidth, newHeight);
+
+        // AwayFromZero, not the default banker's rounding (code-review nit): makes "nearest grid
+        // line" an explicit, stated intent rather than an implicit default. No live effect at the
+        // production gridSize (0.05) -- binary floating point means an exact .5 tie essentially
+        // never occurs there -- but a caller passing an exactly-representable grid (e.g. 0.25) could
+        // otherwise hit a real midpoint tie.
+        static double Round(double value, double step) => Math.Round(value / step, MidpointRounding.AwayFromZero) * step;
     }
 
     /// <summary>Legacy's own real precision mechanism (verified in <c>TxImageEditorPaneViewModel</c>'s
@@ -201,6 +261,18 @@ public partial class TxImageEditorPaneView : UserControl
     {
         if (ViewModel is not { } vm)
         {
+            return;
+        }
+
+        // Phase 6 (spec/15-template-designer.md, plan-review blocker): the ONLY deselect affordance
+        // anywhere in this editor -- SelectedOverlayElement is set on every element click/Add
+        // command and otherwise only cleared on remove/template-load/dispose. Without this, once any
+        // element exists, arrow-key crop-rect nudge (the branch below) becomes permanently
+        // unreachable -- including as the recovery path for item 3's own hit-testing fix.
+        if (e.Key == Key.Escape && vm.SelectedOverlayElement is not null)
+        {
+            vm.SelectedOverlayElement = null;
+            e.Handled = true;
             return;
         }
 
@@ -215,6 +287,17 @@ public partial class TxImageEditorPaneView : UserControl
 
         if (direction is not { } dir)
         {
+            return;
+        }
+
+        // Phase 6: Shift+arrow stays bound to crop-RESIZE unconditionally (plan-review-scoped
+        // decision -- this phase does NOT add an element-resize-by-nudge counterpart, only move).
+        // Plain arrow nudges the selected element instead of the crop rect when one is selected and
+        // unlocked; otherwise falls through to today's crop-rect nudge unchanged.
+        if (!e.KeyModifiers.HasFlag(KeyModifiers.Shift) && vm.SelectedOverlayElement is { Locked: false })
+        {
+            vm.NudgeElement(dir, ctrl: e.KeyModifiers.HasFlag(KeyModifiers.Control));
+            e.Handled = true;
             return;
         }
 
