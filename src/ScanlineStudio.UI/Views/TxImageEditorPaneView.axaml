@@ -234,7 +234,19 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:OverlayElementViewModel">
+                                        <!-- FontSize/FontFamily bound so the canvas chrome actually
+                                             matches what TransmitImagePreparer.ApplyOverlay bakes
+                                             into the transmitted image (spec/18-path-to-1.0.md
+                                             Medium item, overlay-text WYSIWYG). CanvasFontSize is
+                                             computed by the parent VM (not a converter here, since
+                                             it depends on the crop rect, PreserveAspect, and the
+                                             target mode's own dimensions, none of which this
+                                             DataTemplate's own DataContext, the element itself,
+                                             has access to), and IndustryMonoFontFamily is the same
+                                             DejaVu Sans Mono file ApplyOverlay itself loads. -->
                                         <TextBlock Text="{Binding ResolvedText}"
+                                                   FontSize="{Binding CanvasFontSize}"
+                                                   FontFamily="{StaticResource IndustryMonoFontFamily}"
                                                    Foreground="White"
                                                    Background="#66000000"
                                                    Canvas.Left="{Binding LeftPixels}"
