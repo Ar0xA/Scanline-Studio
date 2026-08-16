@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Text.RegularExpressions;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -7,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.UI.Imaging;
@@ -80,9 +82,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// worth carrying across a re-open) or <see cref="Rotate"/>'s own orientation (the retained
     /// <c>Original</c> the caller passes to the constructor already reflects every prior rotate --
     /// see <see cref="CurrentSource"/>'s own doc comment).</summary>
+    /// <summary><paramref name="TemplateVariables"/> is optional (default <see langword="null"/>,
+    /// treated as empty) -- Phase 3 (spec/15-template-designer.md) addition, so pre-Phase-3 call
+    /// sites/tests that don't care about fill-bar values keep compiling unchanged. Real callers
+    /// (<see cref="TxControlsPaneViewModel"/>'s re-open/re-edit path) pass the prior editor's own
+    /// <see cref="TemplateVariables"/> snapshot -- without this, re-opening a just-applied image
+    /// would restore <c>{his_call}</c> tokens correctly (via <see cref="OverlayElements"/> above)
+    /// while silently losing everything the operator already typed into the fill bar.</summary>
     public sealed record EditorInitialState(
         NormalizedRect CropRect, bool PreserveAspect, ImageAdjustments Adjustments,
-        IReadOnlyList<RawElementSnapshot> OverlayElements);
+        IReadOnlyList<RawElementSnapshot> OverlayElements, IReadOnlyDictionary<string, string>? TemplateVariables = null);
 
     /// <summary>One undo/redo step -- the editor's FULL editable state, captured wholesale rather
     /// than as a per-operation command/inverse (spec/18-path-to-1.0.md Medium item, undo/redo
@@ -98,7 +107,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// with no resampling.</summary>
     private sealed record EditorSnapshot(
         int RotationCount, NormalizedRect CropRect, bool PreserveAspect, bool LockAspectToMode,
-        ImageAdjustments Adjustments, IReadOnlyList<RawElementSnapshot> OverlayElements);
+        ImageAdjustments Adjustments, IReadOnlyList<RawElementSnapshot> OverlayElements,
+        IReadOnlyDictionary<string, string> TemplateVariables);
 
     private const double MinNormalizedCropSize = 0.02;
 
@@ -121,6 +131,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private readonly ITransmitImagePreparer _preparer;
     private readonly IMacroTextResolver _macroTextResolver;
     private readonly OperatorSettings _operatorSettings;
+    private readonly IRadioSessionService _radioSessionService;
     private readonly ILocalizationService _localization;
     private readonly ILogger<TxImageEditorPaneViewModel> _logger;
 
@@ -131,6 +142,27 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private readonly IImageFileLoader _imageFileLoader;
     private readonly IReceivedImageBuffer _receivedImageBuffer;
     private readonly IReceiveHistoryStore _receiveHistoryStore;
+
+    // Phase 3 (spec/15-template-designer.md) -- named template variables. PERSISTENT value map, only
+    // ever added to by user input via OnTemplateVariableValueChanged/ClearTemplateVariables -- never
+    // pruned by RescanTemplateVariables, which only ever computes which keys currently have a VISIBLE
+    // row (see that method's own doc comment for why: editing an existing {his_call} token
+    // character-by-character passes through syntactically-valid intermediate tokens on every
+    // keystroke, and a naive "remove keys no longer referenced" rescan would silently discard the
+    // operator's already-typed value on the very first backspace).
+    private readonly Dictionary<string, string> _templateVariables = [];
+
+    // [A-Za-z0-9_]+, case-sensitive, no spaces -- same grammar as MacroTextResolver's own
+    // BraceTokenPattern (Phase 3 plan-review's decided token grammar), duplicated here (not shared)
+    // since this scan serves a different purpose (discovering which KEYS to show a fill-bar row
+    // for, not resolving VALUES) and lives in a different project/layer than the resolver.
+    [GeneratedRegex(@"\{([A-Za-z0-9_]+)\}")]
+    private static partial Regex TemplateVariableTokenPattern();
+
+    // Fixed known-macro token names (Phase 3: name/grid pre-existing, freq/mode new) -- a {word}
+    // token matching one of these is a MACRO reference, not a variable, and must never grow a
+    // fill-bar row of its own.
+    private static readonly HashSet<string> KnownMacroTokenNames = new(StringComparer.Ordinal) { "name", "grid", "freq", "mode" };
 
     // Suppresses RecomputePreview() while RotateCommand is mid-update (rotated working copy but
     // not-yet-transformed CropRect/overlay positions) -- without this, each overlay element's own
@@ -204,6 +236,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         ITransmitImagePreparer preparer,
         IMacroTextResolver macroTextResolver,
         OperatorSettings operatorSettings,
+        IRadioSessionService radioSessionService,
         ILocalizationService localization,
         ILogger<TxImageEditorPaneViewModel> logger,
         IFilePickerService filePickerService,
@@ -217,6 +250,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
         _operatorSettings = operatorSettings;
+        _radioSessionService = radioSessionService;
         _localization = localization;
         _logger = logger;
         _filePickerService = filePickerService;
@@ -244,6 +278,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 Gamma = initial.Adjustments.Gamma;
                 Sharpen = initial.Adjustments.Sharpen;
                 Denoise = initial.Adjustments.Denoise;
+                // Seeded BEFORE the overlay elements below -- RescanTemplateVariables (run inside the
+                // trailing RecomputePreview()) discovers variable references in the elements just
+                // added and seeds each new row from _templateVariables, so the restored VALUES must
+                // already be in place first, not filled in afterward.
+                if (initial.TemplateVariables is { } variables)
+                {
+                    foreach (var (key, value) in variables)
+                    {
+                        _templateVariables[key] = value;
+                    }
+                }
+
                 // SelectedOverlayElement deliberately stays null (code-review nit) -- unlike
                 // AddOverlayElement, which always selects the ONE element it just created, there is
                 // no obviously-correct choice among N restored elements to auto-select.
@@ -271,6 +317,23 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     }
 
     public ObservableCollection<ITemplateElementViewModel> OverlayElements { get; } = [];
+
+    /// <summary>Phase 3 (spec/15-template-designer.md) fill bar -- one row per template variable
+    /// name currently referenced by a live text element, kept in sync by
+    /// <see cref="RescanTemplateVariables"/> (called from <see cref="RecomputePreview"/>, so it runs
+    /// on every mutation that could add/remove a reference). ROW visibility only -- see
+    /// <see cref="_templateVariables"/>'s own doc comment for why the underlying VALUE is tracked
+    /// separately and survives a row's temporary disappearance.</summary>
+    public ObservableCollection<TemplateVariableRowViewModel> TemplateVariableRows { get; } = [];
+
+    /// <summary>Snapshot of the current template-variable value map, for a host
+    /// (<see cref="TxControlsPaneViewModel"/>) to capture alongside <see cref="RawOverlayElements"/>
+    /// when building its own re-open <c>EditState</c> -- same "read-only snapshot for callers that
+    /// shouldn't hold a live reference into this VM's own mutable state" reasoning as
+    /// <see cref="RawOverlayElements"/> itself. A defensive copy (not the live
+    /// <see cref="_templateVariables"/> dictionary itself) so a caller that squirrels this away
+    /// (e.g. into an undo/redo <c>EditorSnapshot</c>) isn't silently mutated by later edits.</summary>
+    public IReadOnlyDictionary<string, string> TemplateVariables => new Dictionary<string, string>(_templateVariables);
 
     /// <summary>spec/18-path-to-1.0.md Medium item: the card header used to be a static locale
     /// string ("EDITOR — OUTGOING FRAME · 640×496 · PD120") regardless of the actual mode/image
@@ -748,7 +811,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
-            ResolveMacros = macroText => _macroTextResolver.Resolve(macroText, _operatorSettings),
+            // Phase 3: reads _radioSessionService.LastKnownState/_templateVariables FRESH on every
+            // ResolvedText access (this delegate re-invokes on every call, not once) -- FREQ/MODE
+            // reflect the radio state as of the last element mutation, not a live tick (no
+            // subscription is wired here; see MacroTextResolver's own doc comment on why that's an
+            // accepted, pre-existing-pattern tradeoff, same as %T's own staleness).
+            ResolveMacros = macroText => _macroTextResolver.Resolve(macroText, _operatorSettings, _radioSessionService.LastKnownState, _templateVariables),
             // Set AFTER X/Y/Width/Height above -- an object initializer assigns in listed order, so
             // their own construction-time assignment fires On*Changing while this is still null,
             // avoiding a spurious push from element creation itself (AddOverlayElement already
@@ -851,6 +919,161 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     }
 
     partial void OnSelectedOverlayElementChanged(ITemplateElementViewModel? value) => InsertFieldCommand.NotifyCanExecuteChanged();
+
+    /// <summary>Phase 3 (spec/15-template-designer.md) -- discovers which template-variable KEYS are
+    /// currently referenced by scanning every live text element's RAW <c>Text</c> (plan-review fix:
+    /// NOT <see cref="Document"/>/<c>ResolvedText</c>, which are already-resolved by construction and
+    /// would find nothing or only unfilled leftovers). Called from <see cref="RecomputePreview"/>, so
+    /// it runs on every mutation that could add/remove a reference (element add/remove/Text edit,
+    /// Undo/Redo). Only adjusts <see cref="TemplateVariableRows"/> (row VISIBILITY) -- NEVER writes
+    /// into <see cref="_templateVariables"/> itself (real-window finding: an eager empty-string seed
+    /// on first discovery made an unfilled variable resolve to "" instead of verbatim, since
+    /// `MacroTextResolver`'s own unfilled-resolves-verbatim branch only triggers when the key is
+    /// ABSENT from the dictionary -- see this method's own inline comment). An already-typed value
+    /// survives a key's temporary de-reference for the same reason it was never written speculatively
+    /// in the first place (see <see cref="_templateVariables"/>'s own doc comment for the exact
+    /// character-by-character-editing scenario this protects against).</summary>
+    private void RescanTemplateVariables()
+    {
+        var referenced = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var element in OverlayElements.OfType<OverlayElementViewModel>())
+        {
+            foreach (Match match in TemplateVariableTokenPattern().Matches(element.Text))
+            {
+                var token = match.Groups[1].Value;
+                if (!KnownMacroTokenNames.Contains(token))
+                {
+                    referenced.Add(token);
+                }
+            }
+        }
+
+        for (var i = TemplateVariableRows.Count - 1; i >= 0; i--)
+        {
+            if (!referenced.Contains(TemplateVariableRows[i].Key))
+            {
+                TemplateVariableRows.RemoveAt(i);
+            }
+        }
+
+        var existingKeys = new HashSet<string>(TemplateVariableRows.Select(r => r.Key), StringComparer.Ordinal);
+        foreach (var key in referenced)
+        {
+            if (existingKeys.Contains(key))
+            {
+                continue;
+            }
+
+            // Real-window finding (not caught by MacroTextResolverTests' own isolated unit test,
+            // which never exercises this seeding path): do NOT write into _templateVariables here.
+            // An eager `_templateVariables[key] = string.Empty` on first discovery would make the
+            // dictionary key ALWAYS exist the instant a token is typed -- MacroTextResolver's own
+            // "unfilled resolves verbatim" branch only triggers when the key is ABSENT, so an eager
+            // seed makes that branch practically unreachable (every token resolves to "" the moment
+            // it's typed, before the operator ever gets a chance to fill it in). Read-only lookup:
+            // display whatever's already there (a value typed before this key's LAST
+            // de-reference), or empty for a genuinely untouched key -- the dictionary itself is
+            // written to ONLY by an actual edit (OnTemplateVariableValueChanged) or Clear.
+            _templateVariables.TryGetValue(key, out var value);
+            TemplateVariableRows.Add(new TemplateVariableRowViewModel(key, value ?? string.Empty)
+            {
+                ValueChangedCallback = OnTemplateVariableValueChanged,
+            });
+        }
+    }
+
+    /// <summary>Fired by a <see cref="TemplateVariableRowViewModel"/>'s own
+    /// <see cref="TemplateVariableRowViewModel.ValueChangedCallback"/> whenever the operator types
+    /// into a fill-bar row. Plan-review blocker: does NOT rely on
+    /// <see cref="OverlayElementViewModel.ResolvedText"/>'s own property-changed raise alone --
+    /// <see cref="OnOverlayElementPropertyChanged"/> explicitly filters <c>ResolvedText</c> out of
+    /// its own recompute trigger (treated as a derived/computed property, same tier as
+    /// <c>CanvasFontSize</c>), and that filtering held safe pre-Phase-3 only because
+    /// <c>ResolvedText</c> never changed independently of its owning element's own <c>Text</c> --
+    /// this handler is the first place that breaks that coincidence (a fill-bar edit changes what
+    /// MANY elements resolve to, without any of their own <c>Text</c> changing), so it explicitly
+    /// drives every step <see cref="OnOverlayElementPropertyChanged"/> would otherwise have chained
+    /// together: the canvas <c>TextBlock</c> binding (via
+    /// <see cref="OverlayElementViewModel.NotifyResolvedTextChanged"/>, scoped to only the elements
+    /// that actually reference this key), the font-shrink-to-fit recompute, and the real pipeline
+    /// preview -- mirroring how <see cref="Rotate"/>'s own multi-element loop already drives both
+    /// explicitly rather than trusting a property-changed cascade to add up to the same effect.</summary>
+    private void OnTemplateVariableValueChanged(string key, string value)
+    {
+        _templateVariables[key] = value;
+        // Moved here from RescanTemplateVariables (real-window finding, see that method's own
+        // comment) -- this is now the ONLY place _templateVariables gains a new key, so it's the
+        // only place that can flip CanClearTemplateVariables from false to true.
+        ClearTemplateVariablesCommand.NotifyCanExecuteChanged();
+        var token = $"{{{key}}}";
+        foreach (var element in OverlayElements.OfType<OverlayElementViewModel>())
+        {
+            if (element.Text.Contains(token, StringComparison.Ordinal))
+            {
+                element.NotifyResolvedTextChanged();
+            }
+        }
+
+        RefreshOverlayElementCanvasFontSizes();
+        RecomputePreview();
+    }
+
+    private bool CanClearTemplateVariables() => _templateVariables.Count > 0;
+
+    /// <summary>The one real, spec-backed fill-bar action (spec/15-template-designer.md: "one
+    /// 'clear fields' action after the QSO") -- removes every persisted variable KEY entirely
+    /// (visible row or not; a key that's currently hidden because nothing references it right now
+    /// still belongs to "that QSO's data" and must not survive to the next one), not just blank its
+    /// value. <para>[Code-review blocker, fixed here] The original draft set each value to
+    /// <c>string.Empty</c> instead of removing the key -- <see cref="MacroTextResolver"/>'s own
+    /// unfilled-resolves-VERBATIM branch only fires when a key is ABSENT from the dictionary (see
+    /// <see cref="_templateVariables"/>'s own doc comment), so a present-but-empty value made every
+    /// `{token}` silently resolve to nothing instead of showing the token again -- exactly the
+    /// "content vanishes instead of showing an obvious placeholder" failure this phase's own
+    /// verbatim-resolution decision exists to prevent (a `DE {his_call}` reading `DE ` with no
+    /// callsign, easy to transmit by mistake). A real `.Clear()`, not a per-key blank, also fixes
+    /// <see cref="CanClearTemplateVariables"/> being permanently stuck true (it checks
+    /// `Count > 0`, which a per-key blank never changes).</para>
+    /// <para>Row display values are reset via <see cref="TemplateVariableRowViewModel
+    /// .ResetDisplayValueWithoutNotifying"/>, NOT the ordinary <c>Value</c> setter -- that setter
+    /// invokes <see cref="TemplateVariableRowViewModel.ValueChangedCallback"/> (wired to
+    /// <see cref="OnTemplateVariableValueChanged"/>), which would immediately re-write an empty
+    /// string right back into the dictionary this method just cleared, silently undoing the fix
+    /// above.</para>
+    /// <para>Iterates a defensive <c>.ToList()</c> snapshot of <see cref="TemplateVariableRows"/>
+    /// (code-review risk, fixed here) -- <see cref="RecomputePreview"/> below re-enters
+    /// <see cref="RescanTemplateVariables"/>, which can Add/Remove on that same collection; today
+    /// nothing in this method changes which keys are referenced, so it's not yet reachable, but
+    /// iterating the live collection directly is one future behavior change away from
+    /// <c>InvalidOperationException</c> (the sibling dictionary-key loop above already defends the
+    /// same way).</para> "Fill all" is deliberately NOT implemented (Phase 3 plan-review decision)
+    /// -- no real default-value source exists yet (<see cref="OperatorSettings"/> is MY-side only;
+    /// spec/15 frames any logbook-based prefill as future/additive, not this phase).</summary>
+    [RelayCommand(CanExecute = nameof(CanClearTemplateVariables))]
+    private void ClearTemplateVariables()
+    {
+        if (_templateVariables.Count == 0)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        _templateVariables.Clear();
+        ClearTemplateVariablesCommand.NotifyCanExecuteChanged();
+
+        foreach (var row in TemplateVariableRows.ToList())
+        {
+            row.ResetDisplayValueWithoutNotifying(string.Empty);
+        }
+
+        foreach (var element in OverlayElements.OfType<OverlayElementViewModel>())
+        {
+            element.NotifyResolvedTextChanged();
+        }
+
+        RefreshOverlayElementCanvasFontSizes();
+        RecomputePreview();
+    }
 
     [RelayCommand]
     private void RemoveOverlayElement(ITemplateElementViewModel? element)
@@ -1319,6 +1542,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             return;
         }
 
+        // Phase 3: rescans for template-variable references on every real recompute -- piggybacks on
+        // this method (already called on every mutation that could add/remove a {word} reference:
+        // element add/remove/Text edit, Rotate, Undo/Redo) rather than a separate trigger mechanism.
+        RescanTemplateVariables();
+
         var cropped = _preparer.Crop(_workingCopy, CropRect);
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
         var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());
@@ -1331,7 +1559,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private ImageAdjustments BuildAdjustments() => new(Brightness, Contrast, Saturation, Gamma, Sharpen, Denoise);
 
     private EditorSnapshot CaptureSnapshot() =>
-        new(_rotationCount, CropRect, PreserveAspect, LockAspectToMode, BuildAdjustments(), RawOverlayElements);
+        new(_rotationCount, CropRect, PreserveAspect, LockAspectToMode, BuildAdjustments(), RawOverlayElements, TemplateVariables);
 
     private bool CanUndo() => _undoStack.Count > 0;
 
@@ -1487,6 +1715,27 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
             OverlayElements.Clear();
             SelectedOverlayElement = null;
+
+            // Phase 3: restored BEFORE the element-recreation loop below, same ordering reasoning as
+            // the constructor's own EditorInitialState seeding -- the trailing RecomputePreview()'s
+            // RescanTemplateVariables() rebuilds TemplateVariableRows from whatever's in
+            // _templateVariables at that point, so the restored VALUES must already be in place.
+            // TemplateVariableRows itself is cleared here too (not just left stale) since it holds
+            // references to rows built against the elements just cleared above.
+            _templateVariables.Clear();
+            foreach (var (key, value) in snapshot.TemplateVariables)
+            {
+                _templateVariables[key] = value;
+            }
+
+            // Code-review nit, fixed here: Undo/Redo swaps _templateVariables wholesale without
+            // going through ClearTemplateVariables/OnTemplateVariableValueChanged, so
+            // ClearTemplateVariablesCommand's own CanExecute needs an explicit refresh here too --
+            // otherwise a Redo that restores a non-empty dictionary after an Undo emptied it (or the
+            // fixed Clear command itself) would leave the button's enabled state one step stale.
+            ClearTemplateVariablesCommand.NotifyCanExecuteChanged();
+
+            TemplateVariableRows.Clear();
 
             var delta = ((snapshot.RotationCount - _rotationCount) % 4 + 4) % 4;
             for (var i = 0; i < delta; i++)

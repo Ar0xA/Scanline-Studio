@@ -2,6 +2,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
@@ -41,7 +42,7 @@ public sealed class TxImageEditorPaneViewModelTests
         CreateEditor(original, mode, preparer, new OperatorSettings());
 
     private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, OperatorSettings operatorSettings) =>
-        new(original, mode, preparer, new MacroTextResolver(), operatorSettings, new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+        new(original, mode, preparer, new MacroTextResolver(), operatorSettings, new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
 
     /// <summary>Phase 2 overload -- exposes the 4 new image-source fakes so a test can configure
@@ -52,8 +53,16 @@ public sealed class TxImageEditorPaneViewModelTests
         IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer,
         IFilePickerService filePickerService, IImageFileLoader imageFileLoader,
         IReceivedImageBuffer receivedImageBuffer, IReceiveHistoryStore receiveHistoryStore) =>
-        new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+        new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             filePickerService, imageFileLoader, receivedImageBuffer, receiveHistoryStore);
+
+    /// <summary>Phase 3 overload -- exposes <see cref="FakeRadioSessionService"/> so a test can set
+    /// <see cref="FakeRadioSessionService.LastKnownState"/> before constructing, for
+    /// <c>{freq}</c>/<c>{mode}</c> resolution tests.</summary>
+    private static TxImageEditorPaneViewModel CreateEditor(
+        IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, FakeRadioSessionService radioSessionService) =>
+        new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), radioSessionService, new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
 
     [AvaloniaFact]
     public void Constructor_OriginalLargerThanWorkingCopyBudget_DownsamplesBeforeUse()
@@ -1010,7 +1019,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var localization = new FakeLocalizationService();
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
-            new OperatorSettings(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new OperatorSettings(), new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
 
         _ = vm.HeaderText;
@@ -1025,7 +1034,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var localization = new FakeLocalizationService();
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
-            new OperatorSettings(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new OperatorSettings(), new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
 
         _ = vm.DimensionsChipText;
@@ -1209,7 +1218,7 @@ public sealed class TxImageEditorPaneViewModelTests
 
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
-            new OperatorSettings { Callsign = "W1AW" }, new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new OperatorSettings { Callsign = "W1AW" }, new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             initialState);
 
@@ -1261,7 +1270,7 @@ public sealed class TxImageEditorPaneViewModelTests
 
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
-            new OperatorSettings(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             initialState);
 
@@ -1289,7 +1298,7 @@ public sealed class TxImageEditorPaneViewModelTests
 
         _ = new TxImageEditorPaneViewModel(
             CreateSource(8, 8), WideMode, preparer, new MacroTextResolver(),
-            new OperatorSettings(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             initialState);
 
@@ -1913,6 +1922,298 @@ public sealed class TxImageEditorPaneViewModelTests
 
         Assert.True(width > 0);
         Assert.True(height > 0);
+    }
+
+    // Phase 3 (spec/15-template-designer.md): named template variables + fill bar.
+
+    [AvaloniaFact]
+    public void AddingAVariableToken_AddsAFillBarRow()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        element.Text = "DE {his_call}";
+
+        var row = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("his_call", row.Key);
+        Assert.Equal(string.Empty, row.Value);
+    }
+
+    [AvaloniaFact]
+    public void RemovingTheLastReferenceToAVariable_RemovesItsFillBarRow()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.Text = "DE {his_call}";
+        Assert.Single(vm.TemplateVariableRows);
+
+        element.Text = "DE W1AW";
+
+        Assert.Empty(vm.TemplateVariableRows);
+    }
+
+    [AvaloniaFact]
+    public void KnownMacroTokens_NeverGrowAFillBarRow()
+    {
+        // {name}/{grid} (pre-existing) and {freq}/{mode} (Phase 3) are ordinary resolved macros, not
+        // variables -- they must never appear in the fill bar alongside genuine {word} references.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        element.Text = "{name} {grid} {freq} {mode} {his_call}";
+
+        var row = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("his_call", row.Key);
+    }
+
+    [AvaloniaFact]
+    public void EditingAVariableTokenCharacterByCharacter_DoesNotLoseAnAlreadyTypedFillValue()
+    {
+        // Plan-review blocker: the persistent value map must survive a token's temporary
+        // de-reference. Backspacing through "{his_call}" passes through the syntactically-valid
+        // intermediate token "{his_cal}" -- a naive "remove keys no longer referenced" rescan would
+        // silently discard the operator's already-typed callsign at that point.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.Text = "{his_call}";
+        var row = Assert.Single(vm.TemplateVariableRows);
+        row.Value = "K1ABC";
+
+        element.Text = "{his_cal}"; // simulates a backspace mid-edit
+        Assert.DoesNotContain(vm.TemplateVariableRows, r => r.Key == "his_call");
+
+        element.Text = "{his_call}"; // simulates retyping the closing character
+
+        var restoredRow = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("his_call", restoredRow.Key);
+        Assert.Equal("K1ABC", restoredRow.Value);
+    }
+
+    [AvaloniaFact]
+    public void FillBarValueEdit_UpdatesResolvedTextAndRecomputesPreview()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.Text = "DE {his_call}";
+        var row = Assert.Single(vm.TemplateVariableRows);
+        var recomputeCountBefore = preparer.ApplyTemplateCallCount;
+
+        row.Value = "K1ABC";
+
+        // Plan-review blocker: ResolvedText's own PropertyChanged raise is filtered out of
+        // OnOverlayElementPropertyChanged's recompute trigger, so this only passes if the fill-bar
+        // row's edit explicitly drives the recompute itself, not a property-changed cascade.
+        Assert.Equal("DE K1ABC", element.ResolvedText);
+        Assert.True(preparer.ApplyTemplateCallCount > recomputeCountBefore);
+    }
+
+    [AvaloniaFact]
+    public void FillBarValueEdit_RaisesResolvedTextPropertyChanged_OnlyForReferencingElements()
+    {
+        // ResolvedText itself has no caching (it re-invokes ResolveMacros on every read), so simply
+        // reading its value afterward can't distinguish "the notification fired" from "the value
+        // happens to be correct anyway" -- this test mutation-tests the actual PropertyChanged raise
+        // (NotifyResolvedTextChanged), the real thing the canvas TextBlock binding depends on.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var referencing = (OverlayElementViewModel)vm.OverlayElements[0];
+        referencing.Text = "{his_call}";
+        vm.AddOverlayElementCommand.Execute(null);
+        var unrelated = (OverlayElementViewModel)vm.OverlayElements[1];
+        unrelated.Text = "Plain text";
+        var row = Assert.Single(vm.TemplateVariableRows);
+        var referencingRaisedResolvedTextChanged = false;
+        var unrelatedRaisedResolvedTextChanged = false;
+        referencing.PropertyChanged += (_, e) => referencingRaisedResolvedTextChanged |= e.PropertyName == nameof(OverlayElementViewModel.ResolvedText);
+        unrelated.PropertyChanged += (_, e) => unrelatedRaisedResolvedTextChanged |= e.PropertyName == nameof(OverlayElementViewModel.ResolvedText);
+
+        row.Value = "K1ABC";
+
+        Assert.True(referencingRaisedResolvedTextChanged);
+        Assert.False(unrelatedRaisedResolvedTextChanged);
+        Assert.Equal("K1ABC", referencing.ResolvedText);
+        Assert.Equal("Plain text", unrelated.ResolvedText);
+    }
+
+    [AvaloniaFact]
+    public void RescanTemplateVariables_KnownMacroTokens_NeverProduceAFillBarRow()
+    {
+        // Code-review finding: the known-macro-token set is duplicated across two projects
+        // (MacroTextResolver's own switch cases, and this VM's private KnownMacroTokenNames used to
+        // exclude macros from the variable scan) with nothing enforcing they agree -- a future macro
+        // added to one without the other would either produce a dead fill-bar row (typed value
+        // silently ignored, the macro branch always wins) or leave a real macro unexpectedly
+        // resolving through the variable path. This pins today's agreement behaviorally: every
+        // currently-known macro name must be excluded from the variable scan.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{name} {grid} {freq} {mode}";
+
+        Assert.Empty(vm.TemplateVariableRows);
+    }
+
+    [AvaloniaFact]
+    public void ClearTemplateVariablesCommand_CanExecute_FalseUntilAValueIsActuallyTyped()
+    {
+        // Real-window finding: merely REFERENCING a token (a row appearing) must NOT be enough to
+        // enable Clear -- Rescan deliberately never writes into _templateVariables (see its own
+        // comment), so CanExecute only flips true once OnTemplateVariableValueChanged actually runs.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.ClearTemplateVariablesCommand.CanExecute(null));
+
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{his_call}";
+        Assert.False(vm.ClearTemplateVariablesCommand.CanExecute(null));
+
+        vm.TemplateVariableRows[0].Value = "K1ABC";
+
+        Assert.True(vm.ClearTemplateVariablesCommand.CanExecute(null));
+
+        // Code-review finding: the original Clear implementation blanked each VALUE in place
+        // instead of removing the KEY, so _templateVariables.Count never returned to 0 and this
+        // command stayed permanently enabled after the very first Clear. A real Clear must flip it
+        // back to false.
+        vm.ClearTemplateVariablesCommand.Execute(null);
+        Assert.False(vm.ClearTemplateVariablesCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void UnfilledVariableToken_ResolvesVerbatim_ImmediatelyAfterBeingTyped_NotToEmptyString()
+    {
+        // Real-window finding: this is exactly the bug a real running window caught that no unit
+        // test here previously did -- MacroTextResolverTests' own "unfilled resolves verbatim" test
+        // exercises the resolver in isolation with an empty dictionary, which doesn't reflect how
+        // the VM actually calls it. An earlier draft of RescanTemplateVariables eagerly wrote
+        // _templateVariables[key] = "" the moment a token was first discovered, which made the
+        // resolver's "key absent -> verbatim" branch practically unreachable: every token resolved
+        // to an empty string the instant it was typed, before the operator ever got a chance to see
+        // or fill it in. This must resolve VERBATIM until the fill-bar row is actually edited.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        element.Text = "DE {his_call}";
+
+        Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("DE {his_call}", element.ResolvedText);
+    }
+
+    [AvaloniaFact]
+    public void ClearTemplateVariables_BlanksEveryValue_IncludingCurrentlyHiddenOnes()
+    {
+        // spec/15-template-designer.md's own "clear fields" contract: a value the operator already
+        // typed for a QSO must not survive to the next one, even if its token isn't referenced by any
+        // CURRENTLY visible element right this moment.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.Text = "{his_call}";
+        Assert.Single(vm.TemplateVariableRows).Value = "K1ABC";
+        element.Text = "no longer referenced"; // hides the row, but the value is still persisted
+
+        vm.ClearTemplateVariablesCommand.Execute(null);
+
+        element.Text = "{his_call}"; // re-reference it and confirm the persisted value is now blank
+        var row = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal(string.Empty, row.Value);
+        // Code-review finding: the KEY must be gone entirely, not present-with-an-empty-value --
+        // MacroTextResolver's own unfilled-resolves-VERBATIM branch only fires when the key is
+        // ABSENT from the dictionary, so a present-but-blank value would make {his_call} silently
+        // resolve to nothing instead of showing the token again (an easy-to-transmit-by-mistake
+        // "DE " with no callsign instead of an obvious "DE {his_call}" placeholder). A row.Value
+        // assertion alone can't distinguish these two cases, since both display "" -- ResolvedText
+        // is the only observable that actually tells them apart.
+        Assert.Equal("{his_call}", element.ResolvedText);
+    }
+
+    [AvaloniaFact]
+    public void ClearTemplateVariables_PushesOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{his_call}";
+        vm.TemplateVariableRows[0].Value = "K1ABC";
+
+        vm.ClearTemplateVariablesCommand.Execute(null);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        Assert.Equal("K1ABC", vm.TemplateVariableRows[0].Value);
+    }
+
+    [AvaloniaFact]
+    public void TemplateVariables_RoundTripsThroughUndoRedo()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{his_call}";
+        vm.TemplateVariableRows[0].Value = "K1ABC";
+
+        vm.RemoveOverlayElementCommand.Execute(vm.OverlayElements[0]);
+        Assert.Empty(vm.TemplateVariableRows);
+
+        vm.UndoCommand.Execute(null);
+
+        var row = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("his_call", row.Key);
+        Assert.Equal("K1ABC", row.Value);
+    }
+
+    [AvaloniaFact]
+    public void TemplateVariables_SnapshotProperty_ReturnsADefensiveCopy()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{his_call}";
+        vm.TemplateVariableRows[0].Value = "K1ABC";
+
+        var snapshot = vm.TemplateVariables;
+        vm.TemplateVariableRows[0].Value = "CHANGED";
+
+        Assert.Equal("K1ABC", snapshot["his_call"]);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_WithInitialStateTemplateVariables_SeedsTheFillBarValues()
+    {
+        var initialState = new TxImageEditorPaneViewModel.EditorInitialState(
+            new NormalizedRect(0, 0, 1, 1), PreserveAspect: true, new ImageAdjustments(),
+            [new TxImageEditorPaneViewModel.RawTextElementSnapshot(
+                X: 0.5, Y: 0.5, Width: 0.3, Height: 0.18, Z: 0, Locked: false,
+                Text: "{his_call}", FontSizeRelative: 0.1, Color: new Rgb24(255, 255, 255))],
+            new Dictionary<string, string> { ["his_call"] = "K1ABC" });
+
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            initialState);
+
+        var row = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("his_call", row.Key);
+        Assert.Equal("K1ABC", row.Value);
+    }
+
+    [AvaloniaFact]
+    public void FreqAndModeTokens_ResolveFromRadioSessionServiceLastKnownState()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            LastKnownState = new RadioState(FrequencyHz: 14_230_000, Mode: RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow),
+        };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), radioSession);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        element.Text = "{freq} {mode}";
+
+        Assert.Equal("14.230000 MHz USB", element.ResolvedText);
     }
 
     private static ArrayImageSource CreateSource(int width, int height)

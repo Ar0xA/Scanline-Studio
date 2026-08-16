@@ -603,20 +603,34 @@
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" />
                         </HeaderedContentControl.Header>
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                            <!-- Phase 3 (spec/15-template-designer.md): HIS CALL/HIS GRID/HIS RSV/FREQ/
+                                 MODE now real "insert variable"/"insert macro" chips — same
+                                 InsertFieldCommand/CommandParameter wiring the 5 already-working chips
+                                 use, fixed conventional token names matching spec/15's own worked
+                                 example ({his_call}/{rsv}) for the 3 QSO-shaped ones, {freq}/{mode} for
+                                 the 2 radio-state ones (ordinary resolved macros, not part of the
+                                 variable mechanism — see MacroTextResolver's own doc comment).
+                                 DIST/BEAM (Chip11/12) stay disabled — explicitly out of scope, no
+                                 distance/bearing calculation exists anywhere in this codebase. -->
                             <WrapPanel>
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
+                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}"
+                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}"
+                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}"
+                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}"
+                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
                                         Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
@@ -626,12 +640,31 @@
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.SourceLabel}" />
                                 <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.SourceValue}" />
                             </Grid></Border>
-                            <Grid ColumnDefinitions="*,*" ColumnSpacing="4" Margin="0,2,0,0">
-                                <!-- Combined-batch auditor review, 2026-08-14: neither had a Command;
-                                     fully clickable in the same card the 7 fake insert-field chips
-                                     were just disabled in. -->
-                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.FillAll}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.ClearFields}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                            <!-- Phase 3 fill bar: one row per template-variable name currently
+                                 referenced by a live text element (TxImageEditorPaneViewModel's own
+                                 RescanTemplateVariables keeps this in sync) — typing here updates
+                                 every reference live, per spec/15-template-designer.md's own
+                                 "slot-fill bar" design. Empty (no rows) when the loaded template
+                                 doesn't reference any {word} beyond the fixed macro set. -->
+                            <ItemsControl ItemsSource="{Binding TemplateVariableRows}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="vm:TemplateVariableRowViewModel">
+                                        <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,3">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="0,0,4,0" Text="{Binding Key}" />
+                                            <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding Value}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Grid ColumnDefinitions="*" Margin="0,2,0,0">
+                                <!-- "Fill all" dropped outright (Phase 3 plan-review decision, not
+                                     just left disabled) — no real default-value source exists yet
+                                     (OperatorSettings is MY-side only; spec/15 frames any
+                                     logbook-based prefill as future/additive). "Clear" is the one
+                                     real, spec-backed action (spec/15: "one 'clear fields' action
+                                     after the QSO"). -->
+                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.ClearFields}"
+                                        Command="{Binding ClearTemplateVariablesCommand}" />
                             </Grid>
                         </StackPanel>
                     </HeaderedContentControl>
