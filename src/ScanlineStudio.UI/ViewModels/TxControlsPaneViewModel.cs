@@ -70,23 +70,35 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     /// <summary>The native-resolution original plus the crop/stretch/overlay/adjustment choices
     /// applied to it -- retained (not just the final mode-sized image) so a later mode change can
-    /// re-run Crop→Resize→ApplyAdjustments→ApplyOverlay against the *new* mode's dimensions instead
+    /// re-run Crop→Resize→ApplyAdjustments→ApplyTemplate against the *new* mode's dimensions instead
     /// of stretching/cropping an already-cropped image a second time. Normalized (0..1) coordinates
     /// make this composition valid across modes with different pixel dimensions.
     /// <see cref="Adjustments"/> was added after the fact (spec/18-path-to-1.0.md Medium item, the
     /// adjustment-sliders sub-piece) -- its absence here was a real, silent feature-loss bug:
     /// without it, a mode change after Apply dropped Brightness/Contrast/etc. entirely, not just
     /// re-projected them incorrectly. <see cref="RawOverlay"/> is DELIBERATELY separate from
-    /// <see cref="Overlay"/> (spec/18-path-to-1.0.md Medium item, re-open/re-edit sub-piece,
-    /// round-1 plan-review finding) -- <see cref="Overlay"/> is already crop-projected and
-    /// macro-resolved (correct for <see cref="OnSelectedModeChanged"/>'s own direct pipeline call),
-    /// while re-seeding a re-opened <see cref="TxImageEditorPaneViewModel"/> needs the raw,
-    /// photo-anchored, un-resolved form instead -- feeding the editor from <see cref="Overlay"/>
-    /// would silently misplace existing overlay text and permanently bake macro templates like
-    /// "DE %m" into their currently-resolved value.</summary>
+    /// <see cref="Document"/> (Phase 1 renamed from <c>Overlay</c>/<c>ImageOverlay</c> -- spec/15-
+    /// template-designer.md's polymorphic element model, spec/18-path-to-1.0.md's own re-open/
+    /// re-edit sub-piece, round-1 plan-review finding) -- <see cref="Document"/> is already
+    /// crop-projected and macro-resolved (correct for <see cref="OnSelectedModeChanged"/>'s own
+    /// direct pipeline call), while re-seeding a re-opened <see cref="TxImageEditorPaneViewModel"/>
+    /// needs the raw, photo-anchored, un-resolved form instead -- feeding the editor from
+    /// <see cref="Document"/> would silently misplace existing content and permanently bake macro
+    /// templates like "DE %m" into their currently-resolved value. **Phase 1 plan-review finding,
+    /// explicitly accepted rather than fixed this pass**: <see cref="Document"/>'s elements are
+    /// projected against the mode/crop/PreserveAspect combination active at Apply time --
+    /// <see cref="OnSelectedModeChanged"/>'s reflow reuses those SAME already-projected coordinates
+    /// against a NEW mode's dimensions, a pre-existing, already-tracked defect (this doc comment's
+    /// own history) that Phase 1 makes materially worse: with real per-element bounds and
+    /// shrink-to-fit, a mode change can now visibly RESCALE text, not just nudge its position. A
+    /// real fix needs <c>ProjectRectToCropRelative</c> extracted into a static pure helper reusable
+    /// from both this class and <see cref="TxImageEditorPaneViewModel"/>, re-projecting from
+    /// <see cref="RawOverlay"/> at the new mode's dimensions (and re-resolving macros freshly rather
+    /// than reusing <see cref="Document"/>'s frozen <c>ResolvedText</c>) -- deliberately out of
+    /// Phase 1's scope; tracked as a known gap, not silently shipped as a discovery.</summary>
     private sealed record EditState(
-        IImageSource Original, NormalizedRect CropRect, bool PreserveAspect, ImageOverlay Overlay,
-        ImageAdjustments Adjustments, IReadOnlyList<TxImageEditorPaneViewModel.RawOverlayElementSnapshot> RawOverlay);
+        IImageSource Original, NormalizedRect CropRect, bool PreserveAspect, TemplateDocument Document,
+        ImageAdjustments Adjustments, IReadOnlyList<TxImageEditorPaneViewModel.RawElementSnapshot> RawOverlay);
 
     private EditState? _editState;
 
@@ -865,7 +877,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // immediate output was correct (used the editor's own live rotated source), but the
         // re-derivation reverted to the unrotated image while still applying the ROTATED crop
         // rect/overlay coordinates to it. CurrentSource always reflects every Rotate call so far.
-        _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Overlay, editor.Adjustments, editor.RawOverlayElements);
+        _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Document, editor.Adjustments, editor.RawOverlayElements);
         _loadedImage = final;
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
         SelectedFileName = fileName;
@@ -1019,17 +1031,20 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _transmitCts?.Cancel();
     }
 
-    /// <summary>Re-runs Crop→Resize→ApplyAdjustments→ApplyOverlay against the retained
+    /// <summary>Re-runs Crop→Resize→ApplyAdjustments→ApplyTemplate against the retained
     /// <see cref="EditState"/>'s original at the new mode's dimensions -- normalized (0..1)
-    /// crop/overlay coordinates make this valid across modes (adjustment slider values are already
-    /// mode-independent, no re-projection needed for those -- unlike overlay position/font-size,
-    /// which the editor's own real-time preview re-derives from the crop rect and DOES need
-    /// re-projecting; that composition-across-modes gap for overlay coordinates specifically is
-    /// tracked separately, spec/18-path-to-1.0.md Medium item). This is synchronous CPU work
-    /// against an already-in-memory original (no file/network I/O like the old flat resize-reload
-    /// did), so there is no async race to guard against here -- the old cancel-and-replace
-    /// <c>CancellationTokenSource</c> machinery existed specifically for that I/O race and would be
-    /// unused complexity now that the source is cached.</summary>
+    /// crop/element coordinates make this valid across modes (adjustment slider values are already
+    /// mode-independent, no re-projection needed for those). **Known, explicitly-accepted gap
+    /// (see <see cref="EditState"/>'s own doc comment)**: <see cref="EditState.Document"/>'s element
+    /// bounds were projected against the OLD mode/crop/PreserveAspect combination at Apply time and
+    /// are reused as-is here against the NEW mode's dimensions -- unlike the editor's own real-time
+    /// preview, which re-derives fresh from the crop rect on every frame. Pre-existing (tracked
+    /// separately, spec/18-path-to-1.0.md Medium item) and amplified, not introduced, by Phase 1's
+    /// real per-element bounds/shrink-to-fit. This is synchronous CPU work against an already-in-
+    /// memory original (no file/network I/O like the old flat resize-reload did), so there is no
+    /// async race to guard against here -- the old cancel-and-replace <c>CancellationTokenSource</c>
+    /// machinery existed specifically for that I/O race and would be unused complexity now that the
+    /// source is cached.</summary>
     partial void OnSelectedModeChanged(SstvModeDefinition? value)
     {
         Log.SelectedModeChanged(_logger, value?.Id);
@@ -1044,7 +1059,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         var cropped = _preparer.Crop(edit.Original, edit.CropRect);
         var resized = _preparer.Resize(cropped, value.ImageWidth, value.ImageHeight, edit.PreserveAspect);
         var adjusted = _preparer.ApplyAdjustments(resized, edit.Adjustments);
-        var final = _preparer.ApplyOverlay(adjusted, edit.Overlay);
+        var final = _preparer.ApplyTemplate(adjusted, edit.Document);
 
         _loadedImage = final;
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);

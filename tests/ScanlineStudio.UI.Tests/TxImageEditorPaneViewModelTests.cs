@@ -6,6 +6,7 @@ using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.UI.ViewModels;
+using ScanlineStudio.UI.Views;
 
 namespace ScanlineStudio.UI.Tests;
 
@@ -117,13 +118,13 @@ public sealed class TxImageEditorPaneViewModelTests
     {
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
-        var countBefore = preparer.ApplyOverlayCallCount;
+        var countBefore = preparer.ApplyTemplateCallCount;
 
         vm.AddOverlayElementCommand.Execute(null);
 
-        var element = Assert.Single(vm.OverlayElements);
+        var element = (OverlayElementViewModel)Assert.Single(vm.OverlayElements);
         Assert.Same(element, vm.SelectedOverlayElement);
-        Assert.True(preparer.ApplyOverlayCallCount > countBefore);
+        Assert.True(preparer.ApplyTemplateCallCount > countBefore);
     }
 
     [AvaloniaFact]
@@ -131,7 +132,7 @@ public sealed class TxImageEditorPaneViewModelTests
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new OperatorSettings { Callsign = "W1AW" });
         vm.AddOverlayElementCommand.Execute(null);
-        var element = vm.OverlayElements[0];
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
 
         element.Text = "DE %m";
 
@@ -148,9 +149,9 @@ public sealed class TxImageEditorPaneViewModelTests
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, new OperatorSettings { Callsign = "W1AW" });
         vm.AddOverlayElementCommand.Execute(null);
-        vm.OverlayElements[0].Text = "DE %m";
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "DE %m";
 
-        Assert.Contains(preparer.Overlays, o => o.Elements.Any(e => e.Text == "DE W1AW"));
+        Assert.Contains(preparer.TemplateDocuments, d => d.Elements.Any(e => e is TemplateTextElement text && text.Content == "DE W1AW"));
     }
 
     [AvaloniaFact]
@@ -158,11 +159,11 @@ public sealed class TxImageEditorPaneViewModelTests
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
         vm.AddOverlayElementCommand.Execute(null);
-        vm.OverlayElements[0].Text = "DE ";
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "DE ";
 
         vm.InsertFieldCommand.Execute("%m");
 
-        Assert.Equal("DE %m", vm.OverlayElements[0].Text);
+        Assert.Equal("DE %m", ((OverlayElementViewModel)vm.OverlayElements[0]).Text);
     }
 
     [AvaloniaFact]
@@ -181,12 +182,12 @@ public sealed class TxImageEditorPaneViewModelTests
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
         vm.AddOverlayElementCommand.Execute(null);
-        var element = vm.OverlayElements[0];
-        var countBefore = preparer.ApplyOverlayCallCount;
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        var countBefore = preparer.ApplyTemplateCallCount;
 
         element.Text = "Hello";
 
-        Assert.True(preparer.ApplyOverlayCallCount > countBefore);
+        Assert.True(preparer.ApplyTemplateCallCount > countBefore);
     }
 
     [AvaloniaFact]
@@ -195,7 +196,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
         vm.AddOverlayElementCommand.Execute(null);
-        var element = vm.OverlayElements[0];
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
 
         vm.RemoveOverlayElementCommand.Execute(element);
 
@@ -204,9 +205,9 @@ public sealed class TxImageEditorPaneViewModelTests
 
         // Proves the PropertyChanged subscription was actually torn down, not just that the
         // element left the collection.
-        var countAfterRemoval = preparer.ApplyOverlayCallCount;
+        var countAfterRemoval = preparer.ApplyTemplateCallCount;
         element.Text = "Still mutated after removal";
-        Assert.Equal(countAfterRemoval, preparer.ApplyOverlayCallCount);
+        Assert.Equal(countAfterRemoval, preparer.ApplyTemplateCallCount);
     }
 
     [AvaloniaFact]
@@ -236,7 +237,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
         var cropCountBefore = preparer.CropCallCount;
         var resizeCountBefore = preparer.ResizeCallCount;
-        var overlayCountBefore = preparer.ApplyOverlayCallCount;
+        var overlayCountBefore = preparer.ApplyTemplateCallCount;
         var cancelled = false;
         vm.Cancelled += () => cancelled = true;
 
@@ -245,7 +246,7 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(cancelled);
         Assert.Equal(cropCountBefore, preparer.CropCallCount);
         Assert.Equal(resizeCountBefore, preparer.ResizeCallCount);
-        Assert.Equal(overlayCountBefore, preparer.ApplyOverlayCallCount);
+        Assert.Equal(overlayCountBefore, preparer.ApplyTemplateCallCount);
     }
 
     // spec/18-path-to-1.0.md High item 3. All rotate tests below use a non-square 6x4 source
@@ -289,11 +290,11 @@ public sealed class TxImageEditorPaneViewModelTests
         // Rotate() relied on that hook instead of calling the shared notify method unconditionally.
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
-        var overlayCountBefore = preparer.ApplyOverlayCallCount;
+        var overlayCountBefore = preparer.ApplyTemplateCallCount;
 
         vm.RotateCommand.Execute(null);
 
-        Assert.Equal(overlayCountBefore + 1, preparer.ApplyOverlayCallCount);
+        Assert.Equal(overlayCountBefore + 1, preparer.ApplyTemplateCallCount);
     }
 
     [AvaloniaFact]
@@ -301,7 +302,7 @@ public sealed class TxImageEditorPaneViewModelTests
     {
         var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
         vm.AddOverlayElementCommand.Execute(null);
-        var element = vm.OverlayElements[0];
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
         element.X = 0.2;
         element.Y = 0.3;
 
@@ -312,8 +313,11 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(0.2, element.Y);
         AssertClose(4, element.ImageWidth);
         AssertClose(6, element.ImageHeight);
-        AssertClose(element.X * element.ImageWidth, element.LeftPixels);
-        AssertClose(element.Y * element.ImageHeight, element.TopPixels);
+        // LeftPixels/TopPixels are CENTER-minus-half-extent conversions (Phase 1), not a bare X*ImageWidth
+        // point -- Rotate() also swaps Width/Height for text elements, so recompute from the element's
+        // own current Width/Height rather than assuming the pre-Phase-1 default (0.3, 0.18) survives rotate.
+        AssertClose((element.X - (element.Width / 2)) * element.ImageWidth, element.LeftPixels);
+        AssertClose((element.Y - (element.Height / 2)) * element.ImageHeight, element.TopPixels);
     }
 
     [AvaloniaFact]
@@ -324,7 +328,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
         vm.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
         vm.AddOverlayElementCommand.Execute(null);
-        var element = vm.OverlayElements[0];
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
         element.X = 0.15;
         element.Y = 0.65;
 
@@ -370,11 +374,11 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.AddOverlayElementCommand.Execute(null);
         vm.OverlayElements[0].X = 0.2;
         vm.OverlayElements[0].Y = 0.3;
-        var overlayCountBefore = preparer.ApplyOverlayCallCount;
+        var overlayCountBefore = preparer.ApplyTemplateCallCount;
 
         vm.RotateCommand.Execute(null);
 
-        Assert.Equal(overlayCountBefore + 1, preparer.ApplyOverlayCallCount);
+        Assert.Equal(overlayCountBefore + 1, preparer.ApplyTemplateCallCount);
     }
 
     [AvaloniaFact]
@@ -501,19 +505,19 @@ public sealed class TxImageEditorPaneViewModelTests
         // Round-1 plan-review blocker B2: ApplyState must detach OnOverlayElementPropertyChanged
         // from every element it removes, or the orphaned handler keeps firing RecomputePreview
         // forever. Pinned indirectly: mutating the OLD (detached) element reference after Undo must
-        // NOT change ApplyOverlayCallCount, since that element is no longer part of this editor.
+        // NOT change ApplyTemplateCallCount, since that element is no longer part of this editor.
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(6, 4), SmallMode, preparer);
         vm.AddOverlayElementCommand.Execute(null);
-        var staleElement = vm.OverlayElements[0];
+        var staleElement = (OverlayElementViewModel)vm.OverlayElements[0];
 
         vm.RotateCommand.Execute(null);
         vm.UndoCommand.Execute(null);
-        var countAfterUndo = preparer.ApplyOverlayCallCount;
+        var countAfterUndo = preparer.ApplyTemplateCallCount;
 
         staleElement.Text = "still subscribed?";
 
-        Assert.Equal(countAfterUndo, preparer.ApplyOverlayCallCount);
+        Assert.Equal(countAfterUndo, preparer.ApplyTemplateCallCount);
     }
 
     [AvaloniaFact]
@@ -685,15 +689,15 @@ public sealed class TxImageEditorPaneViewModelTests
     {
         var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
         vm.AddOverlayElementCommand.Execute(null);
-        vm.OverlayElements[0].Text = "CALLSIGN";
-        var element = vm.OverlayElements[0];
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "CALLSIGN";
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
 
         vm.RemoveOverlayElementCommand.Execute(element);
         Assert.Empty(vm.OverlayElements);
 
         vm.UndoCommand.Execute(null);
 
-        var restored = Assert.Single(vm.OverlayElements);
+        var restored = (OverlayElementViewModel)Assert.Single(vm.OverlayElements);
         Assert.Equal("CALLSIGN", restored.Text);
     }
 
@@ -707,15 +711,15 @@ public sealed class TxImageEditorPaneViewModelTests
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(6, 4), SmallMode, preparer);
         vm.AddOverlayElementCommand.Execute(null);
-        var element = vm.OverlayElements[0];
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
 
         vm.RemoveOverlayElementCommand.Execute(element);
         vm.UndoCommand.Execute(null);
-        var countAfterUndo = preparer.ApplyOverlayCallCount;
+        var countAfterUndo = preparer.ApplyTemplateCallCount;
 
-        vm.OverlayElements[0].Text = "still subscribed";
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "still subscribed";
 
-        Assert.True(preparer.ApplyOverlayCallCount > countAfterUndo);
+        Assert.True(preparer.ApplyTemplateCallCount > countAfterUndo);
     }
 
     [AvaloniaFact]
@@ -1049,10 +1053,11 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.OverlayElements[0].X = 0.625;
         vm.OverlayElements[0].Y = 0.75;
 
-        var overlay = Assert.Single(preparer.Overlays[^1].Elements);
+        var overlay = Assert.Single(preparer.TemplateDocuments[^1].Elements);
+        var (overlayCenterX, overlayCenterY) = (overlay.Bounds.X + (overlay.Bounds.Width / 2), overlay.Bounds.Y + (overlay.Bounds.Height / 2));
 
-        AssertClose(0.75, overlay.X);
-        AssertClose(0.75, overlay.Y);
+        AssertClose(0.75, overlayCenterX);
+        AssertClose(0.75, overlayCenterY);
     }
 
     [AvaloniaFact]
@@ -1074,10 +1079,11 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.OverlayElements[0].X = 0.625;
         vm.OverlayElements[0].Y = 0.75;
 
-        var overlay = Assert.Single(preparer.Overlays[^1].Elements);
+        var overlay = Assert.Single(preparer.TemplateDocuments[^1].Elements);
+        var (overlayCenterX, overlayCenterY) = (overlay.Bounds.X + (overlay.Bounds.Width / 2), overlay.Bounds.Y + (overlay.Bounds.Height / 2));
 
-        AssertClose(0.5625, overlay.X);
-        AssertClose(0.75, overlay.Y);
+        AssertClose(0.5625, overlayCenterX);
+        AssertClose(0.75, overlayCenterY);
     }
 
     [AvaloniaFact]
@@ -1091,9 +1097,10 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.OverlayElements[0].X = 0.0;
         vm.OverlayElements[0].Y = 0.0;
 
-        var overlay = Assert.Single(preparer.Overlays[^1].Elements);
+        var overlay = Assert.Single(preparer.TemplateDocuments[^1].Elements);
+        var (overlayCenterX, overlayCenterY) = (overlay.Bounds.X + (overlay.Bounds.Width / 2), overlay.Bounds.Y + (overlay.Bounds.Height / 2));
 
-        Assert.True(overlay.X < 0 || overlay.Y < 0);
+        Assert.True(overlayCenterX < 0 || overlayCenterY < 0);
     }
 
     [AvaloniaFact]
@@ -1109,12 +1116,13 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.OverlayElements[0].Y = 0.4;
         vm.CropRect = new NormalizedRect(0.5, 0.5, 0, 0);
 
-        var overlay = Assert.Single(preparer.Overlays[^1].Elements);
+        var overlay = Assert.Single(preparer.TemplateDocuments[^1].Elements);
+        var (overlayCenterX, overlayCenterY) = (overlay.Bounds.X + (overlay.Bounds.Width / 2), overlay.Bounds.Y + (overlay.Bounds.Height / 2));
 
-        Assert.False(double.IsNaN(overlay.X));
-        Assert.False(double.IsNaN(overlay.Y));
-        AssertClose(0.3, overlay.X);
-        AssertClose(0.4, overlay.Y);
+        Assert.False(double.IsNaN(overlayCenterX));
+        Assert.False(double.IsNaN(overlayCenterY));
+        AssertClose(0.3, overlayCenterX);
+        AssertClose(0.4, overlayCenterY);
     }
 
     [AvaloniaFact]
@@ -1131,7 +1139,7 @@ public sealed class TxImageEditorPaneViewModelTests
         // 0.1*4/1 = 0.4 (the naive formula would instead give 0.1*2=0.2).
         var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
         vm.AddOverlayElementCommand.Execute(null);
-        var element = vm.OverlayElements[0];
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
 
         vm.CropRect = new NormalizedRect(0.0, 0.375, 1.0, 0.25);
 
@@ -1147,12 +1155,12 @@ public sealed class TxImageEditorPaneViewModelTests
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
         vm.AddOverlayElementCommand.Execute(null);
-        var element = vm.OverlayElements[0];
-        var countBeforeDirectSet = preparer.ApplyOverlayCallCount;
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        var countBeforeDirectSet = preparer.ApplyTemplateCallCount;
 
         element.CanvasFontSize = 12.34;
 
-        Assert.Equal(countBeforeDirectSet, preparer.ApplyOverlayCallCount);
+        Assert.Equal(countBeforeDirectSet, preparer.ApplyTemplateCallCount);
     }
 
     [AvaloniaFact]
@@ -1180,7 +1188,9 @@ public sealed class TxImageEditorPaneViewModelTests
             new NormalizedRect(0.1, 0.2, 0.3, 0.4),
             PreserveAspect: false,
             new ImageAdjustments(Brightness: 11, Contrast: -22, Saturation: 33, Gamma: -44, Sharpen: 55, Denoise: 66),
-            [new TxImageEditorPaneViewModel.RawOverlayElementSnapshot("DE %m", 0.25, 0.75, 0.15, new Rgb24(10, 20, 30))]);
+            [new TxImageEditorPaneViewModel.RawTextElementSnapshot(
+                X: 0.25, Y: 0.75, Width: 0.3, Height: 0.18, Z: 0, Locked: false,
+                Text: "DE %m", FontSizeRelative: 0.15, Color: new Rgb24(10, 20, 30))]);
 
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
@@ -1198,7 +1208,7 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(-44, vm.Gamma);
         AssertClose(55, vm.Sharpen);
         AssertClose(66, vm.Denoise);
-        var element = Assert.Single(vm.OverlayElements);
+        var element = (OverlayElementViewModel)Assert.Single(vm.OverlayElements);
         // Raw Text, NOT resolved -- confirms the macro template itself was restored, not baked.
         Assert.Equal("DE %m", element.Text);
         Assert.Equal("DE W1AW", element.ResolvedText);
@@ -1206,6 +1216,39 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(0.75, element.Y);
         AssertClose(0.15, element.FontSizeRelative);
         Assert.Equal(new Rgb24(10, 20, 30), element.Color);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_WithInitialStateElementsOutOfZOrder_SeedsOverlayElementsSortedByZ()
+    {
+        // Round-3 code-review finding: MoveElementUp/Down assume OverlayElements' own collection
+        // order always matches Z order (that invariant is what lets a plain Canvas.Move()-based
+        // reorder keep the canvas's draw order in sync with Z). Every other mutation site upholds
+        // this already; EditorInitialState is the one entry point that could hand in elements out of
+        // Z order (e.g. a future template-load path) -- this pins that the constructor sorts on
+        // entry instead of trusting the caller.
+        var initialState = new TxImageEditorPaneViewModel.EditorInitialState(
+            new NormalizedRect(0, 0, 1, 1),
+            PreserveAspect: true,
+            new ImageAdjustments(),
+            [
+                new TxImageEditorPaneViewModel.RawTextElementSnapshot(
+                    X: 0.5, Y: 0.5, Width: 0.3, Height: 0.18, Z: 5, Locked: false,
+                    Text: "Z5", FontSizeRelative: 0.1, Color: new Rgb24(0, 0, 0)),
+                new TxImageEditorPaneViewModel.RawTextElementSnapshot(
+                    X: 0.5, Y: 0.5, Width: 0.3, Height: 0.18, Z: 1, Locked: false,
+                    Text: "Z1", FontSizeRelative: 0.1, Color: new Rgb24(0, 0, 0)),
+                new TxImageEditorPaneViewModel.RawTextElementSnapshot(
+                    X: 0.5, Y: 0.5, Width: 0.3, Height: 0.18, Z: 3, Locked: false,
+                    Text: "Z3", FontSizeRelative: 0.1, Color: new Rgb24(0, 0, 0)),
+            ]);
+
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            initialState);
+
+        Assert.Equal(["Z1", "Z3", "Z5"], vm.OverlayElements.Select(e => ((OverlayElementViewModel)e).Text));
     }
 
     [AvaloniaFact]
@@ -1219,8 +1262,12 @@ public sealed class TxImageEditorPaneViewModelTests
             new NormalizedRect(0.1, 0.2, 0.3, 0.4), PreserveAspect: false,
             new ImageAdjustments(Brightness: 10),
             [
-                new TxImageEditorPaneViewModel.RawOverlayElementSnapshot("A", 0.2, 0.2, 0.1, new Rgb24(255, 255, 255)),
-                new TxImageEditorPaneViewModel.RawOverlayElementSnapshot("B", 0.3, 0.3, 0.1, new Rgb24(255, 255, 255)),
+                new TxImageEditorPaneViewModel.RawTextElementSnapshot(
+                    X: 0.2, Y: 0.2, Width: 0.3, Height: 0.18, Z: 0, Locked: false,
+                    Text: "A", FontSizeRelative: 0.1, Color: new Rgb24(255, 255, 255)),
+                new TxImageEditorPaneViewModel.RawTextElementSnapshot(
+                    X: 0.3, Y: 0.3, Width: 0.3, Height: 0.18, Z: 1, Locked: false,
+                    Text: "B", FontSizeRelative: 0.1, Color: new Rgb24(255, 255, 255)),
             ]);
 
         _ = new TxImageEditorPaneViewModel(
@@ -1230,8 +1277,8 @@ public sealed class TxImageEditorPaneViewModelTests
 
         // One from BuildWorkingCopy's own initial Resize + one RecomputePreview pass (Crop, Resize,
         // ApplyAdjustments, ApplyOverlay each call ApplyOverlay/ApplyAdjustments/etc. once) --
-        // asserting on ApplyOverlayCallCount specifically, since that's the pipeline's final step.
-        Assert.Equal(1, preparer.ApplyOverlayCallCount);
+        // asserting on ApplyTemplateCallCount specifically, since that's the pipeline's final step.
+        Assert.Equal(1, preparer.ApplyTemplateCallCount);
     }
 
     [AvaloniaFact]
@@ -1258,11 +1305,11 @@ public sealed class TxImageEditorPaneViewModelTests
     {
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
-        var countBefore = preparer.ApplyOverlayCallCount;
+        var countBefore = preparer.ApplyTemplateCallCount;
 
         typeof(TxImageEditorPaneViewModel).GetProperty(propertyName)!.SetValue(vm, 25.0);
 
-        Assert.True(preparer.ApplyOverlayCallCount > countBefore);
+        Assert.True(preparer.ApplyTemplateCallCount > countBefore);
     }
 
     [AvaloniaFact]
@@ -1336,7 +1383,234 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.ApplyCommand.Execute(null);
 
         Assert.Same(preparer.ResizeResults[^1], preparer.AdjustmentsSources[^1]);
-        Assert.Same(preparer.AdjustmentsResults[^1], preparer.OverlaySources[^1]);
+        Assert.Same(preparer.AdjustmentsResults[^1], preparer.ApplyTemplateSources[^1]);
+    }
+
+    // Phase 1 (spec/15-template-designer.md): box elements + z-order reorder. Code-review finding --
+    // this coverage was entirely missing when Phase 1 first shipped.
+
+    [AvaloniaFact]
+    public void AddBoxElement_AddsAndSelectsItAndTriggersPreviewRecompute()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        var countBefore = preparer.ApplyTemplateCallCount;
+
+        vm.AddBoxElementCommand.Execute(null);
+
+        var element = (BoxElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.Same(element, vm.SelectedOverlayElement);
+        Assert.True(preparer.ApplyTemplateCallCount > countBefore);
+    }
+
+    [AvaloniaFact]
+    public void AddBoxElement_BakesFillBorderThicknessOpacityIntoTheAppliedDocument()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var element = (BoxElementViewModel)vm.OverlayElements[0];
+
+        element.FillColor = new Rgb24(10, 20, 30);
+        element.BorderColor = new Rgb24(40, 50, 60);
+        element.BorderThickness = 0.05;
+        element.Opacity = 0.5;
+
+        var box = Assert.IsType<TemplateBoxElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
+        Assert.Equal(new Rgb24(10, 20, 30), box.FillColor);
+        Assert.Equal(new Rgb24(40, 50, 60), box.BorderColor);
+        AssertClose(0.05, box.BorderThickness);
+        AssertClose(0.5, box.Opacity);
+    }
+
+    [AvaloniaFact]
+    public void MoveElementUp_OnBottomOfTwoAdjacentElements_SwapsDrawOrder_NotJustIncrementsZ()
+    {
+        // Code-review finding: NextZ() hands out consecutive Zs (0, 1, ...) with no gaps, so a naive
+        // `element.Z += 1` on the bottom element lands it on the SAME Z as its already-on-top
+        // neighbor -- ApplyTemplate's stable OrderBy(Z) then still draws them in original
+        // (still-wrong) list order, making the FIRST click on "move up" a visible no-op in the
+        // default (freshly-added) arrangement. This pins the real fix: a neighbor SWAP, which
+        // always changes relative draw order on the very first click.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var bottom = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var top = vm.OverlayElements[1];
+        Assert.True(bottom.Z < top.Z);
+
+        vm.MoveElementUpCommand.Execute(bottom);
+
+        Assert.True(bottom.Z > top.Z);
+        // Round-3 code-review finding: the canvas ItemsControl's ZIndex binding was confirmed (via a
+        // real running window) to have NO effect on draw order -- Avalonia doesn't forward it through
+        // the generated item container. The actual fix is keeping OverlayElements' own COLLECTION
+        // order in sync with Z (a plain Canvas draws children in child order); a Z-only assertion
+        // wouldn't catch a regression that deletes the OverlayElements.Move(...) call but leaves the
+        // Z-swap intact, so assert collection identity too.
+        Assert.Same(top, vm.OverlayElements[0]);
+        Assert.Same(bottom, vm.OverlayElements[1]);
+    }
+
+    [AvaloniaFact]
+    public void MoveElementDown_OnTopOfTwoAdjacentElements_SwapsDrawOrder_NotJustDecrementsZ()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var bottom = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var top = vm.OverlayElements[1];
+
+        vm.MoveElementDownCommand.Execute(top);
+
+        Assert.True(bottom.Z > top.Z);
+        Assert.Same(top, vm.OverlayElements[0]);
+        Assert.Same(bottom, vm.OverlayElements[1]);
+    }
+
+    [AvaloniaFact]
+    public void MoveElementUpAndDown_RepeatedlyOnThreeElements_KeepsCollectionOrderInSyncWithZ()
+    {
+        // Round-3 code-review finding: OverlayElements.Move(...) is only a pure pairwise swap AS LONG
+        // AS collection order already matches Z order before the call -- this test exercises several
+        // mixed up/down clicks across 3 elements (not just one swap) to pin that the invariant survives
+        // repeated use, not just a single move.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var a = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var b = vm.OverlayElements[1];
+        vm.AddOverlayElementCommand.Execute(null);
+        var c = vm.OverlayElements[2];
+
+        vm.MoveElementUpCommand.Execute(a);
+        AssertOrderMatchesZ(vm);
+        Assert.Equal([b, a, c], vm.OverlayElements);
+
+        vm.MoveElementDownCommand.Execute(c);
+        AssertOrderMatchesZ(vm);
+        Assert.Equal([b, c, a], vm.OverlayElements);
+
+        vm.MoveElementUpCommand.Execute(b);
+        AssertOrderMatchesZ(vm);
+        Assert.Equal([c, b, a], vm.OverlayElements);
+
+        static void AssertOrderMatchesZ(TxImageEditorPaneViewModel vm)
+        {
+            var zs = vm.OverlayElements.Select(e => e.Z).ToList();
+            Assert.Equal(zs.OrderBy(z => z), zs);
+        }
+    }
+
+    [AvaloniaFact]
+    public void MoveElementUp_OnTopmostElement_IsANoOp_DoesNotPushAnAdditionalUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var only = vm.OverlayElements[0];
+        var zBefore = only.Z;
+
+        vm.MoveElementUpCommand.Execute(only);
+        Assert.Equal(zBefore, only.Z);
+
+        // If the no-op still pushed an undo step, this single Undo would revert THAT no-op step and
+        // leave the element present with UndoCommand still true; the correct behavior is that this
+        // Undo reverts the ADD itself, since a boundary no-op MoveElementUp never pushed anything.
+        vm.UndoCommand.Execute(null);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void MoveElementDown_OnBottommostElement_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var only = vm.OverlayElements[0];
+        var zBefore = only.Z;
+
+        vm.MoveElementDownCommand.Execute(only);
+
+        Assert.Equal(zBefore, only.Z);
+    }
+
+    [AvaloniaFact]
+    public void MoveElementUp_ThenUndo_RestoresOriginalZOrder()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var bottom = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var top = vm.OverlayElements[1];
+        vm.MoveElementUpCommand.Execute(bottom);
+        Assert.True(bottom.Z > top.Z);
+
+        vm.UndoCommand.Execute(null);
+
+        var restoredBottom = vm.OverlayElements[0];
+        var restoredTop = vm.OverlayElements[1];
+        Assert.True(restoredBottom.Z < restoredTop.Z);
+    }
+
+    // Pure math extracted from TxImageEditorPaneView.axaml.cs's OnCanvasPointerMoved (code-review
+    // finding: this logic shipped with zero test coverage since it lived entirely in code-behind;
+    // splitting it into a public static method makes it testable without simulating real Avalonia
+    // pointer events -- see that method's own doc comment for the InternalsVisibleTo/public
+    // reasoning, same precedent as WaterfallPalette).
+
+    [Fact]
+    public void ComputeElementResize_GrowingBothAxes_PinsOppositeCornerViaHalfDeltaCenterShift()
+    {
+        var (width, height, centerDeltaX, centerDeltaY) = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.3, currentHeight: 0.2, dxNormalized: 0.1, dyNormalized: 0.04);
+
+        AssertClose(0.4, width);
+        AssertClose(0.24, height);
+        AssertClose(0.05, centerDeltaX);
+        AssertClose(0.02, centerDeltaY);
+    }
+
+    [Fact]
+    public void ComputeElementResize_ShrinkingWithinFloor_AppliesTheFullRequestedDelta()
+    {
+        var (width, height, centerDeltaX, centerDeltaY) = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.3, currentHeight: 0.2, dxNormalized: -0.1, dyNormalized: -0.05);
+
+        AssertClose(0.2, width);
+        AssertClose(0.15, height);
+        AssertClose(-0.05, centerDeltaX);
+        AssertClose(-0.025, centerDeltaY);
+    }
+
+    [Fact]
+    public void ComputeElementResize_ShrinkingPastTheFloor_ClampsSizeAndOnlyShiftsCenterByTheAppliedDelta()
+    {
+        // Code-review finding: an unclamped resize could drive Width/Height negative, which
+        // ApplyTemplate silently treats as "skip this element" -- a fast drag past the opposite
+        // corner made the element vanish from both the canvas and the transmitted image with no
+        // visible handle left to recover it (other than Undo). This pins both halves of the fix:
+        // the size floors at MinNormalizedElementSize (0.02), and the center-pinning math uses the
+        // ACTUALLY-APPLIED delta (not the raw requested one), so the opposite corner doesn't keep
+        // drifting once the floor engages.
+        var (width, height, centerDeltaX, centerDeltaY) = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.05, currentHeight: 0.05, dxNormalized: -0.5, dyNormalized: -0.5);
+
+        AssertClose(0.02, width);
+        AssertClose(0.02, height);
+        // Applied delta is (0.02 - 0.05) = -0.03, not the raw -0.5 request.
+        AssertClose(-0.015, centerDeltaX);
+        AssertClose(-0.015, centerDeltaY);
+    }
+
+    [Fact]
+    public void ComputeElementResize_NeverProducesANonPositiveWidthOrHeight()
+    {
+        var (width, height, _, _) = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.3, currentHeight: 0.3, dxNormalized: -10, dyNormalized: -10);
+
+        Assert.True(width > 0);
+        Assert.True(height > 0);
     }
 
     private static ArrayImageSource CreateSource(int width, int height)
