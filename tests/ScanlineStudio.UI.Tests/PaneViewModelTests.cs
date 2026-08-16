@@ -1363,6 +1363,106 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_EditCurrentImage_CanExecuteOnlyAfterAnAppliedEdit_AndNotWhileAnEditorIsOpen()
+    {
+        // spec/18-path-to-1.0.md Medium item: re-open/re-edit an image after Apply.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+
+        Assert.False(vm.EditCurrentImageCommand.CanExecute(null));
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        Assert.False(vm.EditCurrentImageCommand.CanExecute(null), "Must stay disabled while the FIRST editor is still open.");
+
+        // Round-1 plan-review blocker: _editState is a plain field, not observable, so nothing
+        // re-evaluates CanExecute unless something explicitly calls NotifyCanExecuteChanged() --
+        // calling CanExecute(null) directly (as above) re-evaluates the predicate fresh regardless
+        // of that wiring, so it CANNOT catch a missing NotifyCanExecuteChanged() call; only
+        // asserting the CanExecuteChanged EVENT actually fires (the real, observable effect a
+        // bound Button's own IsEnabled relies on) can.
+        var canExecuteChangedFireCount = 0;
+        vm.EditCurrentImageCommand.CanExecuteChanged += (_, _) => canExecuteChangedFireCount++;
+
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(canExecuteChangedFireCount > 0, "EditCurrentImageCommand.CanExecuteChanged must fire after Apply, or a bound Button would never actually enable.");
+        Assert.True(vm.EditCurrentImageCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_EditCurrentImage_ReopensWithTheRetainedCropPreserveAspectAndAdjustments()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        firstEditor.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
+        firstEditor.PreserveAspect = false;
+        firstEditor.Brightness = 42;
+        firstEditor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var reopenedEditor = await OpenEditorAsync(vm, () => vm.EditCurrentImageCommand.ExecuteAsync(null));
+
+        Assert.Equal(new NormalizedRect(0.1, 0.2, 0.3, 0.4), reopenedEditor.CropRect);
+        Assert.False(reopenedEditor.PreserveAspect);
+        Assert.Equal(42, reopenedEditor.Brightness);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_EditCurrentImage_RestoresOverlayTextWithItsRawMacroTemplate_NotResolvedOrProjected()
+    {
+        // Round-1 plan-review blocker: an earlier draft of this feature deferred overlay
+        // restoration entirely, which turned out to be a SILENT DESTRUCTIVE-EDIT bug -- Edit then
+        // Apply again would have permanently discarded any overlay text the user had added. Fixed
+        // by retaining a RAW (photo-anchored, un-macro-resolved) snapshot in EditState, separate
+        // from the crop-projected/macro-resolved ImageOverlay OnSelectedModeChanged's own reflow
+        // needs. This test pins that the raw TEMPLATE survives a round trip, not the resolved text.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        // Code-review finding: the CAPTURE side of this round trip (TxImageEditorPaneViewModel.
+        // RawOverlayElements, read at Apply time) had zero coverage -- only the CONSTRUCTOR's own
+        // consume side was pinned elsewhere. A non-identity crop makes the distinction observable:
+        // if the raw snapshot leaked the CROP-PROJECTED coordinates instead (the exact bug this
+        // mechanism exists to avoid), X/Y would read back near 0.5 (the crop-projected value for
+        // this particular crop+element), not the real 0.25/0.75 set below.
+        firstEditor.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
+        firstEditor.AddOverlayElementCommand.Execute(null);
+        firstEditor.OverlayElements[0].Text = "DE %m";
+        firstEditor.OverlayElements[0].X = 0.25;
+        firstEditor.OverlayElements[0].Y = 0.75;
+        firstEditor.OverlayElements[0].FontSizeRelative = 0.15;
+        firstEditor.OverlayElements[0].Color = new Rgb24(10, 20, 30);
+        firstEditor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var reopenedEditor = await OpenEditorAsync(vm, () => vm.EditCurrentImageCommand.ExecuteAsync(null));
+
+        var element = Assert.Single(reopenedEditor.OverlayElements);
+        Assert.Equal("DE %m", element.Text);
+        Assert.Equal(0.25, element.X);
+        Assert.Equal(0.75, element.Y);
+        Assert.Equal(0.15, element.FontSizeRelative);
+        Assert.Equal(new Rgb24(10, 20, 30), element.Color);
+
+        // Re-applying with no further edits must NOT destroy the restored overlay text -- the
+        // exact regression the deferred-restoration draft would have introduced.
+        reopenedEditor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Single(preparer.Overlays[^1].Elements);
+    }
+
+    [AvaloniaFact]
     public async Task TxControlsPaneViewModel_RotateThenApplyThenModeChange_UsesTheRotatedSource_NotTheStaleOriginal()
     {
         // spec/18-path-to-1.0.md High item 3, round-1 plan-review blocker: OnEditorApplied used to

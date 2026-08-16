@@ -762,6 +762,83 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(0.2, vm.OverlayElements[0].Y);
     }
 
+    [AvaloniaFact]
+    public void Constructor_WithInitialState_SeedsCropPreserveAspectAdjustmentsAndOverlayElements()
+    {
+        // spec/18-path-to-1.0.md Medium item: re-open/re-edit an image after Apply. The
+        // TxControlsPaneViewModel.EditCurrentImageAsync command constructs a fresh editor with the
+        // PRIOR edit's own state -- confirms every field actually lands, not just some.
+        var initialState = new TxImageEditorPaneViewModel.EditorInitialState(
+            new NormalizedRect(0.1, 0.2, 0.3, 0.4),
+            PreserveAspect: false,
+            new ImageAdjustments(Brightness: 11, Contrast: -22, Saturation: 33, Gamma: -44, Sharpen: 55, Denoise: 66),
+            [new TxImageEditorPaneViewModel.RawOverlayElementSnapshot("DE %m", 0.25, 0.75, 0.15, new Rgb24(10, 20, 30))]);
+
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings { Callsign = "W1AW" }, new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            initialState);
+
+        AssertClose(0.1, vm.CropRect.X);
+        AssertClose(0.2, vm.CropRect.Y);
+        AssertClose(0.3, vm.CropRect.Width);
+        AssertClose(0.4, vm.CropRect.Height);
+        Assert.False(vm.PreserveAspect);
+        AssertClose(11, vm.Brightness);
+        AssertClose(-22, vm.Contrast);
+        AssertClose(33, vm.Saturation);
+        AssertClose(-44, vm.Gamma);
+        AssertClose(55, vm.Sharpen);
+        AssertClose(66, vm.Denoise);
+        var element = Assert.Single(vm.OverlayElements);
+        // Raw Text, NOT resolved -- confirms the macro template itself was restored, not baked.
+        Assert.Equal("DE %m", element.Text);
+        Assert.Equal("DE W1AW", element.ResolvedText);
+        AssertClose(0.25, element.X);
+        AssertClose(0.75, element.Y);
+        AssertClose(0.15, element.FontSizeRelative);
+        Assert.Equal(new Rgb24(10, 20, 30), element.Color);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_WithInitialState_RecomputesPreviewExactlyOnce()
+    {
+        // Same suspend-preview shape as Rotate()'s own test -- seeding CropRect/PreserveAspect/6
+        // slider properties/N overlay elements must not each independently trigger their own
+        // RecomputePreview() pass.
+        var preparer = new FakeTransmitImagePreparer();
+        var initialState = new TxImageEditorPaneViewModel.EditorInitialState(
+            new NormalizedRect(0.1, 0.2, 0.3, 0.4), PreserveAspect: false,
+            new ImageAdjustments(Brightness: 10),
+            [
+                new TxImageEditorPaneViewModel.RawOverlayElementSnapshot("A", 0.2, 0.2, 0.1, new Rgb24(255, 255, 255)),
+                new TxImageEditorPaneViewModel.RawOverlayElementSnapshot("B", 0.3, 0.3, 0.1, new Rgb24(255, 255, 255)),
+            ]);
+
+        _ = new TxImageEditorPaneViewModel(
+            CreateSource(8, 8), WideMode, preparer, new MacroTextResolver(),
+            new OperatorSettings(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            initialState);
+
+        // One from BuildWorkingCopy's own initial Resize + one RecomputePreview pass (Crop, Resize,
+        // ApplyAdjustments, ApplyOverlay each call ApplyOverlay/ApplyAdjustments/etc. once) --
+        // asserting on ApplyOverlayCallCount specifically, since that's the pipeline's final step.
+        Assert.Equal(1, preparer.ApplyOverlayCallCount);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_WithNullInitialState_BehavesExactlyAsBeforeThisFeature()
+    {
+        // Regression guard: the existing fresh-pick call site (OpenEditorForSourceAsync) never
+        // passes initialState -- confirms that path's defaults are completely unaffected.
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+
+        Assert.Equal(new NormalizedRect(0, 0, 1, 1), vm.CropRect);
+        Assert.True(vm.PreserveAspect);
+        Assert.True(vm.Adjustments.IsIdentity);
+        Assert.Empty(vm.OverlayElements);
+    }
+
     [AvaloniaTheory]
     [InlineData(nameof(TxImageEditorPaneViewModel.Brightness))]
     [InlineData(nameof(TxImageEditorPaneViewModel.Contrast))]
