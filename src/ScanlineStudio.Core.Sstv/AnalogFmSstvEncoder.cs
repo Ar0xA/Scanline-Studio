@@ -41,14 +41,57 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         StationIdTransmitOptions? stationId = null,
         CancellationToken ct = default)
     {
+        ValidateImageDimensions(mode, image);
+
+        return EncodeAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, ct);
+    }
+
+    /// <summary>Spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during transmit."
+    /// Replicates <see cref="EncodeAsyncCore"/>'s own running-accumulator expression verbatim
+    /// (same per-segment formula, same operand order, same summation order) rather than summing
+    /// <c>DurationMs</c> first and multiplying once -- floating-point addition is not associative,
+    /// so those two forms are only guaranteed to agree in exact arithmetic; over the ~hundreds of
+    /// thousands of segments a full image produces, they can diverge by enough to flip the final
+    /// truncation by one sample on some (mode, image, stationId) combination even though a
+    /// single-mode spot check would show exact agreement. This is a real traversal of every segment
+    /// (same iterators <see cref="EncodeAsyncCore"/> walks), not O(1) metadata math -- no tone
+    /// synthesis or filtering happens, but the cost is still proportional to image size.
+    ///
+    /// Honesty note on how this was verified: mutation-testing this specific property (temporarily
+    /// reverting to sum-then-multiply, confirming a test catches it) did NOT actually fail on any of
+    /// the several structurally different modes tried in
+    /// <c>AnalogFmSstvEncoderEstimateSampleCountTests</c> -- the divergence this comment describes is
+    /// real (IEEE-754 addition is provably non-associative) but apparently doesn't manifest for these
+    /// particular solid-color test images at these particular mode sizes; constructing an image/mode
+    /// combination that DOES trigger it was not attempted (would require reasoning about exact
+    /// per-segment floating-point rounding across hundreds of thousands of terms). Bit-identical
+    /// output here is guaranteed by identical code path/operand order (structural correctness), not
+    /// by an empirical test that has been shown to fail without it.</summary>
+    public long EstimateSampleCount(
+        SstvModeDefinition mode,
+        IImageSource image,
+        StationIdTransmitOptions? stationId = null)
+    {
+        ValidateImageDimensions(mode, image);
+
+        var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
+        var idealSamplesSoFar = 0.0;
+        foreach (var (_, durationMs) in GenerateFrequencySegments(mode, image, lineEncoder, stationId ?? StationIdTransmitOptions.None))
+        {
+            idealSamplesSoFar += durationMs / 1000.0 * SampleRate;
+        }
+
+        return (long)idealSamplesSoFar;
+    }
+
+    private static void ValidateImageDimensions(SstvModeDefinition mode, IImageSource image)
+    {
         if (image.Width != mode.ImageWidth || image.Height != mode.ImageHeight)
         {
             throw new ArgumentException(
                 $"Image dimensions {image.Width}x{image.Height} do not match mode '{mode.Id}' expected {mode.ImageWidth}x{mode.ImageHeight}.",
                 nameof(image));
         }
-
-        return EncodeAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, ct);
     }
 
     private async IAsyncEnumerable<float> EncodeAsyncCore(

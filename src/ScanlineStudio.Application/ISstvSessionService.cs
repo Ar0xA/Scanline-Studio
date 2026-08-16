@@ -137,6 +137,24 @@ public interface ISstvSessionService : IAsyncDisposable
     /// PTT via the injected <c>IRadioSessionService</c> around playback.</summary>
     Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default);
 
+    /// <summary>Fires periodically (roughly every 4096 samples, ~0.37s at 11025Hz) while a
+    /// <see cref="TransmitAsync"/> call is actively enqueuing samples to the playback device — spec/
+    /// 18-path-to-1.0.md Medium item: "No TX send-progress feedback during transmit." Does NOT fire
+    /// for <see cref="TuneAsync"/> (a fixed-tone AFC-lock aid, not something this feature targets).
+    ///
+    /// <b>Threading contract, same as <see cref="ModeDetected"/>/<see cref="DecodeRestarted"/></b>:
+    /// raised SYNCHRONOUSLY on the playback pump thread, wrapped in a try/catch internally so a
+    /// throwing subscriber cannot abort an in-flight transmission — but a slow SYNCHRONOUS subscriber
+    /// still directly stalls sample enqueue (audible dropout risk). Subscribers must marshal to their
+    /// own scheduler and must not block.
+    ///
+    /// <see cref="TransmitProgressInfo.Fraction"/> is derived from samples successfully enqueued to
+    /// the playback device (not wall-clock elapsed time), which tracks real playback closely but not
+    /// exactly: the playback engine's own internal buffer (on the order of ~1.5s of audio) means
+    /// progress can reach 100% slightly before audio actually finishes playing, and the very first
+    /// report can jump several percent at once on a short mode once that buffer fills.</summary>
+    event Action<TransmitProgressInfo>? TransmitProgressChanged;
+
     /// <summary>Keys PTT, plays a steady sine tone at <paramref name="frequencyHz"/> for
     /// <paramref name="duration"/> (WSJT-X/legacy-Tune-style AFC-lock aid), then un-keys PTT --
     /// same pause-RX/key-PTT/resume-RX guarantee shape as <see cref="TransmitAsync"/>.</summary>
