@@ -73,7 +73,7 @@
                              Content="{loc:Translate Panes.TxImageEditor.ToolMask}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="EditorTool" IsEnabled="False" Margin="0,0,4,4"
                              Content="{loc:Translate Panes.TxImageEditor.ToolPick}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <Border Width="1" Height="16" Margin="0,0,4,4" Background="{StaticResource IndustryDivider}" />
+                <Border Width="1" Height="16" Margin="0,0,4,4" Background="{StaticResource IndustryControlBorder}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding UndoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding RedoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />

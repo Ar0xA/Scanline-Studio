@@ -616,7 +616,7 @@
                                          IndustryTableRowRule rows against, left empty until a real
                                          decode-history event log exists. -->
                                 </DockPanel>
-                                <Border Grid.Column="1" BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1,0,0,0" Padding="9,0,0,0">
+                                <Border Grid.Column="1" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1,0,0,0" Padding="9,0,0,0">
                                     <DockPanel LastChildFill="True">
                                         <TextBlock DockPanel.Dock="Top" Classes="Industry IndustryKicker" Text="{loc:Translate Panes.RxDecodeLog.TraceHeader}" />
                                         <ScrollViewer>
@@ -1047,7 +1047,9 @@
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxHistory.SelectedFrameHeader}" />
                             </HeaderedContentControl.Header>
                             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                <Border BorderBrush="{StaticResource IndustryDivider}" BorderThickness="1" Height="190">
+                                <!-- §7.4 fixed exception: received-frame pane is content, not
+                                     UI — ControlBorder (#A0A0A0), not ChromeBorder. -->
+                                <Border BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" Height="190">
                                     <Image Source="{Binding PreviewImage}" Stretch="Uniform" />
                                 </Border>
                                 <StackPanel Classes="Industry IndustryRows">
@@ -1437,7 +1439,7 @@
              ported it 1:1 into Ellipse.IndustryLed/TextBlock.IndustryReadoutSmall (Atoms.axaml),
              same colors, just relocated off the deleted old-design files. -->
         <Border Grid.Row="3" Height="25" Classes="Industry" Background="{StaticResource IndustryBg}"
-                BorderBrush="{StaticResource IndustryDivider}" BorderThickness="0,1,0,0">
+                BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="0,1,0,0">
             <!-- Margin 8,3,8,3 (was 8,4,8,4, 2026-08-14): the new LED+lozenge status chips below
                  are the spec's real 19px (§6), 2px taller than the existing 17px IndustryMini
                  chips — loosened here to fit them without clipping; the 17px chips just sit
