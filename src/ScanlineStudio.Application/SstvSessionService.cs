@@ -48,6 +48,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private const int ExceptionLogEveryN = 200;
     private int _decoderExceptionCount;
     private int _waterfallExceptionCount;
+    private int _transmitProgressHandlerExceptionCount;
 
     public SstvSessionService(
         IAudioEngine audioEngine,
@@ -220,6 +221,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
         add => _decoder.StationIdDecoded += value;
         remove => _decoder.StationIdDecoded -= value;
     }
+
+    /// <summary>See <see cref="ISstvSessionService.TransmitProgressChanged"/> for the full threading
+    /// contract. Raised from <see cref="PumpToPlaybackAsync"/> via <see cref="ReportTransmitProgress"/>.</summary>
+    public event Action<TransmitProgressInfo>? TransmitProgressChanged;
 
     public async Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default)
     {
@@ -428,7 +433,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
     {
         Log.TxStarting(_logger, mode.Id, image.Width, image.Height);
         var stationId = await GetStationIdTransmitOptionsAsync(ct).ConfigureAwait(false);
-        await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, ct), _encoder.SampleRate, ct).ConfigureAwait(false);
+
+        // Plan-review finding: MUST reuse this SAME resolved stationId for the estimate below, not
+        // re-resolve it -- MacroTextResolver's CW-ID text can be time-dependent (DateTime.UtcNow), so
+        // two independent resolutions aren't guaranteed to produce the same footer duration, which
+        // would make the estimate silently disagree with what EncodeAsync actually emits.
+        //
+        // Code-review finding: EstimateSampleCount is a real traversal of every scanline segment
+        // (its own doc comment says so), not O(1) metadata math -- Task.Run keeps it off whichever
+        // thread called TransmitAsync (the caller's own await above may not have yielded at all, e.g.
+        // JsonSettingsStore.LoadAsync returns synchronously when no settings file exists yet), so a
+        // large image's estimate can't delay PTT keying/RX pause by running inline on the UI thread.
+        var totalSamplesEstimate = await Task.Run(() => _encoder.EstimateSampleCount(mode, image, stationId), ct).ConfigureAwait(false);
+        await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
     }
 
     /// <summary>Resolves the CW-ID/FSK station-ID settings + operator identity into one fully-formed
@@ -534,7 +551,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// shape's <c>try</c>/<c>finally</c> didn't start until after those calls.</summary>
     private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
 
-    private async Task PlayWithPttAsync(IAsyncEnumerable<float> samples, int sampleRate, CancellationToken ct, bool leaveKeyedAfterCall = false)
+    private async Task PlayWithPttAsync(IAsyncEnumerable<float> samples, int sampleRate, CancellationToken ct, bool leaveKeyedAfterCall = false, long? totalSamplesEstimate = null)
     {
         var wasReceiving = _isReceiving;
         if (wasReceiving)
@@ -574,7 +591,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
             await _audioEngine.StartPlaybackAsync(
                 device, sampleRate, audioSettings.PeriodSizeInFrames, audioSettings.Periods,
                 audioSettings.StereoTxEnabled, ct).ConfigureAwait(false);
-            await PumpToPlaybackAsync(samples, gain, ct).ConfigureAwait(false);
+            await PumpToPlaybackAsync(samples, gain, sampleRate, totalSamplesEstimate, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -744,11 +761,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
     }
 
-    private async Task PumpToPlaybackAsync(IAsyncEnumerable<float> samples, float gain, CancellationToken ct)
+    /// <summary><paramref name="totalSamplesEstimate"/> is <see langword="null"/> for
+    /// <see cref="TuneAsync"/> (no <see cref="TransmitProgressChanged"/> reporting for a tone) and a
+    /// real value for <see cref="TransmitAsync"/> (spec/18-path-to-1.0.md Medium item). The running
+    /// sample counter is a local, not a field -- nothing must dangle across separate calls.</summary>
+    private async Task PumpToPlaybackAsync(IAsyncEnumerable<float> samples, float gain, int sampleRate, long? totalSamplesEstimate, CancellationToken ct)
     {
         const int chunkSize = 4096;
         var buffer = new float[chunkSize];
         var count = 0;
+        var samplesEnqueued = 0L;
 
         await foreach (var sample in samples.WithCancellation(ct).ConfigureAwait(false))
         {
@@ -756,6 +778,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
             if (count == chunkSize)
             {
                 await EnqueueAllAsync(buffer.AsMemory(0, count), ct).ConfigureAwait(false);
+                samplesEnqueued += count;
+                ReportTransmitProgress(samplesEnqueued, totalSamplesEstimate, sampleRate);
                 count = 0;
             }
         }
@@ -763,6 +787,46 @@ public sealed partial class SstvSessionService : ISstvSessionService
         if (count > 0)
         {
             await EnqueueAllAsync(buffer.AsMemory(0, count), ct).ConfigureAwait(false);
+            samplesEnqueued += count;
+            ReportTransmitProgress(samplesEnqueued, totalSamplesEstimate, sampleRate);
+        }
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.TransmitProgressChanged"/>'s own doc comment for
+    /// the full threading contract this raise site must uphold: synchronous on the playback pump
+    /// thread, so a throwing subscriber must not be allowed to propagate out and abort the
+    /// transmission this progress report belongs to.</summary>
+    private void ReportTransmitProgress(long samplesEnqueued, long? totalSamplesEstimate, int sampleRate)
+    {
+        if (totalSamplesEstimate is not { } total || total <= 0)
+        {
+            return;
+        }
+
+        // Code-review finding: try/catch scoped to ONLY the invoke, not the fraction/TimeSpan math
+        // above it -- a future change to that math throwing (e.g. a genuinely degenerate sampleRate)
+        // would otherwise get misattributed to "a subscriber's handler threw" in the log.
+        var fraction = Math.Clamp(samplesEnqueued / (double)total, 0.0, 1.0);
+        var info = new TransmitProgressInfo(
+            fraction,
+            TimeSpan.FromSeconds(samplesEnqueued / (double)sampleRate),
+            TimeSpan.FromSeconds(total / (double)sampleRate));
+
+        try
+        {
+            TransmitProgressChanged?.Invoke(info);
+        }
+        catch (Exception ex)
+        {
+            // Hot-path rate-limiting (docs/logging-guidelines.md), same reasoning/pattern as
+            // _decoderExceptionCount/_waterfallExceptionCount above: this fires roughly every 4096
+            // samples (~2.7/s at 11025Hz), so an unguarded Error log per occurrence would flood the
+            // log file across a multi-minute transmission if a subscriber keeps throwing.
+            var count = Interlocked.Increment(ref _transmitProgressHandlerExceptionCount);
+            if (count == 1 || count % ExceptionLogEveryN == 0)
+            {
+                Log.TransmitProgressHandlerFailed(_logger, count, ex);
+            }
         }
     }
 
@@ -944,5 +1008,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Maintenance handler '{HandlerName}' threw")]
         public static partial void MaintenanceHandlerFailed(ILogger logger, string handlerName, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "TransmitProgressChanged handler threw ({Count} occurrence(s) so far this session)")]
+        public static partial void TransmitProgressHandlerFailed(ILogger logger, int count, Exception ex);
     }
 }

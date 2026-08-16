@@ -25,4 +25,27 @@ public interface ISstvEncoder
         IImageSource image,
         StationIdTransmitOptions? stationId = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// The exact total sample count a matching <see cref="EncodeAsync"/> call (same <paramref
+    /// name="mode"/>/<paramref name="image"/>/<paramref name="stationId"/>) will emit -- computed
+    /// without performing any audio synthesis (no tone generation, no filtering), only the same
+    /// per-segment duration accumulation <c>EncodeAsync</c>'s own implementation performs
+    /// internally. Used to compute transmit progress (elapsed/total) before playback starts.
+    ///
+    /// Implementations must apply the identical dimension-mismatch <see cref="ArgumentException"/>
+    /// contract <see cref="EncodeAsync"/> documents. Callers that need the estimate to match a
+    /// specific in-flight <see cref="EncodeAsync"/> call byte-for-byte must pass the SAME resolved
+    /// <paramref name="stationId"/> to both calls, not re-resolve it independently -- station-ID
+    /// text can be time-dependent (macro expansion), so two independent resolutions are not
+    /// guaranteed to agree.
+    ///
+    /// Still a real traversal of every scanline segment (not O(1) metadata), so this has a
+    /// non-trivial cost proportional to image size -- callers on a UI thread should not assume this
+    /// is free.
+    /// </summary>
+    long EstimateSampleCount(
+        SstvModeDefinition mode,
+        IImageSource image,
+        StationIdTransmitOptions? stationId = null);
 }

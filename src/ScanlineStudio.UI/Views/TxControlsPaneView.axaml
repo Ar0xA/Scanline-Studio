@@ -332,6 +332,22 @@
             <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnDanger" Padding="7,0" Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
         </StackPanel>
 
+        <!-- spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during transmit."
+             A multi-minute send used to show only the toggle button above, no percentage/time-
+             remaining. Stacked vertically (text below the bar), NOT the RX pane's own side-by-side
+             DockPanel pattern (MainWindow.axaml's Incoming-frame progress row): real-window
+             verification found that pattern genuinely overlapping/clipping here, since this TX sidebar
+             column is far narrower (~258px) than RX's incoming-frame area, too narrow for a
+             percentage+remaining-time string next to a bar sharing one row. Only visible while
+             TransmitProgress has a real value (i.e. while actually transmitting). TargetNullValue=0
+             on the ProgressBar's own Value binding is defense-in-depth only, since IsVisible already
+             hides the whole row in the null case. -->
+        <StackPanel Spacing="{StaticResource IndustrySpacingHairline}"
+                    IsVisible="{Binding TransmitProgress, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <ProgressBar Classes="Industry" Minimum="0" Maximum="1" Value="{Binding TransmitProgress, TargetNullValue=0}" />
+            <TextBlock Classes="IndustryRowValue" HorizontalAlignment="Center" Text="{Binding TransmitProgressText}" />
+        </StackPanel>
+
         <!-- Outgoing metadata: visual scaffolding only; blocked on the same missing operator-
              profile setting as Identification, plus a "to station"/report/QSO-context concept
              that doesn't exist yet (spec/14-roadmap.md backlog). All value rows show a neutral

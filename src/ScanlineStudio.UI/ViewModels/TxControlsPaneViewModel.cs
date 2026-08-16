@@ -117,6 +117,32 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isTransmitting;
 
+    /// <summary>spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during
+    /// transmit." Nullable, mirroring <c>RxImagePaneViewModel.Progress</c>'s own pattern -- null
+    /// while idle (no ProgressBar fill), a real <c>[0,1]</c> value while
+    /// <see cref="IsTransmitting"/>. Set to <c>0</c> at TX start (not left null until the first
+    /// report arrives) and reset to <c>null</c> in <see cref="TransmitAsync"/>'s own
+    /// <c>finally</c>, alongside the existing telemetry resets there.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TransmitProgressText))]
+    private double? _transmitProgress;
+
+    /// <summary>Backing value for <see cref="TransmitProgressText"/> only -- deliberately not an
+    /// <c>[ObservableProperty]</c> itself; <see cref="OnTransmitProgressChanged"/> always sets this
+    /// immediately before <see cref="TransmitProgress"/>, whose own setter is what actually raises
+    /// the <see cref="TransmitProgressText"/> change notification (via
+    /// <c>NotifyPropertyChangedFor</c> above) -- a second independent notification here would be
+    /// redundant.</summary>
+    private TimeSpan _transmitRemaining;
+
+    public string TransmitProgressText => TransmitProgress is { } progress
+        ? _localization.GetString("Panes.TxControls.TransmitProgressFormat", (int)Math.Round(progress * 100), FormatRemaining(_transmitRemaining))
+        : string.Empty;
+
+    private static string FormatRemaining(TimeSpan remaining) => remaining.TotalHours >= 1
+        ? $"{(int)remaining.TotalHours}:{remaining.Minutes:D2}:{remaining.Seconds:D2}"
+        : $"{remaining.Minutes}:{remaining.Seconds:D2}";
+
     [ObservableProperty]
     private string? _errorMessage;
 
@@ -281,6 +307,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             .ToList();
 
         sstvSession.ModeDetected += OnModeDetected;
+        sstvSession.TransmitProgressChanged += OnTransmitProgressChanged;
         radioSession.StateChanges.Subscribe(OnRadioStateChanged);
 
         // Best-effort initial load, same reasoning as RxHistoryPaneViewModel's constructor -- a
@@ -535,6 +562,28 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             }
 
             CheckSwrCutoff(state);
+        });
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.TransmitProgressChanged"/>'s own doc comment for
+    /// the raise-site threading contract this marshals from (playback pump thread, not the UI
+    /// thread). Plan-review finding: the <see cref="IsTransmitting"/> guard here is a defense-in-
+    /// depth measure, not strictly required for correctness under this codebase's actual dispatcher
+    /// priorities -- but removes any dependency on <see cref="Dispatcher.UIThread.Post"/> ordering
+    /// happening to match <see cref="TransmitAsync"/>'s own await-continuation priority for a late
+    /// report arriving after that method's own <c>finally</c> reset has already run.</summary>
+    private void OnTransmitProgressChanged(TransmitProgressInfo info)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!IsTransmitting)
+            {
+                return;
+            }
+
+            var remaining = info.EstimatedTotal - info.Elapsed;
+            _transmitRemaining = remaining < TimeSpan.Zero ? TimeSpan.Zero : remaining;
+            TransmitProgress = info.Fraction;
         });
     }
 
@@ -838,6 +887,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _cutoffTriggered = false;
         _consecutiveSwrOverThreshold = 0;
         IsTransmitting = true;
+        // Code-review finding: reset BOTH -- _transmitRemaining isn't its own ObservableProperty
+        // (see its own doc comment), so leaving it at a previous transmission's last value would
+        // show a stale "remaining" figure in TransmitProgressText for the brief window between TX
+        // start and the first real progress report.
+        _transmitRemaining = TimeSpan.Zero;
+        TransmitProgress = 0;
         TransmitCommand.NotifyCanExecuteChanged();
         StopTransmitCommand.NotifyCanExecuteChanged();
 
@@ -874,6 +929,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             LiveSwrRatio = null;
             LiveAlcLevel = null;
             LivePowerPercent = null;
+            TransmitProgress = null;
             IsTransmitting = false;
             TransmitCommand.NotifyCanExecuteChanged();
             StopTransmitCommand.NotifyCanExecuteChanged();
