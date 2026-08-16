@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
@@ -53,7 +54,28 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         NormalizedRect CropRect, bool PreserveAspect, ImageAdjustments Adjustments,
         IReadOnlyList<RawOverlayElementSnapshot> OverlayElements);
 
+    /// <summary>One undo/redo step -- the editor's FULL editable state, captured wholesale rather
+    /// than as a per-operation command/inverse (spec/18-path-to-1.0.md Medium item, undo/redo
+    /// sub-piece; round-1 plan-review confirmed snapshot-over-command as the right call: the
+    /// mutation surface here is ~10 scalars plus a small element list, cheap to snapshot, and a
+    /// command pattern would need 6+ inverse operations while still special-casing Rotate).
+    /// <see cref="RotationCount"/> instead of a copy of the rotated image itself -- the ORIGINAL
+    /// image at construction time isn't retained (<see cref="RotateImageOnly"/> reassigns
+    /// <see cref="_originalSource"/> in place), so reconciliation rotates a DELTA of
+    /// <c>(target - current) mod 4</c> steps from whatever the CURRENT orientation is, not from a
+    /// fixed baseline -- deterministic and exact regardless, since
+    /// <c>TransmitImagePreparer.Rotate</c> is an exact <c>RotateMode.Rotate90</c> pixel permutation
+    /// with no resampling.</summary>
+    private sealed record EditorSnapshot(
+        int RotationCount, NormalizedRect CropRect, bool PreserveAspect, bool LockAspectToMode,
+        ImageAdjustments Adjustments, IReadOnlyList<RawOverlayElementSnapshot> OverlayElements);
+
     private const double MinNormalizedCropSize = 0.02;
+
+    /// <summary>Undo/redo stack depth cap (round-1 plan-review risk: unbounded keyboard-nudge
+    /// auto-repeat would otherwise grow <see cref="_undoStack"/> forever). Arbitrary but generous
+    /// for an interactive editing session -- not a tuning knob expected to matter in practice.</summary>
+    private const int MaxUndoDepth = 50;
 
     // ~2x the target mode's dimensions (capped at the original's own size) -- a data-structure
     // decision made now, not a tuning knob to retrofit later (spec's own perf section): every
@@ -77,6 +99,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     // ImageWidth/ImageHeight PropertyChanged (now real notifications, see OverlayElementViewModel)
     // would each trigger a full Crop+Resize+ApplyOverlay against transiently inconsistent state.
     private bool _suspendPreview;
+
+    // Also set/read by ApplyState (undo/redo) and RotateImageOnly -- see EditorSnapshot's own doc
+    // comment for why this tracks orientation instead of retaining a pristine original image.
+    private int _rotationCount;
+
+    private readonly List<EditorSnapshot> _undoStack = [];
+    private readonly List<EditorSnapshot> _redoStack = [];
+
+    // Dispatcher-idle coalescing for PushUndoSnapshotCoalesced (round-1 plan-review: sliders/
+    // TextBoxes fire many rapid Value/Text changes per user gesture with no cheap drag-start/end
+    // event to hook, unlike crop/overlay-element dragging -- see PushUndoSnapshotCoalesced's own
+    // doc comment for the full mechanism).
+    private string? _pendingCoalesceProperty;
 
     [ObservableProperty]
     private NormalizedRect _cropRect = new(0, 0, 1, 1);
@@ -257,6 +292,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// regardless of how small the interactive working copy is.</summary>
     public void NudgeCropMove(NudgeDirection direction, bool ctrl)
     {
+        PushUndoSnapshot(); // one keypress = one discrete undo step, no coalescing needed
         var delta = ctrl ? 16 : 1;
         var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, delta);
         ApplyCropMove((double)dxPixels / _originalSource.Width, (double)dyPixels / _originalSource.Height);
@@ -272,11 +308,39 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// (spec/18-path-to-1.0.md High item 4, round-1 plan-review finding).</summary>
     public void NudgeCropResize(NudgeDirection direction)
     {
-        PreserveAspect = false;
-        LockAspectToMode = false;
-        var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, 1);
-        ApplyCropResize((double)dxPixels / _originalSource.Width, (double)dyPixels / _originalSource.Height);
+        // One keypress = one discrete undo step (undo/redo sub-piece) -- pushed once up front, then
+        // _suspendPreview-guarded (same pattern as Rotate/ApplyState) so the PreserveAspect/
+        // LockAspectToMode assignments below don't ALSO fire their own On*Changing-coalesced pushes
+        // via the mutually-exclusive-group side effect and turn one keypress into up to 3 steps.
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            PreserveAspect = false;
+            LockAspectToMode = false;
+            var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, 1);
+            ApplyCropResize((double)dxPixels / _originalSource.Width, (double)dyPixels / _originalSource.Height);
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        NotifyCropRectDerivedPropertiesAndRecomputePreview();
     }
+
+    /// <summary>Called by the View exactly once per CROP drag gesture (move or resize), on the
+    /// FIRST real (nonzero-delta) <c>PointerMoved</c> after a <c>StartDrag</c> -- NOT on
+    /// <c>PointerPressed</c> itself (a bare click that never moves would otherwise push a no-op
+    /// undo step), and NOT from <see cref="ApplyCropMove"/>/<see cref="ApplyCropResize"/>
+    /// themselves (those are the shared per-frame helpers hit on EVERY pointer-move during a drag;
+    /// pushing there would flood the stack the same way the coalesced slider path avoids). Public
+    /// because gesture start/end is only observable at the View layer (pointer events), unlike the
+    /// scalar sliders' own VM-level <c>On*Changing</c> hooks. Overlay-element drags do NOT use this
+    /// method (code-review finding, folded in) -- they push via
+    /// <see cref="OverlayElementViewModel.PushUndoSnapshotForPositionChange"/> instead, a path that
+    /// also covers typed X/Y TextBox edits, which this drag-only method never would.</summary>
+    public void PushUndoSnapshotForDragGesture() => PushUndoSnapshot();
 
     public void DragCropMove(double dxNormalized, double dyNormalized) => ApplyCropMove(dxNormalized, dyNormalized);
 
@@ -290,6 +354,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         // tight, off-center crop would otherwise place brand-new text outside the visible/
         // transmitted frame immediately. See ProjectToCropRelative's own doc comment for why X/Y
         // are stored relative to the full working copy, not the crop, despite this.
+        PushUndoSnapshot();
         var element = CreateOverlayElement(
             text: "Text",
             x: CropRect.X + (CropRect.Width / 2),
@@ -318,6 +383,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             ImageHeight = WorkingCopyHeight,
             RemoveCommand = RemoveOverlayElementCommand,
             ResolveMacros = macroText => _macroTextResolver.Resolve(macroText, _operatorSettings),
+            // Set AFTER X/Y above -- an object initializer assigns in listed order, so X/Y's own
+            // construction-time assignment fires OnXChanging/OnYChanging while this is still null,
+            // avoiding a spurious push from element creation itself (AddOverlayElement already
+            // pushes explicitly before calling this; ApplyState's own restore is separately guarded
+            // by _suspendPreview inside PushUndoSnapshotCoalesced regardless of ordering here).
+            PushUndoSnapshotForPositionChange = () => PushUndoSnapshotCoalesced("OverlayPosition"),
         };
         element.CanvasFontSize = ComputeCanvasFontSize(element.FontSizeRelative);
         element.PropertyChanged += OnOverlayElementPropertyChanged;
@@ -347,6 +418,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             return;
         }
 
+        PushUndoSnapshot();
         element.PropertyChanged -= OnOverlayElementPropertyChanged;
         OverlayElements.Remove(element);
         if (ReferenceEquals(SelectedOverlayElement, element))
@@ -389,21 +461,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private void Rotate()
     {
         Log.RotateInvoked(_logger);
-
-        // BuildWorkingCopy's own small-image fast path can return the source instance itself
-        // (already covered by Constructor_OriginalWithinWorkingCopyBudget_UsesOriginalDirectlyAsWorkingCopy)
-        // -- captured BEFORE reassigning _originalSource below, so a shared instance stays shared
-        // (one Rotate call, not two independent copies where one used to be the same object).
-        var wasShared = ReferenceEquals(_workingCopy, _originalSource);
-        _originalSource = _preparer.Rotate(_originalSource);
-        _workingCopy = wasShared ? _originalSource : _preparer.Rotate(_workingCopy);
+        PushUndoSnapshot();
 
         _suspendPreview = true;
         try
         {
-            WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
-            OnPropertyChanged(nameof(WorkingCopyWidth));
-            OnPropertyChanged(nameof(WorkingCopyHeight));
+            RotateImageOnly();
 
             foreach (var element in OverlayElements)
             {
@@ -419,8 +482,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 var (x, y) = (element.X, element.Y);
                 element.X = 1 - y;
                 element.Y = x;
-                element.ImageWidth = WorkingCopyWidth;
-                element.ImageHeight = WorkingCopyHeight;
             }
 
             CropRect = TransformCropRectClockwise(CropRect);
@@ -444,6 +505,41 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
 
         NotifyCropRectDerivedPropertiesAndRecomputePreview();
+    }
+
+    /// <summary>The IMAGE-only half of a 90°-clockwise rotation -- <c>_originalSource</c>/
+    /// <c>_workingCopy</c>/<c>WorkingCopyBitmap</c>/dimensions/per-element <c>ImageWidth</c>/
+    /// <c>ImageHeight</c>, with NO coordinate transform (no <see cref="CropRect"/>/overlay X-Y
+    /// change). Extracted from <see cref="Rotate"/> (spec/18-path-to-1.0.md Medium item, undo/redo
+    /// sub-piece, round-1 plan-review blocker B3) so <see cref="ApplyState"/> can reconcile
+    /// orientation by calling this directly, delta-rotation-count times, without going through the
+    /// <see cref="Rotate"/> COMMAND -- that command's own <c>_suspendPreview = true; try { ... }
+    /// finally { _suspendPreview = false; }</c> block would clear an OUTER suspension `ApplyState`
+    /// already has in progress partway through the restore (`_suspendPreview` is a bare bool, not a
+    /// re-entrant counter), and would also apply a coordinate transform on TOP of coordinates the
+    /// snapshot already stores pre-transformed for the target orientation -- a double-transform
+    /// bug. Callers own their own <c>_suspendPreview</c>/undo-push/recompute -- this method does
+    /// none of that itself.</summary>
+    private void RotateImageOnly()
+    {
+        // BuildWorkingCopy's own small-image fast path can return the source instance itself
+        // (already covered by Constructor_OriginalWithinWorkingCopyBudget_UsesOriginalDirectlyAsWorkingCopy)
+        // -- captured BEFORE reassigning _originalSource below, so a shared instance stays shared
+        // (one Rotate call, not two independent copies where one used to be the same object).
+        var wasShared = ReferenceEquals(_workingCopy, _originalSource);
+        _originalSource = _preparer.Rotate(_originalSource);
+        _workingCopy = wasShared ? _originalSource : _preparer.Rotate(_workingCopy);
+        _rotationCount = (_rotationCount + 1) % 4;
+
+        WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
+        OnPropertyChanged(nameof(WorkingCopyWidth));
+        OnPropertyChanged(nameof(WorkingCopyHeight));
+
+        foreach (var element in OverlayElements)
+        {
+            element.ImageWidth = WorkingCopyWidth;
+            element.ImageHeight = WorkingCopyHeight;
+        }
     }
 
     /// <summary>(x,y,w,h) -&gt; (1-y-h, x, h, w) -- exact for 90°-multiple rotations (bounding box
@@ -481,6 +577,30 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         // recompute -- see CanvasFontSize's own doc comment.
         RefreshOverlayElementCanvasFontSizes();
     }
+
+    // spec/18-path-to-1.0.md Medium item, undo/redo sub-piece -- On*Changing (fires BEFORE the
+    // assignment, unlike On*Changed above which fires after) is the correct push point: it captures
+    // the OLD value as the undo target. Coalesced (see PushUndoSnapshotCoalesced's own doc comment)
+    // since these are all continuously-updating bound controls (sliders drag, PreserveAspect/
+    // LockAspectToMode are toggles so coalescing is a no-op for them in practice, but using the
+    // same helper uniformly is simpler than special-casing). CropRect deliberately has NO
+    // On*Changing push here -- crop dragging is covered by the View-level drag-start mechanism
+    // instead (avoids double-pushing the same logical gesture from two different mechanisms).
+    partial void OnPreserveAspectChanging(bool value) => PushUndoSnapshotCoalesced(nameof(PreserveAspect));
+
+    partial void OnLockAspectToModeChanging(bool value) => PushUndoSnapshotCoalesced(nameof(LockAspectToMode));
+
+    partial void OnBrightnessChanging(double value) => PushUndoSnapshotCoalesced(nameof(Brightness));
+
+    partial void OnContrastChanging(double value) => PushUndoSnapshotCoalesced(nameof(Contrast));
+
+    partial void OnSaturationChanging(double value) => PushUndoSnapshotCoalesced(nameof(Saturation));
+
+    partial void OnGammaChanging(double value) => PushUndoSnapshotCoalesced(nameof(Gamma));
+
+    partial void OnSharpenChanging(double value) => PushUndoSnapshotCoalesced(nameof(Sharpen));
+
+    partial void OnDenoiseChanging(double value) => PushUndoSnapshotCoalesced(nameof(Denoise));
 
     partial void OnPreserveAspectChanged(bool value)
     {
@@ -675,6 +795,192 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private ImageOverlay BuildOverlay() => new(OverlayElements.Select(BuildImageOverlayElement).ToList());
 
     private ImageAdjustments BuildAdjustments() => new(Brightness, Contrast, Saturation, Gamma, Sharpen, Denoise);
+
+    private EditorSnapshot CaptureSnapshot() =>
+        new(_rotationCount, CropRect, PreserveAspect, LockAspectToMode, BuildAdjustments(), RawOverlayElements);
+
+    private bool CanUndo() => _undoStack.Count > 0;
+
+    private bool CanRedo() => _redoStack.Count > 0;
+
+    [RelayCommand(CanExecute = nameof(CanUndo))]
+    private void Undo()
+    {
+        if (_undoStack.Count == 0)
+        {
+            return;
+        }
+
+        var previous = _undoStack[^1];
+        _undoStack.RemoveAt(_undoStack.Count - 1);
+        _redoStack.Add(CaptureSnapshot());
+        ApplyState(previous);
+        UndoCommand.NotifyCanExecuteChanged();
+        RedoCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRedo))]
+    private void Redo()
+    {
+        if (_redoStack.Count == 0)
+        {
+            return;
+        }
+
+        var next = _redoStack[^1];
+        _redoStack.RemoveAt(_redoStack.Count - 1);
+        _undoStack.Add(CaptureSnapshot());
+        ApplyState(next);
+        UndoCommand.NotifyCanExecuteChanged();
+        RedoCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Pushes the CURRENT state (before the caller's own change) as one undo step and
+    /// clears the redo stack (standard undo/redo semantics -- redo history is only valid until the
+    /// next new action). Used directly by naturally-discrete actions (Rotate, Add/RemoveOverlayElement,
+    /// the View-level crop/overlay-drag-start hook) -- see <see cref="PushUndoSnapshotCoalesced"/>
+    /// for the burst-of-rapid-changes variant (sliders/TextBoxes).</summary>
+    private void PushUndoSnapshot()
+    {
+        // _suspendPreview doubles as "a restore (ApplyState, or the constructor's own
+        // EditorInitialState seeding) is in progress" -- without this guard, ApplyState setting
+        // PreserveAspect/LockAspectToMode/the 6 sliders during an Undo/Redo would themselves push
+        // MORE undo snapshots via the On*Changing hooks below, corrupting the stacks on every
+        // single Undo/Redo call. Safe to reuse: both callers of _suspendPreview=true (Rotate,
+        // ApplyState) are exactly the cases where pushing would be wrong, and every REAL push site
+        // (Rotate itself, Add/RemoveOverlayElement, the View-level drag-start hook) calls this
+        // BEFORE entering its own _suspendPreview block, never from inside one.
+        if (_suspendPreview)
+        {
+            return;
+        }
+
+        _undoStack.Add(CaptureSnapshot());
+        if (_undoStack.Count > MaxUndoDepth)
+        {
+            _undoStack.RemoveAt(0);
+        }
+
+        _redoStack.Clear();
+        _pendingCoalesceProperty = null; // a real, non-coalesced push always resets coalescing state
+        UndoCommand.NotifyCanExecuteChanged();
+        RedoCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Same contract as <see cref="PushUndoSnapshot"/>, but coalesces a rapid BURST of
+    /// changes to the SAME property into one undo step -- round-1 plan-review finding: sliders
+    /// fire <c>Value</c> changes continuously while dragging (many times per second), and TextBoxes
+    /// fire <c>Text</c> changes per keystroke; pushing on every one of those would flood the undo
+    /// stack and make one Undo click barely move anything. Unlike the crop/overlay-drag case (which
+    /// has a real View-level drag-start/end signal to hook), neither has a cheap one here, and this
+    /// codebase has no existing testable-clock abstraction to build a wall-clock debounce on
+    /// (checked -- none exists; adding one purely for this would be new complexity beyond what's
+    /// needed). Instead: the FIRST change for a given <paramref name="propertyName"/> pushes
+    /// normally and records it as "pending"; a Background-priority <see cref="Dispatcher"/>
+    /// continuation (matching this codebase's own established <c>Dispatcher.UIThread.Post</c>
+    /// pattern, e.g. <c>TxControlsPaneViewModel</c>'s several call sites) clears that "pending"
+    /// marker once the UI thread actually goes idle; further changes to the SAME property BEFORE
+    /// that continuation runs are skipped (still mid-burst). A change to a DIFFERENT property
+    /// always pushes fresh, even mid-burst for the first one.</summary>
+    private void PushUndoSnapshotCoalesced(string propertyName)
+    {
+        // Same _suspendPreview-in-progress guard as PushUndoSnapshot's own -- see its doc comment.
+        if (_suspendPreview)
+        {
+            return;
+        }
+
+        if (_pendingCoalesceProperty == propertyName)
+        {
+            return;
+        }
+
+        _undoStack.Add(CaptureSnapshot());
+        if (_undoStack.Count > MaxUndoDepth)
+        {
+            _undoStack.RemoveAt(0);
+        }
+
+        _redoStack.Clear();
+        _pendingCoalesceProperty = propertyName;
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                if (_pendingCoalesceProperty == propertyName)
+                {
+                    _pendingCoalesceProperty = null;
+                }
+            },
+            DispatcherPriority.Background);
+        UndoCommand.NotifyCanExecuteChanged();
+        RedoCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Restores the editor to a previously-captured <see cref="EditorSnapshot"/> -- shared
+    /// by <see cref="Undo"/> and <see cref="Redo"/>. NOT a straight reuse of the constructor's own
+    /// <see cref="EditorInitialState"/>-seeding block (round-1 plan-review blocker B2): that block
+    /// only ever ADDS into an empty <see cref="OverlayElements"/>, but a restore must first detach
+    /// <see cref="OnOverlayElementPropertyChanged"/> from every CURRENTLY-live element (mirroring
+    /// <see cref="RemoveOverlayElement"/>'s own detach) and clear the collection, or orphaned
+    /// handlers leak and keep firing <see cref="RecomputePreview"/> forever; <see cref="SelectedOverlayElement"/>
+    /// must also be nulled (it would otherwise dangle at a removed instance). Detach/clear runs
+    /// BEFORE the rotation-reconciliation loop below (code-review finding on an earlier draft that
+    /// had it after: <see cref="RotateImageOnly"/> updates every then-live element's own
+    /// <c>ImageWidth</c>/<c>ImageHeight</c>, which is wasted work when those elements are about to
+    /// be discarded and replaced wholesale anyway). Orientation is reconciled via
+    /// <see cref="RotateImageOnly"/> called DELTA times (never the <see cref="Rotate"/> COMMAND --
+    /// that command's own nested <c>_suspendPreview</c> block would clear THIS method's outer
+    /// suspension partway through, round-1 blocker B3, and would apply a coordinate transform on
+    /// top of coordinates this snapshot already stores pre-transformed for the target orientation).
+    /// <see cref="LockAspectToMode"/> is assigned BEFORE <see cref="CropRect"/> (code-review
+    /// correction of an earlier draft's reversed order and its own backwards rationale) -- a
+    /// false-to-true transition fires <c>OnLockAspectToModeChanged</c> -&gt;
+    /// <c>ApplyCropResizeAspectLocked(0, 0)</c>, which mutates <see cref="CropRect"/>; assigning
+    /// <see cref="LockAspectToMode"/> FIRST means that side effect (a no-op re-fit in practice,
+    /// since a snapshot captured while locked already has an aspect-correct rect) gets
+    /// unconditionally overwritten by the real restored value on the very next line, rather than
+    /// relying on the re-fit itself happening to be a no-op to avoid corrupting the restored
+    /// rect.</summary>
+    private void ApplyState(EditorSnapshot snapshot)
+    {
+        _suspendPreview = true;
+        try
+        {
+            foreach (var element in OverlayElements)
+            {
+                element.PropertyChanged -= OnOverlayElementPropertyChanged;
+            }
+
+            OverlayElements.Clear();
+            SelectedOverlayElement = null;
+
+            var delta = ((snapshot.RotationCount - _rotationCount) % 4 + 4) % 4;
+            for (var i = 0; i < delta; i++)
+            {
+                RotateImageOnly();
+            }
+
+            LockAspectToMode = snapshot.LockAspectToMode;
+            CropRect = snapshot.CropRect;
+            PreserveAspect = snapshot.PreserveAspect;
+            Brightness = snapshot.Adjustments.Brightness;
+            Contrast = snapshot.Adjustments.Contrast;
+            Saturation = snapshot.Adjustments.Saturation;
+            Gamma = snapshot.Adjustments.Gamma;
+            Sharpen = snapshot.Adjustments.Sharpen;
+            Denoise = snapshot.Adjustments.Denoise;
+            foreach (var raw in snapshot.OverlayElements)
+            {
+                OverlayElements.Add(CreateOverlayElement(raw.Text, raw.X, raw.Y, raw.FontSizeRelative, raw.Color));
+            }
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        NotifyCropRectDerivedPropertiesAndRecomputePreview();
+    }
 
     /// <summary>Builds the real, pipeline-bound overlay element from an on-canvas
     /// <see cref="OverlayElementViewModel"/>. Cannot just forward its raw X/Y as-is -- those are

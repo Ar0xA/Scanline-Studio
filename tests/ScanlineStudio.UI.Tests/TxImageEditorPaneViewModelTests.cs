@@ -1,4 +1,5 @@
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
@@ -401,6 +402,413 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.RotateCommand.Execute(null);
 
         Assert.Equal(2, preparer.RotateCallCount);
+    }
+
+    [AvaloniaFact]
+    public void UndoRedoCommands_CanExecute_IsFalseInitially()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.False(vm.RedoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Rotate_ThenUndo_RevertsDimensionsCropRectAndOverlayPosition()
+    {
+        // spec/18-path-to-1.0.md Medium item: undo/redo, the final TX-image-editor cluster
+        // sub-piece. Rotate is the highest-risk push point (round-1 plan-review's own focus) --
+        // undoing it must restore BOTH the image orientation (WorkingCopyWidth/Height) AND the
+        // coordinate-space state (CropRect/overlay X-Y) consistently, not just one half.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.OverlayElements[0].X = 0.2;
+        vm.OverlayElements[0].Y = 0.3;
+        var cropBeforeRotate = vm.CropRect;
+
+        vm.RotateCommand.Execute(null);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        AssertClose(4, vm.WorkingCopyWidth);
+        AssertClose(6, vm.WorkingCopyHeight);
+
+        vm.UndoCommand.Execute(null);
+
+        AssertClose(6, vm.WorkingCopyWidth);
+        AssertClose(4, vm.WorkingCopyHeight);
+        Assert.Equal(cropBeforeRotate, vm.CropRect);
+        var restoredElement = Assert.Single(vm.OverlayElements);
+        AssertClose(0.2, restoredElement.X);
+        AssertClose(0.3, restoredElement.Y);
+        Assert.True(vm.RedoCommand.CanExecute(null));
+        // One more Undo remains: AddOverlayElement's own push (piece (c) of this same sub-piece --
+        // adding the element is itself undoable), not the just-undone Rotate.
+        Assert.True(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Rotate_ThenUndo_ThenRedo_ReappliesTheRotation()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.RotateCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        vm.RedoCommand.Execute(null);
+
+        AssertClose(4, vm.WorkingCopyWidth);
+        AssertClose(6, vm.WorkingCopyHeight);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        Assert.False(vm.RedoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void RotateThreeTimes_ThenUndoTwice_ReconcilesToOneRotationNotThree()
+    {
+        // Round-1 plan-review's own central concern: orientation reconciliation must rotate a
+        // DELTA (target - current, mod 4) from whatever the CURRENT state is, not replay from a
+        // fixed baseline. Three rotates then two undos should land on exactly ONE rotation's worth
+        // of dimension-swapping (odd count -> swapped dims), not zero or some other count.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.RotateCommand.Execute(null);
+        vm.RotateCommand.Execute(null);
+        vm.RotateCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+
+        AssertClose(4, vm.WorkingCopyWidth);
+        AssertClose(6, vm.WorkingCopyHeight);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_ThenUndo_ThenRotateAgain_ClearsTheRedoStack()
+    {
+        // Standard undo/redo semantics: redo history is only valid until the next NEW action.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.RotateCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.True(vm.RedoCommand.CanExecute(null));
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.False(vm.RedoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Rotate_ThenUndo_DetachesTheOldOverlayElementsPropertyChangedHandler()
+    {
+        // Round-1 plan-review blocker B2: ApplyState must detach OnOverlayElementPropertyChanged
+        // from every element it removes, or the orphaned handler keeps firing RecomputePreview
+        // forever. Pinned indirectly: mutating the OLD (detached) element reference after Undo must
+        // NOT change ApplyOverlayCallCount, since that element is no longer part of this editor.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var staleElement = vm.OverlayElements[0];
+
+        vm.RotateCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        var countAfterUndo = preparer.ApplyOverlayCallCount;
+
+        staleElement.Text = "still subscribed?";
+
+        Assert.Equal(countAfterUndo, preparer.ApplyOverlayCallCount);
+    }
+
+    [AvaloniaFact]
+    public void Brightness_ThenUndo_RevertsToThePreChangeValue()
+    {
+        // Confirms the On*Changing hook actually fires as a pre-assignment push (the round-1
+        // plan-review B1 finding this hook exists to satisfy) -- Undo must land back on the value
+        // BEFORE the change, not the changed-to value or some stale default.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Brightness = 25;
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        AssertClose(0, vm.Brightness);
+    }
+
+    [AvaloniaFact]
+    public void Brightness_RapidBurst_CoalescesIntoOneUndoStep()
+    {
+        // Round-1 plan-review's dispatcher-idle coalescing design: several changes to the SAME
+        // property before the UI thread goes idle must collapse into one undo step, or a slider
+        // drag would flood the stack and one Undo click would barely move the value.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Brightness = 20;
+        vm.Brightness = 30;
+        vm.Brightness = 40;
+        vm.UndoCommand.Execute(null);
+
+        AssertClose(0, vm.Brightness);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Brightness_ChangeThenDispatcherIdleThenChangeAgain_PushesTwoSeparateUndoSteps()
+    {
+        // The coalescing window closes once the UI thread actually goes idle (the Background-
+        // priority Dispatcher.Post continuation clearing _pendingCoalesceProperty) -- a change
+        // AFTER that point must push a fresh step, not keep coalescing into the first one.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Brightness = 20;
+        Dispatcher.UIThread.RunJobs();
+        vm.Brightness = 30;
+
+        vm.UndoCommand.Execute(null);
+        AssertClose(20, vm.Brightness);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        AssertClose(0, vm.Brightness);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void ChangeToDifferentProperty_MidBurst_PushesAFreshStepForBoth()
+    {
+        // A change to a DIFFERENT property mid-burst must not be swallowed by the first
+        // property's still-open coalescing window -- each property gets its own undo step.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Brightness = 20;
+        vm.Contrast = 15;
+
+        vm.UndoCommand.Execute(null);
+        AssertClose(20, vm.Brightness);
+        AssertClose(0, vm.Contrast);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        AssertClose(0, vm.Brightness);
+        AssertClose(0, vm.Contrast);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void PreserveAspectAndLockAspectToMode_ThenUndo_RevertBothToPreChangeValues()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), WideMode, new FakeTransmitImagePreparer());
+        var preserveBefore = vm.PreserveAspect;
+        var lockBefore = vm.LockAspectToMode;
+
+        vm.PreserveAspect = !preserveBefore;
+        vm.LockAspectToMode = !lockBefore;
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+
+        Assert.Equal(preserveBefore, vm.PreserveAspect);
+        Assert.Equal(lockBefore, vm.LockAspectToMode);
+    }
+
+    [AvaloniaFact]
+    public void Undo_RestoresALockAspectToModeTrueSnapshot_WithTheExactStoredCropRect()
+    {
+        // Code-review finding: no prior test exercised a snapshot with LockAspectToMode == true --
+        // the scenario where ApplyState's LockAspectToMode assignment can fire a false->true
+        // transition mid-restore (OnLockAspectToModeChanged -> ApplyCropResizeAspectLocked(0, 0),
+        // which mutates CropRect as a side effect). ApplyState assigns LockAspectToMode BEFORE
+        // CropRect so that side effect's refit gets unconditionally overwritten by the exact
+        // snapshot value on the next line, rather than relying on "a locked snapshot's rect is
+        // already aspect-correct" to make the refit a harmless no-op.
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer()); // square source, deliberately mismatched to WideMode's 2:1
+
+        vm.LockAspectToMode = true; // pushes (LockAspectToMode=false, CropRect=default 0,0,1,1)
+        var lockedCrop = vm.CropRect;
+        Assert.NotEqual(new NormalizedRect(0, 0, 1, 1), lockedCrop); // sanity: engaging the lock did refit something
+        Dispatcher.UIThread.RunJobs(); // settle so the next LockAspectToMode change pushes a FRESH step, not coalescing with the engage above
+
+        vm.LockAspectToMode = false; // pushes (LockAspectToMode=true, CropRect=lockedCrop)
+        vm.CropRect = new NormalizedRect(0.1, 0.1, 0.3, 0.15); // deliberately non-aspect-correct; CropRect has no push of its own
+
+        vm.UndoCommand.Execute(null); // restores from (LockAspectToMode=false, CropRect=0.1,0.1,0.3,0.15) to the snapshot
+
+        Assert.True(vm.LockAspectToMode);
+        Assert.Equal(lockedCrop, vm.CropRect);
+    }
+
+    [AvaloniaFact]
+    public void ApplyState_DoesNotItselfPushMoreUndoSnapshots()
+    {
+        // Round-1 plan-review blocker B3's own reuse of _suspendPreview as a "restore in
+        // progress" guard: ApplyState assigns Brightness/Contrast/PreserveAspect/etc. directly,
+        // which would otherwise re-trigger the very On*Changing hooks under test above and
+        // corrupt the stacks on every single Undo/Redo call. Uses TWO different properties
+        // (Brightness then Contrast) so the assertion can't accidentally pass by coincidence of
+        // _pendingCoalesceProperty still matching the last-restored property's own name -- a
+        // single-property version of this test was tried first and did NOT catch removing the
+        // guard, precisely because of that coincidence; ChangeToDifferentProperty_MidBurst above
+        // is what actually caught it during mutation-testing, informing this rewrite.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.Brightness = 20;
+        vm.Contrast = 15;
+
+        vm.UndoCommand.Execute(null);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        Assert.True(vm.RedoCommand.CanExecute(null));
+        AssertClose(20, vm.Brightness);
+        AssertClose(0, vm.Contrast);
+
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        AssertClose(0, vm.Brightness);
+        AssertClose(0, vm.Contrast);
+
+        vm.RedoCommand.Execute(null);
+        vm.RedoCommand.Execute(null);
+        Assert.False(vm.RedoCommand.CanExecute(null));
+        AssertClose(20, vm.Brightness);
+        AssertClose(15, vm.Contrast);
+    }
+
+    [AvaloniaFact]
+    public void AddOverlayElement_ThenUndo_RemovesTheElement()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.Single(vm.OverlayElements);
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.Null(vm.SelectedOverlayElement);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void RemoveOverlayElement_ThenUndo_RestoresTheElementWithItsText()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.OverlayElements[0].Text = "CALLSIGN";
+        var element = vm.OverlayElements[0];
+
+        vm.RemoveOverlayElementCommand.Execute(element);
+        Assert.Empty(vm.OverlayElements);
+
+        vm.UndoCommand.Execute(null);
+
+        var restored = Assert.Single(vm.OverlayElements);
+        Assert.Equal("CALLSIGN", restored.Text);
+    }
+
+    [AvaloniaFact]
+    public void RemoveOverlayElement_ThenUndo_ReattachesThePropertyChangedHandlerOnTheRestoredElement()
+    {
+        // Code-review finding: the existing detach test (Rotate_ThenUndo_DetachesTheOld...) only
+        // pins that a REMOVED element's handler is gone -- the mirror half is that a RESTORED
+        // element (recreated via CreateOverlayElement, a genuinely new instance) is properly
+        // RE-attached, or edits to it after Undo would silently stop updating the preview.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+
+        vm.RemoveOverlayElementCommand.Execute(element);
+        vm.UndoCommand.Execute(null);
+        var countAfterUndo = preparer.ApplyOverlayCallCount;
+
+        vm.OverlayElements[0].Text = "still subscribed";
+
+        Assert.True(preparer.ApplyOverlayCallCount > countAfterUndo);
+    }
+
+    [AvaloniaFact]
+    public void OverlayElementXAndY_ThenUndo_RevertsBothAsOneStep()
+    {
+        // Code-review finding on an earlier draft: only the canvas pointer-drag path pushed an
+        // undo step for overlay X/Y -- the sidebar X/Y TextBoxes (bound directly to
+        // OverlayElementViewModel.X/Y) were completely untracked despite being claimed as covered.
+        // OverlayElementViewModel.PushUndoSnapshotForPositionChange now routes BOTH paths through
+        // the same coalesced mechanism as the sliders, under a SHARED key so a diagonal
+        // change (X then Y in the same burst) collapses into ONE step, not two.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null); // its own push -- one level stays below the burst's
+        var xBefore = vm.OverlayElements[0].X;
+        var yBefore = vm.OverlayElements[0].Y;
+
+        vm.OverlayElements[0].X = xBefore + 0.1;
+        vm.OverlayElements[0].Y = yBefore + 0.1;
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        AssertClose(xBefore, vm.OverlayElements[0].X);
+        AssertClose(yBefore, vm.OverlayElements[0].Y);
+        // Exactly ONE step for the X+Y burst -- AddOverlayElement's own earlier push is the one
+        // level still remaining, not a second X/Y-burst step.
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        Assert.Empty(vm.OverlayElements);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void NudgeCropMove_ThenUndo_RevertsCropRect()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
+        var cropBefore = vm.CropRect;
+
+        vm.NudgeCropMove(NudgeDirection.Right, ctrl: false);
+        Assert.NotEqual(cropBefore, vm.CropRect);
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        Assert.Equal(cropBefore, vm.CropRect);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void NudgeCropResize_ThenUndo_RevertsCropRectAndPreserveAspect_AsOneStep()
+    {
+        // Regression coverage for the _suspendPreview wrap in NudgeCropResize: without it, the
+        // PreserveAspect/LockAspectToMode side-effect assignments (legacy's mutually-exclusive
+        // stretch/keep-aspect radio group) would ALSO fire their own On*Changing-coalesced pushes,
+        // turning one keypress into up to 3 undo steps instead of the intended 1.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
+        Assert.True(vm.PreserveAspect);
+        var cropBefore = vm.CropRect;
+
+        vm.NudgeCropResize(NudgeDirection.Right);
+        Assert.False(vm.PreserveAspect);
+        Assert.NotEqual(cropBefore, vm.CropRect);
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        Assert.Equal(cropBefore, vm.CropRect);
+        Assert.True(vm.PreserveAspect);
+        Assert.False(vm.UndoCommand.CanExecute(null)); // exactly ONE step, not up to 3
+    }
+
+    [AvaloniaFact]
+    public void DragCropMove_MultiFrame_OnlyPushesOneUndoStepWhenGestureStartIsCalledOnce()
+    {
+        // Simulates the View's real contract: PushUndoSnapshotForDragGesture is called ONCE per
+        // gesture (on the first PointerMoved), then DragCropMove is called once per subsequent
+        // frame. ApplyCropMove/ApplyCropResize themselves must never push directly (round-1
+        // plan-review blocker B4) or every frame of a drag would flood the stack.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
+        var cropBefore = vm.CropRect;
+
+        vm.PushUndoSnapshotForDragGesture();
+        vm.DragCropMove(0.05, 0.0);
+        vm.DragCropMove(0.05, 0.0);
+        vm.DragCropMove(0.05, 0.0);
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        Assert.Equal(cropBefore, vm.CropRect);
+        Assert.False(vm.UndoCommand.CanExecute(null));
     }
 
     [AvaloniaFact]
