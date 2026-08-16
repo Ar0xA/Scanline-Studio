@@ -49,6 +49,29 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     [ObservableProperty]
     private Rgb24 _color = new(255, 255, 255);
 
+    /// <summary>Empty by default (matches <see cref="ITransmitImagePreparer.MeasureFittedFontSize"/>'s
+    /// own "empty family falls back to the pipeline's default" contract) -- the REAL default (one of
+    /// <see cref="ITransmitImagePreparer.AvailableFontFamilies"/>) is set explicitly by
+    /// <see cref="TxImageEditorPaneViewModel.CreateOverlayElement"/>'s object initializer at
+    /// construction time, queried fresh from the preparer rather than hardcoded here a second time
+    /// (Phase 4, spec/15-template-designer.md).</summary>
+    [ObservableProperty]
+    private string _fontFamily = string.Empty;
+
+    /// <summary>Null means no outline (matches <see cref="TemplateBoxElement.BorderColor"/>'s own
+    /// null-means-none convention) -- Phase 4, the user-requested legibility mechanism for text
+    /// against varying backgrounds (this session's own real-window testing hit white-on-white text
+    /// twice against near-white stock photos).</summary>
+    [ObservableProperty]
+    private Rgb24? _strokeColor;
+
+    /// <summary>Relative to the image's HEIGHT, same convention as <see cref="FontSizeRelative"/>/
+    /// <see cref="BoxElementViewModel.BorderThickness"/>. Meaningless while <see cref="StrokeColor"/>
+    /// is null (mirrors <see cref="BoxElementViewModel.BorderThickness"/>'s own "thickness without a
+    /// color is a no-op" contract).</summary>
+    [ObservableProperty]
+    private double _strokeThickness = 0.02;
+
     /// <summary>Set by the owning <see cref="TxImageEditorPaneViewModel"/> at creation time -- lets
     /// this element compute its own on-screen position without the View needing a
     /// multi-binding/converter to combine X/Y with the canvas size itself. Settable (not
@@ -118,6 +141,21 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
 
     public double CanvasHeightPixels => Height * ImageHeight;
 
+    /// <summary>Phase 4 -- the TEXT STYLE panel's "Outline" checkbox binds here rather than directly
+    /// to <see cref="StrokeColor"/> (a <c>Rgb24?</c>, not directly checkbox-bindable). Turning it ON
+    /// seeds a real default color (black -- the highest-contrast choice against this app's own
+    /// default WHITE text fill, which is exactly the "white text on a light photo" legibility
+    /// problem this feature exists to fix); turning it OFF clears <see cref="StrokeColor"/> back to
+    /// null (matches <see cref="Abstractions.Imaging.TemplateBoxElement.BorderColor"/>'s own
+    /// null-means-none contract) rather than leaving a stale color the pipeline would just ignore
+    /// anyway, so re-enabling later doesn't silently resurrect an old value with no visible
+    /// indication it was still there.</summary>
+    public bool HasStroke
+    {
+        get => StrokeColor is not null;
+        set => StrokeColor = value ? (StrokeColor ?? new Rgb24(0, 0, 0)) : null;
+    }
+
     /// <summary>What actually gets drawn -- the canvas preview binds here, not <see cref="Text"/>,
     /// so the user sees "DE W1AW" rather than the literal "DE %m" template while editing.</summary>
     public string ResolvedText => ResolveMacros?.Invoke(Text) ?? Text;
@@ -174,4 +212,6 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     }
 
     partial void OnTextChanged(string value) => OnPropertyChanged(nameof(ResolvedText));
+
+    partial void OnStrokeColorChanged(Rgb24? value) => OnPropertyChanged(nameof(HasStroke));
 }

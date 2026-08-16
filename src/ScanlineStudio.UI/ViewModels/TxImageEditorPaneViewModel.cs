@@ -48,9 +48,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// one subtype per <see cref="ITemplateElementViewModel"/> concrete type.</summary>
     public abstract record RawElementSnapshot(double X, double Y, double Width, double Height, int Z, bool Locked);
 
+    /// <summary><paramref name="FontFamily"/>/<paramref name="StrokeColor"/>/
+    /// <paramref name="StrokeThickness"/> are Phase 4 (spec/15-template-designer.md) additions,
+    /// all trailing/optional so pre-Phase-4 call sites/tests keep compiling unchanged.</summary>
     public sealed record RawTextElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
-        string Text, double FontSizeRelative, Rgb24 Color)
+        string Text, double FontSizeRelative, Rgb24 Color,
+        string FontFamily = "", Rgb24? StrokeColor = null, double StrokeThickness = 0.02)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     public sealed record RawBoxElementSnapshot(
@@ -402,7 +406,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private static RawElementSnapshot BuildRawSnapshot(ITemplateElementViewModel element) => element switch
     {
         OverlayElementViewModel text => new RawTextElementSnapshot(
-            text.X, text.Y, text.Width, text.Height, text.Z, text.Locked, text.Text, text.FontSizeRelative, text.Color),
+            text.X, text.Y, text.Width, text.Height, text.Z, text.Locked, text.Text, text.FontSizeRelative, text.Color,
+            text.FontFamily, text.StrokeColor, text.StrokeThickness),
         BoxElementViewModel box => new RawBoxElementSnapshot(
             box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
         ImageElementViewModel image => new RawImageElementSnapshot(
@@ -793,7 +798,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// this in exactly one place, not duplicated between "new blank element" and "restored element"
     /// call sites.</summary>
     private OverlayElementViewModel CreateOverlayElement(
-        string text, double x, double y, double width, double height, double fontSizeRelative, Rgb24 color, int z, bool locked)
+        string text, double x, double y, double width, double height, double fontSizeRelative, Rgb24 color, int z, bool locked,
+        string? fontFamily = null, Rgb24? strokeColor = null, double strokeThickness = 0.02)
     {
         var element = new OverlayElementViewModel
         {
@@ -804,6 +810,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             Height = height,
             FontSizeRelative = fontSizeRelative,
             Color = color,
+            // Phase 4: defaults to the preparer's own default family (queried fresh, not a second
+            // hardcoded literal) when the caller doesn't specify one -- AddOverlayElement's own
+            // brand-new-element path.
+            FontFamily = fontFamily ?? _preparer.AvailableFontFamilies.FirstOrDefault(string.Empty),
+            StrokeColor = strokeColor,
+            StrokeThickness = strokeThickness,
             Z = z,
             Locked = locked,
             ImageWidth = WorkingCopyWidth,
@@ -890,7 +902,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private ITemplateElementViewModel CreateElementFromSnapshot(RawElementSnapshot snapshot) => snapshot switch
     {
         RawTextElementSnapshot text => CreateOverlayElement(
-            text.Text, text.X, text.Y, text.Width, text.Height, text.FontSizeRelative, text.Color, text.Z, text.Locked),
+            text.Text, text.X, text.Y, text.Width, text.Height, text.FontSizeRelative, text.Color, text.Z, text.Locked,
+            text.FontFamily, text.StrokeColor, text.StrokeThickness),
         RawBoxElementSnapshot box => CreateBoxElement(
             box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked),
         RawImageElementSnapshot image => CreateImageElement(
@@ -918,7 +931,88 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         element.Text += token;
     }
 
-    partial void OnSelectedOverlayElementChanged(ITemplateElementViewModel? value) => InsertFieldCommand.NotifyCanExecuteChanged();
+    partial void OnSelectedOverlayElementChanged(ITemplateElementViewModel? value)
+    {
+        InsertFieldCommand.NotifyCanExecuteChanged();
+        AddPlateBehindTextCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(SelectedTextElement));
+    }
+
+    /// <summary>Phase 4 (spec/15-template-designer.md) -- <see cref="SelectedOverlayElement"/>
+    /// narrowed to the TEXT case, or null when a box/image element (or nothing) is selected. Lets
+    /// the TEXT STYLE panel's AXAML bind its whole content against this as a nested DataContext
+    /// (font family/size/fill/stroke are all TEXT-only concepts) instead of every individual control
+    /// needing its own <c>SelectedOverlayElement as OverlayElementViewModel</c> cast -- same
+    /// "narrow once, bind against the narrowed type" shape <see cref="CanInsertField"/> already
+    /// established for the insert-field chips.</summary>
+    public OverlayElementViewModel? SelectedTextElement => SelectedOverlayElement as OverlayElementViewModel;
+
+    /// <summary>Phase 4 -- the TEXT STYLE panel's font-family picker ItemsSource. Forwards
+    /// <see cref="ITransmitImagePreparer.AvailableFontFamilies"/> rather than the VM hardcoding its
+    /// own copy of what's bundled.</summary>
+    public IReadOnlyList<string> AvailableFontFamilies => _preparer.AvailableFontFamilies;
+
+    private bool CanAddPlateBehindText() => SelectedOverlayElement is OverlayElementViewModel;
+
+    /// <summary>Phase 4 "plate" (background box behind text) -- DECIDED as a one-shot BUTTON action,
+    /// not a stateful toggle (plan-review: a persistent toggle would need Z-collision handling, a
+    /// new persisted "is plated" flag with no home on <see cref="RawTextElementSnapshot"/> today,
+    /// LIVE bounds tracking on every text drag/resize, and a real parent/child relationship this
+    /// element model is deliberately flat today -- none of that is "pure UI convenience"). Inserts
+    /// one ordinary, INDEPENDENT <see cref="BoxElementViewModel"/> sized to the text's CURRENT
+    /// bounds plus a small padding margin, directly behind it in draw order -- after insertion the
+    /// two are just two separate elements the user can move/resize/remove independently, same as if
+    /// they'd used the existing "Box" button and positioned it by hand.
+    /// <para>Inserted at the text element's own COLLECTION index (i.e. immediately behind it in
+    /// draw order), then EVERY element's <c>Z</c> is renumbered to match the collection's own order
+    /// exactly (<c>0, 1, 2, ...</c>) -- avoids any Z-collision with an existing element (a plain
+    /// <c>text.Z - 1</c> could collide with whatever's already there, unlike
+    /// <see cref="SetAsBackground"/>'s own <c>Min(Z) - 1</c>, which is collision-free BY
+    /// CONSTRUCTION only because it always targets the absolute bottom). A full renumber keeps
+    /// everyone else's RELATIVE order untouched, is simple, and Undo already restores the pre-
+    /// renumber Z values for free via the existing whole-state snapshot mechanism.</para></summary>
+    [RelayCommand(CanExecute = nameof(CanAddPlateBehindText))]
+    private void AddPlateBehindText()
+    {
+        if (SelectedOverlayElement is not OverlayElementViewModel text)
+        {
+            return;
+        }
+
+        var index = OverlayElements.IndexOf(text);
+        if (index < 0)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        const double padding = 0.02;
+        var plate = CreateBoxElement(
+            x: text.X, y: text.Y,
+            width: text.Width + (padding * 2), height: text.Height + (padding * 2),
+            fillColor: new Rgb24(0, 0, 0), borderColor: null, borderThickness: 0, opacity: 0.6,
+            z: text.Z, locked: false);
+
+        // _suspendPreview-guarded (same pattern as SetAsBackground/Rotate's own multi-element
+        // loops) so the up-to-N Z reassignments below don't each independently trigger their own
+        // RecomputePreview() pass -- one full pipeline run at the end instead.
+        _suspendPreview = true;
+        try
+        {
+            OverlayElements.Insert(index, plate);
+            for (var i = 0; i < OverlayElements.Count; i++)
+            {
+                OverlayElements[i].Z = i;
+            }
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        SelectedOverlayElement = plate;
+        RecomputePreview();
+    }
 
     /// <summary>Phase 3 (spec/15-template-designer.md) -- discovers which template-variable KEYS are
     /// currently referenced by scanning every live text element's RAW <c>Text</c> (plan-review fix:
@@ -1407,7 +1501,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             or nameof(ITemplateElementViewModel.CanvasHeightPixels)
             or nameof(BoxElementViewModel.CanvasBorderThicknessPixels)
             or nameof(ImageElementViewModel.CanvasBitmap)
-            or nameof(ITemplateElementViewModel.Locked))
+            or nameof(ITemplateElementViewModel.Locked)
+            // Code-review nit, fixed here: HasStroke is a derived bool of StrokeColor (raised by
+            // OnStrokeColorChanged), not new information -- without this, every stroke-color edit
+            // fired two full Crop->Resize->ApplyTemplate passes (one from StrokeColor's own
+            // notification below, one from this redundant follow-up).
+            or nameof(OverlayElementViewModel.HasStroke))
         {
             return;
         }
@@ -1416,7 +1515,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             && e.PropertyName is nameof(OverlayElementViewModel.FontSizeRelative)
                 or nameof(ITemplateElementViewModel.Width)
                 or nameof(ITemplateElementViewModel.Height)
-                or nameof(OverlayElementViewModel.Text))
+                or nameof(OverlayElementViewModel.Text)
+                // Phase 4: FontFamily/StrokeThickness both feed ComputeCanvasFontSize's own
+                // MeasureFittedFontSize call (family changes what's measured; stroke thickness
+                // changes the fit-box-shrink allowance) -- StrokeColor going null<->set also
+                // changes whether the stroke allowance applies at all (see ComputeCanvasFontSize's
+                // own strokeThicknessRelative computation), so it needs the same refresh.
+                or nameof(OverlayElementViewModel.FontFamily)
+                or nameof(OverlayElementViewModel.StrokeThickness)
+                or nameof(OverlayElementViewModel.StrokeColor))
         {
             textElement.CanvasFontSize = ComputeCanvasFontSize(textElement);
         }
@@ -1604,14 +1711,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// for the burst-of-rapid-changes variant (sliders/TextBoxes).</summary>
     private void PushUndoSnapshot()
     {
-        // _suspendPreview doubles as "a restore (ApplyState, or the constructor's own
-        // EditorInitialState seeding) is in progress" -- without this guard, ApplyState setting
-        // PreserveAspect/LockAspectToMode/the 6 sliders during an Undo/Redo would themselves push
-        // MORE undo snapshots via the On*Changing hooks below, corrupting the stacks on every
-        // single Undo/Redo call. Safe to reuse: both callers of _suspendPreview=true (Rotate,
-        // ApplyState) are exactly the cases where pushing would be wrong, and every REAL push site
-        // (Rotate itself, Add/RemoveOverlayElement, the View-level drag-start hook) calls this
-        // BEFORE entering its own _suspendPreview block, never from inside one.
+        // _suspendPreview doubles as "a restore/multi-element-geometry-change is in progress" --
+        // without this guard, ApplyState setting PreserveAspect/LockAspectToMode/the 6 sliders
+        // during an Undo/Redo would themselves push MORE undo snapshots via the On*Changing hooks
+        // below, corrupting the stacks on every single Undo/Redo call. Safe to reuse: every
+        // _suspendPreview=true site (Rotate, ApplyState, the constructor's own EditorInitialState
+        // seeding, PreserveAspect's own crop-relock block, SetAsBackground, AddPlateBehindText) is
+        // exactly a case where pushing would be wrong, and every REAL push site calls this BEFORE
+        // entering its own _suspendPreview block, never from inside one.
         if (_suspendPreview)
         {
             return;
@@ -1780,8 +1887,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         var bounds = ProjectRectToCropRelative(element.X, element.Y, element.Width, element.Height);
         return element switch
         {
+            // FontSpec.Family fixed to text.FontFamily (Phase 4 plan-review blocker) -- this is the
+            // REAL pipeline call site (ApplyTemplate consumes this directly), not just the canvas
+            // preview one; an empty string here would have meant every text element always rendered
+            // in the default font regardless of what the style panel's picker actually selected.
             OverlayElementViewModel text => new TemplateTextElement(
-                bounds, text.Z, text.ResolvedText, new FontSpec(string.Empty, text.FontSizeRelative), text.Color),
+                bounds, text.Z, text.ResolvedText, new FontSpec(text.FontFamily, text.FontSizeRelative), text.Color,
+                text.StrokeColor, text.StrokeThickness),
             BoxElementViewModel box => new TemplateBoxElement(
                 bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
             ImageElementViewModel image => new TemplateImageElement(bounds, image.Z, image.Source, image.Fit),
@@ -1906,8 +2018,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         var bounds = ProjectRectToCropRelative(element.X, element.Y, element.Width, element.Height);
         var boundsWidthPx = Math.Max(1, (int)Math.Round(bounds.Width * targetWidth));
         var boundsHeightPx = Math.Max(1, (int)Math.Round(bounds.Height * targetHeight));
+        // FontSpec.Family + the trailing stroke-thickness argument fixed (Phase 4 plan-review
+        // blocker) -- an empty family/omitted stroke here would measure against the WRONG font/
+        // without the stroke fit-box allowance while the real pipeline (BuildTemplateElement) uses
+        // the actually-selected ones, silently desyncing the canvas from the transmitted image.
+        var strokeThicknessRelative = element.StrokeColor is { } ? element.StrokeThickness : 0;
         var fittedFinalSizePx = _preparer.MeasureFittedFontSize(
-            element.ResolvedText, new FontSpec(string.Empty, element.FontSizeRelative), (int)Math.Round(targetHeight), boundsWidthPx, boundsHeightPx);
+            element.ResolvedText, new FontSpec(element.FontFamily, element.FontSizeRelative), (int)Math.Round(targetHeight),
+            boundsWidthPx, boundsHeightPx, strokeThicknessRelative);
 
         return fittedFinalSizePx / scaleY;
     }

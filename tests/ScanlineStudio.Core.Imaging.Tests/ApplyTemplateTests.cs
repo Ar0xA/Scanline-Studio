@@ -408,6 +408,189 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
+    public async Task ApplyTemplate_TextWithLargeStroke_RendersInsideBoundsWithoutThrowing()
+    {
+        // Phase 4: empirically verified (a direct pixel dump comparing WITH and WITHOUT the
+        // fit-box-shrink correction, both run against this exact fixture) that
+        // AssertNoNonBackgroundPixelOutsideBounds CANNOT distinguish correct from incorrect
+        // behavior here -- DrawTemplateText's clip is unconditional, so stroke ink that would
+        // otherwise extend past Bounds is silently CLIPPED there, not leaked outside it, with or
+        // without the correction. The real, observable effect of the fix is a SMALLER fitted font
+        // size (more room for the stroke before clipping kicks in) -- see
+        // MeasureFittedFontSize_WithStroke_ShrinksFurtherThanWithoutOne below, which asserts that
+        // directly and IS mutation-tested (this test and that one exercise the same shared
+        // ShrinkFitBoxForStroke helper, so one direct test covers both call sites). This test stays
+        // as a basic smoke check (renders without throwing, produces visible ink) -- a real
+        // safety net, just not a bleed-detection one.
+        var path = await WriteFixturePngAsync(64, 64, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 64, 64);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.2, 0.35, 0.3, 0.12);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "W1AW", new FontSpec("DejaVu Sans Mono", 0.5), new Rgb24(0, 0, 255),
+                    StrokeColor: new Rgb24(255, 0, 0), StrokeThickness: 0.15),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+            AssertAtLeastOneNonBackgroundPixelInsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_WithStroke_ShrinksFurtherThanWithoutOne()
+    {
+        // Companion to the bleed test above -- pins that the CANVAS-side measurement (this method)
+        // applies the same fit-box-shrink correction as the real pipeline (DrawTemplateText), not
+        // just the pipeline alone. A regression here is exactly the "canvas silently disagrees with
+        // the transmitted image" bug class Phase 4 plan-review flagged as its second blocker.
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", 0.3);
+
+        var withoutStroke = preparer.MeasureFittedFontSize("W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20);
+        var withStroke = preparer.MeasureFittedFontSize(
+            "W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20, strokeThicknessRelative: 0.15);
+
+        Assert.True(withStroke < withoutStroke, $"Expected the stroke allowance to shrink the fitted size below {withoutStroke}, got {withStroke}.");
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_WithStroke_ShrinksTheFitBoxByTheFullStrokeThickness_NotHalf()
+    {
+        // Code-review finding: the "smaller than without a stroke" assertion above would still pass
+        // if a future change shrunk the fit box by HALF the stroke thickness instead of the full
+        // amount (a plausible-looking but wrong "just the outward growth per side" mistake) -- this
+        // pins the actual magnitude by comparing against an equivalent bounds box shrunk by hand.
+        // ImageSharp's Pen centers the stroke ON the glyph outline, so ink grows strokeThicknessPx/2
+        // per side = strokeThicknessPx total across each axis, which is what ShrinkFitBoxForStroke
+        // must subtract.
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", 0.3);
+        const int imageHeightPx = 64;
+        const int boundsWidthPx = 40;
+        const int boundsHeightPx = 20;
+        const double strokeThicknessRelative = 0.15;
+        var strokeThicknessPxRounded = (int)MathF.Round((float)(strokeThicknessRelative * imageHeightPx));
+
+        var withStroke = preparer.MeasureFittedFontSize(
+            "W1AW", font, imageHeightPx, boundsWidthPx, boundsHeightPx, strokeThicknessRelative);
+        var equivalentPreShrunkBounds = preparer.MeasureFittedFontSize(
+            "W1AW", font, imageHeightPx, boundsWidthPx - strokeThicknessPxRounded, boundsHeightPx - strokeThicknessPxRounded);
+
+        // Both paths reach ComputeFittedFontSizePx with identical bounded-width/height integers, so
+        // this is the same deterministic binary search both times -- exact equality, not a tolerance
+        // comparison.
+        Assert.Equal(equivalentPreShrunkBounds, withStroke);
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_NegativeStrokeThickness_DoesNotGrowTheFitBoxPastUnstrokedSize()
+    {
+        // Code-review finding: nothing upstream (the AXAML TextBox binding) validates
+        // StrokeThickness, so a negative value must not be allowed to GROW the fit box past what an
+        // unstroked element would get -- ShrinkFitBoxForStroke's own arithmetic
+        // (bounds - strokeThicknessPxRounded) would otherwise ADD magnitude for a negative input,
+        // letting the fit search pick a size larger than Bounds while DrawGlyphs's own
+        // strokeThicknessPx > 0 gate draws no outline to fill that extra allowance -- silently
+        // hard-clipped, oversized transmitted text with no outline, the worst combination.
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", 0.3);
+
+        var withoutStroke = preparer.MeasureFittedFontSize("W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20);
+        var withNegativeStroke = preparer.MeasureFittedFontSize(
+            "W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20, strokeThicknessRelative: -0.15);
+
+        Assert.True(
+            withNegativeStroke <= withoutStroke,
+            $"Expected a negative stroke thickness to be clamped (never exceed the unstroked fitted size {withoutStroke}), got {withNegativeStroke}.");
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithNoStroke_RendersIdenticallyToBeforeThisFeature()
+    {
+        // Regression guard: StrokeColor defaults to null on TemplateTextElement, so an existing
+        // (pre-Phase-4) caller that never sets it must render through the SAME plain Color-overload
+        // DrawText call as before -- not a behavior change hiding behind a default-null stroke.
+        var path = await WriteFixturePngAsync(32, 32, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 32, 32);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.1, 0.1, 0.8, 0.4);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, "HI", new FontSpec("DejaVu Sans Mono", 0.3), new Rgb24(0, 0, 255)),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+            AssertAtLeastOneNonBackgroundPixelInsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithFamilyName_ResolvesTheRequestedFontNotJustTheDefault()
+    {
+        // Phase 4: ResolveFontFamily became a real per-family lookup -- this pins that requesting
+        // "Barlow" (the second bundled family) actually renders something (doesn't throw/no-op),
+        // proving the FontCollection.TryGet path is reachable end-to-end, not just compiling.
+        var path = await WriteFixturePngAsync(64, 64, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 64, 64);
+            var preparer = new TransmitImagePreparer(FontPath);
+            Assert.Contains("Barlow", preparer.AvailableFontFamilies);
+            var bounds = new NormalizedRect(0.1, 0.1, 0.8, 0.4);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, "HI", new FontSpec("Barlow", 0.3), new Rgb24(0, 0, 255)),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertAtLeastOneNonBackgroundPixelInsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithUnknownFamilyName_FallsBackToTheDefaultFontRatherThanThrowing()
+    {
+        var path = await WriteFixturePngAsync(64, 64, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 64, 64);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.1, 0.1, 0.8, 0.4);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, "HI", new FontSpec("Nonexistent Font Family", 0.3), new Rgb24(0, 0, 255)),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertAtLeastOneNonBackgroundPixelInsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task ApplyTemplate_OutOfBoundsElement_DoesNotThrowAndLeavesImageUnchanged()
     {
         // Mirrors ApplyOverlay_FarOutOfBoundsPosition_DoesNotThrowAndLeavesImageUnchanged's own
