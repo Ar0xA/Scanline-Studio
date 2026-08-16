@@ -76,8 +76,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="Adjustments"/> was added after the fact (spec/18-path-to-1.0.md Medium item, the
     /// adjustment-sliders sub-piece) -- its absence here was a real, silent feature-loss bug:
     /// without it, a mode change after Apply dropped Brightness/Contrast/etc. entirely, not just
-    /// re-projected them incorrectly.</summary>
-    private sealed record EditState(IImageSource Original, NormalizedRect CropRect, bool PreserveAspect, ImageOverlay Overlay, ImageAdjustments Adjustments);
+    /// re-projected them incorrectly. <see cref="RawOverlay"/> is DELIBERATELY separate from
+    /// <see cref="Overlay"/> (spec/18-path-to-1.0.md Medium item, re-open/re-edit sub-piece,
+    /// round-1 plan-review finding) -- <see cref="Overlay"/> is already crop-projected and
+    /// macro-resolved (correct for <see cref="OnSelectedModeChanged"/>'s own direct pipeline call),
+    /// while re-seeding a re-opened <see cref="TxImageEditorPaneViewModel"/> needs the raw,
+    /// photo-anchored, un-resolved form instead -- feeding the editor from <see cref="Overlay"/>
+    /// would silently misplace existing overlay text and permanently bake macro templates like
+    /// "DE %m" into their currently-resolved value.</summary>
+    private sealed record EditState(
+        IImageSource Original, NormalizedRect CropRect, bool PreserveAspect, ImageOverlay Overlay,
+        ImageAdjustments Adjustments, IReadOnlyList<TxImageEditorPaneViewModel.RawOverlayElementSnapshot> RawOverlay);
 
     private EditState? _editState;
 
@@ -696,11 +705,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <summary>Keeps the favorite-mode AND quick-mode-grid buttons' enabled state in sync with
     /// <see cref="IsEditorOpen"/> -- <see cref="CanSelectFavoriteMode"/>/
     /// <see cref="CanQuickSelectMode"/> alone only re-evaluate when something explicitly requests
-    /// it.</summary>
+    /// it. <see cref="EditCurrentImageCommand"/> piggybacks on this same hook (round-1 plan-review
+    /// finding) -- <see cref="_editState"/> is a plain field, not observable, so nothing else would
+    /// ever re-evaluate its own CanExecute; this fires after BOTH <see cref="OnEditorApplied"/>
+    /// (which just set <see cref="_editState"/>) and <see cref="OnEditorCancelled"/>, since both set
+    /// <see cref="IsEditorOpen"/> = <see langword="false"/>.</summary>
     partial void OnIsEditorOpenChanged(bool value)
     {
         SelectFavoriteModeCommand.NotifyCanExecuteChanged();
         QuickSelectModeCommand.NotifyCanExecuteChanged();
+        EditCurrentImageCommand.NotifyCanExecuteChanged();
     }
 
     [RelayCommand]
@@ -851,7 +865,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // immediate output was correct (used the editor's own live rotated source), but the
         // re-derivation reverted to the unrotated image while still applying the ROTATED crop
         // rect/overlay coordinates to it. CurrentSource always reflects every Rotate call so far.
-        _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Overlay, editor.Adjustments);
+        _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Overlay, editor.Adjustments, editor.RawOverlayElements);
         _loadedImage = final;
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
         SelectedFileName = fileName;
@@ -865,6 +879,62 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     {
         IsEditorOpen = false;
         EditorClosed?.Invoke();
+    }
+
+    private bool CanEditCurrentImage() => _editState is not null && !IsEditorOpen;
+
+    /// <summary>spec/18-path-to-1.0.md Medium item: re-open/re-edit an image after Apply -- no
+    /// fresh <see cref="IImageFileLoader"/>/<see cref="IStockImageLibrary"/> I/O needed, unlike
+    /// <see cref="OpenEditorForSourceAsync"/> (round-1 plan-review confirmed: <see cref="_editState"/>'s
+    /// own <c>Original</c> is already fully in memory, reflecting every prior Rotate too -- see
+    /// <see cref="OnEditorApplied"/>'s own doc comment on why it's captured from
+    /// <c>editor.CurrentSource</c>). Still async (operator-settings reload) and still wrapped in
+    /// the same construction try/catch <see cref="OpenEditorForSourceAsync"/> uses -- round-1
+    /// finding: <c>BuildWorkingCopy</c>/<c>ToBitmap</c> inside the editor's own constructor can
+    /// still throw, and an uncaught throw here would leave <see cref="IsEditorOpen"/> stuck
+    /// <see langword="true"/> forever with no editor to Cancel, permanently freezing
+    /// <see cref="SelectedMode"/>/favorites/quick-grid/RX auto-follow (see
+    /// <see cref="IsEditorOpen"/>'s own doc comment).</summary>
+    [RelayCommand(CanExecute = nameof(CanEditCurrentImage))]
+    private async Task EditCurrentImageAsync()
+    {
+        // CanExecute alone isn't a hard gate -- CommunityToolkit's IAsyncRelayCommand.ExecuteAsync
+        // doesn't consult it, only Avalonia's Button.OnClick does (code-review finding, same
+        // doctrine SelectFavoriteMode/QuickSelectMode already follow above). This body-level
+        // IsEditorOpen check is the real backstop -- without it, a direct ExecuteAsync call while
+        // an editor is already open would construct a SECOND editor and orphan the first (the
+        // first's own Applied/Cancelled handlers would still fire into a now-stale closure).
+        if (_editState is not { } edit || SelectedMode is not { } mode || IsEditorOpen)
+        {
+            Log.EditCurrentImageWithNoEditState(_logger);
+            return;
+        }
+
+        IsEditorOpen = true;
+        ErrorMessage = null; // stale error from a prior failed pick/edit must not linger through this one
+        try
+        {
+            var operatorSettings = (await _settingsStore.LoadAsync())
+                .GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
+                ?? new OperatorSettings();
+
+            var editor = new TxImageEditorPaneViewModel(
+                edit.Original, mode, _preparer, _macroTextResolver, operatorSettings, _localization, _imageEditorLogger,
+                new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay));
+            // SelectedFileName! is safe here: only OnEditorApplied ever writes it, always in the
+            // same assignment that sets _editState (:868-871 below) -- _editState being non-null at
+            // this point (the guard above) guarantees SelectedFileName was set at the same time.
+            var fileName = SelectedFileName!;
+            editor.Applied += final => OnEditorApplied(fileName, editor, final);
+            editor.Cancelled += OnEditorCancelled;
+            EditorOpened?.Invoke(editor);
+        }
+        catch (Exception ex)
+        {
+            Log.OpenTxEditorFailed(_logger, SelectedFileName ?? "(re-edit)", ex);
+            IsEditorOpen = false;
+            ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
+        }
     }
 
     /// <summary>Deliberately does NOT also require <c>!IsEditorOpen</c> -- confirmed sound (code
@@ -1041,6 +1111,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Opening the TX image editor failed: {FileName}")]
         public static partial void OpenTxEditorFailed(ILogger logger, string fileName, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "EditCurrentImage invoked with no retained edit state or selected mode -- no-op")]
+        public static partial void EditCurrentImageWithNoEditState(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Transmit invoked: mode={ModeId}")]
         public static partial void TransmitInvoked(ILogger logger, string modeId);

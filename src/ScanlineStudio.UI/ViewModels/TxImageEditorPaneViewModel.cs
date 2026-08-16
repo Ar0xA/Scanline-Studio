@@ -31,6 +31,28 @@ public enum NudgeDirection
 /// headlessly without simulating real pointer events.</summary>
 public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 {
+    /// <summary>Raw (photo-anchored, un-macro-resolved) snapshot of one overlay element -- the
+    /// counterpart to <see cref="ImageOverlayElement"/>, which <see cref="Overlay"/> exposes
+    /// already crop-projected AND with <see cref="OverlayElementViewModel.ResolvedText"/> baked in.
+    /// Deliberately a SEPARATE type, not a reuse of <see cref="ImageOverlayElement"/> with different
+    /// semantics depending on which property produced it -- <see cref="TxControlsPaneViewModel"/>'s
+    /// own EditState needs this exact, unprojected, unresolved form to faithfully re-seed a
+    /// re-opened editor (round-1 plan-review finding on spec/18-path-to-1.0.md's re-open/re-edit
+    /// sub-piece: restoring from the crop-projected <see cref="Overlay"/> instead would silently
+    /// misplace existing overlay text AND permanently bake macro templates like <c>"DE %m"</c> into
+    /// their currently-resolved value).</summary>
+    public sealed record RawOverlayElementSnapshot(string Text, double X, double Y, double FontSizeRelative, Rgb24 Color);
+
+    /// <summary>Prior edit state to seed a re-opened editor with (spec/18-path-to-1.0.md Medium
+    /// item: re-open/re-edit after Apply) -- everything genuinely mode/crop-independent.
+    /// Deliberately does NOT include <see cref="LockAspectToMode"/> (affects future drags only, not
+    /// worth carrying across a re-open) or <see cref="Rotate"/>'s own orientation (the retained
+    /// <c>Original</c> the caller passes to the constructor already reflects every prior rotate --
+    /// see <see cref="CurrentSource"/>'s own doc comment).</summary>
+    public sealed record EditorInitialState(
+        NormalizedRect CropRect, bool PreserveAspect, ImageAdjustments Adjustments,
+        IReadOnlyList<RawOverlayElementSnapshot> OverlayElements);
+
     private const double MinNormalizedCropSize = 0.02;
 
     // ~2x the target mode's dimensions (capped at the original's own size) -- a data-structure
@@ -110,7 +132,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         IMacroTextResolver macroTextResolver,
         OperatorSettings operatorSettings,
         ILocalizationService localization,
-        ILogger<TxImageEditorPaneViewModel> logger)
+        ILogger<TxImageEditorPaneViewModel> logger,
+        EditorInitialState? initialState = null)
     {
         _originalSource = originalSource;
         _targetMode = targetMode;
@@ -122,6 +145,38 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
         WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
+
+        if (initialState is { } initial)
+        {
+            // Seeded BEFORE the trailing RecomputePreview() below, wrapped in _suspendPreview (same
+            // pattern as Rotate()) so setting CropRect/PreserveAspect/6 slider properties/N overlay
+            // elements here doesn't each independently trigger their own RecomputePreview() pass --
+            // one full pipeline run at the end, not initialState.OverlayElements.Count + 8.
+            _suspendPreview = true;
+            try
+            {
+                CropRect = initial.CropRect;
+                PreserveAspect = initial.PreserveAspect;
+                Brightness = initial.Adjustments.Brightness;
+                Contrast = initial.Adjustments.Contrast;
+                Saturation = initial.Adjustments.Saturation;
+                Gamma = initial.Adjustments.Gamma;
+                Sharpen = initial.Adjustments.Sharpen;
+                Denoise = initial.Adjustments.Denoise;
+                // SelectedOverlayElement deliberately stays null (code-review nit) -- unlike
+                // AddOverlayElement, which always selects the ONE element it just created, there is
+                // no obviously-correct choice among N restored elements to auto-select.
+                foreach (var snapshot in initial.OverlayElements)
+                {
+                    OverlayElements.Add(CreateOverlayElement(snapshot.Text, snapshot.X, snapshot.Y, snapshot.FontSizeRelative, snapshot.Color));
+                }
+            }
+            finally
+            {
+                _suspendPreview = false;
+            }
+        }
+
         RecomputePreview();
     }
 
@@ -183,6 +238,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// spec/18-path-to-1.0.md Medium item).</summary>
     public ImageAdjustments Adjustments => BuildAdjustments();
 
+    /// <summary>Raw (photo-anchored, un-macro-resolved) snapshot of every current overlay element
+    /// -- the counterpart to <see cref="Overlay"/> for callers that need to faithfully RE-SEED an
+    /// editor later rather than feed the real transmit pipeline. See
+    /// <see cref="RawOverlayElementSnapshot"/>'s own doc comment for why this can't just reuse
+    /// <see cref="Overlay"/>'s already-projected, already-macro-resolved elements.</summary>
+    public IReadOnlyList<RawOverlayElementSnapshot> RawOverlayElements =>
+        OverlayElements.Select(e => new RawOverlayElementSnapshot(e.Text, e.X, e.Y, e.FontSizeRelative, e.Color)).ToList();
+
     public event Action<IImageSource>? Applied;
 
     public event Action? Cancelled;
@@ -227,20 +290,38 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         // tight, off-center crop would otherwise place brand-new text outside the visible/
         // transmitted frame immediately. See ProjectToCropRelative's own doc comment for why X/Y
         // are stored relative to the full working copy, not the crop, despite this.
-        var element = new OverlayElementViewModel
-        {
-            X = CropRect.X + (CropRect.Width / 2),
-            Y = CropRect.Y + (CropRect.Height / 2),
-            ImageWidth = WorkingCopyWidth,
-            ImageHeight = WorkingCopyHeight,
-            RemoveCommand = RemoveOverlayElementCommand,
-            ResolveMacros = text => _macroTextResolver.Resolve(text, _operatorSettings),
-        };
-        element.CanvasFontSize = ComputeCanvasFontSize(element.FontSizeRelative);
-        element.PropertyChanged += OnOverlayElementPropertyChanged;
+        var element = CreateOverlayElement(
+            text: "Text",
+            x: CropRect.X + (CropRect.Width / 2),
+            y: CropRect.Y + (CropRect.Height / 2),
+            fontSizeRelative: 0.1,
+            color: new Rgb24(255, 255, 255));
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
         RecomputePreview();
+    }
+
+    /// <summary>Shared element-construction wiring for <see cref="AddOverlayElement"/> and
+    /// <see cref="EditorInitialState"/>-based restoration (round-1 plan-review finding on
+    /// spec/18-path-to-1.0.md's re-open/re-edit sub-piece: keep this in exactly one place, not
+    /// duplicated between "new blank element" and "restored element" call sites).</summary>
+    private OverlayElementViewModel CreateOverlayElement(string text, double x, double y, double fontSizeRelative, Rgb24 color)
+    {
+        var element = new OverlayElementViewModel
+        {
+            Text = text,
+            X = x,
+            Y = y,
+            FontSizeRelative = fontSizeRelative,
+            Color = color,
+            ImageWidth = WorkingCopyWidth,
+            ImageHeight = WorkingCopyHeight,
+            RemoveCommand = RemoveOverlayElementCommand,
+            ResolveMacros = macroText => _macroTextResolver.Resolve(macroText, _operatorSettings),
+        };
+        element.CanvasFontSize = ComputeCanvasFontSize(element.FontSizeRelative);
+        element.PropertyChanged += OnOverlayElementPropertyChanged;
+        return element;
     }
 
     /// <summary>Backs the overlay editor's "Insert field" chips -- appends a macro token (e.g.
