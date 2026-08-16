@@ -1,5 +1,9 @@
+using System.Collections.Concurrent;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp;
+// NOT "using SixLabors.ImageSharp.Drawing" -- SixLabors.ImageSharp.Drawing.Path collides with
+// System.IO.Path (used throughout this file, e.g. the constructor's Path.Combine). Reference
+// SixLabors.ImageSharp.Drawing.RectangularPolygon fully-qualified at each use site instead.
 using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
@@ -153,22 +157,343 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         foreach (var element in overlay.Elements)
         {
             var fontSize = (float)(element.FontSizeRelative * source.Height);
-            var font = _fontFamily.CreateFont(fontSize);
-            var color = new Rgba32(element.Color.R, element.Color.G, element.Color.B, 255);
-
             var origin = new PointF((float)(element.X * source.Width), (float)(element.Y * source.Height));
-            var options = new RichTextOptions(font)
-            {
-                Origin = origin,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                WrappingLength = source.Width, // clip at the image's own width -- v1 overflow rule
-            };
 
-            image.Mutate(ctx => ctx.DrawText(options, element.Text, color));
+            // WrappingLength = source.Width (not -1/no-wrap) -- v1's own clip-at-image-width
+            // overflow rule, preserved byte-for-byte through the ApplyTemplate refactor (Phase 0
+            // plan-review round-2 finding: WrappingLength also drives HorizontalAlignment.Center's
+            // own alignment box, so this is a real behavioral parameter, not just a wrap toggle --
+            // ApplyOverlay's existing tests are the acceptance criterion that this still matches).
+            // hintingMode: null -- leaves TextOptions.HintingMode at its own pre-refactor default,
+            // never touched by this call site (code-review round-1 finding: this must stay
+            // completely unchanged from before the refactor, unlike DrawTemplateText's call below).
+            DrawGlyphs(image, element.Text, _fontFamily, fontSize, origin, element.Color, wrappingLength: source.Width, clip: null, hintingMode: null);
         }
 
         return FromImageSharp(image);
+    }
+
+    /// <summary>See <see cref="ITransmitImagePreparer.ApplyTemplate"/>'s own doc comment for the
+    /// full contract. <c>OrderBy</c> is a documented STABLE sort (preserves original relative
+    /// order among equal keys), which is what makes "ascending (Z, list index)" correct with just
+    /// <c>OrderBy(e =&gt; e.Z)</c> alone -- no separate index tiebreaker needed.</summary>
+    public IImageSource ApplyTemplate(IImageSource existingBase, TemplateDocument document)
+    {
+        if (document.IsEmpty)
+        {
+            return existingBase;
+        }
+
+        using var image = ToImageSharp(existingBase);
+
+        foreach (var element in document.Elements.OrderBy(e => e.Z))
+        {
+            if (element.Bounds.Width <= 0 || element.Bounds.Height <= 0)
+            {
+                continue;
+            }
+
+            var bounds = ToPixelBounds(element.Bounds, existingBase.Width, existingBase.Height);
+
+            switch (element)
+            {
+                case TemplateTextElement text:
+                    DrawTemplateText(image, text, bounds, existingBase.Height);
+                    break;
+                case TemplateImageElement img:
+                    DrawTemplateImage(image, img, bounds);
+                    break;
+                case TemplateBoxElement box:
+                    DrawTemplateBox(image, box, bounds, existingBase.Height);
+                    break;
+                default:
+                    // TemplateElement is a public abstract record -- an unrecognized subtype means
+                    // this switch fell out of sync with the real hierarchy. Throw, don't silently
+                    // skip (code-review round-1 finding): a silently-dropped element is a much
+                    // harder bug to notice than a build/test failure right here.
+                    throw new NotSupportedException($"Unrecognized {nameof(TemplateElement)} subtype: {element.GetType()}.");
+            }
+        }
+
+        return FromImageSharp(image);
+    }
+
+    public double MeasureFittedFontSize(string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx)
+    {
+        var fontFamily = ResolveFontFamily(font.Family);
+        var startingSizePx = MathF.Max((float)(font.Size * imageHeightPx), MinFontSizePx);
+        var boundedWidth = Math.Max(1, boundsWidthPx);
+        var boundedHeight = Math.Max(1, boundsHeightPx);
+        return ComputeFittedFontSizePx(text, fontFamily, startingSizePx, MinFontSizePx, boundedWidth, boundedHeight);
+    }
+
+    private void DrawTemplateText(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateTextElement element, PixelBounds bounds, int imageHeightPx)
+    {
+        var fontFamily = ResolveFontFamily(element.Font.Family);
+        var startingSizePx = MathF.Max((float)(element.Font.Size * imageHeightPx), MinFontSizePx);
+        var boundsWidthPx = Math.Max(1, (int)MathF.Round(bounds.Width));
+        var boundsHeightPx = Math.Max(1, (int)MathF.Round(bounds.Height));
+        var fittedSizePx = ComputeFittedFontSizePx(element.Content, fontFamily, startingSizePx, MinFontSizePx, boundsWidthPx, boundsHeightPx);
+
+        var origin = new PointF(bounds.X + (bounds.Width / 2f), bounds.Y + (bounds.Height / 2f));
+
+        // Render-time overflow policy (Phase 0 plan-review blocker 4): the fit search can bottom
+        // out at MinFontSizePx and the text STILL not fit Bounds -- clip to Bounds rather than
+        // overflow or ellipsize. Clipping unconditionally (not just in the overflow case) is both
+        // simpler and correct: when text already fits, nothing is outside the clip region, so it's
+        // a no-op.
+        var clip = new SixLabors.ImageSharp.Drawing.RectangularPolygon(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        // hintingMode: HintingMode.None -- code-review round-1 finding: must match
+        // ComputeFittedFontSizePx's own measurement HintingMode exactly, or the fitted size this
+        // method just computed can render slightly larger/smaller than what was actually measured
+        // (hinting's grid-fitting quantization), silently reintroducing the overflow this whole
+        // mechanism exists to prevent.
+        DrawGlyphs(image, element.Content, fontFamily, fittedSizePx, origin, element.Color, wrappingLength: -1f, clip, hintingMode: HintingMode.None);
+    }
+
+    private void DrawTemplateImage(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateImageElement element, PixelBounds bounds)
+    {
+        // Defensive floor at 1px -- element.Bounds.Width/Height > 0 is already guaranteed by the
+        // caller's skip check, but rounding a very thin bounds rect to pixels can still floor to 0.
+        var targetWidth = Math.Max(1, (int)MathF.Round(bounds.Width));
+        var targetHeight = Math.Max(1, (int)MathF.Round(bounds.Height));
+        var resized = GetOrCreateResizedImage(element.Source, targetWidth, targetHeight, element.Fit);
+
+        using var resizedImage = ToImageSharp(resized);
+        var location = new Point((int)MathF.Round(bounds.X), (int)MathF.Round(bounds.Y));
+        image.Mutate(ctx => ctx.DrawImage(resizedImage, location, 1f));
+    }
+
+    /// <summary>Opacity goes through <see cref="GraphicsOptions.BlendPercentage"/>, NOT the fill
+    /// color's own alpha channel -- verified empirically (this project's own "no assumptions"
+    /// discipline caught it, not a documentation read): on an <see cref="Image{TPixel}"/> of
+    /// <see cref="SixLabors.ImageSharp.PixelFormats.Rgb24"/> (no alpha channel), <c>Fill</c>/
+    /// <c>Draw</c> silently ignore a semi-transparent <c>Rgba32</c>/<c>Color</c> argument's own
+    /// alpha and paint fully opaque regardless -- confirmed by a standalone repro before writing
+    /// this, not assumed from how it works on an <c>Rgba32</c>-format destination (where color
+    /// alpha DOES blend correctly). <c>BlendPercentage</c> works on either destination format, so
+    /// it's the one real opacity control here.</summary>
+    private static void DrawTemplateBox(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateBoxElement element, PixelBounds bounds, int imageHeightPx)
+    {
+        var rect = new SixLabors.ImageSharp.Drawing.RectangularPolygon(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        var opacity = Math.Clamp((float)element.Opacity, 0f, 1f);
+        var options = new DrawingOptions { GraphicsOptions = new GraphicsOptions { BlendPercentage = opacity } };
+        var fillColor = new Rgba32(element.FillColor.R, element.FillColor.G, element.FillColor.B, 255);
+
+        image.Mutate(ctx =>
+        {
+            ctx.Fill(options, fillColor, rect);
+
+            if (element.BorderColor is { } borderColor && element.BorderThickness > 0)
+            {
+                var requestedThicknessPx = (float)(element.BorderThickness * imageHeightPx);
+                // ImageSharp's Draw(pen, path) CENTERS the stroke on the path -- confirmed via the
+                // same empirical check as the opacity fix above, not assumed -- so drawing directly
+                // on `rect` would bleed BorderThickness/2 outside Bounds on every side (code-review
+                // round-1 finding). Inset the stroked rect by half the (clamped) thickness so the
+                // stroke's OUTER edge lands exactly at Bounds, keeping the whole border inside it --
+                // matches the same "clip to Bounds" philosophy DrawTemplateText already uses.
+                var maxThicknessPx = MathF.Max(0f, MathF.Min(bounds.Width, bounds.Height) - 0.5f);
+                var borderThicknessPx = MathF.Min(requestedThicknessPx, maxThicknessPx);
+                if (borderThicknessPx > 0)
+                {
+                    var half = borderThicknessPx / 2f;
+                    var borderRect = new SixLabors.ImageSharp.Drawing.RectangularPolygon(
+                        bounds.X + half, bounds.Y + half, bounds.Width - borderThicknessPx, bounds.Height - borderThicknessPx);
+                    var borderColorRgba = new Rgba32(borderColor.R, borderColor.G, borderColor.B, 255);
+                    ctx.Draw(options, borderColorRgba, borderThicknessPx, borderRect);
+                }
+            }
+        });
+    }
+
+    /// <summary>Shared by <see cref="ApplyOverlay"/> and <see cref="ApplyTemplate"/> (Phase 0
+    /// plan-review finding: one drawing path, not two parallel implementations).
+    /// <paramref name="clip"/> null means "no clipping" (ApplyOverlay's own historical behavior --
+    /// its <paramref name="wrappingLength"/> already handles overflow). <paramref name="hintingMode"/>
+    /// null leaves <see cref="TextOptions.HintingMode"/> at its own default, UNTOUCHED -- required
+    /// for <see cref="ApplyOverlay"/>'s call site so this method's rendered OUTPUT stays
+    /// byte-for-byte identical to before this refactor. <see cref="DrawTemplateText"/>'s call site
+    /// passes <see cref="HintingMode.None"/> explicitly instead (code-review round-1 finding: it
+    /// MUST match <see cref="ComputeFittedFontSizePx"/>'s own measurement <see cref="HintingMode"/>
+    /// exactly, or a fitted size can render larger than what was actually measured).</summary>
+    private static void DrawGlyphs(
+        Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, string text, FontFamily fontFamily, float fontSizePx, PointF origin,
+        Abstractions.Imaging.Rgb24 color,
+        float wrappingLength, SixLabors.ImageSharp.Drawing.RectangularPolygon? clip, HintingMode? hintingMode)
+    {
+        var font = fontFamily.CreateFont(fontSizePx);
+        var rgba = new Rgba32(color.R, color.G, color.B, 255);
+        var options = new RichTextOptions(font)
+        {
+            Origin = origin,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            WrappingLength = wrappingLength,
+        };
+
+        if (hintingMode is { } mode)
+        {
+            options.HintingMode = mode;
+        }
+
+        if (clip is { } clipPath)
+        {
+            image.Mutate(ctx => ctx.Clip(clipPath, inner => inner.DrawText(options, text, rgba)));
+        }
+        else
+        {
+            image.Mutate(ctx => ctx.DrawText(options, text, rgba));
+        }
+    }
+
+    /// <summary>Floor for <see cref="ComputeFittedFontSizePx"/>'s shrink-to-fit search, in pixels
+    /// -- deliberately a placeholder value (Phase 0 plan's own open question 6: "pick a concrete
+    /// number," not yet a real UX-tuned decision). Below this, <see cref="DrawTemplateText"/>'s
+    /// clip-to-<see cref="TemplateElement.Bounds"/> is what actually enforces the render-time
+    /// overflow policy, not a smaller font.</summary>
+    private const float MinFontSizePx = 6f;
+
+    /// <summary>Binary-searches downward from <paramref name="startingSizePx"/> for the largest
+    /// font size at or above <paramref name="minSizePx"/> that measures within
+    /// <paramref name="boundsWidthPx"/> x <paramref name="boundsHeightPx"/>, single-line
+    /// (spec/15-template-designer.md decision 2: SSTV text is always short, so shrink-to-fit alone
+    /// is sufficient -- no wrap mode). <see cref="SixLabors.Fonts"/> 2.1.3 has no fit-to-box helper
+    /// (verified directly against its real API surface during Phase 0 plan-review, not assumed) --
+    /// this manual search is the only path. <see cref="HintingMode.None"/> is pinned for the
+    /// measurement so a naive bisect can't land on a size that measures as fitting only because of
+    /// hinting's grid-fitting quantization. The search is robust to non-monotonic measurement BY
+    /// CONSTRUCTION, not by a defensive decrement pass afterward (code-review round-1 finding: an
+    /// earlier draft had one, but it was provably dead code -- <c>low</c> is only ever assigned
+    /// from a candidate that <c>FitsAt</c> independently verified true at that exact size, so the
+    /// returned value is always either a verified-fitting size or the untested floor
+    /// <paramref name="minSizePx"/> itself; there is no reachable state in between where a
+    /// verify-and-decrement pass would ever find something to correct). Returns
+    /// <paramref name="minSizePx"/> if even the floor doesn't fit -- <see cref="DrawTemplateText"/>'s
+    /// own clip-to-bounds is what actually enforces the render-time overflow policy in that
+    /// case, not this method.</summary>
+    private static float ComputeFittedFontSizePx(
+        string text, FontFamily fontFamily, float startingSizePx, float minSizePx, int boundsWidthPx, int boundsHeightPx)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return MathF.Max(startingSizePx, minSizePx);
+        }
+
+        bool FitsAt(float candidateSizePx)
+        {
+            var font = fontFamily.CreateFont(candidateSizePx);
+            var options = new TextOptions(font) { HintingMode = HintingMode.None };
+            var measured = TextMeasurer.MeasureSize(text, options);
+            return measured.Width <= boundsWidthPx && measured.Height <= boundsHeightPx;
+        }
+
+        var upper = MathF.Max(startingSizePx, minSizePx);
+        if (FitsAt(upper))
+        {
+            return upper;
+        }
+
+        var low = minSizePx;
+        var high = upper;
+        for (var i = 0; i < 12 && high - low > 0.5f; i++)
+        {
+            var mid = (low + high) / 2f;
+            if (FitsAt(mid))
+            {
+                low = mid;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+
+        return low;
+    }
+
+    /// <summary>Always returns the single bundled font family regardless of
+    /// <paramref name="family"/> -- <see cref="TransmitImagePreparer"/> loads exactly one bundled
+    /// font today (constructor), so any requested family (including an unknown/unavailable one)
+    /// falls back to it. Stated Phase 0 fallback behavior, not yet a real per-family lookup -- a
+    /// real bundled cross-platform font SET is a tracked open question
+    /// (spec/15-template-designer.md's font-portability functional-scope item, Phase 4).</summary>
+    private FontFamily ResolveFontFamily(string family) => _fontFamily;
+
+    private static PixelBounds ToPixelBounds(NormalizedRect bounds, int imageWidth, int imageHeight) => new(
+        (float)(bounds.X * imageWidth), (float)(bounds.Y * imageHeight),
+        (float)(bounds.Width * imageWidth), (float)(bounds.Height * imageHeight));
+
+    private readonly record struct PixelBounds(float X, float Y, float Width, float Height);
+
+    /// <summary>Approximately-bounded, thread-safe-in-the-weak-sense (this preparer is a DI
+    /// singleton, <c>Program.cs</c>) cache for <see cref="TemplateImageElement"/>'s per-frame
+    /// resize -- ImageSharp's own <c>DrawImage</c> has no scale-to-destination-rect overload, so
+    /// every image element needs a real <see cref="Resize"/>/crop-to-fill pass on every
+    /// <c>RecomputePreview</c> frame without this. Key equality is <see cref="IImageSource"/>
+    /// REFERENCE identity, enforced EXPLICITLY by <see cref="ImageResizeCacheKeyComparer"/> (not
+    /// left to the default record-struct equality, which would silently start comparing by VALUE
+    /// the day some future <c>IImageSource</c> implementation happens to be a <c>record</c> --
+    /// code-review round-1 finding: <see cref="ArrayImageSource"/> not overriding <c>Equals</c>
+    /// today made the old implicit approach correct only by, not because of, that fact).
+    /// "Approximately" bounded: the check-clear-add sequence below is not atomic, so N concurrent
+    /// callers can transiently push the count to <see cref="MaxCachedResizedImages"/> + N, and a
+    /// racing <see cref="ConcurrentDictionary{TKey,TValue}.Clear"/> can drop an entry another
+    /// thread just inserted (harmless -- a future lookup just misses and recomputes). No corruption
+    /// either way; real LRU is Phase 0 over-scope, revisit only if profiling ever shows this
+    /// matters in practice.</summary>
+    private readonly ConcurrentDictionary<ImageResizeCacheKey, IImageSource> _imageResizeCache = new(new ImageResizeCacheKeyComparer());
+
+    private const int MaxCachedResizedImages = 64;
+
+    private IImageSource GetOrCreateResizedImage(IImageSource source, int width, int height, ImageFitMode fit)
+    {
+        var key = new ImageResizeCacheKey(source, width, height, fit);
+        if (_imageResizeCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        var resized = fit switch
+        {
+            ImageFitMode.Stretch => Resize(source, width, height, preserveAspect: false),
+            ImageFitMode.Contain => Resize(source, width, height, preserveAspect: true),
+            ImageFitMode.Cover => ResizeCover(source, width, height),
+            _ => throw new ArgumentOutOfRangeException(nameof(fit), fit, message: null),
+        };
+
+        if (_imageResizeCache.Count >= MaxCachedResizedImages)
+        {
+            _imageResizeCache.Clear();
+        }
+
+        _imageResizeCache[key] = resized;
+        return resized;
+    }
+
+    private static ArrayImageSource ResizeCover(IImageSource source, int width, int height)
+    {
+        using var image = ToImageSharp(source);
+        image.Mutate(ctx => ctx.Resize(new ResizeOptions
+        {
+            Size = new Size(width, height),
+            Mode = ResizeMode.Crop,
+        }));
+        return FromImageSharp(image);
+    }
+
+    private readonly record struct ImageResizeCacheKey(IImageSource Source, int Width, int Height, ImageFitMode Fit);
+
+    /// <summary>Explicit reference-identity equality for <see cref="ImageResizeCacheKey.Source"/> --
+    /// see the cache field's own doc comment for why this must not be left to default record-struct
+    /// equality.</summary>
+    private sealed class ImageResizeCacheKeyComparer : IEqualityComparer<ImageResizeCacheKey>
+    {
+        public bool Equals(ImageResizeCacheKey x, ImageResizeCacheKey y) =>
+            ReferenceEquals(x.Source, y.Source) && x.Width == y.Width && x.Height == y.Height && x.Fit == y.Fit;
+
+        public int GetHashCode(ImageResizeCacheKey obj) =>
+            HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj.Source), obj.Width, obj.Height, obj.Fit);
     }
 
     public IImageSource Rotate(IImageSource source)

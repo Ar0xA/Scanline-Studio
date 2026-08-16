@@ -36,6 +36,89 @@ public sealed record ImageAdjustments(
         && Gamma == 0 && Sharpen == 0 && Denoise == 0;
 }
 
+/// <summary>Which fixed-size box <see cref="TemplateImageElement"/> resizes into, when its
+/// <see cref="TemplateImageElement.Bounds"/> pixel size doesn't already match the source image's
+/// own aspect ratio. Mirrors <see cref="ITransmitImagePreparer.Resize"/>'s own two modes
+/// (Stretch/Contain) plus a third, Cover, that mode doesn't offer. <c>Stretch</c>: fills
+/// <see cref="TemplateImageElement.Bounds"/> exactly, distorting aspect if needed (same as
+/// <see cref="ITransmitImagePreparer.Resize"/> with <c>preserveAspect: false</c>). <c>Contain</c>:
+/// fits entirely within <see cref="TemplateImageElement.Bounds"/> preserving aspect, letterboxed
+/// with black on the remainder (same as <see cref="ITransmitImagePreparer.Resize"/> with
+/// <c>preserveAspect: true</c>). <c>Cover</c>: fills <see cref="TemplateImageElement.Bounds"/>
+/// completely preserving aspect, cropping whatever overflows (the "background-as-element" case —
+/// spec/15-template-designer.md — typically wants this, not letterboxing, for a full-frame
+/// image).</summary>
+public enum ImageFitMode { Stretch, Contain, Cover }
+
+/// <summary>Plain, SixLabors-free font descriptor — same "declared here so
+/// <c>ScanlineStudio.UI</c> never needs a concrete <c>SixLabors.Fonts</c> reference" reasoning as
+/// the rest of this file (<c>ScanlineStudio.Abstractions</c> has zero <c>PackageReference</c>s;
+/// keep it that way). <paramref name="Size"/> is the MAXIMUM/starting size for
+/// <see cref="ITransmitImagePreparer.ApplyTemplate"/>'s shrink-to-fit search, not a fixed rendered
+/// size — relative to the target image's HEIGHT, same convention as
+/// <see cref="ImageOverlayElement.FontSizeRelative"/>, for the same reason (stable regardless of
+/// aspect/stretch). <paramref name="Family"/> is accepted but not yet meaningfully consumed —
+/// <c>TransmitImagePreparer</c> currently loads exactly one bundled font and falls back to it
+/// regardless of the requested family; a real bundled cross-platform font set is a tracked open
+/// question (spec/15-template-designer.md's font-portability functional-scope item).</summary>
+public sealed record FontSpec(string Family, double Size);
+
+/// <summary>Base for every element a <see cref="TemplateDocument"/> can composite —
+/// spec/15-template-designer.md. <paramref name="Bounds"/> is normalized against the FULL target
+/// image (same space as <see cref="ITransmitImagePreparer.Crop"/>'s own region), deliberately NOT
+/// clamped into <c>[0,1]</c> the way <see cref="ITransmitImagePreparer.Crop"/> clamps its own
+/// region — an element may legitimately sit partially or fully outside the frame (matches the
+/// existing far-out-of-bounds <see cref="ImageOverlayElement"/> precedent,
+/// <c>TransmitImagePreparerTests.cs</c>'s own <c>X = -50</c> case). An element with zero or
+/// negative <see cref="NormalizedRect.Width"/>/<see cref="NormalizedRect.Height"/> is skipped
+/// entirely by <see cref="ITransmitImagePreparer.ApplyTemplate"/>, not rendered.
+/// <paramref name="Z"/> is layer order — <see cref="ITransmitImagePreparer.ApplyTemplate"/> draws
+/// ALL elements in ascending <c>(Z, list index)</c> order via a stable sort; there is no special
+/// case for any particular <paramref name="Z"/> value (an image element happening to sit at the
+/// lowest Z and cover the full frame becomes "the background" as a structural consequence of
+/// ordinary z-order, not a flag).</summary>
+public abstract record TemplateElement(NormalizedRect Bounds, int Z);
+
+/// <summary><paramref name="Content"/> may contain macro/variable tokens (spec/15's fill-bar
+/// mechanism, Phase 3) — resolution happens above this layer, same as
+/// <see cref="ImageOverlayElement.Text"/> today; by the time a <see cref="TemplateDocument"/>
+/// reaches <see cref="ITransmitImagePreparer.ApplyTemplate"/>, <paramref name="Content"/> is
+/// already fully resolved. Text is always drawn single-line, shrunk to fit
+/// <see cref="TemplateElement.Bounds"/> (down to an implementation-defined minimum size, below
+/// which it's clipped to <see cref="TemplateElement.Bounds"/> rather than overflowing), centered
+/// within it — matches <see cref="ImageOverlayElement"/>'s own center-anchor precedent.</summary>
+public sealed record TemplateTextElement(NormalizedRect Bounds, int Z, string Content, FontSpec Font, Rgb24 Color)
+    : TemplateElement(Bounds, Z);
+
+/// <summary><paramref name="Source"/> is an already-resolved <see cref="IImageSource"/>, not a
+/// deferred binding token — last-received-image/RX-history/file/clipboard resolution happens at
+/// the VM/Application layer, before a <see cref="TemplateDocument"/> is built, so
+/// <see cref="ITransmitImagePreparer.ApplyTemplate"/> stays synchronous and I/O-free (matches
+/// <c>TxImageEditorPaneViewModel.RecomputePreview</c>'s existing synchronous-per-frame
+/// model).</summary>
+public sealed record TemplateImageElement(NormalizedRect Bounds, int Z, IImageSource Source, ImageFitMode Fit)
+    : TemplateElement(Bounds, Z);
+
+/// <summary><paramref name="Opacity"/> (0..1) applies to fill and border alike — text/image
+/// elements don't have their own opacity yet (not a confirmed 1.1 requirement; add if actually
+/// wanted). <paramref name="BorderThickness"/> is relative to the target image's HEIGHT, same
+/// convention as <see cref="FontSpec.Size"/>, so borders scale consistently across different
+/// target-mode render sizes rather than looking wrong at a fixed pixel width on a small mode. No
+/// corner-radius — ImageSharp.Drawing 2.1.7 has no rounded-rectangle primitive; deferred, tracked
+/// as an open question in the Phase 0 implementation plan.</summary>
+public sealed record TemplateBoxElement(
+    NormalizedRect Bounds, int Z, Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity = 1.0)
+    : TemplateElement(Bounds, Z);
+
+/// <summary><paramref name="Elements"/> in any order — <see cref="ITransmitImagePreparer.ApplyTemplate"/>
+/// sorts by <c>(Z, list index)</c> itself. <see cref="IsEmpty"/> drives the same same-instance
+/// no-op convention <see cref="ImageAdjustments.IsIdentity"/> already established for
+/// <see cref="ITransmitImagePreparer.ApplyAdjustments"/>.</summary>
+public sealed record TemplateDocument(string? Name, IReadOnlyList<TemplateElement> Elements)
+{
+    public bool IsEmpty => Elements.Count == 0;
+}
+
 public interface ITransmitImagePreparer
 {
     IImageSource Crop(IImageSource source, NormalizedRect region);
@@ -62,6 +145,38 @@ public interface ITransmitImagePreparer
     /// smears/distorts already-drawn glyphs. Crop -&gt; Resize -&gt; ApplyAdjustments -&gt;
     /// ApplyOverlay is the only correct order.</summary>
     IImageSource ApplyOverlay(IImageSource source, ImageOverlay overlay);
+
+    /// <summary>The successor to <see cref="ApplyOverlay"/> for the 1.1 template editor
+    /// (spec/15-template-designer.md) — additive for now, <see cref="ApplyOverlay"/>/
+    /// <see cref="ImageOverlay"/>/<see cref="ImageOverlayElement"/> are not yet removed (tracked
+    /// for deletion once the editor VM migrates onto <see cref="TemplateDocument"/>, Phase 1).
+    /// Must run in the same pipeline position <see cref="ApplyOverlay"/> did — after
+    /// <see cref="Resize"/>, never before. Compositing starts from <paramref name="existingBase"/>;
+    /// every element in <paramref name="document"/> is drawn on top of it in ascending
+    /// <c>(Z, list index)</c> order (see <see cref="TemplateElement"/>'s own doc comment for why
+    /// there's no Z=0-is-the-background special case). Adjustments
+    /// (<see cref="ApplyAdjustments"/>) are NOT reapplied to any element here, including an image
+    /// element that ends up covering the whole frame — adjustment sliders stay scoped to the photo
+    /// being edited, applied earlier in the pipeline, by design. When
+    /// <paramref name="document"/>.<see cref="TemplateDocument.IsEmpty"/>, returns
+    /// <paramref name="existingBase"/> unchanged (the SAME instance, matching
+    /// <see cref="ApplyAdjustments"/>'s established no-op convention) — a document whose elements
+    /// are all individually skipped (zero/negative size) is a distinct case and may return a
+    /// copy.</summary>
+    IImageSource ApplyTemplate(IImageSource existingBase, TemplateDocument document);
+
+    /// <summary>Measures the font size <see cref="ApplyTemplate"/>'s shrink-to-fit text rendering
+    /// would actually use for <paramref name="text"/> at <paramref name="font"/>.Size inside a
+    /// <paramref name="boundsWidthPx"/> x <paramref name="boundsHeightPx"/> box of a
+    /// <paramref name="imageHeightPx"/>-tall target image (needed separately from the bounds
+    /// dimensions since <see cref="FontSpec.Size"/> is relative to the image's height, not the
+    /// box's) — lets the UI mirror the pipeline's own fit computation for WYSIWYG canvas rendering
+    /// without depending on <c>SixLabors.Fonts</c> itself (same "declared in
+    /// <c>ScanlineStudio.Abstractions</c> so the UI project never references the concrete package"
+    /// reasoning as this whole file). Plain pixel dimensions, not a UI-framework size type — this
+    /// project deliberately never references Avalonia types from
+    /// <c>ScanlineStudio.Abstractions</c> either.</summary>
+    double MeasureFittedFontSize(string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx);
 
     /// <summary>Rotates 90° clockwise, always -- no direction parameter. Matches the TX image
     /// editor's single-button UX (4 clicks returns to the original orientation); width/height are
