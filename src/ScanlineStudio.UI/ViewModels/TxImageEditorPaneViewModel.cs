@@ -77,7 +77,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     public sealed record RawImageElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
-        IImageSource Source, ImageFitMode Fit, ImageSourceOrigin Origin)
+        IImageSource Source, ImageFitMode Fit, ImageSourceOrigin Origin, bool IsBackground = false)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Prior edit state to seed a re-opened editor with (spec/18-path-to-1.0.md Medium
@@ -209,6 +209,23 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// behavior is unchanged unless a user opts in.</summary>
     [ObservableProperty]
     private bool _lockAspectToMode;
+
+    /// <summary>Phase 6 (spec/15-template-designer.md) -- gates the always-been-there dashed
+    /// safe-area guide `Rectangle`'s own `IsVisible`. Default true matches the toolbar toggle's own
+    /// pre-Phase-6 `IsChecked="True"` stub value, so the guide's default-visible behavior is
+    /// unchanged unless the operator turns it off.</summary>
+    [ObservableProperty]
+    private bool _safeAreaVisible = true;
+
+    /// <summary>Phase 6 -- when on, an element drag/resize gesture snaps its final (pointer-release)
+    /// position to a fixed 5%-of-working-copy grid, computed in EDGE space (not center/size
+    /// independently -- see <see cref="SnapElementBoundsToGrid"/>'s own doc comment for why).
+    /// Snap-ON-DROP only, never during the drag itself (plan-review blocker: continuous per-frame
+    /// snapping against this editor's own incremental drag-delta model discards residual motion and
+    /// can defeat <see cref="MinNormalizedElementSize"/>'s own vanishing-element floor). Does not
+    /// affect the crop rect.</summary>
+    [ObservableProperty]
+    private bool _snapToGrid;
 
     [ObservableProperty]
     private Bitmap? _workingCopyBitmap;
@@ -455,7 +472,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         BoxElementViewModel box => new RawBoxElementSnapshot(
             box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
         ImageElementViewModel image => new RawImageElementSnapshot(
-            image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin),
+            image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground),
         _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
     };
 
@@ -474,6 +491,70 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         var delta = ctrl ? 16 : 1;
         var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, delta);
         ApplyCropMove((double)dxPixels / _originalSource.Width, (double)dyPixels / _originalSource.Height);
+    }
+
+    /// <summary>Phase 6 (spec/15-template-designer.md) -- element counterpart to
+    /// <see cref="NudgeCropMove"/> above, same 1px/Ctrl+16px precision. Pixel deltas are computed
+    /// against the WORKING COPY's resolution (<c>WorkingCopyWidth</c>/<c>WorkingCopyHeight</c>, same
+    /// as <see cref="ITemplateElementViewModel.ImageWidth"/>/<c>ImageHeight</c> on the element
+    /// itself), NOT <see cref="_originalSource"/> like the crop rect uses -- element X/Y are
+    /// normalized against the working copy (see <see cref="ITemplateElementViewModel"/>'s own
+    /// `LeftPixels`-style formulas), a different coordinate space than the crop rect's pre-resize
+    /// one. Deliberately does NOT call <see cref="PushUndoSnapshot"/> itself (unlike
+    /// <see cref="NudgeCropMove"/>, which has to -- <c>CropRect</c> is a single record property with
+    /// no per-field change hook) -- assigning <c>X</c>/<c>Y</c> below already pushes an undo step via
+    /// each element's own <c>OnXChanging</c>/<c>OnYChanging</c> -&gt;
+    /// <c>PushUndoSnapshotForGeometryChange</c> hook, the SAME mechanism the sidebar X/Y TextBoxes
+    /// already use; pushing here too would double up. MOVE only, no resize counterpart (plan-review-
+    /// scoped decision -- <c>Shift+arrow</c> stays bound to crop-resize regardless of selection; see
+    /// <c>OnCanvasKeyDown</c>'s own comment for the full reasoning). No-op if nothing is selected --
+    /// the caller (<c>OnCanvasKeyDown</c>) already gates on a non-null, unlocked selection, but this
+    /// method stays self-contained rather than trusting that.</summary>
+    public void NudgeElement(NudgeDirection direction, bool ctrl)
+    {
+        // Code-review nit: same zero-size guard the drag path already has
+        // (TxImageEditorPaneView.axaml.cs's OnCanvasPointerMoved) -- without it, a zero-sized
+        // working copy divides X/Y into +-Infinity/NaN, which then propagates into the preview and
+        // any saved template.
+        if (SelectedOverlayElement is not { } element || WorkingCopyWidth <= 0 || WorkingCopyHeight <= 0)
+        {
+            return;
+        }
+
+        var delta = ctrl ? 16 : 1;
+        var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, delta);
+        element.X += dxPixels / WorkingCopyWidth;
+        element.Y += dyPixels / WorkingCopyHeight;
+    }
+
+    /// <summary>Applies <see cref="TxImageEditorPaneView.SnapElementBoundsToGrid"/>'s own already-
+    /// computed result to <paramref name="element"/> as ONE atomic undo step (code-review finding):
+    /// each of the 4 property assignments below has its own <c>On*Changing</c> hook that pushes a
+    /// COALESCED undo snapshot (same mechanism <see cref="NudgeElement"/> above relies on) -- but
+    /// that coalescing window is cleared by a background-priority dispatcher continuation that has
+    /// virtually always already run by the time a pointer-release (where the snap fires) reaches
+    /// here, well after the drag gesture's own last pointer-move. Left as 4 separate coalesced
+    /// pushes, a snapped drag would need TWO Undos to get back to the pre-drag state (one for the
+    /// unsnapped drag, one for the snap) -- not the "one gesture, one undo step" convention every
+    /// other structural mutation in this editor follows (see <see cref="SetAsBackground"/> for the
+    /// same <c>_suspendPreview</c> + single explicit push pattern this mirrors).</summary>
+    public void ApplySnappedElementBounds(ITemplateElementViewModel element, double x, double y, double width, double height)
+    {
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            element.X = x;
+            element.Y = y;
+            element.Width = width;
+            element.Height = height;
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        RecomputePreview();
     }
 
     /// <summary>Shift+arrow resizes the crop rect's bottom-right corner by 1px and auto-engages
@@ -827,6 +908,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             // without the empty-collection special case NextZ() needs for its own max+1 case.
             element.Z = OverlayElements.Min(e => e.Z) - 1;
             OverlayElements.Move(index, 0);
+            element.Locked = true;
+            // Phase 6 (spec/15-template-designer.md): IsBackground + the auto-lock above together
+            // let the crop rect underneath become reachable again (see
+            // ImageElementViewModel.BlocksHitTesting) -- SetAsBackgroundCommand is only ever bound
+            // from the image element's own DataTemplate (see this method's own doc comment), so
+            // `element` is always really an ImageElementViewModel in practice; IsBackground simply
+            // isn't part of the shared ITemplateElementViewModel interface (text/box elements have
+            // no such concept), same reasoning as SetAsBackgroundCommand itself living only on
+            // ImageElementViewModel.
+            if (element is ImageElementViewModel image)
+            {
+                image.IsBackground = true;
+            }
         }
         finally
         {
@@ -916,7 +1010,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// <summary>Image counterpart to <see cref="CreateOverlayElement"/>/<see cref="CreateBoxElement"/>
     /// -- same wiring shape, Phase 2 (spec/15-template-designer.md).</summary>
     private ImageElementViewModel CreateImageElement(
-        double x, double y, double width, double height, IImageSource source, ImageFitMode fit, ImageSourceOrigin origin, int z, bool locked)
+        double x, double y, double width, double height, IImageSource source, ImageFitMode fit, ImageSourceOrigin origin, int z, bool locked,
+        bool isBackground = false)
     {
         var element = new ImageElementViewModel(source)
         {
@@ -928,6 +1023,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             Origin = origin,
             Z = z,
             Locked = locked,
+            IsBackground = isBackground,
             ImageWidth = WorkingCopyWidth,
             ImageHeight = WorkingCopyHeight,
             RemoveCommand = RemoveOverlayElementCommand,
@@ -951,7 +1047,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         RawBoxElementSnapshot box => CreateBoxElement(
             box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked),
         RawImageElementSnapshot image => CreateImageElement(
-            image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked),
+            image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground),
         _ => throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {snapshot.GetType()}."),
     };
 
@@ -1054,7 +1150,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 };
                 return new PersistedImageElement(
                     image.X, image.Y, image.Width, image.Height, image.Z, image.Locked,
-                    assetFileName, image.Fit, originKind, originPayload);
+                    assetFileName, image.Fit, originKind, originPayload, image.IsBackground);
             default:
                 throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {raw.GetType()}.");
         }
@@ -1097,7 +1193,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 // -- see PersistedImageElement's own doc comment for why none of the three are safe
                 // to re-resolve from later).
                 var origin = new ImageSourceOrigin(ImageSourceKind.File, assetPath);
-                return new RawImageElementSnapshot(image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, source, image.Fit, origin);
+                return new RawImageElementSnapshot(
+                    image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, source, image.Fit, origin, image.IsBackground);
             default:
                 throw new NotSupportedException($"Unrecognized {nameof(PersistedTemplateElement)}: {element.GetType()}.");
         }
@@ -1170,6 +1267,20 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     {
         InsertFieldCommand.NotifyCanExecuteChanged();
         AddPlateBehindTextCommand.NotifyCanExecuteChanged();
+        DuplicateCommand.NotifyCanExecuteChanged();
+        // Code-review finding: FontFamilyPickerItems/IsFontUnavailable MUST raise BEFORE
+        // SelectedTextElement -- the Font ComboBox's ItemsSource is bound to
+        // FontFamilyPickerItems and its SelectedItem (two-way) to SelectedTextElement.FontFamily.
+        // Avalonia re-evaluates SelectedItem the moment SelectedTextElement's own change
+        // notification fires; if ItemsSource is still the OLD list at that instant (an unavailable
+        // font not yet included), SelectedItem resolves to no match and the two-way binding can
+        // write that back, silently clobbering the very font name IsFontUnavailable exists to warn
+        // about -- exactly the scenario this feature was built for (selecting a text element whose
+        // font isn't bundled). Raising the ItemsSource-affecting properties first guarantees the
+        // superset list (which always includes the current font, see FontFamilyPickerItems' own doc
+        // comment) is already in place before SelectedItem gets re-evaluated.
+        OnPropertyChanged(nameof(IsFontUnavailable));
+        OnPropertyChanged(nameof(FontFamilyPickerItems));
         OnPropertyChanged(nameof(SelectedTextElement));
     }
 
@@ -1186,6 +1297,34 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// <see cref="ITransmitImagePreparer.AvailableFontFamilies"/> rather than the VM hardcoding its
     /// own copy of what's bundled.</summary>
     public IReadOnlyList<string> AvailableFontFamilies => _preparer.AvailableFontFamilies;
+
+    /// <summary>Phase 6 (spec/15-template-designer.md) -- true when the selected text element's own
+    /// <see cref="OverlayElementViewModel.FontFamily"/> isn't one of <see cref="AvailableFontFamilies"/>
+    /// (a cross-platform-shared or hand-edited template referencing a font this build doesn't bundle
+    /// -- <see cref="ITransmitImagePreparer.ResolveFontFamily"/>'s own real pipeline behavior is to
+    /// silently substitute the default font, with nothing today telling the operator that happened).
+    /// Lives on the PARENT VM, not per-element -- <see cref="AvailableFontFamilies"/> itself already
+    /// lives here, and the whole TEXT STYLE panel already binds <see cref="SelectedTextElement"/>
+    /// paths off the parent (plan-review finding: pushing this onto every text element VM would be a
+    /// new pattern, not the existing one).</summary>
+    public bool IsFontUnavailable => SelectedTextElement is { } text && !AvailableFontFamilies.Contains(text.FontFamily);
+
+    /// <summary>Phase 6 -- the Font `ComboBox`'s own `ItemsSource` (NOT <see cref="AvailableFontFamilies"/>
+    /// directly). <see cref="ComboBox.SelectedItem"/> is two-way bound to
+    /// <see cref="SelectedTextElement"/>'s own <c>FontFamily</c> -- if the bound value isn't present
+    /// in `ItemsSource` at all, Avalonia resolves `SelectedItem` to no match, and a two-way binding
+    /// can then write that resolved (non-)value straight back through, silently overwriting the
+    /// element's real (if unavailable) font name before the operator ever sees the warning glyph
+    /// (plan-review risk). Fix: always include the CURRENTLY selected font name in the list, even if
+    /// it's not one of the real bundled families -- guarantees `SelectedItem` always has a match, so
+    /// this binding can never silently mutate the underlying value regardless of the exact
+    /// no-match resolution behavior. Deliberately a SEPARATE list from <see cref="AvailableFontFamilies"/>:
+    /// <see cref="IsFontUnavailable"/>'s own check needs the real bundled set, not this
+    /// display-safe superset.</summary>
+    public IReadOnlyList<string> FontFamilyPickerItems =>
+        SelectedTextElement is { } text && !AvailableFontFamilies.Contains(text.FontFamily)
+            ? [.. AvailableFontFamilies, text.FontFamily]
+            : AvailableFontFamilies;
 
     private bool CanAddPlateBehindText() => SelectedOverlayElement is OverlayElementViewModel;
 
@@ -1246,6 +1385,59 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
 
         SelectedOverlayElement = plate;
+        RecomputePreview();
+    }
+
+    private bool CanDuplicate() => SelectedOverlayElement is not null;
+
+    /// <summary>Phase 6 (spec/15-template-designer.md) -- clones the selected element (any type,
+    /// unlike <see cref="AddPlateBehindText"/> which is text-only) with a small position offset,
+    /// inserted at <see cref="NextZ"/> (top of stack, same convention as <see cref="AddOverlayElement"/>/
+    /// <see cref="AddBoxElement"/> -- NOT <see cref="AddPlateBehindText"/>'s own insert-behind
+    /// pattern). If the duplicated element is a background image element, the CLONE has
+    /// <see cref="ImageElementViewModel.IsBackground"/>/<see cref="ITemplateElementViewModel.Locked"/>
+    /// cleared before insert (plan-review risk) -- otherwise Duplicate would produce a second
+    /// full-frame, top-Z, locked, hit-test-passthrough copy that covers the whole canvas and is
+    /// itself unreachable by canvas click. A plain, independent, unlocked copy is what "duplicate"
+    /// means regardless of what was duplicated.</summary>
+    [RelayCommand(CanExecute = nameof(CanDuplicate))]
+    private void Duplicate()
+    {
+        if (SelectedOverlayElement is not { } selected)
+        {
+            return;
+        }
+
+        const double offset = 0.02;
+        var snapshot = BuildRawSnapshot(selected) switch
+        {
+            RawImageElementSnapshot image => image with
+            {
+                X = Math.Clamp(image.X + offset, 0, 1),
+                Y = Math.Clamp(image.Y + offset, 0, 1),
+                Z = NextZ(),
+                IsBackground = false,
+                Locked = false,
+            },
+            RawTextElementSnapshot text => text with
+            {
+                X = Math.Clamp(text.X + offset, 0, 1),
+                Y = Math.Clamp(text.Y + offset, 0, 1),
+                Z = NextZ(),
+            },
+            RawBoxElementSnapshot box => box with
+            {
+                X = Math.Clamp(box.X + offset, 0, 1),
+                Y = Math.Clamp(box.Y + offset, 0, 1),
+                Z = NextZ(),
+            },
+            var other => other,
+        };
+
+        PushUndoSnapshot();
+        var copy = CreateElementFromSnapshot(snapshot);
+        OverlayElements.Add(copy);
+        SelectedOverlayElement = copy;
         RecomputePreview();
     }
 
@@ -1737,6 +1929,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             or nameof(BoxElementViewModel.CanvasBorderThicknessPixels)
             or nameof(ImageElementViewModel.CanvasBitmap)
             or nameof(ITemplateElementViewModel.Locked)
+            // Phase 6: pure interaction state (which/whether an element blocks canvas hit-testing),
+            // never affects pipeline output -- same tier as Locked itself just above.
+            or nameof(ImageElementViewModel.IsBackground)
+            or nameof(ImageElementViewModel.BlocksHitTesting)
             // Code-review nit, fixed here: HasStroke is a derived bool of StrokeColor (raised by
             // OnStrokeColorChanged), not new information -- without this, every stroke-color edit
             // fired two full Crop->Resize->ApplyTemplate passes (one from StrokeColor's own
@@ -1761,6 +1957,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 or nameof(OverlayElementViewModel.StrokeColor))
         {
             textElement.CanvasFontSize = ComputeCanvasFontSize(textElement);
+        }
+
+        // Phase 6: FontFamily can change on the selected text element without SelectedOverlayElement
+        // itself changing (the operator picks a different font from the ComboBox) -- IsFontUnavailable
+        // needs to be re-evaluated for that case too, not just on selection change.
+        if (sender is OverlayElementViewModel && e.PropertyName == nameof(OverlayElementViewModel.FontFamily)
+            && ReferenceEquals(sender, SelectedOverlayElement))
+        {
+            OnPropertyChanged(nameof(IsFontUnavailable));
+            OnPropertyChanged(nameof(FontFamilyPickerItems));
         }
 
         RecomputePreview();
