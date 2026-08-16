@@ -192,6 +192,12 @@ internal static partial class Program
         // Gallery pane's "Export frame" (2026-08-15) -- re-saves an already-received image file to a
         // user-chosen location, optionally re-encoded as JPEG.
         hostBuilder.Services.AddSingleton<IReceivedFrameExporter, ReceivedFrameExporter>();
+        // TX template editor persistence (Phase 5, spec/15-template-designer.md) -- IImageSourceWriter
+        // is the missing "write an IImageSource out as a PNG" counterpart to IImageFileLoader;
+        // TemplateStore (Application layer) depends on it, IImageFileLoader, and
+        // ITransmitImagePreparer, never ImageSharp directly.
+        hostBuilder.Services.AddSingleton<IImageSourceWriter, ImageSourceWriter>();
+        hostBuilder.Services.AddSingleton<ITemplateStore, TemplateStore>();
 
         // Phase 4 image-tooling UI -- spec/07-image-pipeline.md's "Stock image library"/"RX history"
         // sections. ReceiveHistoryRecorder is resolved once, explicitly, below (nothing else in the

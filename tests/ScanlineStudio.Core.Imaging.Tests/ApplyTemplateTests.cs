@@ -446,6 +446,48 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
+    public async Task ApplyTemplate_TextWithStroke_FillColorStillVisibleInside_NotFullyOverdrawnByStroke()
+    {
+        // Real-window verification finding (Phase 5): a Phase 5 ready-rack thumbnail rendered as
+        // solid black -- zero non-background pixels anywhere -- for a plain white-fill/black-
+        // stroke text element using the app's OWN SHIPPED DEFAULTS (FontSizeRelative 0.1,
+        // StrokeThickness 0.02). Root cause, confirmed via an isolated ImageSharp-only repro
+        // against the exact installed package version: the combined
+        // `DrawText(options, text, Brush, Pen)` overload draws fill+stroke in one pass, and a Pen
+        // centers its stroke ON the glyph outline (inward as well as outward) -- at this ratio the
+        // inward growth from the stroke pass fully overdraws the fill for every glyph, leaving
+        // nothing but a handful of antialiased edge pixels. Fixed by splitting into two draw calls
+        // (stroke first, fill painted last on top -- see DrawGlyphs's own doc comment).
+        // AssertAtLeastOneNonBackgroundPixelInsideBounds alone did NOT catch this (the
+        // ApplyTemplate_TextWithLargeStroke_RendersInsideBoundsWithoutThrowing test above still
+        // passed even with the bug present, since the STROKE's own outward ring is itself
+        // "non-background" regardless of whether the fill survived) -- this test instead asserts a
+        // pixel matching the exact FILL color specifically, which the bug's own symptom (fill fully
+        // overdrawn) makes fail.
+        var path = await WriteFixturePngAsync(120, 120, (_, _) => new ImageSharpRgb24(0, 0, 0));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 120, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.35, 0.41, 0.3, 0.18);
+            var fill = new Rgb24(255, 255, 255);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "Text", new FontSpec("DejaVu Sans Mono", 0.1), fill,
+                    StrokeColor: new Rgb24(0, 0, 0), StrokeThickness: 0.02),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertAtLeastOnePixelOfColorInsideBounds(result, bounds, fill);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void MeasureFittedFontSize_WithStroke_ShrinksFurtherThanWithoutOne()
     {
         // Companion to the bleed test above -- pins that the CANVAS-side measurement (this method)
@@ -709,6 +751,28 @@ public sealed class ApplyTemplateTests
         }
 
         Assert.Fail($"Expected at least one non-background pixel inside Bounds ({bounds.X},{bounds.Y},{bounds.Width},{bounds.Height}); found none.");
+    }
+
+    private static void AssertAtLeastOnePixelOfColorInsideBounds(IImageSource image, NormalizedRect bounds, Rgb24 color)
+    {
+        var minX = Math.Clamp((int)Math.Floor(bounds.X * image.Width), 0, image.Width - 1);
+        var minY = Math.Clamp((int)Math.Floor(bounds.Y * image.Height), 0, image.Height - 1);
+        var maxX = Math.Clamp((int)Math.Ceiling((bounds.X + bounds.Width) * image.Width), 0, image.Width);
+        var maxY = Math.Clamp((int)Math.Ceiling((bounds.Y + bounds.Height) * image.Height), 0, image.Height);
+
+        for (var y = minY; y < maxY; y++)
+        {
+            var row = image.GetScanline(y);
+            for (var x = minX; x < maxX; x++)
+            {
+                if (row[x].R == color.R && row[x].G == color.G && row[x].B == color.B)
+                {
+                    return;
+                }
+            }
+        }
+
+        Assert.Fail($"Expected at least one pixel of color ({color.R},{color.G},{color.B}) inside Bounds ({bounds.X},{bounds.Y},{bounds.Width},{bounds.Height}); found none.");
     }
 
     private static void AssertNoNonBackgroundPixelOutsideBounds(IImageSource image, NormalizedRect bounds, (byte R, byte G, byte B) background)
