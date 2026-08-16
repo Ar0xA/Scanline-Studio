@@ -28,9 +28,13 @@ artifacts/
 
 # Test/coverage output
 TestResults/
+coverage-results/
 coverage*.json
 coverage*.xml
 coverage*.info
+# Checked-in CI coverage-gate config (spec/18-path-to-1.0.md), not test output -- would otherwise
+# be silently caught by coverage*.json above.
+!coverage-thresholds.json
 
 # OS cruft
 .DS_Store
