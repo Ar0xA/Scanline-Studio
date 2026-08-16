@@ -122,6 +122,21 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// so the user sees "DE W1AW" rather than the literal "DE %m" template while editing.</summary>
     public string ResolvedText => ResolveMacros?.Invoke(Text) ?? Text;
 
+    /// <summary>Phase 3 (spec/15-template-designer.md, named template variables + fill bar) --
+    /// forces a <see cref="ResolvedText"/> property-changed raise from OUTSIDE this class. Needed
+    /// because <see cref="ResolvedText"/> otherwise only ever
+    /// re-raises as a SIDE EFFECT of <see cref="Text"/> changing (<see cref="OnTextChanged"/>
+    /// below) -- that held by coincidence pre-Phase-3, since nothing else could change what
+    /// <see cref="ResolveMacros"/> resolves to. A fill-bar edit changes the RESOLUTION CONTEXT
+    /// (<see cref="TxImageEditorPaneViewModel"/>'s own template-variable dictionary), not this
+    /// element's own <see cref="Text"/>, so it needs its own explicit trigger -- see
+    /// <c>TxImageEditorPaneViewModel</c>'s own template-variable-changed handler for the full
+    /// picture (this call covers only the canvas <c>TextBlock</c> binding refresh; the pipeline
+    /// recompute and font-size refresh are separate, explicit calls that handler also makes, since
+    /// <see cref="ResolvedText"/> itself is filtered out of
+    /// <c>TxImageEditorPaneViewModel.OnOverlayElementPropertyChanged</c>'s own recompute trigger).</summary>
+    public void NotifyResolvedTextChanged() => OnPropertyChanged(nameof(ResolvedText));
+
     partial void OnXChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
 
     partial void OnYChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();

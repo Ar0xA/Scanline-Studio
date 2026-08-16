@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Radio;
+
 namespace ScanlineStudio.Application.Tests;
 
 public sealed class MacroTextResolverTests
@@ -100,5 +102,112 @@ public sealed class MacroTextResolverTests
         var settings = new OperatorSettings();
 
         Assert.Equal(string.Empty, _resolver.Resolve(string.Empty, settings));
+    }
+
+    // Phase 3 (spec/15-template-designer.md, "named template variables + fill bar") -- {freq}/{mode}
+    // ordinary resolved macros, and generic {word} variable resolution.
+
+    [Fact]
+    public void FreqToken_ResolvesToFormattedMegahertz()
+    {
+        var settings = new OperatorSettings();
+        var state = new RadioState(FrequencyHz: 14_230_000, Mode: RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow);
+
+        // RadioStatusViewModel's own $"{Hz/1_000_000.0:0.000000} MHz" formatting, mirrored here so a
+        // template's {freq} reads the same as the header's own live frequency readout.
+        Assert.Equal("14.230000 MHz", _resolver.Resolve("{freq}", settings, state));
+    }
+
+    [Fact]
+    public void ModeToken_ResolvesToRadioModeToString()
+    {
+        var settings = new OperatorSettings();
+        var state = new RadioState(FrequencyHz: 14_230_000, Mode: RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow);
+
+        Assert.Equal("USB", _resolver.Resolve("{mode}", settings, state));
+    }
+
+    [Fact]
+    public void FreqAndModeTokens_NullRadioState_ResolveToEmptyString()
+    {
+        // No radio connected is a normal, fully-supported state (IRadioSessionService.LastKnownState's
+        // own doc comment) -- {freq}/{mode} must not throw or leave the literal token behind.
+        var settings = new OperatorSettings();
+
+        Assert.Equal(" / ", _resolver.Resolve("{freq} / {mode}", settings, radioState: null));
+    }
+
+    [Fact]
+    public void FreqAndModeTokens_OmittedRadioStateArgument_ResolveToEmptyString()
+    {
+        // The 2 pre-Phase-3 arguments still compile and behave the same as a null radioState --
+        // confirms the new parameters are genuinely optional, not just nullable.
+        var settings = new OperatorSettings();
+
+        Assert.Equal(" / ", _resolver.Resolve("{freq} / {mode}", settings));
+    }
+
+    [Fact]
+    public void VariableToken_ResolvesFromVariablesDictionary()
+    {
+        var settings = new OperatorSettings();
+        var variables = new Dictionary<string, string> { ["his_call"] = "K1ABC" };
+
+        Assert.Equal("DE K1ABC", _resolver.Resolve("DE {his_call}", settings, variables: variables));
+    }
+
+    [Fact]
+    public void UnfilledVariableToken_ResolvesVerbatim_NotToEmptyString()
+    {
+        // Phase 3 plan-review decision: an unfilled variable must NOT silently resolve to an empty
+        // string and vanish from the transmitted image -- it stays literally in the text, same as any
+        // other unrecognized {token} already does, needing no escape-hatch syntax for a user's
+        // ordinary literal {note}-shaped text.
+        var settings = new OperatorSettings();
+        var variables = new Dictionary<string, string>();
+
+        Assert.Equal("DE {his_call}", _resolver.Resolve("DE {his_call}", settings, variables: variables));
+    }
+
+    [Fact]
+    public void VariableToken_NullVariablesDictionary_ResolvesVerbatim()
+    {
+        var settings = new OperatorSettings();
+
+        Assert.Equal("DE {his_call}", _resolver.Resolve("DE {his_call}", settings, variables: null));
+    }
+
+    [Fact]
+    public void VariableTokenMatching_IsCaseSensitive()
+    {
+        // Matches {name}/{grid}'s own existing literal-Replace case sensitivity -- {His_Call} and
+        // {his_call} are different tokens, not merged.
+        var settings = new OperatorSettings();
+        var variables = new Dictionary<string, string> { ["his_call"] = "K1ABC" };
+
+        Assert.Equal("{His_Call}", _resolver.Resolve("{His_Call}", settings, variables: variables));
+    }
+
+    [Fact]
+    public void VariableValueContainingBraceToken_IsNotReResolved()
+    {
+        // Single-pass grammar (Phase 3 plan-review decision): a fill VALUE containing "{something}"
+        // is never itself re-resolved -- the regex scan only ever sees the ORIGINAL text, never its
+        // own substituted output.
+        var settings = new OperatorSettings { Name = "Jane" };
+        var variables = new Dictionary<string, string> { ["note"] = "say {name}" };
+
+        Assert.Equal("say {name}", _resolver.Resolve("{note}", settings, variables: variables));
+    }
+
+    [Fact]
+    public void KnownMacroToken_TakesPriorityOverAVariableOfTheSameName()
+    {
+        // "name"/"grid"/"freq"/"mode" are always resolved as macros first -- a variables dictionary
+        // that happens to also contain one of those keys must never shadow the real macro source.
+        var settings = new OperatorSettings { Name = "Jane" };
+        var variables = new Dictionary<string, string> { ["name"] = "SHOULD NOT WIN" };
+
+        Assert.Equal("Jane", _resolver.Resolve("{name}", settings, variables: variables));
     }
 }

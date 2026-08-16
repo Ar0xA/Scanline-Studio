@@ -103,7 +103,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// Phase 1's scope; tracked as a known gap, not silently shipped as a discovery.</summary>
     private sealed record EditState(
         IImageSource Original, NormalizedRect CropRect, bool PreserveAspect, TemplateDocument Document,
-        ImageAdjustments Adjustments, IReadOnlyList<TxImageEditorPaneViewModel.RawElementSnapshot> RawOverlay);
+        ImageAdjustments Adjustments, IReadOnlyList<TxImageEditorPaneViewModel.RawElementSnapshot> RawOverlay,
+        IReadOnlyDictionary<string, string> TemplateVariables);
 
     private EditState? _editState;
 
@@ -864,7 +865,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 ?? new OperatorSettings();
 
             var editor = new TxImageEditorPaneViewModel(
-                original, mode, _preparer, _macroTextResolver, operatorSettings, _localization, _imageEditorLogger,
+                original, mode, _preparer, _macroTextResolver, operatorSettings, _radioSession, _localization, _imageEditorLogger,
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore);
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
@@ -888,7 +889,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // immediate output was correct (used the editor's own live rotated source), but the
         // re-derivation reverted to the unrotated image while still applying the ROTATED crop
         // rect/overlay coordinates to it. CurrentSource always reflects every Rotate call so far.
-        _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Document, editor.Adjustments, editor.RawOverlayElements);
+        _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Document, editor.Adjustments, editor.RawOverlayElements, editor.TemplateVariables);
         _loadedImage = final;
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
         SelectedFileName = fileName;
@@ -942,9 +943,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 ?? new OperatorSettings();
 
             var editor = new TxImageEditorPaneViewModel(
-                edit.Original, mode, _preparer, _macroTextResolver, operatorSettings, _localization, _imageEditorLogger,
+                edit.Original, mode, _preparer, _macroTextResolver, operatorSettings, _radioSession, _localization, _imageEditorLogger,
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
-                new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay));
+                new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay, edit.TemplateVariables));
             // SelectedFileName! is safe here: only OnEditorApplied ever writes it, always in the
             // same assignment that sets _editState (:868-871 below) -- _editState being non-null at
             // this point (the guard above) guarantees SelectedFileName was set at the same time.
