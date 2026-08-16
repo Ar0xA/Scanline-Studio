@@ -39,6 +39,19 @@ public sealed partial class OverlayElementViewModel : ObservableObject
     [ObservableProperty]
     private double _imageHeight;
 
+    /// <summary>Font size in CANVAS DISPLAY pixels (the same pixel space as <see cref="ImageWidth"/>/
+    /// <see cref="ImageHeight"/>), pushed by <see cref="TxImageEditorPaneViewModel"/> whenever the
+    /// crop rect, PreserveAspect, or this element's own <see cref="FontSizeRelative"/> changes --
+    /// same parent-pushed pattern as <see cref="ImageWidth"/>/<see cref="ImageHeight"/>, for the same
+    /// reason (no live ambient binding back to the parent VM from inside this DataTemplate; see
+    /// <see cref="RemoveCommand"/>'s own doc comment for the concrete crash that pattern hit).
+    /// Purely canvas-chrome display state -- never feeds
+    /// <see cref="TxImageEditorPaneViewModel.BuildImageOverlayElement"/> or the real pipeline, so
+    /// <c>TxImageEditorPaneViewModel.OnOverlayElementPropertyChanged</c> excludes it from triggering
+    /// a preview recompute.</summary>
+    [ObservableProperty]
+    private double _canvasFontSize;
+
     /// <summary>Set once by <see cref="TxImageEditorPaneViewModel.AddOverlayElement"/> at creation
     /// time (its own <c>RemoveOverlayElementCommand</c>), not bound in XAML via
     /// `$parent[ItemsControl].((vm:TxImageEditorPaneViewModel)DataContext)...` -- that pattern
@@ -64,8 +77,6 @@ public sealed partial class OverlayElementViewModel : ObservableObject
     /// <summary>What actually gets drawn -- the canvas preview binds here, not <see cref="Text"/>,
     /// so the user sees "DE W1AW" rather than the literal "DE %m" template while editing.</summary>
     public string ResolvedText => ResolveMacros?.Invoke(Text) ?? Text;
-
-    public ImageOverlayElement ToImageOverlayElement() => new(ResolvedText, X, Y, FontSizeRelative, Color);
 
     partial void OnXChanged(double value) => OnPropertyChanged(nameof(LeftPixels));
 
