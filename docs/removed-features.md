@@ -75,8 +75,8 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 - **Legacy**: `CItems/` (PERIMG, QSLBox, TextArt, TEXTBOX subfolders), documented in `CItems/ECUSTOM.TXT` — a native Win32 DLL ABI that MMSSTV loads on-the-fly to extend the QSL/template designer.
 - **Replacement**: none directly. [[spec/11-plugin-system]] provides a managed, cross-platform plugin model (`AssemblyLoadContext`-isolated, `IScanlineStudioPlugin`), but it is not binary-compatible with legacy CItems DLLs — those are native Win32 code built against a C++Builder-specific struct layout, incompatible with a cross-platform managed host by construction, not by choice.
 - **Not carried forward**: any third-party custom-item DLLs built against the legacy `ECUSTOM.TXT` ABI (unknown how many exist in the wild) stop working with no automatic migration path.
-- **Successor**: the concept — a loadable extension that draws into the QSL/template designer — is the intended scope of a future `ITemplateItem`-style extension point once [[spec/15-template-designer]] is implemented (currently deferred, see [[spec/14-roadmap]]). Until then this is a real capability gap, not a completed replacement.
-- **Impact**: any user of a third-party MMSSTV custom-item DLL loses that specific extension until the template designer and its plugin point ship.
+- **Successor**: none planned. [[spec/15-template-designer]]'s 2026-08-16 redesign explicitly moved a CItems-equivalent `ITemplateItem`-style extension point out of scope (its own "Non-goals" section) rather than carrying the concept forward — this is a permanent, acknowledged gap, not a migration pending that document's implementation.
+- **Impact**: any user of a third-party MMSSTV custom-item DLL loses that specific extension with no planned path back.
 
 ## MMlink inter-application broadcast
 

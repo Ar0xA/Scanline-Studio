@@ -1,5 +1,12 @@
 # 18 — Path to 1.0
 
+## Status: 1.0 COMPLETE (2026-08-16)
+
+🔴 Critical, 🟠 High, and 🟡 Medium are all closed (final item: the TX image editor cluster's
+undo/redo sub-piece, commit `629ecb6`). Remaining items in this doc (🔵 Human-action-required,
+⚪ Parked) are explicitly non-agent-completable or out-of-scope-by-user-decision, not open 1.0
+work — see their own sections below. Next target is 1.1; see [[19-path-to-1.1]].
+
 ## Related
 
 [[14-roadmap]] (this supersedes its Tier 0/1 "DONE" status — see "Relationship to 14-roadmap" below)

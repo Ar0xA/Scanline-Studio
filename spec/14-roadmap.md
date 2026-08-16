@@ -4374,10 +4374,10 @@ experience legacy users would recognize.
 **Trimmed 2026-08-05** to just the plugin system — everything else previously bucketed here (remaining
 dialogs, settings migration, localization completion) moved into Phase 4 above.
 
-- [[11-plugin-system]]: plugin host, at least one built-in extension point (`IImageFilter`) proven to load through the plugin path, plus `PluginManagerDialog` ([[09-ui]]'s inventory table). If [[15-template-designer]] work has started by this point, its `ITemplateItem` extension point (the documented successor to the legacy CItems DLL ABI) is the higher-value target to prove the plugin path against, since it's the one with real legacy prior art and potential third-party demand.
+- [[11-plugin-system]]: plugin host, at least one built-in extension point (`IImageFilter`) proven to load through the plugin path, plus `PluginManagerDialog` ([[09-ui]]'s inventory table). **Stale as of 2026-08-16**: this used to say a future `ITemplateItem` extension point ([[15-template-designer]]) would be the higher-value target to prove the plugin path against — that document's redesign explicitly moved a CItems-successor plugin point out of scope, so `IImageFilter` is the only concrete target now.
 
-**Demo:** a user can extend the app with a plugin (at minimum, an image filter loading through the same
-path a future `ITemplateItem` extension would use).
+**Demo:** a user can extend the app with a plugin (at minimum, an image filter loading through the plugin
+path).
 
 ## Phase 4+ backlog — legacy YONIQ/QSSTV feature inventory (2026-08-05)
 
@@ -5101,7 +5101,7 @@ verb for it.
 - Full Hamlib extended command-set coverage beyond frequency/mode/PTT ([[04-rigctld]]).
 - Plugin sandboxing beyond same-process isolation ([[11-plugin-system]]).
 - Legacy proprietary `.MDT` log format import (ADIF is the supported migration path instead, [[08-logging]]).
-- The full QSL/template designer and `.mtm` import ([[15-template-designer]]) — specified but deferred; [[07-image-pipeline]]'s minimal `ImageOverlay` covers text-only TX overlay in the meantime.
+- **Stale as of 2026-08-16**: the QSL/template designer ([[15-template-designer]]) is no longer deferred — it's the active 1.1 target (redesigned, not a legacy `.mtm` port; see [[19-path-to-1.1]]). Legacy `.mtm` *import* specifically remains deferred, until after 1.1's modern core ships.
 - SSTV repeater/beacon mode ([[06-sstv-dsp]], legacy `RepSet.cpp`).
 - Contest logging (JASTA application, `MMCG.DEF` JARL area database) — out of scope entirely, not just deferred; see [docs/removed-features.md](../docs/removed-features.md).
 - OCR (callsign-from-image recognition on the Gallery Frame-metadata card's "Callsign · OCR"/"OCR confidence" fields) — user decision 2026-08-11: "eh, maybe one day." No legacy precedent (verified against `yoniq-old/YONIQ-main`, zero OCR anywhere — see the Must-implement backlog's own entry above for the false-positive that once suggested otherwise), so this is wholly new work with no port to lean on; QRZ.com lookup was split out of the same former backlog line and stays active (see above) since that part *is* a real legacy feature.
