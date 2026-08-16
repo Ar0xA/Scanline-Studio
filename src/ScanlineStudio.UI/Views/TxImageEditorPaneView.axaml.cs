@@ -23,6 +23,11 @@ public partial class TxImageEditorPaneView : UserControl
     private Point _lastPointerPosition;
     private OverlayElementViewModel? _draggedOverlayElement;
 
+    // Undo/redo sub-piece: a gesture pushes ONE undo step, on the first real move, not on press
+    // (a bare click that never moves shouldn't push a no-op step) -- reset in StartDrag, consumed
+    // in OnCanvasPointerMoved.
+    private bool _pushedUndoThisGesture;
+
     public TxImageEditorPaneView()
     {
         InitializeComponent();
@@ -56,6 +61,7 @@ public partial class TxImageEditorPaneView : UserControl
     private void StartDrag(DragMode mode, PointerPressedEventArgs e)
     {
         _dragMode = mode;
+        _pushedUndoThisGesture = false;
         _lastPointerPosition = e.GetPosition(EditorCanvas);
         e.Pointer.Capture(EditorCanvas);
         e.Handled = true;
@@ -71,6 +77,21 @@ public partial class TxImageEditorPaneView : UserControl
         var current = e.GetPosition(EditorCanvas);
         var dxNormalized = (current.X - _lastPointerPosition.X) / vm.WorkingCopyWidth;
         var dyNormalized = (current.Y - _lastPointerPosition.Y) / vm.WorkingCopyHeight;
+
+        // Crop-move/crop-resize push their own undo step here, lazily, on the FIRST REAL (nonzero)
+        // move of this gesture -- not on PointerPressed (a bare click that never moves shouldn't
+        // push a no-op step) and not on a zero-delta move event Avalonia can raise right after
+        // press (code-review finding on an earlier draft). Overlay-element drags do NOT push here
+        // -- they push themselves via OverlayElementViewModel's own On*Changing hooks instead (see
+        // PushUndoSnapshotForPositionChange's own doc comment), a path that ALSO covers the X/Y
+        // sidebar TextBoxes, which a View-level drag-only push here never would have (code-review
+        // finding: an earlier draft left typed coordinate edits completely untracked).
+        if (!_pushedUndoThisGesture && _dragMode != DragMode.Overlay && (dxNormalized != 0 || dyNormalized != 0))
+        {
+            vm.PushUndoSnapshotForDragGesture();
+            _pushedUndoThisGesture = true;
+        }
+
         _lastPointerPosition = current;
 
         switch (_dragMode)

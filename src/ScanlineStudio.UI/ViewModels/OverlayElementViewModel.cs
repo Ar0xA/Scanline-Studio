@@ -70,6 +70,18 @@ public sealed partial class OverlayElementViewModel : ObservableObject
     /// Null only in tests/design-time contexts that don't care about macro resolution.</summary>
     public Func<string, string>? ResolveMacros { get; init; }
 
+    /// <summary>Set once by <see cref="TxImageEditorPaneViewModel"/> at creation time, same
+    /// parent-pushed pattern as <see cref="RemoveCommand"/>/<see cref="ResolveMacros"/> -- pushes an
+    /// undo/redo snapshot (spec/18-path-to-1.0.md Medium item, undo/redo sub-piece) BEFORE
+    /// <see cref="X"/> or <see cref="Y"/> actually changes, coalesced under one SHARED key covering
+    /// both axes (code-review finding: a diagonal pointer drag or a burst of X/Y TextBox keystrokes
+    /// must collapse to ONE undo step, not two just because X and Y are separate properties). Covers
+    /// BOTH the canvas pointer-drag path and the sidebar X/Y TextBox edits -- a code-review finding
+    /// on an earlier draft found the drag-only View-level push left typed coordinate edits
+    /// completely untracked despite being claimed as covered. Null only in tests/design-time
+    /// contexts that don't care about undo.</summary>
+    public Action? PushUndoSnapshotForPositionChange { get; init; }
+
     public double LeftPixels => X * ImageWidth;
 
     public double TopPixels => Y * ImageHeight;
@@ -77,6 +89,10 @@ public sealed partial class OverlayElementViewModel : ObservableObject
     /// <summary>What actually gets drawn -- the canvas preview binds here, not <see cref="Text"/>,
     /// so the user sees "DE W1AW" rather than the literal "DE %m" template while editing.</summary>
     public string ResolvedText => ResolveMacros?.Invoke(Text) ?? Text;
+
+    partial void OnXChanging(double value) => PushUndoSnapshotForPositionChange?.Invoke();
+
+    partial void OnYChanging(double value) => PushUndoSnapshotForPositionChange?.Invoke();
 
     partial void OnXChanged(double value) => OnPropertyChanged(nameof(LeftPixels));
 
