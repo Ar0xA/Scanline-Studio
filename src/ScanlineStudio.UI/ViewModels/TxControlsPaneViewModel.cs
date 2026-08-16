@@ -824,7 +824,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 .GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
                 ?? new OperatorSettings();
 
-            var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _macroTextResolver, operatorSettings, _imageEditorLogger);
+            var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _macroTextResolver, operatorSettings, _localization, _imageEditorLogger);
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             EditorOpened?.Invoke(editor);
