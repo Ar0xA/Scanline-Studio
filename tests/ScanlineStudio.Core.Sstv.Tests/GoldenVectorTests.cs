@@ -130,6 +130,18 @@ public class GoldenVectorTests
 
         var delta = MeasureAveragePerChannelDelta(source, rx, pictureHeight);
 
+        // Code-review finding (spec/18-path-to-1.0.md's TX golden-vector re-capture item): the
+        // *_TX_RX.bmp files this test reads are now STALE relative to the *_TX.mmv files checked
+        // into this same TxCapture/ directory -- the .mmv fixtures were re-captured against the
+        // current AnalogFmSstvEncoder, but refreshing their real-legacy-decoded counterparts needs
+        // a human with a real Wine YONIQ install (see TxCapture/README.md's own "What to do"
+        // section) and hasn't happened yet. This test's own real-legacy-validation claim below is
+        // therefore accurate for the ENCODER STATE THAT PRODUCED THESE SPECIFIC .bmp FILES, not
+        // necessarily today's encoder -- TxCaptureFixturesTests.cs's
+        // LiveEncoderOutput_MatchesCheckedInFixture_WithinQuantizationTolerance is what actually
+        // tracks the current encoder now; this test's own real-legacy cross-check will go stale
+        // again the next time the encoder changes, until a human refreshes the *_TX_RX.bmp files.
+        //
         // Measured directly (not assumed), via the same temporary-zero-tolerance technique used
         // throughout this session: robot-36 3.30, martin-m1 1.53, scottie-s1 1.05, robot-72 3.21,
         // pd90 2.40, rm8 5.15, mn110 2.60, avt 0.86, scottie-dx 1.03, mr73 3.22, r24 3.70. All 11
@@ -757,7 +769,12 @@ public class GoldenVectorTests
         // there is a tautology, not evidence. The `*_TX.mmv`/`*_TX_RX.bmp` fixtures
         // (`Fixtures/GoldenVectors/TxCapture/`) were captured from the PRE-fix encoder and are now
         // STALE with respect to this fix -- `TxCaptureFixturesTests.cs` decodes the same stale
-        // `.mmv` and doesn't cover it either. THIS test (`EncoderOutput_DecodesSimilarlyTo_
+        // `.mmv` and doesn't cover it either [NO LONGER TRUE as of spec/18-path-to-1.0.md's TX
+        // golden-vector re-capture item: the `.mmv` files are now re-captured against the current
+        // encoder on every ordinary test run via `TxCaptureFixturesTests`' own live-encoder-vs-
+        // checked-in-fixture assertion -- see `TxCapture/README.md` for current status. The
+        // `*_TX_RX.bmp` half of this sentence is still accurate: those remain stale until a human
+        // re-runs them through a real legacy install]. THIS test (`EncoderOutput_DecodesSimilarlyTo_
         // RealLegacyAudioDecode`, the one whose numbers moved above) is the only test in this file
         // that actually live-encodes with this port's own (now-fixed) encoder, so it's the only
         // real evidence this fix has today. Real TX-vs-real-legacy validation of this specific fix
@@ -789,9 +806,14 @@ public class GoldenVectorTests
         // category as every other fix's own cross-mode effects. All comfortably inside their existing
         // tolerances, none needed to change. Same caveat as always: the TX-direction real-legacy-decode
         // test and `TxCaptureFixturesTests` still read stale pre-fix checked-in fixtures and do not
-        // exercise this filter at all -- a fresh `TxCapture/` re-capture against a real legacy install
-        // remains the only way to validate this fix against actual legacy TX output, not just this
-        // port's own self-consistency (tracked as an open follow-up, not silently left unstated).
+        // exercise this filter at all [NO LONGER TRUE for `TxCaptureFixturesTests` as of
+        // spec/18-path-to-1.0.md's TX golden-vector re-capture item -- it now live-encodes and DOES
+        // exercise this filter (and every other current-encoder behavior) on every ordinary test
+        // run; still true for `LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage`, whose
+        // `*_TX_RX.bmp` inputs remain stale until a human re-runs them through a real legacy
+        // install] -- a fresh `TxCapture/` re-capture against a real legacy install remains the
+        // only way to validate this fix against actual legacy TX output, not just this port's own
+        // self-consistency (tracked as an open follow-up, not silently left unstated).
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 4.0,
