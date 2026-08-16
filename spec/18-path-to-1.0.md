@@ -218,9 +218,10 @@ superseded.
   net). Re-capture the 11 `TxCapture/*.mmv` fixtures against the current encoder.
 - No TX send-progress feedback during transmit — a multi-minute PD290 send shows only the red
   toggle button, no percentage/time-remaining.
-- Editor-open guard not enforced: `TxControlsPaneViewModel.cs:80-84` documents that picking a new
-  image while the editor is open should be disabled; no `IsEnabled` binding actually does this
-  (`:652-655`) — a second pick is a silent no-op.
+- ✅ **DONE** (commit `963f16d`): editor-open guard's visual half — `OpenEditorForSourceAsync`
+  already blocked a second pick while the editor is open (silent no-op, already tested); added the
+  missing `IsEnabled="{Binding !IsEditorOpen}"` bindings (Browse button, stock-image ListBox) plus a
+  third ungated entry point code-review found (File > Open image, Ctrl+O).
 - CI doesn't enforce the ≥80% line-coverage gate `spec/13-testing.md:25,56` requires — no coverage
   collection in `.github/workflows/ci.yml` at all.
 - `README.md` is badly stale (still describes "Phase 0 — walking skeleton," links a gitignored
