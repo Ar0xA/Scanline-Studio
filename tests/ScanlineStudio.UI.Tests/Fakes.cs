@@ -529,6 +529,12 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
 
     public List<IImageSource> RotateSources { get; } = [];
 
+    public int ApplyTemplateCallCount { get; private set; }
+
+    public List<TemplateDocument> TemplateDocuments { get; } = [];
+
+    public List<IImageSource> ApplyTemplateSources { get; } = [];
+
     public IImageSource Crop(IImageSource source, NormalizedRect region)
     {
         CropCallCount++;
@@ -579,6 +585,26 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
         RotateSources.Add(source);
         return new ArrayImageSource(source.Height, source.Width, new Rgb24[source.Width * source.Height]);
     }
+
+    /// <summary>Identity-return for an empty document (matches the real implementation's own
+    /// no-op convention), genuinely-new instance otherwise -- same "distinguish ran vs. didn't
+    /// run" reasoning as <see cref="ApplyAdjustments"/> above.</summary>
+    public IImageSource ApplyTemplate(IImageSource existingBase, TemplateDocument document)
+    {
+        ApplyTemplateCallCount++;
+        TemplateDocuments.Add(document);
+        ApplyTemplateSources.Add(existingBase);
+
+        if (document.IsEmpty)
+        {
+            return existingBase;
+        }
+
+        return new ArrayImageSource(existingBase.Width, existingBase.Height, new Rgb24[existingBase.Width * existingBase.Height]);
+    }
+
+    public double MeasureFittedFontSize(string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx)
+        => font.Size * imageHeightPx;
 }
 
 internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
