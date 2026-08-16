@@ -1330,6 +1330,39 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ModeChangeWithAnAppliedEdit_CarriesAdjustmentSlidersThroughTheReflow()
+    {
+        // Real gap found while implementing the adjustment sliders (spec/18-path-to-1.0.md Medium
+        // item): EditState originally had no Adjustments field at all, so OnSelectedModeChanged's
+        // own Crop->Resize->ApplyOverlay reflow silently dropped Brightness/Contrast/etc. on the
+        // very next mode change after Apply -- a real feature loss, not just a cosmetic gap, and
+        // not caught by TxImageEditorPaneViewModelTests since those only exercise the editor in
+        // isolation, never this reflow path. Pins that ApplyAdjustments is now actually invoked
+        // during the reflow, with the SAME adjustment values the user set before Apply.
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.Brightness = 33;
+        editor.Sharpen = 77;
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var adjustmentsCallCountBeforeModeChange = preparer.ApplyAdjustmentsCallCount;
+
+        vm.SelectedMode = modeB;
+
+        Assert.True(preparer.ApplyAdjustmentsCallCount > adjustmentsCallCountBeforeModeChange);
+        var adjustments = preparer.Adjustments[^1];
+        Assert.Equal(33, adjustments.Brightness);
+        Assert.Equal(77, adjustments.Sharpen);
+    }
+
+    [AvaloniaFact]
     public async Task TxControlsPaneViewModel_RotateThenApplyThenModeChange_UsesTheRotatedSource_NotTheStaleOriginal()
     {
         // spec/18-path-to-1.0.md High item 3, round-1 plan-review blocker: OnEditorApplied used to
