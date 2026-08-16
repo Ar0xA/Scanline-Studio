@@ -10,6 +10,7 @@ using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.UI.Imaging;
+using ScanlineStudio.UI.Services;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -53,6 +54,24 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     public sealed record RawBoxElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
         Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity)
+        : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
+
+    /// <summary>Which of Phase 2's 3 sources an image element was resolved from, plus enough to
+    /// re-resolve it later (spec/15-template-designer.md, plan-review finding) -- a resolved
+    /// <see cref="IImageSource"/> alone can't tell Phase 5's persisted-template format whether to
+    /// serialize a file reference or embed the pixels, and would foreclose ever re-resolving the
+    /// "last RX image" case against a NEW picture on a future render (not built in Phase 2, but the
+    /// origin field keeps that door open instead of silently designing it out).
+    /// <see cref="Payload"/> is the file path for <see cref="ImageSourceKind.File"/>, the
+    /// <see cref="ReceiveHistoryEntry.Id"/> for <see cref="ImageSourceKind.RxHistory"/>, and unused
+    /// (null) for <see cref="ImageSourceKind.LastRx"/>.</summary>
+    public enum ImageSourceKind { File, RxHistory, LastRx }
+
+    public sealed record ImageSourceOrigin(ImageSourceKind Kind, string? Payload);
+
+    public sealed record RawImageElementSnapshot(
+        double X, double Y, double Width, double Height, int Z, bool Locked,
+        IImageSource Source, ImageFitMode Fit, ImageSourceOrigin Origin)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Prior edit state to seed a re-opened editor with (spec/18-path-to-1.0.md Medium
@@ -104,6 +123,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private readonly OperatorSettings _operatorSettings;
     private readonly ILocalizationService _localization;
     private readonly ILogger<TxImageEditorPaneViewModel> _logger;
+
+    // Phase 2 (spec/15-template-designer.md) -- image element sources. See the plan's own scope cut:
+    // file/last-RX/RX-history have real precedent to reuse; clipboard/drag-drop are deferred (no
+    // precedent anywhere in this codebase).
+    private readonly IFilePickerService _filePickerService;
+    private readonly IImageFileLoader _imageFileLoader;
+    private readonly IReceivedImageBuffer _receivedImageBuffer;
+    private readonly IReceiveHistoryStore _receiveHistoryStore;
 
     // Suppresses RecomputePreview() while RotateCommand is mid-update (rotated working copy but
     // not-yet-transformed CropRect/overlay positions) -- without this, each overlay element's own
@@ -179,6 +206,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         OperatorSettings operatorSettings,
         ILocalizationService localization,
         ILogger<TxImageEditorPaneViewModel> logger,
+        IFilePickerService filePickerService,
+        IImageFileLoader imageFileLoader,
+        IReceivedImageBuffer receivedImageBuffer,
+        IReceiveHistoryStore receiveHistoryStore,
         EditorInitialState? initialState = null)
     {
         _originalSource = originalSource;
@@ -188,6 +219,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         _operatorSettings = operatorSettings;
         _localization = localization;
         _logger = logger;
+        _filePickerService = filePickerService;
+        _imageFileLoader = imageFileLoader;
+        _receivedImageBuffer = receivedImageBuffer;
+        _receiveHistoryStore = receiveHistoryStore;
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
         WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
@@ -307,6 +342,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             text.X, text.Y, text.Width, text.Height, text.Z, text.Locked, text.Text, text.FontSizeRelative, text.Color),
         BoxElementViewModel box => new RawBoxElementSnapshot(
             box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
+        ImageElementViewModel image => new RawImageElementSnapshot(
+            image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin),
         _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
     };
 
@@ -436,6 +473,257 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// existing max Z + 1, or 0 for the first element.</summary>
     private int NextZ() => OverlayElements.Count == 0 ? 0 : OverlayElements.Max(e => e.Z) + 1;
 
+    /// <summary>Phase 2 (spec/15-template-designer.md) source 1/3 -- direct reuse of the same
+    /// picker/loader the TX editor's own "Browse..." stock-image flow already uses
+    /// (<see cref="TxControlsPaneViewModel.SelectImageAsync"/>), not new I/O. Mirrors that method's
+    /// own error-handling shape: log + return on picker/load failure, silent return on cancel (a
+    /// null path from the picker is a normal "user hit Cancel", not an error).</summary>
+    [RelayCommand]
+    private async Task AddImageFromFileAsync()
+    {
+        string? path;
+        try
+        {
+            path = await _filePickerService.PickImageFileAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.AddImageFromFileFailed(_logger, ex);
+            return;
+        }
+
+        if (path is null)
+        {
+            return;
+        }
+
+        IImageSource source;
+        try
+        {
+            source = await _imageFileLoader.LoadOriginalAsync(path);
+        }
+        catch (Exception ex)
+        {
+            Log.AddImageFromFileFailed(_logger, ex);
+            return;
+        }
+
+        InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.File, path));
+    }
+
+    /// <summary>Phase 2 source 2/3 -- snapshot at insert time, NOT a live binding (plan-review
+    /// decided open question: a saved template must not carry a reference to whatever RX buffer
+    /// state happens to exist when it's reused later -- <see cref="IReceivedImageBuffer.Current"/>'s
+    /// own instance is never mutated in place once read, so this assignment genuinely freezes it,
+    /// though that's copy-on-WRITE inside the buffer, not copy-on-read here -- see this method body's
+    /// own comment for why that distinction matters).
+    /// <para>Mid-decode insert is intentionally ALLOWED (not gated on
+    /// <see cref="IReceivedImageBuffer.Progress"/> being null/complete) -- a live CanExecute gate
+    /// would need this VM to subscribe to <see cref="IReceivedImageBuffer.Updated"/>, a long-lived DI
+    /// singleton event this VM has no <c>IDisposable</c>/lifecycle hook to ever unsubscribe from
+    /// (every other event this VM raises, it owns and disposes with itself). A user who inserts a
+    /// still-decoding (partially black) frame can simply Undo/Remove it -- an acceptable, low-severity
+    /// v1 tradeoff documented here rather than left unspecified.</para></summary>
+    [RelayCommand]
+    private void AddLastRxImage()
+    {
+        // Code-review finding: the idle/never-received case is distinct from the mid-decode case
+        // this method's own class doc comment already covers -- IReceivedImageBuffer.Current
+        // defaults to (and resets to, on decode restart) a 1x1 black placeholder, never null. A
+        // click here with nothing ever received would otherwise silently insert that black square
+        // with no visible feedback. No live subscription needed to guard this (checked at click
+        // time, not reactively) -- same "no lifecycle hook to unsubscribe" reasoning as this
+        // method's own class-level doc comment, just applied as a body-level no-op instead of a
+        // CanExecute gate that would go stale anyway without a subscription.
+        if (_receivedImageBuffer.Current is { Width: <= 1, Height: <= 1 })
+        {
+            return;
+        }
+
+        // _receivedImageBuffer.Current's getter returns the stored reference directly (not a
+        // fresh copy per read) -- the copy happens on WRITE, when a new scanline group decodes and
+        // a fresh ArrayImageSource is swapped in. Never mutated in place afterward, so capturing the
+        // reference here still freezes it for this element -- but a future perf change that mutated
+        // the buffer in place instead of reallocating per scanline group would silently break this.
+        InsertImageElement(_receivedImageBuffer.Current, new ImageSourceOrigin(ImageSourceKind.LastRx, null));
+    }
+
+    private const int RxHistoryPickerMaxEntries = 20;
+    private const int RxHistoryPickerThumbnailMaxDimension = 96;
+
+    /// <summary>One row in the Phase 2 "From RX history" picker flyout -- deliberately NOT a reuse of
+    /// <c>RxHistoryPaneViewModel</c>'s own row type (that VM has its own, unrelated concerns/
+    /// dependencies; the plan's own scope calls for injecting <see cref="IReceiveHistoryStore"/>
+    /// directly here instead).</summary>
+    /// <summary><see cref="SelectCommand"/> is parent-pushed (same pattern as
+    /// <see cref="ITemplateElementViewModel.RemoveCommand"/>/<c>MoveUpCommand</c>) so the AXAML
+    /// picker list can bind <c>Command="{Binding SelectCommand}" CommandParameter="{Binding}"</c>
+    /// directly on each row -- deliberately NOT a
+    /// <c>$parent[ItemsControl].((vm:TxImageEditorPaneViewModel)DataContext).AddImageFromRxHistoryCommand</c>
+    /// binding path, which this codebase has already hit as a real
+    /// <c>ArgumentException: Unable to resolve type</c> at first DataTemplate realization elsewhere
+    /// (see <see cref="ITemplateElementViewModel.RemoveCommand"/>'s own doc comment).</summary>
+    public sealed record RxHistoryPickerEntry(string Id, string FilePath, Bitmap? Thumbnail, IRelayCommand<RxHistoryPickerEntry>? SelectCommand);
+
+    [ObservableProperty]
+    private ObservableCollection<RxHistoryPickerEntry> _rxHistoryPickerEntries = [];
+
+    /// <summary>Refreshes <see cref="RxHistoryPickerEntries"/> -- called when the "From RX history"
+    /// flyout opens (View-level), not kept live/subscribed (same "no lifecycle hook to unsubscribe"
+    /// reasoning as <see cref="AddLastRxImage"/>). <see cref="IReceiveHistoryStore.QueryAsync"/>
+    /// already returns newest-first (<c>SqliteReceiveHistoryStore</c>'s own <c>ORDER BY ReceivedAt
+    /// DESC</c>), capped client-side to <see cref="RxHistoryPickerMaxEntries"/> since the store has
+    /// no server-side limit parameter.</summary>
+    [RelayCommand]
+    private async Task RefreshRxHistoryPickerAsync()
+    {
+        IReadOnlyList<ReceiveHistoryEntry> entries;
+        try
+        {
+            entries = await _receiveHistoryStore.QueryAsync(new ReceiveHistoryFilter());
+        }
+        catch (Exception ex)
+        {
+            Log.RefreshRxHistoryPickerFailed(_logger, ex);
+            return;
+        }
+
+        var picked = new List<RxHistoryPickerEntry>();
+        foreach (var entry in entries.Take(RxHistoryPickerMaxEntries))
+        {
+            Bitmap? thumbnail = null;
+            try
+            {
+                var thumbnailSource = await _receiveHistoryStore.LoadThumbnailAsync(entry, RxHistoryPickerThumbnailMaxDimension);
+                thumbnail = ImageSourceBitmapConverter.ToBitmap(thumbnailSource);
+            }
+            catch (Exception ex)
+            {
+                // One bad thumbnail (e.g. a history row whose backing file was deleted out-of-band)
+                // shouldn't blank the whole picker list -- degrade to a null-thumbnail row instead.
+                Log.RxHistoryThumbnailLoadFailed(_logger, entry.Id, ex);
+            }
+
+            picked.Add(new RxHistoryPickerEntry(entry.Id, entry.FilePath, thumbnail, AddImageFromRxHistoryCommand));
+        }
+
+        RxHistoryPickerEntries = new ObservableCollection<RxHistoryPickerEntry>(picked);
+    }
+
+    /// <summary>Phase 2 source 3/3 -- <see cref="IReceiveHistoryStore"/> has no full-resolution
+    /// loader (only <see cref="IReceiveHistoryStore.LoadThumbnailAsync"/>), so the full-res load
+    /// reuses the same <see cref="IImageFileLoader.LoadOriginalAsync"/> the file-picker source
+    /// already uses, against the entry's own real on-disk <see cref="ReceiveHistoryEntry.FilePath"/>
+    /// -- confirmed the only available move, not a gap glossed over.</summary>
+    [RelayCommand]
+    private async Task AddImageFromRxHistoryAsync(RxHistoryPickerEntry? entry)
+    {
+        if (entry is null)
+        {
+            return;
+        }
+
+        IImageSource source;
+        try
+        {
+            source = await _imageFileLoader.LoadOriginalAsync(entry.FilePath);
+        }
+        catch (Exception ex)
+        {
+            Log.AddImageFromRxHistoryFailed(_logger, entry.Id, ex);
+            return;
+        }
+
+        InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.RxHistory, entry.Id));
+    }
+
+    /// <summary>Shared by all 3 Phase 2 image sources -- same crop-centered seed/undo/select/
+    /// recompute shape as <see cref="AddOverlayElement"/>/<see cref="AddBoxElement"/>. Default
+    /// Contain fit (not Stretch) -- an inserted photo keeping its own aspect ratio by default is the
+    /// less-surprising choice; <see cref="ImageElementViewModel.Fit"/> isn't yet user-editable in
+    /// Phase 2 (Phase 4's style panel territory), but the pipeline/VM plumbing already supports it.</summary>
+    private void InsertImageElement(IImageSource source, ImageSourceOrigin origin)
+    {
+        // Downsampled to the SAME working-copy budget as the background image itself (code-review
+        // finding -- see DownsampleToBudget's own doc comment) before ANY of it touches the UI
+        // thread's WriteableBitmap conversion or the real per-frame pipeline. Resolved once here,
+        // at insert time, same as the file/RX-history sources' own LoadOriginalAsync resolution --
+        // consistent with RawImageElementSnapshot's own "resolve once, snapshot the resolved value"
+        // contract, not a departure from it.
+        var downsampled = DownsampleToBudget(
+            source, (int)(WorkingCopyWidth * WorkingCopyScaleFactor), (int)(WorkingCopyHeight * WorkingCopyScaleFactor), _preparer);
+
+        PushUndoSnapshot();
+        var element = CreateImageElement(
+            x: CropRect.X + (CropRect.Width / 2),
+            y: CropRect.Y + (CropRect.Height / 2),
+            width: DefaultElementWidth,
+            height: DefaultElementWidth,
+            source: downsampled,
+            fit: ImageFitMode.Contain,
+            origin: origin,
+            z: NextZ(),
+            locked: false);
+        OverlayElements.Add(element);
+        SelectedOverlayElement = element;
+        RecomputePreview();
+    }
+
+    /// <summary>Phase 2 (spec/15-template-designer.md) "set as background" -- moves an existing
+    /// element to full-frame (X=0.5,Y=0.5,Width=1,Height=1, covering the whole canvas under the
+    /// CENTER-anchored convention) and to the very BOTTOM of the z-order
+    /// (<c>Min(Z) - 1</c>, mirrors <see cref="NextZ"/>'s own max+1-for-top pattern, just for the
+    /// bottom -- no Z==0 special case, consistent with Phase 0's own "no Z==0 special case"
+    /// decision). Not restricted to image elements at the VM layer, but Phase 2's own AXAML only
+    /// exposes this action on image-element rows.
+    /// <para>[Plan-review blocker, fixed here] Setting Z alone is NOT enough -- the interactive
+    /// canvas draws in <see cref="OverlayElements"/>' own COLLECTION order (see
+    /// <see cref="MoveElementUp"/>'s own doc comment for why: <c>ZIndex</c> bound on a DataTemplate
+    /// root has no effect, confirmed via Avalonia DevTools in Phase 1), so this ALSO moves the
+    /// element to collection index 0, or the mini-preview (real <c>ApplyTemplate</c>, Z-based) and
+    /// the interactive canvas would desync immediately -- exactly the bug class real-window review
+    /// already caught once for <see cref="MoveElementUp"/>/<see cref="MoveElementDown"/>.</para>
+    /// <para>Wrapped in <see cref="_suspendPreview"/> (same pattern as <see cref="Rotate"/>'s own
+    /// multi-element geometry loop) so the 4 geometry-property assignments below don't ALSO each
+    /// trigger their own <see cref="ITemplateElementViewModel.PushUndoSnapshotForGeometryChange"/>
+    /// coalesced push on top of this method's own explicit <see cref="PushUndoSnapshot"/> -- without
+    /// it, one click would push 2 undo steps instead of 1.</para></summary>
+    [RelayCommand]
+    private void SetAsBackground(ITemplateElementViewModel? element)
+    {
+        // Code-review finding: element could be a stale reference no longer in OverlayElements
+        // (e.g. a queued click racing an Undo, which replaces every element wholesale -- see
+        // ApplyState's own doc comment) -- IndexOf would then return -1, and
+        // OverlayElements.Move(-1, 0) throws ArgumentOutOfRangeException out of a command handler.
+        // Same "index < 0 means not found, no-op" guard as MoveElementUp/MoveElementDown, checked
+        // BEFORE PushUndoSnapshot so a stale click doesn't leave a bogus undo step behind either.
+        var index = element is null ? -1 : OverlayElements.IndexOf(element);
+        if (index < 0)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            element!.X = 0.5;
+            element.Y = 0.5;
+            element.Width = 1;
+            element.Height = 1;
+            // At least one element (this one) is always in OverlayElements here, so Min(Z) is safe
+            // without the empty-collection special case NextZ() needs for its own max+1 case.
+            element.Z = OverlayElements.Min(e => e.Z) - 1;
+            OverlayElements.Move(index, 0);
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        RecomputePreview();
+    }
+
     /// <summary>Shared element-construction wiring for <see cref="AddOverlayElement"/> and
     /// restoration (<see cref="CreateElementFromSnapshot"/>) -- round-1 plan-review finding on
     /// spec/18-path-to-1.0.md's re-open/re-edit sub-piece, still the right call in Phase 1: keep
@@ -501,6 +789,33 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         return element;
     }
 
+    /// <summary>Image counterpart to <see cref="CreateOverlayElement"/>/<see cref="CreateBoxElement"/>
+    /// -- same wiring shape, Phase 2 (spec/15-template-designer.md).</summary>
+    private ImageElementViewModel CreateImageElement(
+        double x, double y, double width, double height, IImageSource source, ImageFitMode fit, ImageSourceOrigin origin, int z, bool locked)
+    {
+        var element = new ImageElementViewModel(source)
+        {
+            X = x,
+            Y = y,
+            Width = width,
+            Height = height,
+            Fit = fit,
+            Origin = origin,
+            Z = z,
+            Locked = locked,
+            ImageWidth = WorkingCopyWidth,
+            ImageHeight = WorkingCopyHeight,
+            RemoveCommand = RemoveOverlayElementCommand,
+            MoveUpCommand = MoveElementUpCommand,
+            MoveDownCommand = MoveElementDownCommand,
+            SetAsBackgroundCommand = SetAsBackgroundCommand,
+            PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
+        };
+        element.PropertyChanged += OnOverlayElementPropertyChanged;
+        return element;
+    }
+
     /// <summary>Shared by the constructor's <see cref="EditorInitialState"/>-seeding block and
     /// <see cref="ApplyState"/> -- one place that knows how to turn a <see cref="RawElementSnapshot"/>
     /// back into a live element, rather than duplicating the type switch at both call sites.</summary>
@@ -510,6 +825,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             text.Text, text.X, text.Y, text.Width, text.Height, text.FontSizeRelative, text.Color, text.Z, text.Locked),
         RawBoxElementSnapshot box => CreateBoxElement(
             box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked),
+        RawImageElementSnapshot image => CreateImageElement(
+            image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked),
         _ => throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {snapshot.GetType()}."),
     };
 
@@ -866,6 +1183,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             or nameof(ITemplateElementViewModel.CanvasWidthPixels)
             or nameof(ITemplateElementViewModel.CanvasHeightPixels)
             or nameof(BoxElementViewModel.CanvasBorderThicknessPixels)
+            or nameof(ImageElementViewModel.CanvasBitmap)
             or nameof(ITemplateElementViewModel.Locked))
         {
             return;
@@ -1217,6 +1535,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 bounds, text.Z, text.ResolvedText, new FontSpec(string.Empty, text.FontSizeRelative), text.Color),
             BoxElementViewModel box => new TemplateBoxElement(
                 bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
+            ImageElementViewModel image => new TemplateImageElement(bounds, image.Z, image.Source, image.Fit),
             _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
         };
     }
@@ -1356,17 +1675,30 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
     }
 
-    private static IImageSource BuildWorkingCopy(IImageSource source, SstvModeDefinition mode, ITransmitImagePreparer preparer)
+    private static IImageSource BuildWorkingCopy(IImageSource source, SstvModeDefinition mode, ITransmitImagePreparer preparer) =>
+        DownsampleToBudget(source, mode.ImageWidth * WorkingCopyScaleFactor, mode.ImageHeight * WorkingCopyScaleFactor, preparer);
+
+    /// <summary>Shared aspect-preserving downsample-to-budget, factored out of
+    /// <see cref="BuildWorkingCopy"/> (code-review finding, Phase 2, spec/15-template-designer.md):
+    /// an inserted image element previously bypassed this entirely, going straight from
+    /// <see cref="IImageFileLoader.LoadOriginalAsync"/>'s full native resolution into
+    /// <see cref="ImageSourceBitmapConverter.ToBitmap"/> (a synchronous, UI-thread, per-pixel
+    /// <c>Marshal.Copy</c> loop -- ~96 MB/~24M-iteration for a 6000x4000 phone photo) AND into
+    /// <see cref="RecomputePreview"/>'s own real pipeline on every drag frame. This is exactly what
+    /// <see cref="WorkingCopyScaleFactor"/> already exists to prevent for the background image
+    /// itself ("every interactive drag-frame recompute runs against this small copy, never the
+    /// original") -- <see cref="InsertImageElement"/> now applies the same budget.</summary>
+    private static IImageSource DownsampleToBudget(IImageSource source, int maxWidth, int maxHeight, ITransmitImagePreparer preparer)
     {
-        var targetWidth = Math.Min(source.Width, mode.ImageWidth * WorkingCopyScaleFactor);
-        var targetHeight = Math.Min(source.Height, mode.ImageHeight * WorkingCopyScaleFactor);
+        var targetWidth = Math.Min(source.Width, maxWidth);
+        var targetHeight = Math.Min(source.Height, maxHeight);
         if (targetWidth >= source.Width && targetHeight >= source.Height)
         {
             return source;
         }
 
-        // Preserve source aspect while capping to the working-copy budget above, rather than a
-        // flat stretch -- this is a display/perf aid, not user-visible cropping/distortion.
+        // Preserve source aspect while capping to the budget above, rather than a flat stretch --
+        // this is a display/perf aid, not user-visible cropping/distortion.
         var scale = Math.Min((double)targetWidth / source.Width, (double)targetHeight / source.Height);
         var width = Math.Max(1, (int)Math.Round(source.Width * scale));
         var height = Math.Max(1, (int)Math.Round(source.Height * scale));
@@ -1383,5 +1715,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Rotate invoked")]
         public static partial void RotateInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "AddImageFromFile failed")]
+        public static partial void AddImageFromFileFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "RefreshRxHistoryPicker failed")]
+        public static partial void RefreshRxHistoryPickerFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "RX history thumbnail load failed: entryId={EntryId}")]
+        public static partial void RxHistoryThumbnailLoadFailed(ILogger logger, string entryId, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "AddImageFromRxHistory failed: entryId={EntryId}")]
+        public static partial void AddImageFromRxHistoryFailed(ILogger logger, string entryId, Exception exception);
     }
 }

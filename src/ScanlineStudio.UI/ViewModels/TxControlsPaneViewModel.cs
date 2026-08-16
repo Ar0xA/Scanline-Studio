@@ -39,6 +39,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private readonly ILogger<TxControlsPaneViewModel> _logger;
     private readonly ILogger<TxImageEditorPaneViewModel> _imageEditorLogger;
 
+    // Phase 2 (spec/15-template-designer.md) -- threaded through to TxImageEditorPaneViewModel's own
+    // constructor at both construction sites below; this VM doesn't otherwise consume either itself.
+    private readonly IReceivedImageBuffer _receivedImageBuffer;
+    private readonly IReceiveHistoryStore _receiveHistoryStore;
+
     private const int SwrCutoffConsecutiveSamplesRequired = 2;
 
     /// <summary>Owns the token passed into <see cref="ISstvSessionService.TransmitAsync"/> -- both
@@ -311,7 +316,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         IRadioSessionService radioSession,
         IMacroTextResolver macroTextResolver,
         ILogger<TxControlsPaneViewModel> logger,
-        ILogger<TxImageEditorPaneViewModel> imageEditorLogger)
+        ILogger<TxImageEditorPaneViewModel> imageEditorLogger,
+        IReceivedImageBuffer receivedImageBuffer,
+        IReceiveHistoryStore receiveHistoryStore)
     {
         _sstvSession = sstvSession;
         _imageFileLoader = imageFileLoader;
@@ -324,6 +331,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _macroTextResolver = macroTextResolver;
         _logger = logger;
         _imageEditorLogger = imageEditorLogger;
+        _receivedImageBuffer = receivedImageBuffer;
+        _receiveHistoryStore = receiveHistoryStore;
 
         AvailableModes = sstvSession.AvailableModes;
         _selectedMode = AvailableModes.Count > 0 ? AvailableModes[0] : null;
@@ -854,7 +863,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 .GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
                 ?? new OperatorSettings();
 
-            var editor = new TxImageEditorPaneViewModel(original, mode, _preparer, _macroTextResolver, operatorSettings, _localization, _imageEditorLogger);
+            var editor = new TxImageEditorPaneViewModel(
+                original, mode, _preparer, _macroTextResolver, operatorSettings, _localization, _imageEditorLogger,
+                _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore);
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             EditorOpened?.Invoke(editor);
@@ -932,6 +943,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
             var editor = new TxImageEditorPaneViewModel(
                 edit.Original, mode, _preparer, _macroTextResolver, operatorSettings, _localization, _imageEditorLogger,
+                _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
                 new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay));
             // SelectedFileName! is safe here: only OnEditorApplied ever writes it, always in the
             // same assignment that sets _editState (:868-871 below) -- _editState being non-null at
