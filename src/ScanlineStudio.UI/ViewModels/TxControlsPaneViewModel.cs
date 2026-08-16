@@ -68,12 +68,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     private IImageSource? _loadedImage;
 
-    /// <summary>The native-resolution original plus the crop/stretch/overlay choices applied to it --
-    /// retained (not just the final mode-sized image) so a later mode change can re-run
-    /// Crop→Resize→ApplyOverlay against the *new* mode's dimensions instead of stretching/cropping an
-    /// already-cropped image a second time. Normalized (0..1) coordinates make this composition valid
-    /// across modes with different pixel dimensions.</summary>
-    private sealed record EditState(IImageSource Original, NormalizedRect CropRect, bool PreserveAspect, ImageOverlay Overlay);
+    /// <summary>The native-resolution original plus the crop/stretch/overlay/adjustment choices
+    /// applied to it -- retained (not just the final mode-sized image) so a later mode change can
+    /// re-run Crop→Resize→ApplyAdjustments→ApplyOverlay against the *new* mode's dimensions instead
+    /// of stretching/cropping an already-cropped image a second time. Normalized (0..1) coordinates
+    /// make this composition valid across modes with different pixel dimensions.
+    /// <see cref="Adjustments"/> was added after the fact (spec/18-path-to-1.0.md Medium item, the
+    /// adjustment-sliders sub-piece) -- its absence here was a real, silent feature-loss bug:
+    /// without it, a mode change after Apply dropped Brightness/Contrast/etc. entirely, not just
+    /// re-projected them incorrectly.</summary>
+    private sealed record EditState(IImageSource Original, NormalizedRect CropRect, bool PreserveAspect, ImageOverlay Overlay, ImageAdjustments Adjustments);
 
     private EditState? _editState;
 
@@ -847,7 +851,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // immediate output was correct (used the editor's own live rotated source), but the
         // re-derivation reverted to the unrotated image while still applying the ROTATED crop
         // rect/overlay coordinates to it. CurrentSource always reflects every Rotate call so far.
-        _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Overlay);
+        _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Overlay, editor.Adjustments);
         _loadedImage = final;
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
         SelectedFileName = fileName;
@@ -945,12 +949,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _transmitCts?.Cancel();
     }
 
-    /// <summary>Re-runs Crop→Resize→ApplyOverlay against the retained <see cref="EditState"/>'s
-    /// original at the new mode's dimensions -- normalized (0..1) crop/overlay coordinates make this
-    /// valid across modes. This is synchronous CPU work against an already-in-memory original (no
-    /// file/network I/O like the old flat resize-reload did), so there is no async race to guard
-    /// against here -- the old cancel-and-replace <c>CancellationTokenSource</c> machinery existed
-    /// specifically for that I/O race and would be unused complexity now that the source is cached.</summary>
+    /// <summary>Re-runs Crop→Resize→ApplyAdjustments→ApplyOverlay against the retained
+    /// <see cref="EditState"/>'s original at the new mode's dimensions -- normalized (0..1)
+    /// crop/overlay coordinates make this valid across modes (adjustment slider values are already
+    /// mode-independent, no re-projection needed for those -- unlike overlay position/font-size,
+    /// which the editor's own real-time preview re-derives from the crop rect and DOES need
+    /// re-projecting; that composition-across-modes gap for overlay coordinates specifically is
+    /// tracked separately, spec/18-path-to-1.0.md Medium item). This is synchronous CPU work
+    /// against an already-in-memory original (no file/network I/O like the old flat resize-reload
+    /// did), so there is no async race to guard against here -- the old cancel-and-replace
+    /// <c>CancellationTokenSource</c> machinery existed specifically for that I/O race and would be
+    /// unused complexity now that the source is cached.</summary>
     partial void OnSelectedModeChanged(SstvModeDefinition? value)
     {
         Log.SelectedModeChanged(_logger, value?.Id);
@@ -964,7 +973,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         var cropped = _preparer.Crop(edit.Original, edit.CropRect);
         var resized = _preparer.Resize(cropped, value.ImageWidth, value.ImageHeight, edit.PreserveAspect);
-        var final = _preparer.ApplyOverlay(resized, edit.Overlay);
+        var adjusted = _preparer.ApplyAdjustments(resized, edit.Adjustments);
+        var final = _preparer.ApplyOverlay(adjusted, edit.Overlay);
 
         _loadedImage = final;
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
