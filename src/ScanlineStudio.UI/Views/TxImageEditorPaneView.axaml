@@ -141,43 +141,46 @@
                          elsewhere, removed outright rather than left as a disabled ghost (matches
                          this project's own precedent for confirmed-duplicate stub UI). -->
 
-                    <!-- Adjustments row: literal Value=, no binding this pass. 3-per-row x 2 rows
+                    <!-- Adjustments row: real ITransmitImagePreparer.ApplyAdjustments backing
+                         (spec/18-path-to-1.0.md Medium item), wired 2026-08-16. 3-per-row x 2 rows
                          (UniformGrid Columns=3, auto-flows 6 children into 2 rows), matching mock2's
-                         own grid-template-columns:repeat(3,1fr) intent; each Slider is disabled +
-                         NotImplemented-tooltipped (0.9-beta bar: dragging it currently did nothing
-                         but looked live) — IndustrySliderTheme h6 variant + Label/Value flanking it,
-                         same 3-cell composition as the Output card's real Drive slider
-                         (TxControlsPaneView.axaml). -->
+                         own grid-template-columns:repeat(3,1fr) intent — IndustrySliderTheme h6
+                         variant + Label/Value flanking it, same 3-cell composition as the Output
+                         card's real Drive slider (TxControlsPaneView.axaml). Value readouts use
+                         StringFormat={}{0:0} (MainWindow.axaml's own ModeTimingRowViewModel rows
+                         are the precedent for this exact pattern in this codebase) since these
+                         sliders have no TickFrequency/IsSnapToTickEnabled and would otherwise show
+                         raw double noise. -->
                     <UniformGrid DockPanel.Dock="Bottom" Columns="3" Margin="0,6,0,0">
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,10,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Brightness}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="-50" Maximum="50" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.BrightnessValue}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Brightness}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Brightness, StringFormat={}{0:0}}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,10,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Contrast}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="-50" Maximum="50" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ContrastValue}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Contrast}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Contrast, StringFormat={}{0:0}}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Saturation}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="-50" Maximum="50" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.SaturationValue}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Saturation}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Saturation, StringFormat={}{0:0}}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,10,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Gamma}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="-100" Maximum="100" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.GammaValue}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-100" Maximum="100" Value="{Binding Gamma}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Gamma, StringFormat={}{0:0}}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,10,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Sharpen}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="0" Maximum="100" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.SharpenValue}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="0" Maximum="100" Value="{Binding Sharpen}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Sharpen, StringFormat={}{0:0}}" />
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Denoise}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" IsEnabled="False" Margin="6,0" Value="0" Minimum="0" Maximum="100" VerticalAlignment="Center" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.DenoiseValue}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="0" Maximum="100" Value="{Binding Denoise}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Denoise, StringFormat={}{0:0}}" />
                         </Grid>
                     </UniformGrid>
 

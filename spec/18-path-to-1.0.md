@@ -147,13 +147,38 @@ superseded.
 
 ## 🟡 Medium — should-have, not release-blocking
 
-- TX image editor: no way to re-open/re-edit an image after Apply (`Applied`/`Cancelled` both null
-  `ActiveEditor`, no Edit button exists — `MainViewModel.cs:72-73`); no undo/redo; overlay text on
-  the editing canvas is not WYSIWYG (no `FontSize` binding, wrong plate rendering —
-  `TxImageEditorPaneView.axaml:215-225` vs `TransmitImagePreparer.cs:67-90`); 6 brightness/contrast/
-  saturation/gamma/sharpen/denoise sliders have zero backing code in `ITransmitImagePreparer`
-  (implement or remove the row); card header + dimensions chip hardcode "640×496 · PD120"
-  regardless of actual mode/size (`:28-30`, `:79`).
+- TX image editor cluster (sub-pieces sequenced small/mechanical first — see `PROJECT_BRIEF.md` for
+  full history):
+  - ✅ **DONE** (commit `307e528`): card header + dimensions chip hardcoded "640×496 · PD120"
+    regardless of actual mode/size.
+  - ✅ **DONE** (commit `7f1d32c`): overlay text's crop-relative position/font-size math fixed —
+    `BuildOverlay()` used to pass raw, full-photo-normalized X/Y straight into `ApplyOverlay`, which
+    interprets them as normalized against the CROPPED+RESIZED final image; wrong whenever the crop
+    wasn't the full identity rect. Also added the missing canvas `FontSize`/`FontFamily` binding.
+    **Two new findings surfaced by this fix, not yet resolved:**
+    - **Overlay text never renders visibly on the interactive editing canvas at all** (confirmed via
+      `git stash` to pre-date this fix; confirmed unrelated to the new binding via a hardcoded
+      `FontSize="40"` test and a `ClipToBounds="False"` experiment, neither fixed it). The separate
+      pipeline-accurate side preview panel (`PreviewImage`) DOES render it correctly. Root cause not
+      found — worth a dedicated investigation pass, `TxImageEditorPaneView.axaml`'s overlay
+      `ItemsControl`/`ItemsPanel` (nested `Canvas` inside the outer `EditorCanvas`) is the prime
+      suspect area.
+    - `TxControlsPaneViewModel.EditState.Overlay` captures already-crop-projected coordinates
+      (`TxControlsPaneViewModel.cs:850`), so switching TX mode mid-edit re-applies those same
+      coordinates against the NEW mode's aspect (`:965-967`) — stale whenever the two modes' aspect
+      ratios differ. Not a regression (pre-fix those coordinates were wrong at both modes), but the
+      composition-across-modes comments at `:74-75`/`:948-950` now overclaim. Fix needs `EditState`
+      to carry raw (un-projected) positions + `CropRect` + `PreserveAspect`, re-projected fresh at
+      the new mode via a shared helper.
+  - ✅ **DONE**: 6 brightness/contrast/saturation/gamma/sharpen/denoise sliders implemented (not
+    removed) against a new `ITransmitImagePreparer.ApplyAdjustments` — real ImageSharp-backed
+    Brightness/Contrast/Saturate + a hand-rolled gamma curve (ImageSharp has no `GammaCorrection`
+    operation) + conditionally-skipped Gaussian sharpen/denoise, applied between Resize and
+    ApplyOverlay so adjustments never touch already-burned-in overlay text. Real-window verified
+    (Brightness slider dragged in the running app; side preview panel's pixel values measurably
+    brightened).
+  - Remaining: no way to re-open/re-edit an image after Apply (`Applied`/`Cancelled` both null
+    `ActiveEditor`, no Edit button exists — `MainViewModel.cs:72-73`); no undo/redo.
 - Waterfall range caption is a stale literal ("1000…2600 Hz," `MainWindow.axaml:376-378`,
   `en.json:118`) that silently lies once the real Start/Span steppers are touched; those same
   steppers only window the spectrum half, not the waterfall (`WaterfallControl.cs:25-32` has no
