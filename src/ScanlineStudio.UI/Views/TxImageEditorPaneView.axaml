@@ -291,9 +291,17 @@
                                Margin="0,0,0,4"
                                Text="{loc:Translate Panes.TxImageEditor.Caption}" />
 
+                    <!-- Design-fidelity Phase C (mockups/Editwindow line 97): the canvas "well" —
+                         IndustryNeutral200 is the SAME token this design system's own token file
+                         already calls out as "the editor canvas's" background (AtomsTokens.axaml:333)
+                         elsewhere in the app, reused here rather than a new hardcoded color; it's a
+                         near-exact match to the mock's own #e9e9ea well fill anyway (#E7E7EA). -->
+                    <Border Background="{StaticResource IndustryNeutral200}" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1">
                     <ScrollViewer x:Name="EditorScrollViewer"
                                   HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollBarVisibility="Auto">
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalContentAlignment="Center"
+                                  VerticalContentAlignment="Center">
                         <!-- Phase 7 (spec/15-template-designer.md): zoom is baked directly into
                              CanvasDisplayWidth/Height (= WorkingCopyWidth/Height * ZoomFactor, and
                              into every other on-screen pixel property — CropLeftPixels/LeftPixels/
@@ -340,13 +348,17 @@
                                    Width="{Binding CanvasDisplayWidth}" Height="{Binding CanvasDisplayHeight}"
                                    Stretch="Fill" />
 
+                            <!-- Design-fidelity Phase C: fill removed (was #22FFFF00) — the mock has
+                                 no crop-rect fill at all (mockups/Editwindow line 105, outline only);
+                                 crop == the working-copy frame conceptually, not a separate tinted
+                                 region on top of it. -->
                             <Border Canvas.Left="{Binding CropLeftPixels}"
                                     Canvas.Top="{Binding CropTopPixels}"
                                     Width="{Binding CropWidthPixels}"
                                     Height="{Binding CropHeightPixels}"
                                     BorderBrush="{StaticResource IndustryAccent}"
                                     BorderThickness="2"
-                                    Background="#22FFFF00"
+                                    Background="Transparent"
                                     PointerPressed="OnCropBodyPointerPressed" />
 
                             <Border Canvas.Left="{Binding CropRightPixels}"
@@ -729,8 +741,37 @@
                                    IsVisible="{Binding SafeAreaVisible}"
                                    Stroke="{StaticResource IndustryAccent}" Opacity="0.55"
                                    StrokeThickness="1" StrokeDashArray="4,2" />
+
+                        <!-- Design-fidelity Phase C (mockups/Editwindow line 99): a thin frame around
+                             the working-copy bounds. The mock's own 4 corner "+" marks (lines
+                             127-128) are DELIBERATELY NOT built here, not silently dropped — tried
+                             first, but this ScrollViewer clips its content to its own viewport (same
+                             mechanism Phase A's panel-title fix worked around), which forces any mark
+                             positioned at the frame's true edge to render ON TOP of the photo itself
+                             rather than on neutral chrome outside it (unlike the mock, whose outer
+                             frame always has padding/neutral background around the photo). A subtle
+                             muted-gray "+" against arbitrary photo content is unreliable — sometimes
+                             invisible, sometimes fine — so it's a real functional regression risk
+                             for a purely decorative element. Fixing this properly needs padding
+                             around the working copy inside the well (a real, if small, layout change,
+                             not attempted in this pass). IsHitTestVisible="False" — decorative,
+                             must not steal crop/element pointer events. -->
+                        <Border Width="{Binding CanvasDisplayWidth}" Height="{Binding CanvasDisplayHeight}"
+                                BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
+                                IsHitTestVisible="False" />
+
+                        <!-- Footer hint lines (mockups/Editwindow lines 130-131): bottom-left crop
+                             dims/lock state, bottom-right working-copy/render size. -->
+                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}"
+                                    HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8,0,0,6" IsHitTestVisible="False">
+                            <TextBlock Classes="IndustryRowLabel" Text="{Binding CropFooterText}" />
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.LockedToModeSuffix}" IsVisible="{Binding LockAspectToMode}" />
+                        </StackPanel>
+                        <TextBlock Classes="IndustryRowLabel" Text="{Binding WorkingCopyFooterText}" IsHitTestVisible="False"
+                                   HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,8,6" />
                         </Panel>
                     </ScrollViewer>
+                    </Border>
 
                 </DockPanel>
 

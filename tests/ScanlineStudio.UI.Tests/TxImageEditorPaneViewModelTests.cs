@@ -1236,6 +1236,46 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(
             "OUTGOING FRAME 320×256 · Martin M1 · 114.3 s",
             string.Format(CultureInfo.InvariantCulture, "OUTGOING FRAME {0}×{1} · {2} · {3:0.0} s", 320, 256, "Martin M1", 114.3));
+        Assert.Equal(
+            "CROP 320×256",
+            string.Format(CultureInfo.InvariantCulture, "CROP {0}×{1}", 320, 256));
+        Assert.Equal(
+            "WORKING COPY 836×669 · RENDER 320×256",
+            string.Format(CultureInfo.InvariantCulture, "WORKING COPY {0:0}×{1:0} · RENDER {2}×{3}", 836.0, 669.0, 320, 256));
+    }
+
+    [AvaloniaFact]
+    public void WorkingCopyFooterText_ReflectsTheActualWorkingCopyAndTargetModeDimensions()
+    {
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+
+        _ = vm.WorkingCopyFooterText;
+
+        Assert.Equal("Panes.TxImageEditor.WorkingCopyFooterFormat", localization.LastKey);
+        Assert.Equal(new object[] { 8.0, 4.0, 8, 4 }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public void WorkingCopyFooterText_RaisesPropertyChanged_AfterRotate()
+    {
+        // Pins the OnPropertyChanged(nameof(WorkingCopyFooterText)) raise in RotateImageOnly --
+        // without it this text would silently go stale after the one operation that actually
+        // changes WorkingCopyWidth/Height mid-session. Checking the raised PropertyChanged name
+        // directly (not the text's own value) since FakeLocalizationService always returns the raw
+        // key regardless of args -- WorkingCopyWidth/Height swapping is already covered by the
+        // Rotate_ThenUndo_* tests above.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        var raised = false;
+        vm.PropertyChanged += (_, e) => raised |= e.PropertyName == nameof(vm.WorkingCopyFooterText);
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.True(raised);
     }
 
     [AvaloniaFact]
