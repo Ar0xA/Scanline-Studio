@@ -1219,19 +1219,25 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_ReentrantCall_IsANoOp()
+    public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_ReentrantCallWhileARealEditIsInProgress_IsANoOp()
     {
+        // Auditor-found regression fix (2026-08-17) relaxed this guard to allow a reentrant call
+        // while the open editor is blank/untouched (see the sibling
+        // OpenBlankEditorCommand_AllowedAgainWhileAlreadyBlankAndUntouched_ProducesAFreshEditor
+        // test for that now-intentional case) -- this pins the invariant that's still true: a real
+        // edit in progress still can't be silently swapped out for a fresh blank one.
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
         var editorOpenedCount = 0;
         vm.EditorOpened += _ => editorOpenedCount++;
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
 
-        await vm.OpenBlankEditorCommand.ExecuteAsync(null);
-        Dispatcher.UIThread.RunJobs();
         await vm.OpenBlankEditorCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(1, editorOpenedCount);
+        Assert.Same(editor, ExtractCurrentEditor(vm));
     }
 
     [AvaloniaFact]
@@ -1296,6 +1302,58 @@ public sealed class PaneViewModelTests
         Assert.True(vm.IsEditorOpen);
     }
 
+    // Auditor-found regression (2026-08-17, usability-gap review): with the editor now open by
+    // default, a bare IsEditorOpen guard made Browse/STOCK/the mode ComboBox permanently
+    // unreachable after the very first blank auto-open -- there was no way to ever load a real
+    // photo or change SSTV mode via the dropdown. Fixed the same way the FAVORITES row already
+    // was: relaxed while the currently-open editor is blank/untouched.
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectImageCommand_AllowedWhileTheBlankPlaceholderEditorIsOpen_ReplacesItWithTheRealPhoto()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var blankEditor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        Assert.True(vm.CanChangeSourceOrMode);
+
+        var realEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+
+        Assert.NotSame(blankEditor, realEditor);
+        Assert.Equal(9, realEditor.CurrentSource.Width);
+        Assert.True(vm.IsEditorOpen);
+        Assert.False(vm.CanChangeSourceOrMode, "a real photo pick must re-lock mode-select/Browse/STOCK, same as before this fix.");
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectImageCommand_StillDisallowedWhileARealEditIsInProgress()
+    {
+        // Must NOT relax for a genuinely in-progress edit -- only the specific "nothing to lose"
+        // blank-placeholder case.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var editorOpenedCount = 0;
+        vm.EditorOpened += _ => editorOpenedCount++;
+
+        Assert.False(vm.CanChangeSourceOrMode);
+
+        // SelectImageCommand is a bare [RelayCommand] with no CanExecute predicate (its own
+        // established "body-level check is the real backstop" pattern, matching SelectFavoriteMode/
+        // QuickSelectMode's own documented reasoning) -- CanChangeSourceOrMode is the real gate
+        // (drives the AXAML IsEnabled binding); a direct Execute call must still be a safe no-op.
+        await vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, editorOpenedCount);
+        Assert.True(vm.IsEditorOpen);
+        Assert.True(editor.HasUnsavedEdits);
+    }
+
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_SelectFavoriteMode_DisallowedOnceTheBlankEditorHasARealEdit()
     {
@@ -1313,6 +1371,56 @@ public sealed class PaneViewModelTests
         Assert.True(editor.HasUnsavedEdits);
         Assert.False(vm.SelectFavoriteModeCommand.CanExecute(modeB));
         Assert.True(canExecuteChangedCount > 0, "HasUnsavedEdits flipping must re-notify CanExecute via OnCurrentEditorPropertyChanged, or a bound Button would never actually disable.");
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_AllowedAgainWhileAlreadyBlankAndUntouched_ProducesAFreshEditor()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var firstEditor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+
+        Assert.True(vm.OpenBlankEditorCommand.CanExecute(null));
+        var secondEditor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+
+        Assert.NotSame(firstEditor, secondEditor);
+        Assert.True(vm.IsEditorOpen);
+    }
+
+    [AvaloniaFact]
+    public async Task CanChangeSourceOrMode_ReNotifiesAfterCancelReopensBlank_NotJustOnTheEarlierIsEditorOpenToggle()
+    {
+        // Real bug caught via real-window testing (2026-08-17): IsEditorOpen toggles true BEFORE
+        // OpenEditorWithLoadedSourceAsync's own await-gated _currentEditor assignment completes, so
+        // the OnIsEditorOpenChanged-driven notify fires while _currentEditor is still null (always
+        // reads as "not blank yet" at that instant). Without an explicit re-notify once
+        // _currentEditor is actually attached, CanChangeSourceOrMode's bindable VALUE ends up
+        // correct but the mode ComboBox's IsEnabled binding never learns about it -- confirmed live,
+        // the ComboBox stayed visibly greyed out after Cancel auto-reopened a fresh blank editor.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+
+        // Cancel -> Cancelled fires -> IsEditorOpen false->true (via OpenBlankEditorAsync) already
+        // accounts for 2 raises on its own (one per toggle) -- counting strictly MORE than that
+        // proves the new explicit re-notify after _currentEditor is actually attached is what's
+        // firing, not just catching the same 2 toggle-driven raises the bug already had.
+        var canChangeSourceOrModeRaiseCount = 0;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(TxControlsPaneViewModel.CanChangeSourceOrMode))
+            {
+                canChangeSourceOrModeRaiseCount++;
+            }
+        };
+
+        editor.CancelCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.CanChangeSourceOrMode);
+        Assert.True(canChangeSourceOrModeRaiseCount > 2, $"expected more than the 2 IsEditorOpen-toggle-driven raises (got {canChangeSourceOrModeRaiseCount}) -- the explicit re-notify after _currentEditor is attached must also fire.");
     }
 
     [AvaloniaFact]
@@ -1845,6 +1953,10 @@ public sealed class PaneViewModelTests
     private static IImageSource? ExtractLoadedImage(TxControlsPaneViewModel vm)
         => typeof(TxControlsPaneViewModel).GetField("_loadedImage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
             .GetValue(vm) as IImageSource;
+
+    private static TxImageEditorPaneViewModel? ExtractCurrentEditor(TxControlsPaneViewModel vm)
+        => typeof(TxControlsPaneViewModel).GetField("_currentEditor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(vm) as TxImageEditorPaneViewModel;
 
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_Constructed_LoadsEntriesFromTheHistoryStore()
