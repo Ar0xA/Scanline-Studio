@@ -46,7 +46,14 @@
             <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" Margin="0,0,0,6" VerticalAlignment="Center">
                 <TextBlock Classes="IndustryGbTitle" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ContextBarTitle}" />
                 <Border Grid.Column="1" Width="1" Height="16" Margin="10,0" Background="{StaticResource IndustryChromeBorder}" />
-                <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding FrameReadoutText}" />
+                <!-- design-fidelity Phase H (final confirming pass finding #5): IndustryRowValue is
+                     a right-aligned, grey-data-field-background atom by design (Atoms.axaml:789-800)
+                     — correct for real value cells, wrong for chrome/prose text like this readout,
+                     which rendered inside an unintended grey lozenge. IndustryKicker (already used
+                     for chrome text elsewhere on this screen, e.g. the CROP toolbar label) is the
+                     correct atom here. Fixed at this call site only, not the shared atom itself,
+                     which is correct for its real value-cell consumers elsewhere in the app. -->
+                <TextBlock Grid.Column="2" Classes="IndustryKicker" VerticalAlignment="Center" Text="{Binding FrameReadoutText}" />
                 <Border Grid.Column="3" Classes="Industry IndustryMini" Margin="10,0,0,0" IsVisible="{Binding HasUnsavedEdits}">
                     <TextBlock Text="{loc:Translate Panes.TxImageEditor.UnsavedEditsChip}" />
                 </Border>
@@ -235,7 +242,15 @@
                                                 <Border Classes="IndustryHatchPanel" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}" />
                                                 <Image Source="{Binding Template.Thumbnail}" Stretch="Uniform" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                             </Panel>
-                                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" HorizontalAlignment="Left" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                            <!-- design-fidelity Phase H (final confirming pass finding #5):
+                                                 IndustryRowValue -> IndustryRowLabel — a rack slot's own
+                                                 template name is an item identity/label, not a value cell,
+                                                 and IndustryRowValue's own right-align + grey background
+                                                 (correct for real value cells) rendered as an unintended
+                                                 grey lozenge behind the name here. IndustryRowLabel is
+                                                 legible left-aligned body text with no background, matching
+                                                 what a list-row name actually needs. -->
+                                            <TextBlock Grid.Column="2" Classes="IndustryRowLabel" HorizontalAlignment="Left" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
                                                        Text="{Binding Template.Name}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                             <TextBlock Grid.Column="2" Classes="IndustryKicker" VerticalAlignment="Center"
                                                        Text="{loc:Translate Panes.TxImageEditor.PinFromLibraryHint}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}" />
@@ -270,13 +285,17 @@
 
                             <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                                 <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                    <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesYet}" IsVisible="{Binding ReadyRack.HasNoTemplates}" />
-                                    <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesMatchFilter}" IsVisible="{Binding ReadyRack.HasNoFilteredTemplates}" />
+                                    <!-- design-fidelity Phase H (final confirming pass finding #5):
+                                         same IndustryRowValue->IndustryRowLabel fix as the rack row
+                                         above — these are empty-state PROSE messages and a list-row
+                                         NAME, not value cells. -->
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesYet}" IsVisible="{Binding ReadyRack.HasNoTemplates}" />
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesMatchFilter}" IsVisible="{Binding ReadyRack.HasNoFilteredTemplates}" />
                                     <ItemsControl ItemsSource="{Binding ReadyRack.FilteredTemplates}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="vm:TemplateListRowViewModel">
                                                 <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,2" ColumnSpacing="4">
-                                                    <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
+                                                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
                                                     <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
                                                             Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding LoadCommand}" CommandParameter="{Binding}" />
                                                     <ToggleButton Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
@@ -338,7 +357,16 @@
                          already calls out as "the editor canvas's" background (AtomsTokens.axaml:333)
                          elsewhere in the app, reused here rather than a new hardcoded color; it's a
                          near-exact match to the mock's own #e9e9ea well fill anyway (#E7E7EA). -->
+                    <!-- design-fidelity Phase H (final confirming pass finding #4): outer Panel added
+                         so the footer hint lines below can be pinned to the WELL itself (outside the
+                         ScrollViewer's own clipped/scrolled/zoomed viewport) instead of the zoomed
+                         canvas content — at anything but Fit/100% they were scrolling and clipping
+                         mid-word along with the photo, e.g. "WORKING COPY 640×475 · REND" truncated
+                         at the well's own right edge. Same "ScrollViewer clips to its own viewport"
+                         mechanism already documented for the corner "+" marks and the Phase A
+                         panel-title fix. -->
                     <Border Background="{StaticResource IndustryNeutral200}" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1">
+                    <Panel>
                     <ScrollViewer x:Name="EditorScrollViewer"
                                   HorizontalScrollBarVisibility="Auto"
                                   VerticalScrollBarVisibility="Auto"
@@ -819,17 +847,22 @@
                                 BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
                                 IsHitTestVisible="False" />
 
-                        <!-- Footer hint lines (mockups/Editwindow lines 130-131): bottom-left crop
-                             dims/lock state, bottom-right working-copy/render size. -->
-                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}"
-                                    HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8,0,0,6" IsHitTestVisible="False">
-                            <TextBlock Classes="IndustryRowLabel" Text="{Binding CropFooterText}" />
-                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.LockedToModeSuffix}" IsVisible="{Binding LockAspectToMode}" />
-                        </StackPanel>
-                        <TextBlock Classes="IndustryRowLabel" Text="{Binding WorkingCopyFooterText}" IsHitTestVisible="False"
-                                   HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,8,6" />
                         </Panel>
                     </ScrollViewer>
+
+                    <!-- Footer hint lines (mockups/Editwindow lines 130-131): bottom-left crop
+                         dims/lock state, bottom-right working-copy/render size. Pinned to the WELL
+                         (this outer Panel, a sibling of the ScrollViewer) — see this region's own
+                         Phase H doc comment above for why these moved out of the scrolled/zoomed
+                         content they used to live inside. -->
+                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}"
+                                HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8,0,0,6" IsHitTestVisible="False">
+                        <TextBlock Classes="IndustryRowLabel" Text="{Binding CropFooterText}" />
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.LockedToModeSuffix}" IsVisible="{Binding LockAspectToMode}" />
+                    </StackPanel>
+                    <TextBlock Classes="IndustryRowLabel" Text="{Binding WorkingCopyFooterText}" IsHitTestVisible="False"
+                               HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,8,6" />
+                    </Panel>
                     </Border>
 
                 </DockPanel>
@@ -860,9 +893,13 @@
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.PreviewLabel}" />
                         </HeaderedContentControl.Header>
+                        <!-- design-fidelity Phase H (final confirming pass finding #6): MaxHeight
+                             bound to the real target mode height (was hardcoded 200), so a 256-line
+                             mode's mode-exact preview renders literal 1:1 as the mock does, instead
+                             of always being downscaled to 78%. -->
                         <Image Source="{Binding PreviewImage}"
                                Stretch="Uniform"
-                               MaxHeight="200"
+                               MaxHeight="{Binding PreviewMaxHeight}"
                                RenderOptions.BitmapInterpolationMode="None" />
                     </HeaderedContentControl>
 
@@ -903,11 +940,19 @@
                         </HeaderedContentControl.Header>
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="{StaticResource IndustrySpacingTight}">
-                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
+                                <!-- design-fidelity Phase H (final confirming pass finding #1): these
+                                     4 IndustryBtn21 buttons had no Padding override, unlike every
+                                     other IndustryBtn call site in this file — Fluent's default
+                                     vertical button padding ate the line box at this 21px/10.5pt
+                                     size, vertically clipping the glyphs (confirmed via a real-window
+                                     zoom: a straight cut ~7px inside the button's own border). Phase
+                                     A's own fix here was horizontal only (DUPLICATE->DUP); this is
+                                     the separate vertical clip that fix didn't touch. -->
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0"
                                         Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
                                         Command="{Binding BringToFrontCommand}" CommandParameter="{Binding SelectedOverlayElement}"
                                         ToolTip.Tip="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" />
-                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0"
                                         Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
                                         Command="{Binding SendToBackCommand}" CommandParameter="{Binding SelectedOverlayElement}"
                                         ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" />
@@ -918,10 +963,10 @@
                                      convention, while these compact 21px header buttons need the
                                      mock's own abbreviated DUP/DEL to avoid clipping ("DUPLICATE"
                                      visibly overflowed this button width at this font size). -->
-                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0"
                                         Content="{loc:Translate Panes.TxImageEditor.DuplicateHeaderAction}"
                                         Command="{Binding DuplicateCommand}" />
-                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0"
                                         Content="{loc:Translate Panes.TxImageEditor.RemoveHeaderAction}"
                                         Command="{Binding RemoveOverlayElementCommand}" CommandParameter="{Binding SelectedOverlayElement}" />
                             </StackPanel>
@@ -1072,20 +1117,29 @@
                                  keeping the old SelectXTabCommand wiring (still real, tested VM APIs —
                                  just no longer the AXAML's own interaction path, same as those other
                                  3 call sites). -->
-                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}" GroupName="InspectorTab"
+                            <!-- design-fidelity Phase H (final confirming pass finding #2): StackPanel
+                                 -> UniformGrid + the "stretched" IndustrySeg variant (same fix Phase F
+                                 already applied to the ELEMENTS panel's +TEXT/+IMAGE/+BOX row for the
+                                 identical StackPanel-Stretch-is-a-no-op reason). Mock's own tab strip
+                                 is 3 equal flex:1 segments spanning the panel's full width; this was
+                                 3 content-width buttons occupying roughly half the panel with gaps. -->
+                            <UniformGrid Columns="3">
+                                <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="InspectorTab"
                                              IsChecked="{Binding IsTextStyleTabSelected}"
                                              Content="{loc:Translate Panes.TxImageEditor.InspectorTabText}" />
-                                <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}" GroupName="InspectorTab"
+                                <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="InspectorTab"
                                              IsChecked="{Binding IsGeometryTabSelected}"
                                              Content="{loc:Translate Panes.TxImageEditor.InspectorTabGeometry}" />
-                                <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}" GroupName="InspectorTab"
+                                <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="InspectorTab"
                                              IsChecked="{Binding IsImageTabSelected}"
                                              Content="{loc:Translate Panes.TxImageEditor.InspectorTabImage}" />
-                            </StackPanel>
+                            </UniformGrid>
 
                     <StackPanel Classes="Industry IndustryRows" IsVisible="{Binding IsTextStyleTabSelected}">
-                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoTextSelected}"
+                            <!-- design-fidelity Phase H (final confirming pass finding #5): same
+                                 IndustryRowValue->IndustryRowLabel fix — empty-state prose, not a
+                                 value cell. -->
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTextSelected}"
                                        IsVisible="{Binding SelectedTextElement, Converter={x:Static ObjectConverters.IsNull}}" />
                             <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
                                         IsVisible="{Binding SelectedTextElement, Converter={x:Static ObjectConverters.IsNotNull}}">
@@ -1190,28 +1244,28 @@
                                      panel, unchanged otherwise) for the full reasoning. -->
                                 <Border Classes="IndustryRow"><TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" /></Border>
                                 <WrapPanel>
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 </WrapPanel>
                                 <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.SourceLabel}" />
@@ -1233,7 +1287,9 @@
                          reuses the SAME SnapToGrid property the STAGE toolbar's own toggle already
                          writes — one piece of state, two surfaces, not a duplicate. -->
                     <StackPanel Classes="Industry IndustryRows" Spacing="{StaticResource IndustrySpacingTight}" IsVisible="{Binding IsGeometryTabSelected}">
-                        <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoElementSelected}"
+                        <!-- design-fidelity Phase H (final confirming pass finding #5): same
+                             IndustryRowValue->IndustryRowLabel fix — empty-state prose. -->
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoElementSelected}"
                                    IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNull}}" />
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
                                     IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNotNull}}">
@@ -1283,32 +1339,38 @@
                          its old location, preserved in spirit here) for why StringFormat={}{0:0} is
                          used on every readout. -->
                     <StackPanel Spacing="{StaticResource IndustrySpacingTight}" IsVisible="{Binding IsImageTabSelected}">
-                        <Grid ColumnDefinitions="Auto,*,Auto">
+                        <!-- design-fidelity Phase H (final confirming pass finding #3): label column
+                             fixed at 76px (matching the mock's own literal width:76px, mockups/
+                             Editwindow line 223) across all 6 rows below, replacing each row's own
+                             independent Auto column — 6 separate Grids with no shared column meant
+                             the slider track's own left edge was ragged (measured up to 27 DIP of
+                             spread) instead of aligned, since each label sized to its own text. -->
+                        <Grid ColumnDefinitions="76,*,Auto">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Brightness}" />
                             <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Brightness}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Brightness, StringFormat={}{0:0}}" />
                         </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Grid ColumnDefinitions="76,*,Auto">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Contrast}" />
                             <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Contrast}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Contrast, StringFormat={}{0:0}}" />
                         </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Grid ColumnDefinitions="76,*,Auto">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Saturation}" />
                             <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Saturation}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Saturation, StringFormat={}{0:0}}" />
                         </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Grid ColumnDefinitions="76,*,Auto">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Gamma}" />
                             <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-100" Maximum="100" Value="{Binding Gamma}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Gamma, StringFormat={}{0:0}}" />
                         </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Grid ColumnDefinitions="76,*,Auto">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Sharpen}" />
                             <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="0" Maximum="100" Value="{Binding Sharpen}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Sharpen, StringFormat={}{0:0}}" />
                         </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto">
+                        <Grid ColumnDefinitions="76,*,Auto">
                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Denoise}" />
                             <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="0" Maximum="100" Value="{Binding Denoise}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Denoise, StringFormat={}{0:0}}" />
@@ -1374,7 +1436,11 @@
                                     Content="{loc:Translate Panes.TxImageEditor.ClearFields}"
                                     Command="{Binding ClearTemplateVariablesCommand}" />
                         </Grid>
-                        <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoQsoFields}" IsVisible="{Binding HasNoTemplateVariableRows}" />
+                        <!-- design-fidelity Phase H (final confirming pass finding #5): same
+                             IndustryRowValue->IndustryRowLabel fix — was rendering right-aligned in
+                             a grey box hard against the CLEAR button instead of reading as a plain
+                             message under the QSO FILL title. -->
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoQsoFields}" IsVisible="{Binding HasNoTemplateVariableRows}" />
                         <ItemsControl ItemsSource="{Binding TemplateVariableRows}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
