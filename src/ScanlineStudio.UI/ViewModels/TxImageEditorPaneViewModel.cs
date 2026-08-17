@@ -1327,6 +1327,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
         element.CanvasFontSize = ComputeCanvasFontSize(element);
+        element.CanvasStrokeThicknessPixels = ComputeCanvasStrokeThicknessPixels(element);
         element.PropertyChanged += OnOverlayElementPropertyChanged;
         return element;
     }
@@ -2549,6 +2550,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         if (e.PropertyName is nameof(ITemplateElementViewModel.ImageWidth)
             or nameof(ITemplateElementViewModel.ImageHeight)
             or nameof(OverlayElementViewModel.CanvasFontSize)
+            // Backlog item (user request, 2026-08-17): canvas-preview outline fix -- pure
+            // canvas-chrome derived from StrokeThickness/StrokeColor (both already independently
+            // drive a recompute via their own unfiltered PropertyChanged), same "cascade, not a
+            // driver" reasoning as CanvasFontSize just above.
+            or nameof(OverlayElementViewModel.CanvasStrokeThicknessPixels)
             or nameof(OverlayElementViewModel.ResolvedText)
             or nameof(ITemplateElementViewModel.LeftPixels)
             or nameof(ITemplateElementViewModel.TopPixels)
@@ -2611,6 +2617,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 or nameof(OverlayElementViewModel.RotationDegrees))
         {
             textElement.CanvasFontSize = ComputeCanvasFontSize(textElement);
+            textElement.CanvasStrokeThicknessPixels = ComputeCanvasStrokeThicknessPixels(textElement);
         }
 
         // Phase 6: FontFamily can change on the selected text element without SelectedOverlayElement
@@ -3142,7 +3149,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// plan-review nit), not guaranteed byte-identical near a .5 boundary, but the transmitted
     /// preview image itself always comes from the real pipeline regardless, so this is a
     /// canvas-display-only approximation.</summary>
-    private double ComputeCanvasFontSize(OverlayElementViewModel element)
+    /// <summary>Backlog item (user request, 2026-08-17) -- factored out of
+    /// <see cref="ComputeCanvasFontSize"/> so <see cref="ComputeCanvasStrokeThicknessPixels"/> (the
+    /// canvas-preview outline fix) can convert a target-mode-pixel quantity to canvas-display pixels
+    /// the identical way, instead of a second, driftable copy of this same formula. Returns 0 (an
+    /// already-guarded "no valid scale" sentinel both callers already check for) when the crop has
+    /// zero area.</summary>
+    private double ComputeTargetToCanvasScaleY()
     {
         var cropWidthPixels = CropWidthPixels;
         var cropHeightPixels = CropHeightPixels;
@@ -3153,15 +3166,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         var targetWidth = (double)_targetMode.ImageWidth;
         var targetHeight = (double)_targetMode.ImageHeight;
-        var scaleY = PreserveAspect
+        return PreserveAspect
             ? Math.Min(targetWidth / cropWidthPixels, targetHeight / cropHeightPixels)
             : targetHeight / cropHeightPixels;
+    }
 
+    private double ComputeCanvasFontSize(OverlayElementViewModel element)
+    {
+        var scaleY = ComputeTargetToCanvasScaleY();
         if (scaleY <= 0)
         {
             return 0;
         }
 
+        var targetWidth = (double)_targetMode.ImageWidth;
+        var targetHeight = (double)_targetMode.ImageHeight;
         var bounds = ProjectRectToCropRelative(element.X, element.Y, element.Width, element.Height);
         var boundsWidthPx = Math.Max(1, (int)Math.Round(bounds.Width * targetWidth));
         var boundsHeightPx = Math.Max(1, (int)Math.Round(bounds.Height * targetHeight));
@@ -3193,6 +3212,30 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         return fittedFinalSizePx / scaleY;
     }
 
+    /// <summary>Backlog item (user request, 2026-08-17) -- canvas-preview outline fix. Real-pixel
+    /// formula matches <c>TransmitImagePreparer.DrawTemplateText</c>'s own
+    /// <c>strokeThicknessPx = strokeThicknessRelative * imageHeightPx</c> exactly (against the
+    /// TARGET mode's height, not the crop's), then converted to canvas-display pixels via the same
+    /// <see cref="ComputeTargetToCanvasScaleY"/> <see cref="ComputeCanvasFontSize"/> already uses --
+    /// keeps the canvas stroke width in the same pixel space as <see cref="OverlayElementViewModel.CanvasFontSize"/>.
+    /// 0 when <see cref="OverlayElementViewModel.StrokeColor"/> is null (no outline) or the scale is
+    /// invalid, matching <see cref="ComputeCanvasFontSize"/>'s own zero-sentinel convention.</summary>
+    private double ComputeCanvasStrokeThicknessPixels(OverlayElementViewModel element)
+    {
+        if (element.StrokeColor is not { })
+        {
+            return 0;
+        }
+
+        var scaleY = ComputeTargetToCanvasScaleY();
+        if (scaleY <= 0)
+        {
+            return 0;
+        }
+
+        return (element.StrokeThickness * _targetMode.ImageHeight) / scaleY;
+    }
+
     /// <summary>TEXT elements only -- boxes have no font/shrink-to-fit concept.</summary>
     private void RefreshOverlayElementCanvasFontSizes()
     {
@@ -3201,6 +3244,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             if (element is OverlayElementViewModel text)
             {
                 text.CanvasFontSize = ComputeCanvasFontSize(text);
+                text.CanvasStrokeThicknessPixels = ComputeCanvasStrokeThicknessPixels(text);
             }
         }
     }
