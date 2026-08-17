@@ -1705,6 +1705,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         OnPropertyChanged(nameof(FontFamilyPickerItems));
         OnPropertyChanged(nameof(SelectedTextElement));
         OnPropertyChanged(nameof(SelectionReadoutText));
+        OnPropertyChanged(nameof(SelectedTextElementFontSizePx));
     }
 
     /// <summary>Phase 4 (spec/15-template-designer.md) -- <see cref="SelectedOverlayElement"/>
@@ -1715,6 +1716,33 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// "narrow once, bind against the narrowed type" shape <see cref="CanInsertField"/> already
     /// established for the insert-field chips.</summary>
     public OverlayElementViewModel? SelectedTextElement => SelectedOverlayElement as OverlayElementViewModel;
+
+    /// <summary>Backlog item (user request, 2026-08-17): "text size should be in px not 0.1 or 0.16
+    /// etc" -- the TEXT STYLE tab's SIZE field now shows/edits a real pixel count instead of the raw
+    /// relative-to-height fraction, while <see cref="OverlayElementViewModel.FontSizeRelative"/>
+    /// itself stays the underlying storage (deliberately mode-portable -- see its own doc comment: a
+    /// template saved at one SSTV mode must still render correctly at another, so a plain rename to
+    /// px storage would break that guarantee). Converts against the TARGET mode's own height, the
+    /// same real-pixel convention <c>TransmitImagePreparer.DrawTemplateText</c>'s own
+    /// <c>strokeThicknessPx = strokeThicknessRelative * imageHeightPx</c> already uses -- this is the
+    /// size the text renders at in the TRANSMITTED image, not canvas-display pixels at the current
+    /// zoom (<see cref="OverlayElementViewModel.CanvasFontSize"/> already covers that separate
+    /// concern). Get/set both no-op safely when nothing is selected -- a bound TextBox still
+    /// round-trips through this property even while its row is hidden by
+    /// <c>SelectedTextElement</c>'s own null-check.</summary>
+    public double SelectedTextElementFontSizePx
+    {
+        get => SelectedTextElement is { } text ? text.FontSizeRelative * _targetMode.ImageHeight : 0;
+        set
+        {
+            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            {
+                return;
+            }
+
+            text.FontSizeRelative = value / _targetMode.ImageHeight;
+        }
+    }
 
     /// <summary>Phase 4 -- the TEXT STYLE panel's font-family picker ItemsSource. Forwards
     /// <see cref="ITransmitImagePreparer.AvailableFontFamilies"/> rather than the VM hardcoding its
@@ -2638,6 +2666,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         if (ReferenceEquals(sender, SelectedOverlayElement))
         {
             OnPropertyChanged(nameof(SelectionReadoutText));
+            OnPropertyChanged(nameof(SelectedTextElementFontSizePx));
         }
 
         RecomputePreview();

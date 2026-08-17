@@ -1296,10 +1296,16 @@
                                                IsVisible="{Binding IsFontUnavailable}"
                                                ToolTip.Tip="{loc:Translate Panes.TxImageEditor.FontUnavailableWarning}" />
                                 </Grid></Border>
+                                <!-- Backlog item (user request, 2026-08-17): "text size should be in px not 0.1 or
+                                     0.16 etc" — bound to the parent VM's own SelectedTextElementFontSizePx
+                                     (a real pixel count against the TARGET mode's height) instead of the raw
+                                     FontSizeRelative fraction; FontSizeRelative itself stays the underlying
+                                     storage (deliberately mode-portable), this is a display/edit-side
+                                     conversion only. -->
                                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontSizeLabel}" />
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
-                                             Text="{Binding SelectedTextElement.FontSizeRelative}" />
+                                             Text="{Binding SelectedTextElementFontSizePx}" />
                                 </Grid></Border>
                                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FillColorLabel}" />
