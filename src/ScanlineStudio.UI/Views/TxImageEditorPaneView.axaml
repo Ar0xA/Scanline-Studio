@@ -746,6 +746,23 @@
                                 </ItemsControl.DataTemplates>
                             </ItemsControl>
 
+                            <!-- design-fidelity Phase E (#15, mockups/Editwindow line 108): selection
+                                 readout badge — positioned via the same Canvas.Left/Top + LeftPixels/
+                                 TopPixels convention every overlay element already uses (no ancestor
+                                 transform in this coordinate space, see Phase 7's own doc comment), a
+                                 negative Margin shifts it up above the element's own top edge without
+                                 needing subtraction inside the binding (no arithmetic-in-binding
+                                 converter exists in this codebase for that). A sibling of
+                                 OverlayElementsHost, not inside its DataTemplate — this is ONE badge
+                                 for the current selection, not a per-item template concern. -->
+                            <Border Canvas.Left="{Binding SelectedOverlayElement.LeftPixels}"
+                                    Canvas.Top="{Binding SelectedOverlayElement.TopPixels}"
+                                    Margin="0,-20,0,0" Padding="4,2" IsHitTestVisible="False"
+                                    Background="{StaticResource IndustryAccent}"
+                                    IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                <TextBlock Text="{Binding SelectionReadoutText}" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10" Foreground="{StaticResource IndustryBg}" />
+                            </Border>
+
                         </Canvas>
 
                         <!-- Safe-area guide: a visual crop-boundary indicator only (dashed rectangle),
@@ -810,15 +827,22 @@
                      scaffolding cards below (Insert field/Text style/Saved templates) — each a nested
                      (non-blueprint) group box, same "gb inside gb blueprint" nesting as the Receive
                      tab's Incoming-frame/Previous-frames pair. -->
-                <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
-                <!-- Margin right of 12 clears Fluent's overlay vertical scrollbar (it floats over
-                     content rather than reserving a column) — confirmed via real-window testing
-                     that without this, the scrollbar thumb visually overlaps and silently eats
-                     clicks on the right-edge Save button (Phase 5). Margin top=6 (Phase A design-
-                     fidelity fix): same first-card title-notch clip fix as the rail column above. -->
-                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,12,0">
+                <!-- design-fidelity Phase E (#6): outer ScrollViewer+StackPanel replaced with a
+                     Grid RowDefinitions="Auto,Auto,*" — PREVIEW/ELEMENTS stay Auto-height, INSPECTOR
+                     fills whatever height remains (mock's own right-column proportions leave
+                     INSPECTOR filling the card's bottom, not ~450px of dead space below a
+                     short-content ScrollViewer). Same rail-column restructuring pattern as design-
+                     fidelity Phase D's READY RACK/TEMPLATE LIBRARY split — INSPECTOR now owns its
+                     own internal ScrollViewer (below) instead of the whole column sharing one. -->
+                <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,12,0">
 
-                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
+                    <!-- Margin right of 12 (outer Grid, above) clears Fluent's overlay vertical
+                         scrollbar (it floats over content rather than reserving a column) —
+                         confirmed via real-window testing that without this, the scrollbar thumb
+                         visually overlaps and silently eats clicks on the right-edge Save button
+                         (Phase 5). Margin top=6 (Phase A design-fidelity fix): same first-card
+                         title-notch clip fix as the rail column above. -->
+                    <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.PreviewLabel}" />
                         </HeaderedContentControl.Header>
@@ -849,7 +873,7 @@
                          (selection is shared VM state, so a canvas click already updates what THIS
                          list implicitly reflects via its Lock/Front/Back state), row-click is a
                          smaller, separable follow-up. -->
-                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
+                    <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.ElementsHeader}" />
                         </HeaderedContentControl.Header>
@@ -999,21 +1023,35 @@
                          to keep every tab's own content a plain IsVisible-gated StackPanel (matches
                          this file's own established preference for simple path bindings over
                          template/selector machinery elsewhere). -->
-                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
+                    <HeaderedContentControl Grid.Row="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InspectorHeader}" />
                         </HeaderedContentControl.Header>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                            <!-- design-fidelity Phase E (#4): converted from a plain Button strip
+                                 (no active-state feedback at all) to RadioButton.IndustrySeg — an
+                                 already-existing, purpose-built "segmented control" atom (tint fill +
+                                 border + bold text on :checked), same GroupName + direct TwoWay
+                                 IsChecked-to-bool convention already used by the Waterfall view-mode
+                                 selector (MainWindow.axaml) and the RX/TX Auto/Manual selectors —
+                                 no new style needed, and mutual exclusivity comes for free from
+                                 GroupName + the three existing IsTextStyleTabSelected/
+                                 IsGeometryTabSelected/IsImageTabSelected bools (unchanged from
+                                 Phase 3), matching that established pattern exactly rather than also
+                                 keeping the old SelectXTabCommand wiring (still real, tested VM APIs —
+                                 just no longer the AXAML's own interaction path, same as those other
+                                 3 call sites). -->
                             <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        Content="{loc:Translate Panes.TxImageEditor.InspectorTabText}"
-                                        Command="{Binding SelectTextStyleTabCommand}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        Content="{loc:Translate Panes.TxImageEditor.InspectorTabGeometry}"
-                                        Command="{Binding SelectGeometryTabCommand}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        Content="{loc:Translate Panes.TxImageEditor.InspectorTabImage}"
-                                        Command="{Binding SelectImageTabCommand}" />
+                                <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}" GroupName="InspectorTab"
+                                             IsChecked="{Binding IsTextStyleTabSelected}"
+                                             Content="{loc:Translate Panes.TxImageEditor.InspectorTabText}" />
+                                <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}" GroupName="InspectorTab"
+                                             IsChecked="{Binding IsGeometryTabSelected}"
+                                             Content="{loc:Translate Panes.TxImageEditor.InspectorTabGeometry}" />
+                                <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}" GroupName="InspectorTab"
+                                             IsChecked="{Binding IsImageTabSelected}"
+                                             Content="{loc:Translate Panes.TxImageEditor.InspectorTabImage}" />
                             </StackPanel>
 
                     <StackPanel Classes="Industry IndustryRows" IsVisible="{Binding IsTextStyleTabSelected}">
@@ -1247,10 +1285,10 @@
                         </Grid>
                     </StackPanel>
                         </StackPanel>
+                        </ScrollViewer>
                     </HeaderedContentControl>
 
-                </StackPanel>
-                </ScrollViewer>
+                </Grid>
 
             </Grid>
 
