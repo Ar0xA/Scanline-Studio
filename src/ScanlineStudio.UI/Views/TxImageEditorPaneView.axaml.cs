@@ -52,6 +52,15 @@ public partial class TxImageEditorPaneView : UserControl
         // first layout pass -- AttachedToVisualTree (used above for focus) fires too early for
         // Bounds to be reliable; Loaded fires after layout completes.
         Loaded += (_, _) => ApplyFitFromViewport();
+
+        // Task #23 (zoom slider addendum, plan-reviewed) -- Tunnel routing, not a plain XAML
+        // PointerWheelChanged on EditorCanvas: at Fit zoom the working copy is usually SMALLER than
+        // the viewport (WorkingCopyScaleFactor can put it well past the visible pane at 100%+), so
+        // the pointer is very often over the ScrollViewer's own centering gutter, not the Canvas
+        // itself -- a Canvas-attached handler would silently never fire there. Tunnel also runs
+        // before ScrollContentPresenter's own wheel-scroll handling, which is what lets the
+        // Ctrl/Cmd-gated branch below claim the event (e.Handled = true) ahead of native scroll.
+        EditorScrollViewer.AddHandler(PointerWheelChangedEvent, OnEditorWheelChanged, RoutingStrategies.Tunnel);
     }
 
     private TxImageEditorPaneViewModel? ViewModel => DataContext as TxImageEditorPaneViewModel;
@@ -59,6 +68,62 @@ public partial class TxImageEditorPaneView : UserControl
     private void OnFitButtonClick(object? sender, RoutedEventArgs e) => ApplyFitFromViewport();
 
     private void ApplyFitFromViewport() => ViewModel?.ApplyFit(EditorScrollViewer.Bounds.Width, EditorScrollViewer.Bounds.Height);
+
+    /// <summary>Task #23 (zoom slider addendum, plan-reviewed) -- Ctrl/Cmd+wheel zooms, anchored so
+    /// the canvas pixel under the pointer stays under the pointer (near-universal convention for
+    /// scroll-wheel zoom in image editors/maps/browsers; plain center-anchored zoom would lose track
+    /// of whatever the operator was looking at on this canvas's typically-larger-than-viewport working
+    /// copy). Plain wheel (no modifier) is left completely alone -- unhandled, falls through to
+    /// EditorScrollViewer's own native scroll/pan, matching every other app's own convention.
+    /// <para>Reads pointer position via <c>e.GetPosition(EditorCanvas)</c>, NOT
+    /// <c>EditorScrollViewer.Offset</c> arithmetic (plan-review correction to an earlier draft): the
+    /// ScrollViewer's content is a Panel that STRETCHES to the viewport, and the zoomed Canvas inside
+    /// it (explicit bound Width/Height) is centered within that Panel whenever the content is smaller
+    /// than the viewport (the normal state right after Fit) -- Offset alone doesn't account for that
+    /// centering gutter, but GetPosition is transform-correct in every regime regardless.</para>
+    /// <para><see cref="ScrollViewer.UpdateLayout"/> between the <see cref="TxImageEditorPaneViewModel.ZoomBy"/>
+    /// call and reading the post-zoom pointer position (plan-review finding): the ZoomFactor write
+    /// updates Canvas.Width/Height synchronously via data binding, but no layout pass has run yet, so
+    /// Extent/Viewport (and therefore anything GetPosition or Offset would report) are still the
+    /// PRE-zoom values without this -- an omitted UpdateLayout here would silently anchor against
+    /// stale geometry.</para></summary>
+    private void OnEditorWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (e.Delta.Y == 0 || (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) == 0 || ViewModel is not { } vm
+            || vm.CanvasDisplayWidth <= 0 || vm.CanvasDisplayHeight <= 0)
+        {
+            return;
+        }
+
+        var before = e.GetPosition(EditorCanvas);
+        var fractionX = before.X / vm.CanvasDisplayWidth;
+        var fractionY = before.Y / vm.CanvasDisplayHeight;
+
+        vm.ZoomBy(Math.Pow(1.1, e.Delta.Y));
+        EditorScrollViewer.UpdateLayout();
+
+        var after = e.GetPosition(EditorCanvas);
+        var offset = EditorScrollViewer.Offset;
+        EditorScrollViewer.Offset = new Vector(
+            ComputeAnchoredOffset(offset.X, fractionX, vm.CanvasDisplayWidth, after.X),
+            ComputeAnchoredOffset(offset.Y, fractionY, vm.CanvasDisplayHeight, after.Y));
+        e.Handled = true;
+    }
+
+    /// <summary>Pure pointer-anchor math, split out from <see cref="OnEditorWheelChanged"/> so it's
+    /// unit-testable without simulating real Avalonia pointer/scroll events -- same
+    /// no-<c>InternalsVisibleTo</c>/public-not-internal precedent as <see cref="ComputeElementResize"/>.
+    /// Raising <paramref name="currentOffset"/> by <c>d</c> increases the content coordinate under a
+    /// FIXED screen point by <c>d</c> too (scrolling right/down moves content coordinates left/up
+    /// relative to the viewport in the usual sense, but Avalonia's <c>ScrollViewer.Offset</c> is
+    /// defined the other way: it's how far the TOP-LEFT of the viewport has moved INTO the content),
+    /// so the desired new offset is <c>currentOffset + (desired - actual)</c>, where
+    /// <paramref name="fraction"/> * <paramref name="newContentSize"/> is the anchor point's new
+    /// content-space coordinate (desired) and <paramref name="anchorAfter"/> is where that point
+    /// currently reads in VIEWPORT space post-zoom (actual, from a fresh <c>GetPosition</c> call after
+    /// the layout pass forced by <see cref="ScrollViewer.UpdateLayout"/>).</summary>
+    public static double ComputeAnchoredOffset(double currentOffset, double fraction, double newContentSize, double anchorAfter) =>
+        currentOffset + (fraction * newContentSize) - anchorAfter;
 
     private void OnCropBodyPointerPressed(object? sender, PointerPressedEventArgs e) => StartDrag(DragMode.CropMove, e);
 

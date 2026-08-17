@@ -75,6 +75,28 @@
                      no viewport data, so it stays a plain Command binding. -->
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Click="OnFitButtonClick" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding ZoomActualCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
+                <!-- Task #23 (zoom slider addendum, plan-reviewed). Minimum/Maximum bound via
+                     x:Static to the VM's own public MinZoomFactor/MaxZoomFactor consts — NOT
+                     hardcoded XAML literals — since ZoomFactor's own property setter has no clamp;
+                     a drifted slider Maximum would write an out-of-range value straight through with
+                     nothing else to catch it (unlike the adjustment sliders below, whose bounds exist
+                     nowhere else in the codebase). Explicit Width (a bare Slider has no intrinsic
+                     width and would collapse to ~thumb size unconstrained inside this WrapPanel).
+                     Unanchored (plan-review finding): unlike the scroll-wheel path, dragging this
+                     slider does NOT adjust EditorScrollViewer.Offset to keep any particular canvas
+                     point fixed — the user's eyes are on the slider while dragging it, not the
+                     canvas, so center-anchoring only adds cross-path re-entrancy risk (both this
+                     binding and the wheel handler write the same ZoomFactor) for little real benefit. -->
+                <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}" Margin="0,0,4,4" VerticalAlignment="Center">
+                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Zoom}" />
+                    <Slider Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}"
+                            Width="120"
+                            Minimum="{x:Static vm:TxImageEditorPaneViewModel.MinZoomFactor}"
+                            Maximum="{x:Static vm:TxImageEditorPaneViewModel.MaxZoomFactor}"
+                            Value="{Binding ZoomFactor}"
+                            VerticalAlignment="Center" />
+                    <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding ZoomPercentText}" />
+                </StackPanel>
                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="{Binding SnapToGrid}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SnapGrid.Help}" />
                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="{Binding SafeAreaVisible}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" />
                 <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{Binding DimensionsChipText}" /></Border>
