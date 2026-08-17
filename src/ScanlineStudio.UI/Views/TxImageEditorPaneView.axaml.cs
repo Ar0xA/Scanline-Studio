@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.UI.Views;
@@ -46,9 +47,18 @@ public partial class TxImageEditorPaneView : UserControl
         // shell's plain ContentControl swap (MainViewModel.ActiveEditor) does not, so arrow-key crop
         // nudge (OnCanvasKeyDown) would silently stop receiving key events without this.
         AttachedToVisualTree += (_, _) => EditorCanvas.Focus();
+
+        // Fit needs the ScrollViewer's own real viewport size, which isn't known until after the
+        // first layout pass -- AttachedToVisualTree (used above for focus) fires too early for
+        // Bounds to be reliable; Loaded fires after layout completes.
+        Loaded += (_, _) => ApplyFitFromViewport();
     }
 
     private TxImageEditorPaneViewModel? ViewModel => DataContext as TxImageEditorPaneViewModel;
+
+    private void OnFitButtonClick(object? sender, RoutedEventArgs e) => ApplyFitFromViewport();
+
+    private void ApplyFitFromViewport() => ViewModel?.ApplyFit(EditorScrollViewer.Bounds.Width, EditorScrollViewer.Bounds.Height);
 
     private void OnCropBodyPointerPressed(object? sender, PointerPressedEventArgs e) => StartDrag(DragMode.CropMove, e);
 
@@ -110,14 +120,29 @@ public partial class TxImageEditorPaneView : UserControl
 
     private void OnCanvasPointerMoved(object? sender, PointerEventArgs e)
     {
-        if (_dragMode == DragMode.None || ViewModel is not { } vm || vm.WorkingCopyWidth <= 0 || vm.WorkingCopyHeight <= 0)
+        // [Code-review risk, fixed here] ZoomFactor <= 0 added to the guard -- ZoomFactor is a public
+        // settable property (tests write it directly, e.g. via the VM's own [ObservableProperty]);
+        // ApplyFit/ZoomActual both clamp it, but nothing stops a 0/negative value being assigned some
+        // other way, which would otherwise divide-by-zero below into Infinity/NaN feeding straight
+        // into an element's X/Y.
+        if (_dragMode == DragMode.None || ViewModel is not { } vm || vm.WorkingCopyWidth <= 0 || vm.WorkingCopyHeight <= 0 || vm.ZoomFactor <= 0)
         {
             return;
         }
 
+        // Phase 7 rearchitecture: EditorCanvas is now sized (and rendered) at CanvasDisplayWidth/
+        // Height = WorkingCopyWidth/Height * ZoomFactor -- no ancestor render/layout transform is
+        // involved anymore, so GetPosition returns real on-screen pixels INCLUDING zoom, and the
+        // normalize-by-image-size divisor must include ZoomFactor too, or a drag at any zoom other
+        // than 100% moves the element by the wrong (zoom-multiplied) amount -- this is the one spot
+        // that has to change for pointer math to stay correct; everything downstream (DragCropMove/
+        // DragCropResize/element X/Y/Width/Height math) already operates in normalized [0,1] space
+        // and needs no zoom-awareness of its own. Divides by CanvasDisplayWidth/Height directly
+        // (code-review nit) rather than recomputing WorkingCopyWidth * ZoomFactor here -- one less
+        // place to desync if that definition ever changes.
         var current = e.GetPosition(EditorCanvas);
-        var dxNormalized = (current.X - _lastPointerPosition.X) / vm.WorkingCopyWidth;
-        var dyNormalized = (current.Y - _lastPointerPosition.Y) / vm.WorkingCopyHeight;
+        var dxNormalized = (current.X - _lastPointerPosition.X) / vm.CanvasDisplayWidth;
+        var dyNormalized = (current.Y - _lastPointerPosition.Y) / vm.CanvasDisplayHeight;
 
         // Crop-move/crop-resize push their own undo step here, lazily, on the FIRST REAL (nonzero)
         // move of this gesture -- not on PointerPressed (a bare click that never moves shouldn't

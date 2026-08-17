@@ -29,8 +29,15 @@ public interface ITemplateElementViewModel : INotifyPropertyChanged
 
     bool Locked { get; set; }
 
-    /// <summary>Pixel-space canvas dimensions, parent-pushed at creation and on every rotate — same
-    /// pattern as <see cref="OverlayElementViewModel"/>'s pre-Phase-1 fields, generalized.</summary>
+    /// <summary>Pixel-space canvas dimensions, parent-pushed at creation and on every rotate/zoom
+    /// change — same pattern as <see cref="OverlayElementViewModel"/>'s pre-Phase-1 fields,
+    /// generalized. Since Phase 7's rearchitecture (see <see
+    /// cref="TxImageEditorPaneViewModel.ZoomFactor"/>'s own doc comment) the parent pushes
+    /// <c>CanvasDisplayWidth</c>/<c>CanvasDisplayHeight</c> here (zoom-premultiplied), not raw
+    /// <c>WorkingCopyWidth</c>/<c>WorkingCopyHeight</c> — this is what makes every derived pixel
+    /// property below (<see cref="LeftPixels"/>/<see cref="TopPixels"/>/<see cref="CanvasWidthPixels"/>/
+    /// <see cref="CanvasHeightPixels"/>) zoom-aware for free, via each element's own existing
+    /// <c>OnImageWidthChanged</c>/<c>OnImageHeightChanged</c> notification hooks.</summary>
     double ImageWidth { get; set; }
 
     double ImageHeight { get; set; }

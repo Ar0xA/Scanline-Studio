@@ -116,6 +116,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     private const double MinNormalizedCropSize = 0.02;
 
+    /// <summary>Phase 7 zoom bounds -- arbitrary but generous (0.1x lets a very large working copy
+    /// still shrink to fit a small pane; 4x is well past the point of any real editing value at this
+    /// canvas's typical size). Not exposed as a user setting, per the plan's own explicit scope cut.</summary>
+    private const double MinZoomFactor = 0.1;
+
+    private const double MaxZoomFactor = 4.0;
+
     /// <summary>Undo/redo stack depth cap (round-1 plan-review risk: unbounded keyboard-nudge
     /// auto-repeat would otherwise grow <see cref="_undoStack"/> forever). Arbitrary but generous
     /// for an interactive editing session -- not a tuning knob expected to matter in practice.</summary>
@@ -226,6 +233,35 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// affect the crop rect.</summary>
     [ObservableProperty]
     private bool _snapToGrid;
+
+    /// <summary>Phase 7 (spec/15-template-designer.md) -- purely a view-layer convenience. **Real-
+    /// window finding, post-implementation**: the original design wrapped the editor canvas in
+    /// Avalonia's <c>LayoutTransformControl</c> and left every pixel-conversion property (LeftPixels/
+    /// CropLeftPixels/etc.) untouched, on the theory that a render-transform ancestor would keep zoom
+    /// entirely out of the VM's pixel math. That theory was wrong in a way static plan-review couldn't
+    /// catch: <c>LayoutTransformControl</c>'s subtree does not reliably re-composite on a
+    /// descendant-only bounds change (confirmed via pixel-diffed before/after screenshots -- dragging
+    /// an element updated its bound X/Y correctly, and the separate mini-preview picked it up
+    /// correctly, but the interactive canvas itself stayed visually frozen until an unrelated
+    /// LayoutTransform-property change forced a fresh pass; reproduced identically at exactly 1.0
+    /// zoom, ruling out "only happens when actually scaled"; three different Avalonia invalidation
+    /// attempts -- InvalidateArrange, InvalidateMeasure+InvalidateArrange, reassigning a fresh
+    /// ScaleTransform instance every drag frame -- all failed). Diagnosed (auditor) as a
+    /// render/composition-invalidation gap specific to that control, not a layout-correctness bug --
+    /// the underlying Bounds were already right every time. Rearchitected to bake <see
+    /// cref="ZoomFactor"/> directly into the existing pixel-conversion properties instead (<see
+    /// cref="CanvasDisplayWidth"/>/<see cref="CanvasDisplayHeight"/>, <c>Crop*Pixels</c>, each
+    /// element's own <c>ImageWidth</c>/<c>ImageHeight</c> pushed pre-multiplied by zoom) -- ordinary
+    /// Avalonia data-binding invalidation, the same mechanism every other property on this VM already
+    /// relies on with zero issues, so this sidesteps the whole bug class rather than working around
+    /// it. No <c>LayoutTransformControl</c>/<c>RenderTransform</c> anywhere in this feature anymore.
+    /// Still never touches undo/redo, snap-to-grid math, the pipeline, or saved-template data -- those
+    /// all stay in native working-copy pixel space regardless of this value; only the CANVAS DISPLAY
+    /// properties (and the pointer-delta math that reads them back) are zoom-aware. Both current
+    /// writers (<see cref="ApplyFit"/>, <see cref="ZoomActual"/>) already clamp to <see
+    /// cref="MinZoomFactor"/>/<see cref="MaxZoomFactor"/> before assigning.</summary>
+    [ObservableProperty]
+    private double _zoomFactor = 1.0;
 
     [ObservableProperty]
     private Bitmap? _workingCopyBitmap;
@@ -430,18 +466,85 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     public double WorkingCopyHeight => _workingCopy.Height;
 
-    public double CropLeftPixels => CropRect.X * WorkingCopyWidth;
+    /// <summary>Rearchitected Phase 7 (see <see cref="ZoomFactor"/>'s own doc comment for why): the
+    /// actual on-screen size of <c>EditorCanvas</c>/the overlay <c>ItemsControl</c>, bound directly in
+    /// the View instead of <see cref="WorkingCopyWidth"/>/<see cref="WorkingCopyHeight"/> -- this IS
+    /// zoom, expressed as real pixels, so ordinary Avalonia layout/arrange handles it exactly like any
+    /// other bound size with no transform-subtree involved.</summary>
+    public double CanvasDisplayWidth => WorkingCopyWidth * ZoomFactor;
 
-    public double CropTopPixels => CropRect.Y * WorkingCopyHeight;
+    public double CanvasDisplayHeight => WorkingCopyHeight * ZoomFactor;
 
-    public double CropWidthPixels => CropRect.Width * WorkingCopyWidth;
+    /// <summary>Safe-area guide inset (<c>TxImageEditorPaneView.axaml</c>'s dashed <c>Rectangle</c>),
+    /// zoom-scaled so it still marks the same IMAGE-relative region at any zoom -- 14 was previously a
+    /// literal XAML <c>Margin="14"</c> (screen px, correct only at the zoom that didn't exist yet).</summary>
+    public double SafeAreaInsetPixels => 14 * ZoomFactor;
 
-    public double CropHeightPixels => CropRect.Height * WorkingCopyHeight;
+    partial void OnZoomFactorChanged(double value)
+    {
+        OnPropertyChanged(nameof(CanvasDisplayWidth));
+        OnPropertyChanged(nameof(CanvasDisplayHeight));
+        OnPropertyChanged(nameof(SafeAreaInsetPixels));
+        OnPropertyChanged(nameof(CropLeftPixels));
+        OnPropertyChanged(nameof(CropTopPixels));
+        OnPropertyChanged(nameof(CropWidthPixels));
+        OnPropertyChanged(nameof(CropHeightPixels));
+        OnPropertyChanged(nameof(CropRightPixels));
+        OnPropertyChanged(nameof(CropBottomPixels));
+        RefreshOverlayElementZoomedImageSize();
+        RefreshOverlayElementCanvasFontSizes();
+    }
+
+    /// <summary>Pushes zoom-premultiplied <see cref="ImageWidth"/>/<see cref="ImageHeight"/> onto
+    /// every element (parent-pushed, same pattern as <see cref="RefreshOverlayElementCanvasFontSizes"/>)
+    /// -- reuses each element's OWN existing <c>OnImageWidthChanged</c>/<c>OnImageHeightChanged</c>
+    /// hooks (already wired to re-raise <c>LeftPixels</c>/<c>TopPixels</c>/<c>CanvasWidthPixels</c>/
+    /// <c>CanvasHeightPixels</c>) to get every element's on-screen position/size correctly zoomed with
+    /// zero new notification plumbing -- see <see cref="ZoomFactor"/>'s own doc comment for why this
+    /// replaced a render-transform approach.</summary>
+    private void RefreshOverlayElementZoomedImageSize()
+    {
+        foreach (var element in OverlayElements)
+        {
+            element.ImageWidth = CanvasDisplayWidth;
+            element.ImageHeight = CanvasDisplayHeight;
+        }
+    }
+
+    /// <summary>One-shot "100%" action (Phase 7) -- not a live-tracking toggle, matches the plain
+    /// Button shape the stub already had.</summary>
+    [RelayCommand]
+    private void ZoomActual() => ZoomFactor = 1.0;
+
+    /// <summary>One-shot "Fit" action (Phase 7) -- called by the View's code-behind, which owns the
+    /// actual viewport size (<c>ScrollViewer.Bounds</c>); this VM never reaches for control sizes
+    /// directly. Computed once per call (on editor load and on each Fit button press), never
+    /// live-tracked against a resize hook -- a <c>SizeChanged</c>-driven recompute would fight the
+    /// ScrollViewer's own Auto scrollbars (zoom changes content size, which changes scrollbar
+    /// visibility, which changes the viewport, which would change Fit's own computed value again).</summary>
+    public void ApplyFit(double viewportWidth, double viewportHeight)
+    {
+        if (viewportWidth <= 0 || viewportHeight <= 0 || WorkingCopyWidth <= 0 || WorkingCopyHeight <= 0)
+        {
+            return;
+        }
+
+        var fit = Math.Min(viewportWidth / WorkingCopyWidth, viewportHeight / WorkingCopyHeight);
+        ZoomFactor = Math.Clamp(fit, MinZoomFactor, MaxZoomFactor);
+    }
+
+    public double CropLeftPixels => CropRect.X * CanvasDisplayWidth;
+
+    public double CropTopPixels => CropRect.Y * CanvasDisplayHeight;
+
+    public double CropWidthPixels => CropRect.Width * CanvasDisplayWidth;
+
+    public double CropHeightPixels => CropRect.Height * CanvasDisplayHeight;
 
     /// <summary>Bottom-right corner in pixel space -- the resize-handle's anchor point.</summary>
-    public double CropRightPixels => (CropRect.X + CropRect.Width) * WorkingCopyWidth;
+    public double CropRightPixels => (CropRect.X + CropRect.Width) * CanvasDisplayWidth;
 
-    public double CropBottomPixels => (CropRect.Y + CropRect.Height) * WorkingCopyHeight;
+    public double CropBottomPixels => (CropRect.Y + CropRect.Height) * CanvasDisplayHeight;
 
     /// <summary>Snapshot of the current canvas elements as the immutable <see cref="TemplateDocument"/>
     /// the pipeline actually consumes (Phase 1 -- supersedes the pre-Phase-1 <c>Overlay</c>/
@@ -956,8 +1059,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             StrokeThickness = strokeThickness,
             Z = z,
             Locked = locked,
-            ImageWidth = WorkingCopyWidth,
-            ImageHeight = WorkingCopyHeight,
+            ImageWidth = CanvasDisplayWidth,
+            ImageHeight = CanvasDisplayHeight,
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
@@ -996,8 +1099,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             Opacity = opacity,
             Z = z,
             Locked = locked,
-            ImageWidth = WorkingCopyWidth,
-            ImageHeight = WorkingCopyHeight,
+            ImageWidth = CanvasDisplayWidth,
+            ImageHeight = CanvasDisplayHeight,
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
@@ -1024,8 +1127,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             Z = z,
             Locked = locked,
             IsBackground = isBackground,
-            ImageWidth = WorkingCopyWidth,
-            ImageHeight = WorkingCopyHeight,
+            ImageWidth = CanvasDisplayWidth,
+            ImageHeight = CanvasDisplayHeight,
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
@@ -1793,11 +1896,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
         OnPropertyChanged(nameof(WorkingCopyWidth));
         OnPropertyChanged(nameof(WorkingCopyHeight));
+        // Phase 7 rearchitecture: WorkingCopyWidth/Height changing also changes CanvasDisplayWidth/
+        // Height even though ZoomFactor itself didn't move, and nothing else notifies it on this path
+        // (Crop*Pixels get their own re-notify from the CropRect reassignment in the Rotate() caller;
+        // SafeAreaInsetPixels is zoom-only, unaffected by a working-copy dimension change).
+        OnPropertyChanged(nameof(CanvasDisplayWidth));
+        OnPropertyChanged(nameof(CanvasDisplayHeight));
 
         foreach (var element in OverlayElements)
         {
-            element.ImageWidth = WorkingCopyWidth;
-            element.ImageHeight = WorkingCopyHeight;
+            element.ImageWidth = CanvasDisplayWidth;
+            element.ImageHeight = CanvasDisplayHeight;
         }
     }
 
@@ -2369,8 +2478,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// position-only <c>ProjectToCropRelative</c> entirely (its only caller was this method's own
     /// predecessor) rather than keeping two methods that could drift apart.
     /// Pixel-space note: <see cref="CropWidthPixels"/>/<see cref="CropHeightPixels"/> are in
-    /// WORKING-COPY pixel space (not the original source's), but the result is pixel-space-invariant
-    /// up to <see cref="BuildWorkingCopy"/>'s own integer rounding (code-review nit: it depends only
+    /// CANVAS-DISPLAY (zoomed) pixel space as of the Phase 7 rearchitecture (previously working-copy
+    /// space, before <c>ZoomFactor</c> existed) -- but the result stays zoom-INVARIANT regardless,
+    /// since <c>Z</c> cancels algebraically: <c>contentWidth</c>/<c>contentHeight</c> (line ~2520/2521)
+    /// scale by <c>Z</c> through <c>cropWidthPixels</c>/<c>cropHeightPixels</c> and by <c>1/Z</c>
+    /// through <c>scaleX</c>/<c>scaleY</c>, so the returned NORMALIZED rect never carries a factor of
+    /// <c>Z</c> -- correctly so, since this feeds <see cref="BuildTemplateElement"/> and the
+    /// transmitted image must never depend on the operator's current canvas zoom. Also
+    /// pixel-space-invariant up to <see cref="BuildWorkingCopy"/>'s own integer rounding (code-review
+    /// nit: it depends only
     /// on the crop's aspect ratio, which is preserved from the original only up to that rounding, not
     /// bit-exactly) -- close enough for both <see cref="RecomputePreview"/> (working copy) and
     /// <see cref="Apply"/> (original source) to agree in practice, but not a hard guarantee for
@@ -2468,6 +2584,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             element.ResolvedText, new FontSpec(element.FontFamily, element.FontSizeRelative), (int)Math.Round(targetHeight),
             boundsWidthPx, boundsHeightPx, strokeThicknessRelative);
 
+        // [Code-review blocker, fixed here] NO extra * ZoomFactor -- zoom already arrives here
+        // implicitly, through scaleY: cropHeightPixels (both PreserveAspect and stretch branches
+        // above) is CropHeightPixels, which is now CanvasDisplayHeight-based (= WorkingCopyHeight *
+        // ZoomFactor) per the Phase 7 rearchitecture, so scaleY is proportional to 1/ZoomFactor
+        // already. fittedFinalSizePx itself is zoom-invariant (ProjectRectToCropRelative's own bounds
+        // and _targetMode's dimensions carry no Z, per that method's own doc comment). An earlier
+        // version of this line multiplied by ZoomFactor AGAIN on top of that -- a real Z^2 bug, caught
+        // by code-review, not by the one manual test that happened to run at exactly 1.0 zoom (where
+        // Z^2 == Z == 1 hides the error completely).
         return fittedFinalSizePx / scaleY;
     }
 
