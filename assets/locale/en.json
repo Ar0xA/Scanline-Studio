@@ -521,7 +521,7 @@
   "Panes.TxImageEditor.FontFamilyLabel": "FONT",
   "Panes.TxImageEditor.FontUnavailableGlyph": "⚠",
   "Panes.TxImageEditor.FontUnavailableWarning": "This font isn't bundled with the app — the transmitted image will use the default font instead.",
-  "Panes.TxImageEditor.FontSizeLabel": "SIZE",
+  "Panes.TxImageEditor.FontSizeLabel": "SIZE (PX)",
   "Panes.TxImageEditor.FillColorLabel": "FILL",
   "Panes.TxImageEditor.OutlineLabel": "OUTLINE",
   "Panes.TxImageEditor.OutlineThicknessLabel": "OUTLINE WIDTH",

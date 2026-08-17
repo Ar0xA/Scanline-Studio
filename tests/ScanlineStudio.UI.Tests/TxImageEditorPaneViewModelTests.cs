@@ -2768,6 +2768,47 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal("Panes.TxImageEditor.SelectionReadoutFormat", localization.LastKey);
     }
 
+    // Backlog item (user request, 2026-08-17): "text size should be in px not 0.1 or 0.16 etc" --
+    // SelectedTextElementFontSizePx converts FontSizeRelative against the TARGET mode's own height
+    // (WideMode.ImageHeight = 4), the same real-pixel convention as
+    // TransmitImagePreparer.DrawTemplateText's own strokeThicknessPx formula.
+
+    [AvaloniaFact]
+    public void SelectedTextElementFontSizePx_ReflectsFontSizeRelativeTimesTargetModeHeight()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = text;
+
+        AssertClose(0.4, vm.SelectedTextElementFontSizePx);
+    }
+
+    [AvaloniaFact]
+    public void SelectedTextElementFontSizePx_Set_WritesBackToFontSizeRelative()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = text;
+
+        vm.SelectedTextElementFontSizePx = 2.0;
+
+        AssertClose(0.5, text.FontSizeRelative);
+    }
+
+    [AvaloniaFact]
+    public void SelectedTextElementFontSizePx_NoSelection_GetIsZeroAndSetIsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+
+        Assert.Equal(0, vm.SelectedTextElementFontSizePx);
+
+        vm.SelectedTextElementFontSizePx = 5.0;
+
+        Assert.Equal(0, vm.SelectedTextElementFontSizePx);
+    }
+
     [AvaloniaFact]
     public void IsFontUnavailable_SelectedTextElementFontNotInAvailableFamilies_ReturnsTrue()
     {
