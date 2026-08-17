@@ -50,11 +50,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     /// <summary><paramref name="FontFamily"/>/<paramref name="StrokeColor"/>/
     /// <paramref name="StrokeThickness"/> are Phase 4 (spec/15-template-designer.md) additions,
-    /// all trailing/optional so pre-Phase-4 call sites/tests keep compiling unchanged.</summary>
+    /// all trailing/optional so pre-Phase-4 call sites/tests keep compiling unchanged.
+    /// <paramref name="ShadowColor"/>/<paramref name="ShadowOffsetX"/>/<paramref name="ShadowOffsetY"/>/
+    /// <paramref name="RotationDegrees"/>/<paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
+    /// <paramref name="GradientStartColor"/>/<paramref name="GradientEndColor"/> are Phase 8
+    /// (YONIQ-style text-effects follow-up) additions, same trailing/optional treatment -- mirror
+    /// <see cref="OverlayElementViewModel"/>'s own simplified 2-stop-gradient VM shape exactly (see
+    /// that class's own doc comment for why the gradient isn't stored as a raw
+    /// <see cref="TextGradient"/> here).</summary>
     public sealed record RawTextElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
         string Text, double FontSizeRelative, Rgb24 Color,
-        string FontFamily = "", Rgb24? StrokeColor = null, double StrokeThickness = 0.02)
+        string FontFamily = "", Rgb24? StrokeColor = null, double StrokeThickness = 0.02,
+        Rgb24? ShadowColor = null, double ShadowOffsetX = 0.02, double ShadowOffsetY = 0.02, double RotationDegrees = 0,
+        bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
+        Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     public sealed record RawBoxElementSnapshot(
@@ -571,7 +581,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     {
         OverlayElementViewModel text => new RawTextElementSnapshot(
             text.X, text.Y, text.Width, text.Height, text.Z, text.Locked, text.Text, text.FontSizeRelative, text.Color,
-            text.FontFamily, text.StrokeColor, text.StrokeThickness),
+            text.FontFamily, text.StrokeColor, text.StrokeThickness,
+            text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
+            text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor),
         BoxElementViewModel box => new RawBoxElementSnapshot(
             box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
         ImageElementViewModel image => new RawImageElementSnapshot(
@@ -1040,7 +1052,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// call sites.</summary>
     private OverlayElementViewModel CreateOverlayElement(
         string text, double x, double y, double width, double height, double fontSizeRelative, Rgb24 color, int z, bool locked,
-        string? fontFamily = null, Rgb24? strokeColor = null, double strokeThickness = 0.02)
+        string? fontFamily = null, Rgb24? strokeColor = null, double strokeThickness = 0.02,
+        Rgb24? shadowColor = null, double shadowOffsetX = 0.02, double shadowOffsetY = 0.02, double rotationDegrees = 0,
+        bool gradientEnabled = false, TextGradientKind gradientKind = TextGradientKind.Horizontal,
+        Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null)
     {
         var element = new OverlayElementViewModel
         {
@@ -1057,6 +1072,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             FontFamily = fontFamily ?? _preparer.AvailableFontFamilies.FirstOrDefault(string.Empty),
             StrokeColor = strokeColor,
             StrokeThickness = strokeThickness,
+            ShadowColor = shadowColor,
+            ShadowOffsetX = shadowOffsetX,
+            ShadowOffsetY = shadowOffsetY,
+            RotationDegrees = rotationDegrees,
+            GradientEnabled = gradientEnabled,
+            GradientKind = gradientKind,
+            // Null-coalesced to the VM's own field-initializer defaults (255,0,0)/(0,0,255) -- a
+            // record constructor parameter default can't call a struct constructor (not a compile-
+            // time constant), which is why RawTextElementSnapshot's own Gradient*Color fields are
+            // nullable even though the VM's own are not; this is where that gets reconciled back.
+            GradientStartColor = gradientStartColor ?? new Rgb24(255, 0, 0),
+            GradientEndColor = gradientEndColor ?? new Rgb24(0, 0, 255),
             Z = z,
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
@@ -1146,7 +1173,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     {
         RawTextElementSnapshot text => CreateOverlayElement(
             text.Text, text.X, text.Y, text.Width, text.Height, text.FontSizeRelative, text.Color, text.Z, text.Locked,
-            text.FontFamily, text.StrokeColor, text.StrokeThickness),
+            text.FontFamily, text.StrokeColor, text.StrokeThickness,
+            text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
+            text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor),
         RawBoxElementSnapshot box => CreateBoxElement(
             box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked),
         RawImageElementSnapshot image => CreateImageElement(
@@ -1221,7 +1250,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             case RawTextElementSnapshot text:
                 return new PersistedTextElement(
                     text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
-                    text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness);
+                    text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness,
+                    text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
+                    text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor);
             case RawBoxElementSnapshot box:
                 return new PersistedBoxElement(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
@@ -1282,7 +1313,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             case PersistedTextElement text:
                 return new RawTextElementSnapshot(
                     text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
-                    text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness);
+                    text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness,
+                    text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
+                    text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor);
             case PersistedBoxElement box:
                 return new RawBoxElementSnapshot(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
@@ -1400,6 +1433,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// <see cref="ITransmitImagePreparer.AvailableFontFamilies"/> rather than the VM hardcoding its
     /// own copy of what's bundled.</summary>
     public IReadOnlyList<string> AvailableFontFamilies => _preparer.AvailableFontFamilies;
+
+    /// <summary>Phase 8 -- the TEXT STYLE panel's gradient-direction picker ItemsSource, same
+    /// plain-`Enum.GetValues`-property pattern already established for enum ComboBoxes elsewhere in
+    /// this codebase (e.g. <c>RadioStatusViewModel.AvailableModes</c>).</summary>
+    public IReadOnlyList<TextGradientKind> AvailableGradientKinds { get; } = Enum.GetValues<TextGradientKind>();
 
     /// <summary>Phase 6 (spec/15-template-designer.md) -- true when the selected text element's own
     /// <see cref="OverlayElementViewModel.FontFamily"/> isn't one of <see cref="AvailableFontFamilies"/>
@@ -2046,7 +2084,25 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             // OnStrokeColorChanged), not new information -- without this, every stroke-color edit
             // fired two full Crop->Resize->ApplyTemplate passes (one from StrokeColor's own
             // notification below, one from this redundant follow-up).
-            or nameof(OverlayElementViewModel.HasStroke))
+            or nameof(OverlayElementViewModel.HasStroke)
+            // Phase 8: HasShadow is the identical derived-bool-of-ShadowColor case as HasStroke
+            // just above, same reasoning, same fix.
+            or nameof(OverlayElementViewModel.HasShadow)
+            // Phase 8: StrokeColorForPicker/ShadowColorForPicker are pure ColorPicker-binding view
+            // state (see their own doc comments) -- they re-raise as a side effect of StrokeColor/
+            // ShadowColor's own OnChanged hooks, which ALREADY drive a recompute; without this filter
+            // every stroke/shadow color edit fired a redundant second Crop->Resize->ApplyTemplate
+            // pass, the identical bug class HasStroke's own filter entry above already fixed once.
+            or nameof(OverlayElementViewModel.StrokeColorForPicker)
+            or nameof(OverlayElementViewModel.ShadowColorForPicker)
+            // Phase 8 canvas-preview amendment: RotationTransform/ShadowRenderTransform/
+            // ForegroundBrush are pure canvas-chrome derived from RotationDegrees/ShadowOffsetX/
+            // ShadowOffsetY/ShadowColor/Color/GradientEnabled/GradientKind/GradientStartColor/
+            // GradientEndColor -- all of which already independently drive a recompute via their own
+            // (unfiltered) PropertyChanged, same "cascade, not a driver" reasoning as CanvasFontSize.
+            or nameof(OverlayElementViewModel.RotationTransform)
+            or nameof(OverlayElementViewModel.ShadowRenderTransform)
+            or nameof(OverlayElementViewModel.ForegroundBrush))
         {
             return;
         }
@@ -2063,7 +2119,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 // own strokeThicknessRelative computation), so it needs the same refresh.
                 or nameof(OverlayElementViewModel.FontFamily)
                 or nameof(OverlayElementViewModel.StrokeThickness)
-                or nameof(OverlayElementViewModel.StrokeColor))
+                or nameof(OverlayElementViewModel.StrokeColor)
+                // Phase 8: shadow offset/rotation both feed the SAME MeasureFittedFontSize
+                // fit-box-shrink allowance stroke does (see ComputeCanvasFontSize's own updated
+                // doc comment) -- omitting any of these would desync CanvasFontSize from what the
+                // real pipeline renders, the third occurrence of exactly this bug class.
+                or nameof(OverlayElementViewModel.ShadowColor)
+                or nameof(OverlayElementViewModel.ShadowOffsetX)
+                or nameof(OverlayElementViewModel.ShadowOffsetY)
+                or nameof(OverlayElementViewModel.RotationDegrees))
         {
             textElement.CanvasFontSize = ComputeCanvasFontSize(textElement);
         }
@@ -2443,7 +2507,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             // in the default font regardless of what the style panel's picker actually selected.
             OverlayElementViewModel text => new TemplateTextElement(
                 bounds, text.Z, text.ResolvedText, new FontSpec(text.FontFamily, text.FontSizeRelative), text.Color,
-                text.StrokeColor, text.StrokeThickness),
+                text.StrokeColor, text.StrokeThickness,
+                text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
+                // Phase 8: the VM's own simplified 2-stop shape (GradientEnabled/Kind/Start/End)
+                // composed into a real TextGradient only when actually enabled -- see
+                // OverlayElementViewModel.GradientEnabled's own doc comment for why the VM doesn't
+                // store a raw TextGradient directly.
+                text.GradientEnabled
+                    ? new TextGradient(text.GradientKind, [new GradientColorStop(0f, text.GradientStartColor), new GradientColorStop(1f, text.GradientEndColor)])
+                    : null),
             BoxElementViewModel box => new TemplateBoxElement(
                 bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
             ImageElementViewModel image => new TemplateImageElement(bounds, image.Z, image.Source, image.Fit),
@@ -2580,9 +2652,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         // without the stroke fit-box allowance while the real pipeline (BuildTemplateElement) uses
         // the actually-selected ones, silently desyncing the canvas from the transmitted image.
         var strokeThicknessRelative = element.StrokeColor is { } ? element.StrokeThickness : 0;
+        // Phase 8: shadow offset/rotation are the THIRD occurrence of this same fit-box-shrink
+        // requirement (see MeasureFittedFontSize's own doc comment) -- omitting them here would
+        // desync the canvas-side CanvasFontSize from what DrawTemplateText actually fits/renders,
+        // the exact bug class this whole method exists to prevent.
+        var shadowOffsetXRelative = element.ShadowColor is { } ? element.ShadowOffsetX : 0;
+        var shadowOffsetYRelative = element.ShadowColor is { } ? element.ShadowOffsetY : 0;
         var fittedFinalSizePx = _preparer.MeasureFittedFontSize(
             element.ResolvedText, new FontSpec(element.FontFamily, element.FontSizeRelative), (int)Math.Round(targetHeight),
-            boundsWidthPx, boundsHeightPx, strokeThicknessRelative);
+            boundsWidthPx, boundsHeightPx, strokeThicknessRelative,
+            shadowOffsetXRelative, shadowOffsetYRelative, element.RotationDegrees);
 
         // [Code-review blocker, fixed here] NO extra * ZoomFactor -- zoom already arrives here
         // implicitly, through scaleY: cropHeightPixels (both PreserveAspect and stretch branches

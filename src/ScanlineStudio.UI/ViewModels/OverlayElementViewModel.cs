@@ -1,5 +1,8 @@
+using AvaloniaColor = Avalonia.Media.Color;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Avalonia;
+using Avalonia.Media;
 using ScanlineStudio.Abstractions.Imaging;
 
 namespace ScanlineStudio.UI.ViewModels;
@@ -71,6 +74,47 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// color is a no-op" contract).</summary>
     [ObservableProperty]
     private double _strokeThickness = 0.02;
+
+    /// <summary>Phase 8 (spec/15-template-designer.md, YONIQ-style text-effects follow-up). Null
+    /// means no shadow (same null-means-none convention as <see cref="StrokeColor"/>) -- a plain
+    /// offset-duplicate-glyph draw (legacy YONIQ's own real mechanism), not a soft blur.</summary>
+    [ObservableProperty]
+    private Rgb24? _shadowColor;
+
+    /// <summary>Relative to the image's HEIGHT, same convention as <see cref="FontSizeRelative"/>/
+    /// <see cref="StrokeThickness"/> (both axes, so a template saved at one SSTV mode renders
+    /// correctly at another). Meaningless while <see cref="ShadowColor"/> is null.</summary>
+    [ObservableProperty]
+    private double _shadowOffsetX = 0.02;
+
+    [ObservableProperty]
+    private double _shadowOffsetY = 0.02;
+
+    /// <summary>Phase 8: in-plane (2D) rotation only, clockwise-positive degrees -- true 3D/
+    /// perspective is a separate, deferred future phase (Tier 3).</summary>
+    [ObservableProperty]
+    private double _rotationDegrees;
+
+    /// <summary>Phase 8: simplified 2-stop gradient (start/end color + axis) rather than exposing
+    /// <see cref="Abstractions.Imaging.TextGradient"/>'s own full arbitrary-stop-list shape directly
+    /// on this VM -- a real, deliberate scope cut for the style panel's own UI (a 2-color picker
+    /// pair + an axis ComboBox is the whole surface; an N-stop editor is real, unbudgeted UI work
+    /// for a feature this project's own plan explicitly scoped as "feature parity, not literal
+    /// legacy replication"). <see cref="BuildTemplateElement"/> in the owning
+    /// <see cref="TxImageEditorPaneViewModel"/> composes these three fields into a real
+    /// <see cref="Abstractions.Imaging.TextGradient"/> only when <see cref="GradientEnabled"/> is
+    /// true.</summary>
+    [ObservableProperty]
+    private bool _gradientEnabled;
+
+    [ObservableProperty]
+    private TextGradientKind _gradientKind = TextGradientKind.Horizontal;
+
+    [ObservableProperty]
+    private Rgb24 _gradientStartColor = new(255, 0, 0);
+
+    [ObservableProperty]
+    private Rgb24 _gradientEndColor = new(0, 0, 255);
 
     /// <summary>Set by the owning <see cref="TxImageEditorPaneViewModel"/> at creation time -- lets
     /// this element compute its own on-screen position without the View needing a
@@ -156,6 +200,132 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
         set => StrokeColor = value ? (StrokeColor ?? new Rgb24(0, 0, 0)) : null;
     }
 
+    /// <summary>Real-window finding (Phase 8 verification, but the bug is pre-existing since Phase 4
+    /// -- caught here because <see cref="ShadowColor"/> inherited the identical pattern): binding a
+    /// <c>ColorPicker.Color</c> two-way, through <c>Rgb24ToColorConverter</c>, DIRECTLY to a nullable
+    /// <see cref="StrokeColor"/>/<see cref="ShadowColor"/> silently un-nulls it. That converter's own
+    /// <c>Convert</c> maps <c>null -&gt; Colors.Black</c> for display (so the DISABLED picker doesn't
+    /// spam a binding error while unchecked) -- but the picker's own two-way binding writes that
+    /// synthetic fallback color straight back through <c>ConvertBack</c>, turning <c>null</c> into a
+    /// real <c>Rgb24(0,0,0)</c> with no user action at all. Confirmed live: a freshly-created text
+    /// element (never touched by the operator) showed BOTH "Outline" and "Shadow" checked with a
+    /// black swatch, meaning every new element silently got a black outline AND a black drop-shadow
+    /// baked into the transmitted image by default. Fixed by giving the picker its own NON-nullable
+    /// view (<see cref="StrokeColorForPicker"/>/<see cref="ShadowColorForPicker"/> below) instead of
+    /// binding the nullable source directly -- <see cref="GradientStartColor"/>/<see cref="GradientEndColor"/>
+    /// never had this bug for exactly this reason (already non-nullable <c>Rgb24</c>, no null branch
+    /// in the converter ever gets hit for them).</summary>
+    public bool HasShadow
+    {
+        get => ShadowColor is not null;
+        set => ShadowColor = value ? (ShadowColor ?? new Rgb24(0, 0, 0)) : null;
+    }
+
+    /// <summary>Non-nullable ColorPicker-facing view of <see cref="StrokeColor"/> -- see
+    /// <see cref="HasShadow"/>'s own doc comment for the exact bug this sidesteps. Setter only
+    /// commits while <see cref="HasStroke"/> is already true (the picker is disabled/decorative
+    /// otherwise -- an incidental write while disabled is dropped, not silently un-nulling
+    /// <see cref="StrokeColor"/>).</summary>
+    public Rgb24 StrokeColorForPicker
+    {
+        get => StrokeColor ?? new Rgb24(0, 0, 0);
+        set
+        {
+            if (HasStroke)
+            {
+                StrokeColor = value;
+            }
+        }
+    }
+
+    /// <inheritdoc cref="StrokeColorForPicker"/>
+    public Rgb24 ShadowColorForPicker
+    {
+        get => ShadowColor ?? new Rgb24(0, 0, 0);
+        set
+        {
+            if (HasShadow)
+            {
+                ShadowColor = value;
+            }
+        }
+    }
+
+    /// <summary>Canvas-preview amendment (user explicitly asked for real WYSIWYG here, overriding
+    /// this phase's own original "canvas can't show rotation/shadow/gradient, only the mini-preview
+    /// can" scope decision -- Phase 4 made the identical call for stroke and it's STILL true that a
+    /// plain Avalonia <c>TextBlock</c> has no native outline capability, so stroke stays
+    /// mini-preview-only; rotation and gradient, unlike stroke, DO have real Avalonia primitives to
+    /// use here). Bound to the outer element <c>Border</c>'s own <c>RenderTransform</c> (not the
+    /// <c>TextBlock</c> alone) so it rotates the text AND its shadow copy together, matching the real
+    /// pipeline's own behavior of rotating the whole offscreen sub-bitmap as one unit. Null at 0°
+    /// (no transform needed for the common case) -- Avalonia's own <c>RenderTransform</c> accepts a
+    /// null value as "identity," so this is not a special case, just an optimization.</summary>
+    public Transform? RotationTransform => RotationDegrees != 0 ? new RotateTransform(RotationDegrees) : null;
+
+    /// <summary>Canvas-preview amendment, shadow half -- Avalonia's <c>TextBlock</c> has no native
+    /// drop-shadow primitive (confirmed, same as the stroke case), so this fakes it the same way the
+    /// real pipeline does: a second, offset TextBlock copy underneath the real one (see the
+    /// DataTemplate's own XAML for the actual two-TextBlock structure). Offset is in the SAME
+    /// canvas-display pixel space <see cref="CanvasFontSize"/> already uses (both scale off
+    /// <see cref="ImageHeight"/>, matching <see cref="Abstractions.Imaging.TemplateTextElement.ShadowOffsetX"/>/
+    /// <see cref="ShadowOffsetY"/>'s own image-height-relative convention, so a template saved at one
+    /// SSTV mode previews correctly at another here too). Null while <see cref="HasShadow"/> is false
+    /// -- the shadow TextBlock is ALSO <c>IsVisible</c>-gated on <see cref="HasShadow"/>, so this only
+    /// matters while it's actually shown.</summary>
+    public Transform? ShadowRenderTransform => HasShadow
+        ? new TranslateTransform(ShadowOffsetX * ImageHeight, ShadowOffsetY * ImageHeight)
+        : null;
+
+    /// <summary>Canvas-preview amendment, gradient half -- the main TextBlock's own
+    /// <c>Foreground</c>: a plain solid brush from <see cref="Color"/> (identical to the pre-Phase-8
+    /// binding), or a real Avalonia <see cref="LinearGradientBrush"/>/<see cref="RadialGradientBrush"/>
+    /// when <see cref="GradientEnabled"/> is set. Coordinates use Avalonia's own
+    /// <see cref="RelativeUnit.Relative"/> (0,0)-(1,1) across the TextBlock's own layout box --
+    /// genuinely simpler than the real pipeline's own gradient-brush construction
+    /// (<c>TransmitImagePreparer.BuildGradientBrush</c>), which has to compute real destination-image
+    /// pixel coordinates by hand because ImageSharp's own gradient brushes have no relative-coordinate
+    /// mode at all.</summary>
+    public IBrush ForegroundBrush => GradientEnabled ? BuildForegroundGradientBrush() : new SolidColorBrush(ToAvaloniaColor(Color));
+
+    private IBrush BuildForegroundGradientBrush()
+    {
+        var stops = new GradientStops
+        {
+            new GradientStop(ToAvaloniaColor(GradientStartColor), 0),
+            new GradientStop(ToAvaloniaColor(GradientEndColor), 1),
+        };
+
+        return GradientKind switch
+        {
+            TextGradientKind.Horizontal => new LinearGradientBrush
+            {
+                StartPoint = new RelativePoint(0, 0.5, RelativeUnit.Relative),
+                EndPoint = new RelativePoint(1, 0.5, RelativeUnit.Relative),
+                GradientStops = stops,
+            },
+            TextGradientKind.Vertical => new LinearGradientBrush
+            {
+                StartPoint = new RelativePoint(0.5, 0, RelativeUnit.Relative),
+                EndPoint = new RelativePoint(0.5, 1, RelativeUnit.Relative),
+                GradientStops = stops,
+            },
+            // RadiusX/RadiusY (not the obsolete Radius) -- both already relative regardless (0.5 =
+            // 50%), matching this brush's own Center/GradientOrigin RelativeUnit.Relative usage.
+            TextGradientKind.Radial => new RadialGradientBrush
+            {
+                Center = new RelativePoint(0.5, 0.5, RelativeUnit.Relative),
+                GradientOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative),
+                RadiusX = new RelativeScalar(0.5, RelativeUnit.Relative),
+                RadiusY = new RelativeScalar(0.5, RelativeUnit.Relative),
+                GradientStops = stops,
+            },
+            _ => throw new NotSupportedException($"Unrecognized {nameof(TextGradientKind)}: {GradientKind}."),
+        };
+    }
+
+    private static AvaloniaColor ToAvaloniaColor(Rgb24 color) => AvaloniaColor.FromRgb(color.R, color.G, color.B);
+
     /// <summary>What actually gets drawn -- the canvas preview binds here, not <see cref="Text"/>,
     /// so the user sees "DE W1AW" rather than the literal "DE %m" template while editing.</summary>
     public string ResolvedText => ResolveMacros?.Invoke(Text) ?? Text;
@@ -209,9 +379,43 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     {
         OnPropertyChanged(nameof(TopPixels));
         OnPropertyChanged(nameof(CanvasHeightPixels));
+        // Canvas-preview amendment: ShadowRenderTransform's own offset scales off ImageHeight too.
+        OnPropertyChanged(nameof(ShadowRenderTransform));
     }
 
     partial void OnTextChanged(string value) => OnPropertyChanged(nameof(ResolvedText));
 
-    partial void OnStrokeColorChanged(Rgb24? value) => OnPropertyChanged(nameof(HasStroke));
+    partial void OnStrokeColorChanged(Rgb24? value)
+    {
+        OnPropertyChanged(nameof(HasStroke));
+        OnPropertyChanged(nameof(StrokeColorForPicker));
+    }
+
+    partial void OnShadowColorChanged(Rgb24? value)
+    {
+        OnPropertyChanged(nameof(HasShadow));
+        OnPropertyChanged(nameof(ShadowColorForPicker));
+        // Canvas-preview amendment: HasShadow gates ShadowRenderTransform (null while off).
+        OnPropertyChanged(nameof(ShadowRenderTransform));
+    }
+
+    // Canvas-preview amendment (see RotationTransform/ShadowRenderTransform/ForegroundBrush's own
+    // doc comments) -- every dependency of those three computed properties needs its own re-raise
+    // hook, same "parent-pushed cascade, not left to accidentally work" discipline this file already
+    // established for LeftPixels/TopPixels/CanvasWidthPixels/CanvasHeightPixels above.
+    partial void OnRotationDegreesChanged(double value) => OnPropertyChanged(nameof(RotationTransform));
+
+    partial void OnShadowOffsetXChanged(double value) => OnPropertyChanged(nameof(ShadowRenderTransform));
+
+    partial void OnShadowOffsetYChanged(double value) => OnPropertyChanged(nameof(ShadowRenderTransform));
+
+    partial void OnColorChanged(Rgb24 value) => OnPropertyChanged(nameof(ForegroundBrush));
+
+    partial void OnGradientEnabledChanged(bool value) => OnPropertyChanged(nameof(ForegroundBrush));
+
+    partial void OnGradientKindChanged(TextGradientKind value) => OnPropertyChanged(nameof(ForegroundBrush));
+
+    partial void OnGradientStartColorChanged(Rgb24 value) => OnPropertyChanged(nameof(ForegroundBrush));
+
+    partial void OnGradientEndColorChanged(Rgb24 value) => OnPropertyChanged(nameof(ForegroundBrush));
 }
