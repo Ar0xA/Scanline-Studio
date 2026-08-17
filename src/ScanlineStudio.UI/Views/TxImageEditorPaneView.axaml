@@ -33,7 +33,7 @@
         <HeaderedContentControl.Header>
             <TextBlock Classes="IndustryGbTitle" Text="{Binding HeaderText}" />
         </HeaderedContentControl.Header>
-        <Grid RowDefinitions="Auto,*">
+        <Grid RowDefinitions="Auto,*,Auto">
 
             <!-- Merged tool strip: Move/Crop/Scale/.../Pick RadioButton group, IndustryMiniRadioTheme
                  (GroupName="EditorTool"). Only "Move" reflects real behavior (the default/only tool
@@ -130,16 +130,12 @@
                      action group / insert row (mock's own IA rule, README gap #10: "view state and
                      object state are separated" — this toolbar is STAGE/view-state only now: zoom,
                      snap, safe-area, crop, and the whole-photo Rotate below, which is a crop/source
-                     adjustment, not a per-element operation, so it stays here). -->
+                     adjustment, not a per-element operation, so it stays here). Apply/Cancel ALSO
+                     moved out, into the new SEND panel at the bottom of the card (Phase 4) — same
+                     "object/frame action, not view state" reasoning. -->
                 <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.ToolRotate}"
                         Command="{Binding RotateCommand}" />
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" Margin="0,0,4,4"
-                        Content="{loc:Translate Panes.TxImageEditor.Apply}"
-                        Command="{Binding ApplyCommand}" />
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
-                        Content="{loc:Translate Panes.TxImageEditor.Cancel}"
-                        Command="{Binding CancelCommand}" />
             </WrapPanel>
 
             <!-- EditWindow redesign Phase 1 (mockups/Editwindow, user-provided design handoff,
@@ -822,88 +818,6 @@
                         </StackPanel>
                     </HeaderedContentControl>
 
-                    <!-- Insert-field token chips. Only the 5 backed by real data this pass (MY CALL/MY
-                         GRID/MY NAME/DATE/UTC, sourced from OperatorSettings + system clock via
-                         MacroTextResolver) get a Command; HIS CALL/HIS GRID/FREQ/MODE/HIS RSV/DIST/BEAM
-                         need a "current QSO" form concept this port doesn't have yet
-                         (spec/14-roadmap.md's TX-macro/CW-ID backlog entry). 0.9-beta pass: these 7
-                         were previously left fully clickable with no Command (a fake-live gap the
-                         wiring survey's "correctly-STUB" label didn't actually reflect) — now
-                         disabled + NotImplemented-tooltipped like every other non-functional control.
-                         Clicking a wired chip appends its token to the selected overlay element's raw
-                         Text (no caret-position tracking; append is simplest and matches what
-                         "insert" means for the other chips' future no-selection-yet state too). -->
-                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
-                        <HeaderedContentControl.Header>
-                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" />
-                        </HeaderedContentControl.Header>
-                        <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                            <!-- Phase 3 (spec/15-template-designer.md): HIS CALL/HIS GRID/HIS RSV/FREQ/
-                                 MODE now real "insert variable"/"insert macro" chips — same
-                                 InsertFieldCommand/CommandParameter wiring the 5 already-working chips
-                                 use, fixed conventional token names matching spec/15's own worked
-                                 example ({his_call}/{rsv}) for the 3 QSO-shaped ones, {freq}/{mode} for
-                                 the 2 radio-state ones (ordinary resolved macros, not part of the
-                                 variable mechanism — see MacroTextResolver's own doc comment).
-                                 DIST/BEAM (Chip11/12) stay disabled — explicitly out of scope, no
-                                 distance/bearing calculation exists anywhere in this codebase. -->
-                            <WrapPanel>
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
-                                        Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                            </WrapPanel>
-                            <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
-                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.SourceLabel}" />
-                                <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.SourceValue}" />
-                            </Grid></Border>
-                            <!-- Phase 3 fill bar: one row per template-variable name currently
-                                 referenced by a live text element (TxImageEditorPaneViewModel's own
-                                 RescanTemplateVariables keeps this in sync) — typing here updates
-                                 every reference live, per spec/15-template-designer.md's own
-                                 "slot-fill bar" design. Empty (no rows) when the loaded template
-                                 doesn't reference any {word} beyond the fixed macro set. -->
-                            <ItemsControl ItemsSource="{Binding TemplateVariableRows}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate DataType="vm:TemplateVariableRowViewModel">
-                                        <Grid ColumnDefinitions="Auto,*" Margin="0,0,0,3">
-                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="0,0,4,0" Text="{Binding Key}" />
-                                            <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding Value}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <Grid ColumnDefinitions="*" Margin="0,2,0,0">
-                                <!-- "Fill all" dropped outright (Phase 3 plan-review decision, not
-                                     just left disabled) — no real default-value source exists yet
-                                     (OperatorSettings is MY-side only; spec/15 frames any
-                                     logbook-based prefill as future/additive). "Clear" is the one
-                                     real, spec-backed action (spec/15: "one 'clear fields' action
-                                     after the QSO"). -->
-                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxImageEditor.ClearFields}"
-                                        Command="{Binding ClearTemplateVariablesCommand}" />
-                            </Grid>
-                        </StackPanel>
-                    </HeaderedContentControl>
-
                     <!-- Phase 4 (spec/15-template-designer.md): real, selection-tracking-driven
                          controls replacing the 3 fake rows above (font/size, fill/stroke, plate).
                          Bound via path bindings through SelectedTextElement (a computed property on
@@ -1037,6 +951,44 @@
                                                  Color="{Binding SelectedTextElement.GradientEndColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
                                 </Grid></Border>
 
+                                <!-- EditWindow redesign Phase 4 (mockups/Editwindow): insert-field
+                                     chips relocated INTO the TEXT STYLE tab (mock's own placement —
+                                     "INSERT FIELD → CARET" sits inside the text-style inspector, not
+                                     the bottom QSO-fill bar; the bottom bar is FILL-IN VALUES only,
+                                     this is macro/variable-TOKEN insertion). Only the 10 backed by
+                                     real data get a Command; DIST/BEAM stay disabled — see this
+                                     block's own original comment (moved from its old standalone
+                                     panel, unchanged otherwise) for the full reasoning. -->
+                                <Border Classes="IndustryRow"><TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" /></Border>
+                                <WrapPanel>
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                </WrapPanel>
+                                <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.SourceLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.SourceValue}" />
+                                </Grid></Border>
+
                                 <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AddPlate}"
                                         Command="{Binding AddPlateBehindTextCommand}" />
@@ -1140,6 +1092,64 @@
                 </ScrollViewer>
 
             </Grid>
+
+            <!-- EditWindow redesign Phase 4 (mockups/Editwindow): QSO FILL + SEND bottom bar — the
+                 mock's own "the only tinted region on the screen," since it's the live-QSO path.
+                 IndustryAccent100 (#EEF6FF) already matches the mock's own tint value by coincidence
+                 of shared design-system lineage (see this file's Phase 1 doc comment on that same
+                 point) — reused directly, no new token added, per the user's own explicit "stick with
+                 the current template design items" call. Left (fluid): the fill-bar this project
+                 already had (Phase 3's own TemplateVariableRows + Clear Fields), relocated from its
+                 old standalone side panel — same VM state, same bindings. Right (fixed 220): Apply/
+                 Cancel, relocated from the STAGE toolbar (object-state actions belong here, not
+                 mixed with view-state per this redesign's own IA rule, Phase 2's own reasoning).
+                 [Deferred, stated not silently dropped] The mock's own PULL FROM RX DECODE / FROM
+                 LOGBOOK / QUEUE &amp; TRANSMIT are NOT built here — all three are genuinely new
+                 cross-cutting features (RX-decode/logbook integration; QUEUE &amp; TRANSMIT specifically
+                 needs new cross-VM wiring, since "Apply" and "Transmit" are two separate commands on
+                 two separate VMs today — TxImageEditorPaneViewModel.Applied is an event the PARENT
+                 TxControlsPaneViewModel subscribes to, with no existing "apply then transmit" chain),
+                 not pure layout — out of this redesign pass's own scope. -->
+            <Border Grid.Row="2" Margin="0,8,0,0" Padding="8" Background="{StaticResource IndustryAccent100}" BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1">
+                <Grid ColumnDefinitions="*,220" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
+                    <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                        <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.QsoFillHeader}" />
+                        <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoQsoFields}" IsVisible="{Binding HasNoTemplateVariableRows}" />
+                        <ItemsControl ItemsSource="{Binding TemplateVariableRows}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:TemplateVariableRowViewModel">
+                                    <StackPanel Margin="0,0,10,4" MinWidth="120">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{Binding Key}" />
+                                        <TextBox Classes="Industry IndustryInput" Text="{Binding Value}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <!-- "Fill all" dropped outright (Phase 3 plan-review decision, not just left
+                             disabled) — no real default-value source exists yet (OperatorSettings is
+                             MY-side only; spec/15 frames any logbook-based prefill as future/
+                             additive). "Clear" is the one real, spec-backed action (spec/15: "one
+                             'clear fields' action after the QSO"). -->
+                        <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
+                                Content="{loc:Translate Panes.TxImageEditor.ClearFields}"
+                                Command="{Binding ClearTemplateVariablesCommand}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="{StaticResource IndustrySpacingTight}">
+                        <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.SendHeader}" />
+                        <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                Content="{loc:Translate Panes.TxImageEditor.Cancel}"
+                                Command="{Binding CancelCommand}" />
+                        <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                Content="{loc:Translate Panes.TxImageEditor.Apply}"
+                                Command="{Binding ApplyCommand}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
         </Grid>
     </HeaderedContentControl>
 

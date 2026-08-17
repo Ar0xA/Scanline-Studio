@@ -443,6 +443,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// separately and survives a row's temporary disappearance.</summary>
     public ObservableCollection<TemplateVariableRowViewModel> TemplateVariableRows { get; } = [];
 
+    /// <summary>EditWindow redesign Phase 4 (mockups/Editwindow) -- the bottom QSO FILL bar's own
+    /// "no fields yet" placeholder. A PLAIN computed property (not <c>[ObservableProperty]</c>,
+    /// since there's no backing field to observe) needs an explicit <see cref="OnPropertyChanged"/>
+    /// raise wherever <see cref="TemplateVariableRows"/> actually changes -- <see
+    /// cref="RescanTemplateVariables"/> is the one place that adds/removes rows, so it's the one
+    /// place this needs raising. Not bound as a bare <c>!TemplateVariableRows.Count</c> path in AXAML
+    /// -- Avalonia's binding NOT-operator is for booleans, not a safe implicit int-to-bool
+    /// conversion, so a real bool property is the correct fix here, not a shortcut.</summary>
+    public bool HasNoTemplateVariableRows => TemplateVariableRows.Count == 0;
+
     /// <summary>Snapshot of the current template-variable value map, for a host
     /// (<see cref="TxControlsPaneViewModel"/>) to capture alongside <see cref="RawOverlayElements"/>
     /// when building its own re-open <c>EditState</c> -- same "read-only snapshot for callers that
@@ -1770,6 +1780,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 ValueChangedCallback = OnTemplateVariableValueChanged,
             });
         }
+
+        OnPropertyChanged(nameof(HasNoTemplateVariableRows));
     }
 
     /// <summary>Fired by a <see cref="TemplateVariableRowViewModel"/>'s own
