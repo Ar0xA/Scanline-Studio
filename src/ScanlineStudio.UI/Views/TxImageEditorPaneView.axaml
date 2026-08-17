@@ -96,8 +96,13 @@
                      Click reads EditorScrollViewer.Bounds in code-behind and calls vm.ApplyFit(w,h)
                      directly — a small necessary deviation from a zero-arg RelayCommand. 100% needs
                      no viewport data, so it stays a plain Command binding. -->
-                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Click="OnFitButtonClick" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" />
-                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding ZoomActualCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
+                <!-- design-fidelity Phase G (#16): FIT/100% joined into a shared-border segmented
+                     pair (mock's own border-left:0 joined-button convention) — FIT keeps its normal
+                     border and loses its own right margin (glues flush to 100%); 100% drops its
+                     left border via a per-instance BorderThickness override so the two buttons don't
+                     double up a 2px seam between them. -->
+                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Click="OnFitButtonClick" Margin="0,0,0,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" />
+                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding ZoomActualCommand}" BorderThickness="0,1,1,1" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
                 <!-- Task #23 (zoom slider addendum, plan-reviewed). Minimum/Maximum bound via
                      x:Static to the VM's own public MinZoomFactor/MaxZoomFactor consts — NOT
                      hardcoded XAML literals — since ZoomFactor's own property setter has no clamp;
@@ -122,6 +127,15 @@
                 </StackPanel>
                 <ToggleButton Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" IsChecked="{Binding SnapToGrid}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SnapGrid.Help}" />
                 <ToggleButton Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" IsChecked="{Binding SafeAreaVisible}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" />
+                <!-- design-fidelity Phase G (#16): CROP mono label, matching the mock's own toolbar
+                     grouping (a divider + "CROP" kicker ahead of the dimensions chip/aspect toggles).
+                     No literal right-aligned flex spacer here — this row is a WrapPanel (Phase 1's
+                     own deliberate choice, so a too-narrow column degrades to wrapping instead of
+                     clipping), which has no flex/push-to-edge concept the way the mock's own flex:1
+                     div does; a divider is the achievable part of "group these visually," not a
+                     structural gap in this fix. -->
+                <Border Width="1" Height="18" Margin="6,0" Background="{StaticResource IndustryChromeBorder}" />
+                <TextBlock Classes="IndustryKicker" VerticalAlignment="Center" Margin="0,0,4,4" Text="{loc:Translate Panes.TxImageEditor.CropLabel}" />
                 <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{Binding DimensionsChipText}" /></Border>
 
                 <!-- Real, wired: aspect toggle + add-text + apply/cancel. PreserveAspect has no
@@ -1299,6 +1313,14 @@
                             <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="0" Maximum="100" Value="{Binding Denoise}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Denoise, StringFormat={}{0:0}}" />
                         </Grid>
+                        <!-- design-fidelity Phase G (#12, mockups/Editwindow line 227): static note
+                             only — LOOK PRESET/RESET ALL/AUTO LEVEL/REPLACE (mock lines 223-226) are
+                             genuinely new functionality (a preset system, auto-white-balance, a
+                             second image-replace path), already deferred by the plan's own scope-
+                             discipline note; this phase is layout/label additions only, not new
+                             commands. -->
+                        <TextBlock Classes="IndustryKicker" TextWrapping="Wrap" Margin="0,4,0,0"
+                                   Text="{loc:Translate Panes.TxImageEditor.AdjustmentsNonDestructiveNote}" />
                     </StackPanel>
                         </StackPanel>
                         </ScrollViewer>
