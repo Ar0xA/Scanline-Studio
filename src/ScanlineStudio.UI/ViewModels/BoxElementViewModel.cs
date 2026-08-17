@@ -60,6 +60,8 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
 
     public IRelayCommand? SendToBackCommand { get; init; }
 
+    public IRelayCommand? DuplicateCommand { get; init; }
+
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
 
     public double LeftPixels => (X - (Width / 2)) * ImageWidth;

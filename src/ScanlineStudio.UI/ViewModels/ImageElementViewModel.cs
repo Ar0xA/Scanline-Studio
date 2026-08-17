@@ -73,6 +73,8 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
 
     public IRelayCommand? SendToBackCommand { get; init; }
 
+    public IRelayCommand? DuplicateCommand { get; init; }
+
     /// <summary>Only image elements can be "set as background" (Phase 2 scope) -- not part of
     /// <see cref="ITemplateElementViewModel"/> itself, so this lives here rather than as a no-op on
     /// text/box. Same parent-pushed pattern as <see cref="RemoveCommand"/> -- bound directly in XAML

@@ -82,6 +82,20 @@ public interface ITemplateElementViewModel : INotifyPropertyChanged
 
     IRelayCommand? SendToBackCommand { get; init; }
 
+    /// <summary>Task #24 (right-click context menu addendum, plan-reviewed) -- parent-pushed the
+    /// SAME instance as the toolbar's own parameterless <c>TxImageEditorPaneViewModel.DuplicateCommand</c>
+    /// (which reads <see cref="ITemplateElementViewModel"/> via <c>SelectedOverlayElement</c>, not a
+    /// parameter). Bound in the context menu with NO <c>CommandParameter</c> -- plan-review finding:
+    /// <c>RelayCommand.Execute(object?)</c> ignores its argument regardless, so this is type-correct
+    /// without reshaping the command's own signature (rejected alternative: making it
+    /// element-parameterized like <see cref="RemoveCommand"/>/<see cref="BringToFrontCommand"/> would
+    /// also require touching the EXISTING toolbar binding to keep working, a bigger blast radius for
+    /// no real benefit). Correctness depends on right-click already having set
+    /// <c>SelectedOverlayElement</c> to THIS element by the time the menu opens -- true today, since
+    /// <c>OnOverlayElementPointerPressed</c> sets it on <c>PointerPressed</c> (ungated by mouse
+    /// button), which fires before the native <c>ContextMenu</c> opens on <c>PointerReleased</c>.</summary>
+    IRelayCommand? DuplicateCommand { get; init; }
+
     /// <summary>Pushes ONE coalesced undo/redo step covering X/Y/Width/Height together (Phase 1
     /// plan-review finding: a diagonal drag-resize must collapse to one undo step, same reasoning as
     /// the pre-Phase-1 X/Y-only version covering a diagonal drag). Fires on <c>On*Changing</c> (before

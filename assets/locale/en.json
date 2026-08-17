@@ -403,6 +403,8 @@
   "Panes.TxImageEditor.MoveDown": "▼",
   "Panes.TxImageEditor.BringToFront": "Front",
   "Panes.TxImageEditor.SendToBack": "Back",
+  "Panes.TxImageEditor.BringToFrontMenu": "Bring to Front",
+  "Panes.TxImageEditor.SendToBackMenu": "Send to Back",
   "Panes.TxImageEditor.Lock": "Lock",
   "Panes.TxImageEditor.Duplicate": "Duplicate",
   "Panes.TxImageEditor.Apply": "Apply",
