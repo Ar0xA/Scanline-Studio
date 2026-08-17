@@ -128,10 +128,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     /// <summary>Phase 7 zoom bounds -- arbitrary but generous (0.1x lets a very large working copy
     /// still shrink to fit a small pane; 4x is well past the point of any real editing value at this
-    /// canvas's typical size). Not exposed as a user setting, per the plan's own explicit scope cut.</summary>
-    private const double MinZoomFactor = 0.1;
+    /// canvas's typical size). Not exposed as a user setting, per the plan's own explicit scope cut.
+    /// <c>public</c> (task #23, zoom slider addendum plan-review finding) so the AXAML slider's own
+    /// <c>Minimum</c>/<c>Maximum</c> can bind via <c>x:Static</c> to these same two constants instead
+    /// of a second, driftable pair of hardcoded XAML literals -- unlike the adjustment sliders (whose
+    /// bounds exist nowhere else), these are ALSO enforced in <see cref="ZoomBy"/>'s own clamp, and
+    /// <see cref="ZoomFactor"/>'s property setter itself has no clamp, so a drifted slider Maximum
+    /// would write an out-of-range value straight through with nothing else to catch it.</summary>
+    public const double MinZoomFactor = 0.1;
 
-    private const double MaxZoomFactor = 4.0;
+    public const double MaxZoomFactor = 4.0;
 
     /// <summary>Undo/redo stack depth cap (round-1 plan-review risk: unbounded keyboard-nudge
     /// auto-repeat would otherwise grow <see cref="_undoStack"/> forever). Arbitrary but generous
@@ -490,11 +496,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// literal XAML <c>Margin="14"</c> (screen px, correct only at the zoom that didn't exist yet).</summary>
     public double SafeAreaInsetPixels => 14 * ZoomFactor;
 
+    /// <summary>Task #23 (zoom slider addendum) -- the pre-existing "Fit"/"100%" button labels are
+    /// always shown as a percentage, never a raw factor; this is the same convention for the new
+    /// slider's own numeric readout. A plain VM property (not a XAML <c>StringFormat</c>) since the
+    /// display value needs a real multiply (<c>* 100</c>), not just number formatting.</summary>
+    public string ZoomPercentText => $"{ZoomFactor * 100:0}%";
+
     partial void OnZoomFactorChanged(double value)
     {
         OnPropertyChanged(nameof(CanvasDisplayWidth));
         OnPropertyChanged(nameof(CanvasDisplayHeight));
         OnPropertyChanged(nameof(SafeAreaInsetPixels));
+        OnPropertyChanged(nameof(ZoomPercentText));
         OnPropertyChanged(nameof(CropLeftPixels));
         OnPropertyChanged(nameof(CropTopPixels));
         OnPropertyChanged(nameof(CropWidthPixels));
@@ -522,9 +535,30 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     }
 
     /// <summary>One-shot "100%" action (Phase 7) -- not a live-tracking toggle, matches the plain
-    /// Button shape the stub already had.</summary>
+    /// Button shape the stub already had. Clamped (task #23 plan-review nit) for consistency with
+    /// <see cref="ApplyFit"/>/<see cref="ZoomBy"/>'s own clamping even though 1.0 is always inside
+    /// <see cref="MinZoomFactor"/>/<see cref="MaxZoomFactor"/> today -- a no-op clamp now, but keeps
+    /// every <see cref="ZoomFactor"/> writer on the same discipline rather than three of four.</summary>
     [RelayCommand]
-    private void ZoomActual() => ZoomFactor = 1.0;
+    private void ZoomActual() => ZoomFactor = Math.Clamp(1.0, MinZoomFactor, MaxZoomFactor);
+
+    /// <summary>Task #23 (zoom slider addendum) -- multiplicative step, the third
+    /// <see cref="ZoomFactor"/> writer alongside <see cref="ApplyFit"/>/<see cref="ZoomActual"/>, same
+    /// clamp-in-one-place discipline. Multiplicative (not additive) since <see cref="MinZoomFactor"/>/
+    /// <see cref="MaxZoomFactor"/> span a 40x range (0.1-4.0) -- a fixed additive step would feel
+    /// enormous near the low end and imperceptible near the high end. Guards non-finite/non-positive
+    /// <paramref name="factor"/> (a scroll-wheel handler computing <c>Math.Pow(1.1, delta)</c> can't
+    /// itself produce one, but this is a public VM method, not a private implementation detail paired
+    /// 1:1 with that one caller).</summary>
+    public void ZoomBy(double factor)
+    {
+        if (!double.IsFinite(factor) || factor <= 0)
+        {
+            return;
+        }
+
+        ZoomFactor = Math.Clamp(ZoomFactor * factor, MinZoomFactor, MaxZoomFactor);
+    }
 
     /// <summary>One-shot "Fit" action (Phase 7) -- called by the View's code-behind, which owns the
     /// actual viewport size (<c>ScrollViewer.Bounds</c>); this VM never reaches for control sizes

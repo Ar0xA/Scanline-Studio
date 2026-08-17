@@ -1968,6 +1968,64 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void ZoomBy_MultipliesCurrentZoomFactor()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.ZoomFactor = 1.0;
+
+        vm.ZoomBy(1.1);
+
+        AssertClose(1.1, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ZoomBy_ClampsToMaxZoomFactor()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.ZoomFactor = 3.9;
+
+        vm.ZoomBy(2.0);
+
+        AssertClose(4.0, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ZoomBy_ClampsToMinZoomFactor()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.ZoomFactor = 0.15;
+
+        vm.ZoomBy(0.5);
+
+        AssertClose(0.1, vm.ZoomFactor);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void ZoomBy_NonFiniteOrNonPositiveFactor_IsANoOp(double factor)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.ZoomFactor = 1.5;
+
+        vm.ZoomBy(factor);
+
+        AssertClose(1.5, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ZoomPercentText_ReflectsZoomFactorAsAWholeNumberPercentage()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ZoomFactor = 2.0;
+
+        Assert.Equal("200%", vm.ZoomPercentText);
+    }
+
+    [AvaloniaFact]
     public void ZoomFactorChange_PushesZoomedCanvasSizeOntoEveryExistingElement()
     {
         // Phase 7 rearchitecture: zoom is baked directly into each element's own ImageWidth/
@@ -2633,6 +2691,45 @@ public sealed class TxImageEditorPaneViewModelTests
 
         Assert.True(width > 0);
         Assert.True(height > 0);
+    }
+
+    // Task #23 (zoom slider addendum, plan-reviewed): pointer-anchored scroll-wheel zoom math, split
+    // out of OnEditorWheelChanged for the same unit-testability reason as ComputeElementResize above.
+
+    [Fact]
+    public void ComputeAnchoredOffset_ZoomingIn_KeepsTheSameContentPointUnderTheCursor()
+    {
+        // A 400px-wide canvas, cursor 100px from the left (fraction 0.25) at the moment ZoomFactor
+        // changes; after zooming in to 800px wide, that same content point is now at 200px. If the
+        // cursor itself hasn't moved (still 100px from the viewport's own left edge, i.e. anchorAfter
+        // stays 100 since GetPosition reads viewport-relative, not content-relative), the offset must
+        // grow by exactly 100px (200 - 100) to keep that content point under the still-100px cursor.
+        var newOffset = TxImageEditorPaneView.ComputeAnchoredOffset(
+            currentOffset: 0, fraction: 0.25, newContentSize: 800, anchorAfter: 100);
+
+        AssertClose(100, newOffset);
+    }
+
+    [Fact]
+    public void ComputeAnchoredOffset_NoZoomChange_ReturnsTheOriginalOffsetUnchanged()
+    {
+        // Content size unchanged (400 -> 400) and the cursor read at exactly the position the
+        // fraction predicts (0.25 * 400 = 100) -- a true no-op zoom must not perturb the offset.
+        var newOffset = TxImageEditorPaneView.ComputeAnchoredOffset(
+            currentOffset: 50, fraction: 0.25, newContentSize: 400, anchorAfter: 100);
+
+        AssertClose(50, newOffset);
+    }
+
+    [Fact]
+    public void ComputeAnchoredOffset_StartingFromANonZeroOffset_AddsTheDeltaOnTopOfIt()
+    {
+        // Same zoom-in scenario as the first test above, but starting from an already-scrolled
+        // position -- the correction (+100) must be ADDED to the existing offset, not replace it.
+        var newOffset = TxImageEditorPaneView.ComputeAnchoredOffset(
+            currentOffset: 30, fraction: 0.25, newContentSize: 800, anchorAfter: 100);
+
+        AssertClose(130, newOffset);
     }
 
     // Phase 6 (spec/15-template-designer.md): snap-ON-DROP grid math, computed in edge space.
