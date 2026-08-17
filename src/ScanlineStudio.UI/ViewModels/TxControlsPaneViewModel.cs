@@ -715,6 +715,20 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// true) -- real work (or a deliberate photo pick) is never silently made switchable-away-from.</summary>
     private bool IsCurrentEditorBlankAndUntouched() => _currentEditorIsBlank && _currentEditor is { HasUnsavedEdits: false };
 
+    /// <summary>Auditor-found regression (2026-08-17, usability-gap review): the mode ComboBox and
+    /// Browse/STOCK were still hard-gated on a plain <c>!IsEditorOpen</c> binding in AXAML, which
+    /// <see cref="CanSelectFavoriteMode"/>/<see cref="CanQuickSelectMode"/>'s own relaxation never
+    /// reached (those drive <c>Command.CanExecute</c>, not a separate <c>IsEnabled</c> binding) --
+    /// with the editor now always open by default, this made mode-select-via-dropdown and Browse/
+    /// STOCK permanently unreachable after the very first blank auto-open. Bindable form of the
+    /// same <see cref="IsCurrentEditorBlankAndUntouched"/> relaxation for controls with no
+    /// Command/CanExecute mechanism to hang the check on instead. The 16 quick-mode-grid buttons
+    /// needed no equivalent fix -- removing their own redundant <c>IsEnabled="{Binding !IsEditorOpen}"</c>
+    /// (which was overriding <see cref="CanQuickSelectMode"/>'s already-correct CanExecute) was
+    /// enough, since Avalonia's Button already auto-disables when a bound Command's CanExecute is
+    /// false and nothing else overrides it.</summary>
+    public bool CanChangeSourceOrMode => !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
+
     private bool CanSelectFavoriteMode() => !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
 
     [RelayCommand(CanExecute = nameof(CanSelectFavoriteMode))]
@@ -778,6 +792,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         SelectFavoriteModeCommand.NotifyCanExecuteChanged();
         QuickSelectModeCommand.NotifyCanExecuteChanged();
         EditCurrentImageCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(CanChangeSourceOrMode));
     }
 
     [RelayCommand]
@@ -856,12 +871,28 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <summary><paramref name="source"/> is either a <see cref="StockImageEntry"/> or a
     /// <see cref="string"/> file path. Loads it at native resolution and hands the resulting
     /// <see cref="TxImageEditorPaneViewModel"/> to whoever is listening on <see cref="EditorOpened"/> --
-    /// this VM does not touch Dock/window placement itself.</summary>
+    /// this VM does not touch Dock/window placement itself.
+    /// <para>Auditor-found regression (2026-08-17): with the editor now ALWAYS open by default, a
+    /// bare <c>IsEditorOpen</c> guard made Browse/STOCK permanently unreachable after the very
+    /// first blank auto-open -- there was no way to ever load a real photo. Relaxed the same way
+    /// mode-select already is: a BLANK/untouched editor gets closed (without its own auto-reopen
+    /// side effect, see <see cref="CloseBlankEditorForReplacement"/>) and replaced by the real
+    /// pick; a genuinely in-progress edit still refuses, exactly as before.</para></summary>
     private async Task OpenEditorForSourceAsync(object source, string fileName)
     {
-        if (IsEditorOpen || SelectedMode is not { })
+        if (SelectedMode is not { })
         {
             return;
+        }
+
+        if (IsEditorOpen)
+        {
+            if (!IsCurrentEditorBlankAndUntouched())
+            {
+                return;
+            }
+
+            CloseBlankEditorForReplacement();
         }
 
         IsEditorOpen = true;
@@ -898,12 +929,26 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private async Task OpenBlankEditorAsync()
     {
         // Same runtime guard as OpenEditorForSourceAsync's own -- re-entrancy is prevented at the
-        // View level (IsEnabled="{Binding !IsEditorOpen}" on the button, matching Browse/Stock's own
-        // established convention, not a [RelayCommand(CanExecute=...)] gate) but this guard stays as
-        // the real backstop, same reasoning as the sibling method.
-        if (IsEditorOpen || SelectedMode is not { } mode)
+        // View level (IsEnabled bound to CanLoadNewSource, matching Browse/Stock's own established
+        // convention, not a [RelayCommand(CanExecute=...)] gate) but this guard stays as the real
+        // backstop, same reasoning as the sibling method. Also the reopen target
+        // OnSelectedModeChanged calls right after CloseBlankEditorForReplacement -- relaxed the
+        // same way (2026-08-17 auditor-found regression fix) so a direct "Open editor" click also
+        // works while an already-blank editor is open (a harmless blank-replaces-blank no-op-ish
+        // case), not just while fully closed.
+        if (SelectedMode is not { } mode)
         {
             return;
+        }
+
+        if (IsEditorOpen)
+        {
+            if (!IsCurrentEditorBlankAndUntouched())
+            {
+                return;
+            }
+
+            CloseBlankEditorForReplacement();
         }
 
         IsEditorOpen = true;
@@ -949,6 +994,18 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
+            // Real bug caught via real-window testing (2026-08-17): IsEditorOpen already toggled
+            // true BEFORE this await-gated assignment runs (OnIsEditorOpenChanged already fired,
+            // re-evaluating IsCurrentEditorBlankAndUntouched() while _currentEditor was still null
+            // -- always false at that instant, regardless of whether this editor turns out to be
+            // blank). Nothing else re-notifies once _currentEditor actually gets attached, so
+            // SelectFavoriteMode/QuickSelectMode's CanExecute and CanChangeSourceOrMode's own
+            // bindable value would silently stay stuck at their pre-open (disabled) reading forever
+            // -- confirmed live: the mode ComboBox stayed visibly greyed out after Cancel
+            // auto-reopened a fresh blank editor, even though the underlying state was correct.
+            SelectFavoriteModeCommand.NotifyCanExecuteChanged();
+            QuickSelectModeCommand.NotifyCanExecuteChanged();
+            OnPropertyChanged(nameof(CanChangeSourceOrMode));
             EditorOpened?.Invoke(editor);
             _ = editor.ReadyRack.RefreshAsync();
         }
@@ -979,6 +1036,29 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditor = null;
         _currentEditorIsBlank = false;
         TransmitCommand.NotifyCanExecuteChanged();
+        EditorClosed?.Invoke();
+    }
+
+    /// <summary>Auditor-found regression (2026-08-17, usability-gap review): with the editor now
+    /// ALWAYS open by default, Browse/STOCK/mode-select all still hard-guarded on
+    /// <c>IsEditorOpen</c> alone were permanently unreachable -- there was no way to load a real
+    /// photo, or change SSTV mode, after the very first blank auto-open. Closes the current BLANK/
+    /// untouched editor WITHOUT auto-reopening (unlike <see cref="OnEditorCancelled"/>'s own
+    /// Cancel-button semantics) -- for use right before the caller immediately opens a DIFFERENT
+    /// editor (a new mode's blank placeholder, or a real Browse/Stock pick). Going through
+    /// <c>CancelCommand.Execute</c> instead would ALSO trigger <see cref="OnEditorCancelled"/>'s own
+    /// auto-reopen-blank side effect, racing with the caller's own intended reopen (harmless when
+    /// the caller ALSO wants blank, per <see cref="OnSelectedModeChanged"/>'s own reentrancy-safe
+    /// double-call reasoning -- but wasteful and semantically messy when the caller wants a REAL
+    /// source instead, since it would flicker the UI through an unwanted intermediate blank editor).
+    /// Doesn't unsubscribe the discarded editor's own Applied/Cancelled/PropertyChanged handlers --
+    /// same accepted precedent as every other editor-discard path in this class (nothing will ever
+    /// invoke them again once the View swaps <c>ActiveEditor</c> to the new instance).</summary>
+    private void CloseBlankEditorForReplacement()
+    {
+        IsEditorOpen = false;
+        _currentEditor = null;
+        _currentEditorIsBlank = false;
         EditorClosed?.Invoke();
     }
 
@@ -1013,6 +1093,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         {
             SelectFavoriteModeCommand.NotifyCanExecuteChanged();
             QuickSelectModeCommand.NotifyCanExecuteChanged();
+            OnPropertyChanged(nameof(CanChangeSourceOrMode));
         }
     }
 
@@ -1067,6 +1148,18 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
+            // Real bug caught via real-window testing (2026-08-17): IsEditorOpen already toggled
+            // true BEFORE this await-gated assignment runs (OnIsEditorOpenChanged already fired,
+            // re-evaluating IsCurrentEditorBlankAndUntouched() while _currentEditor was still null
+            // -- always false at that instant, regardless of whether this editor turns out to be
+            // blank). Nothing else re-notifies once _currentEditor actually gets attached, so
+            // SelectFavoriteMode/QuickSelectMode's CanExecute and CanChangeSourceOrMode's own
+            // bindable value would silently stay stuck at their pre-open (disabled) reading forever
+            // -- confirmed live: the mode ComboBox stayed visibly greyed out after Cancel
+            // auto-reopened a fresh blank editor, even though the underlying state was correct.
+            SelectFavoriteModeCommand.NotifyCanExecuteChanged();
+            QuickSelectModeCommand.NotifyCanExecuteChanged();
+            OnPropertyChanged(nameof(CanChangeSourceOrMode));
             EditorOpened?.Invoke(editor);
             _ = editor.ReadyRack.RefreshAsync();
         }
@@ -1181,19 +1274,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // Backlog item (user request, 2026-08-17): "make sure to update the editor window when
         // another mode is selected" -- a currently-open BLANK placeholder editor (nothing else,
         // see IsCurrentEditorBlankAndUntouched's own doc comment) auto-updates to the new mode's
-        // own frame size instead of sitting stale at the old one. Closes the stale editor, then
-        // unconditionally reopens blank at whatever SelectedMode is NOW (this property's own new
-        // value, already committed by the time this partial method runs) -- deliberately does NOT
-        // rely on OnEditorCancelled's own "reopen when SelectedFileName is null" conditional here,
-        // since that would silently skip the reopen for a manually-"Open editor"-triggered fresh
-        // blank template opened AFTER a prior Apply (SelectedFileName already set from that earlier
-        // apply). If OnEditorCancelled's own conditional ALSO fires (the common "nothing ever
-        // applied" case), OpenBlankEditorAsync's own re-entrancy guard makes the resulting double
-        // call a safe no-op the second time -- not a race, since CancelCommand.Execute(null) runs
-        // synchronously through IsEditorOpen=false and back out before this line executes.
+        // own frame size instead of sitting stale at the old one. CloseBlankEditorForReplacement
+        // (not CancelCommand.Execute -- see its own doc comment) closes the stale editor without
+        // any auto-reopen side effect, then this unconditionally reopens blank at whatever
+        // SelectedMode is NOW (this property's own new value, already committed by the time this
+        // partial method runs).
         if (IsCurrentEditorBlankAndUntouched())
         {
-            _currentEditor!.CancelCommand.Execute(null);
+            CloseBlankEditorForReplacement();
             _ = OpenBlankEditorAsync();
             return;
         }
