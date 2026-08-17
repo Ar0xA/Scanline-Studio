@@ -495,6 +495,20 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// <c>_undoStack.Count &gt; 0</c> transition, so they're always in lockstep.</summary>
     public bool HasUnsavedEdits => _undoStack.Count > 0;
 
+    /// <summary>Design-fidelity Phase C (mockups/Editwindow line 130) -- canvas footer, bottom-left:
+    /// crop dims (always the target mode's own fixed render size, same numbers as
+    /// <see cref="DimensionsChipText"/>). The "LOCKED TO MODE" segment is a separate,
+    /// <see cref="LockAspectToMode"/>-gated chip in the View, not baked into this string, so its
+    /// IsVisible binding stays a plain bool instead of parsing this text.</summary>
+    public string CropFooterText => _localization.GetString(
+        "Panes.TxImageEditor.CropFooterFormat", _targetMode.ImageWidth, _targetMode.ImageHeight);
+
+    /// <summary>Design-fidelity Phase C (mockups/Editwindow line 131) -- canvas footer, bottom-right:
+    /// the live working-copy pixel size (which changes with zoom-independent factors like rotation)
+    /// alongside the fixed render target size.</summary>
+    public string WorkingCopyFooterText => _localization.GetString(
+        "Panes.TxImageEditor.WorkingCopyFooterFormat", WorkingCopyWidth, WorkingCopyHeight, _targetMode.ImageWidth, _targetMode.ImageHeight);
+
     /// <summary>The live, current-orientation source -- reflects any <see cref="RotateCommand"/>
     /// calls so far. Round-1 plan-review finding on spec/18-path-to-1.0.md High item 3: a host
     /// (<see cref="TxControlsPaneViewModel"/>) that captured the ORIGINAL constructor argument
@@ -2199,6 +2213,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
         OnPropertyChanged(nameof(WorkingCopyWidth));
         OnPropertyChanged(nameof(WorkingCopyHeight));
+        OnPropertyChanged(nameof(WorkingCopyFooterText));
         // Phase 7 rearchitecture: WorkingCopyWidth/Height changing also changes CanvasDisplayWidth/
         // Height even though ZoomFactor itself didn't move, and nothing else notifies it on this path
         // (Crop*Pixels get their own re-notify from the CropRect reassignment in the Rotate() caller;
