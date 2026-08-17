@@ -45,8 +45,10 @@
                  since removing Move's siblings would leave an orphan single radio with no group
                  context. Undo/Redo now real (spec/18-path-to-1.0.md Medium item, undo/redo
                  sub-piece — CanExecute-gated via UndoCommand/RedoCommand, no IsEnabled="False"/
-                 NotImplemented tooltip needed). Fit/100%/Snap-grid have no Command/binding,
-                 disabled+tooltipped; Safe-area's ToggleButton isn't wired to the canvas guide below
+                 NotImplemented tooltip needed). Fit/100% now real (Phase 7, spec/15-template-
+                 designer.md — see this file's own OnFitButtonClick/ApplyFitFromViewport and
+                 TxImageEditorPaneViewModel.ZoomFactor's own doc comment).
+                 Safe-area's ToggleButton isn't wired to the canvas guide below
                  (that guide is unconditionally visible), so it's disabled too but keeps
                  IsChecked="True" to match the guide's always-on state. Dimensions chip is a plain
                  (non-interactive) label, left as-is. Real wired
@@ -66,8 +68,13 @@
                      siblings would look broken, not minimal. -->
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding UndoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding RedoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <!-- Phase 7 (spec/15-template-designer.md): Fit needs the ScrollViewer's own runtime
+                     viewport size (View knowledge), which a plain Command binding can't supply, so
+                     Click reads EditorScrollViewer.Bounds in code-behind and calls vm.ApplyFit(w,h)
+                     directly — a small necessary deviation from a zero-arg RelayCommand. 100% needs
+                     no viewport data, so it stays a plain Command binding. -->
+                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Click="OnFitButtonClick" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" />
+                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding ZoomActualCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="{Binding SnapToGrid}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SnapGrid.Help}" />
                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="{Binding SafeAreaVisible}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" />
                 <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{Binding DimensionsChipText}" /></Border>
@@ -248,25 +255,54 @@
                                Margin="0,0,0,4"
                                Text="{loc:Translate Panes.TxImageEditor.Caption}" />
 
-                    <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                    <ScrollViewer x:Name="EditorScrollViewer"
+                                  HorizontalScrollBarVisibility="Auto"
                                   VerticalScrollBarVisibility="Auto">
+                        <!-- Phase 7 (spec/15-template-designer.md): zoom is baked directly into
+                             CanvasDisplayWidth/Height (= WorkingCopyWidth/Height * ZoomFactor, and
+                             into every other on-screen pixel property — CropLeftPixels/LeftPixels/
+                             CanvasWidthPixels/etc.) rather than a LayoutTransformControl/RenderTransform
+                             wrapper. Real-window finding, post-implementation: the original
+                             LayoutTransformControl design (kept a bare WorkingCopyWidth/Height-sized
+                             Canvas, scaled the whole subtree via a render transform) looked correct in
+                             plan-review and built clean, but its subtree did not reliably re-composite
+                             on a descendant-only bounds change — confirmed via pixel-diffed screenshots
+                             (an element drag updated its bound X/Y correctly and the mini-preview picked
+                             it up, but the interactive canvas itself stayed visually frozen; reproduced
+                             identically at exactly 1.0 zoom, so it wasn't a "only happens when scaled"
+                             issue; three different Avalonia invalidation attempts all failed). Diagnosed
+                             (auditor) as a render/composition-invalidation gap specific to that control,
+                             not a layout bug — the Bounds were already right every time. This
+                             rearchitecture uses only ordinary Avalonia data-binding invalidation, the
+                             same mechanism every other property on this page already relies on with zero
+                             issues, so it sidesteps the bug class instead of working around it — see
+                             TxImageEditorPaneViewModel.ZoomFactor's own doc comment for the full story.
+                             No transform/wrapper control of any kind between this ScrollViewer and the
+                             Panel below anymore; the Panel's own children size themselves directly off
+                             CanvasDisplayWidth/Height, so Auto scrollbars/extent just work. -->
                         <!-- Panel wrapper exists only so the safe-area guide below can use ordinary
                              Margin/HorizontalAlignment/VerticalAlignment positioning; that's a no-op
                              directly inside a Canvas. The Panel sizes to the Canvas's own bound
-                             WorkingCopyWidth/Height since the Canvas is the only size-driving child.
+                             CanvasDisplayWidth/Height since the Canvas is the only size-driving child.
                              (Used to also host the plate text overlays, removed 2026-08-14 — see the
                              guide's own comment below.) -->
                         <Panel>
                         <Canvas x:Name="EditorCanvas"
-                                Width="{Binding WorkingCopyWidth}"
-                                Height="{Binding WorkingCopyHeight}"
+                                Width="{Binding CanvasDisplayWidth}"
+                                Height="{Binding CanvasDisplayHeight}"
                                 Focusable="True"
                                 Background="Transparent"
                                 KeyDown="OnCanvasKeyDown"
                                 PointerMoved="OnCanvasPointerMoved"
                                 PointerReleased="OnCanvasPointerReleased">
 
-                            <Image Source="{Binding WorkingCopyBitmap}" Stretch="None" />
+                            <!-- Explicit Width/Height + Stretch="Fill" (was Stretch="None" with no
+                                 explicit size, back when the Canvas was always native working-copy
+                                 resolution and zoom didn't exist) — without this the bitmap would stay
+                                 native-size while everything else on this canvas scales with zoom. -->
+                            <Image Source="{Binding WorkingCopyBitmap}"
+                                   Width="{Binding CanvasDisplayWidth}" Height="{Binding CanvasDisplayHeight}"
+                                   Stretch="Fill" />
 
                             <Border Canvas.Left="{Binding CropLeftPixels}"
                                     Canvas.Top="{Binding CropTopPixels}"
@@ -298,31 +334,56 @@
                                  running window, not inferred — round-3 code-review flagged the exact
                                  causal mechanism above as unverifiable from static docs alone, which is
                                  fair; treat it as "what DevTools showed," not a documented contract. -->
-                            <ItemsControl ItemsSource="{Binding OverlayElements}"
-                                          Width="{Binding WorkingCopyWidth}" Height="{Binding WorkingCopyHeight}">
+                            <ItemsControl x:Name="OverlayElementsHost" ItemsSource="{Binding OverlayElements}"
+                                          Width="{Binding CanvasDisplayWidth}" Height="{Binding CanvasDisplayHeight}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <Canvas />
                                     </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
+                                <!-- Phase 7 real-window finding (post-implementation), root cause of a
+                                     LIVE-UPDATE bug this codebase already had one documented symptom of
+                                     (ZIndex, see the comment immediately below): Canvas.Left/Canvas.Top
+                                     bound on a DataTemplate's own ROOT element only positions correctly
+                                     on the FIRST layout pass. Avalonia wraps each ItemsControl item in
+                                     its own generated container (a ContentPresenter here — ItemsControl
+                                     has no SelectingItemsControl-style item container), and the attached
+                                     Canvas.Left/Top properties are read by the OUTER ItemsPanel Canvas
+                                     against THAT container, not against whatever's inside the
+                                     DataTemplate — so AffectsParentArrange's invalidation, triggered by
+                                     LeftPixels/TopPixels changing, never reaches the actual owning Canvas
+                                     when the properties are set one level too deep. A full top-down
+                                     layout pass (initial render, or anything that invalidates the whole
+                                     subtree) still happens to place things correctly once, which is why
+                                     this went unnoticed until a live, isolated drag was actually tested
+                                     (confirmed via direct user observation on the running app: dragging
+                                     an element updates the mini-preview immediately but the interactive
+                                     canvas itself never visibly moves). Fixed below by moving Canvas.Left/
+                                     Top onto the actual generated container via a Style targeting
+                                     "ItemsControl#OverlayElementsHost > ContentPresenter" instead of the
+                                     DataTemplate roots — see that Style, right after this ItemsControl's
+                                     own DataTemplates. -->
+                                <ItemsControl.Styles>
+                                    <Style Selector="ItemsControl#OverlayElementsHost &gt; ContentPresenter">
+                                        <Setter Property="Canvas.Left" Value="{Binding LeftPixels}" />
+                                        <Setter Property="Canvas.Top" Value="{Binding TopPixels}" />
+                                    </Style>
+                                </ItemsControl.Styles>
                                 <!-- Phase 1 (spec/15-template-designer.md): polymorphic per-type
                                      DataTemplates (ItemsControl.DataTemplates, NOT a single
                                      ItemTemplate — Avalonia selects by the item's own runtime type)
                                      replace the pre-Phase-1 text-only ItemTemplate. Each template's
-                                     ROOT is itself a Canvas positioned via Canvas.Left/Top at the
-                                     element's own LeftPixels/TopPixels (real top-left corner, not
-                                     the pre-Phase-1 NegativeHalfConverter self-centering transform —
-                                     Phase 1 gave elements a real Width/Height box, so LeftPixels/
-                                     TopPixels already account for the center-to-corner conversion
-                                     themselves); its CHILDREN position within that inner Canvas's own
-                                     coordinate space, same nested-Canvas technique the crop
-                                     body/handle pair above already uses one level up. Single
-                                     bottom-right resize handle per element (Phase 1 plan-review
-                                     finding: mirrors the crop rect's OWN existing single-corner-
-                                     handle convention — PicRect.cpp real legacy precedent, see the
-                                     crop handle above — deliberately not a 4-corner/8-handle
-                                     system), hidden while Locked (code-behind is the real gate;
-                                     this is the visual cue). -->
+                                     ROOT is itself a Canvas sized (NOT positioned — see the Style
+                                     above for why Canvas.Left/Top moved off this root) via the
+                                     element's own CanvasWidthPixels/CanvasHeightPixels; its CHILDREN
+                                     position within that inner Canvas's own coordinate space, same
+                                     nested-Canvas technique the crop body/handle pair above already
+                                     uses one level up. Single bottom-right resize handle per element
+                                     (Phase 1 plan-review finding: mirrors the crop rect's OWN existing
+                                     single-corner-handle convention — PicRect.cpp real legacy
+                                     precedent, see the crop handle above — deliberately not a
+                                     4-corner/8-handle system), hidden while Locked (code-behind is the
+                                     real gate; this is the visual cue). -->
                                 <ItemsControl.DataTemplates>
                                     <DataTemplate DataType="vm:OverlayElementViewModel">
                                         <!-- No ZIndex binding here (real-window code-review finding, via
@@ -334,8 +395,7 @@
                                              Z itself (MoveElementUp/Down physically move the item within
                                              OverlayElements, not just its Z value) — see that method's own
                                              doc comment. -->
-                                        <Canvas Canvas.Left="{Binding LeftPixels}" Canvas.Top="{Binding TopPixels}"
-                                                Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}">
+                                        <Canvas Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}">
                                             <!-- FontSize/FontFamily bound so the canvas chrome
                                                  actually matches what TransmitImagePreparer.
                                                  ApplyTemplate bakes into the transmitted image
@@ -383,8 +443,7 @@
                                     <DataTemplate DataType="vm:BoxElementViewModel">
                                         <!-- No ZIndex binding here either — see the text DataTemplate's own
                                              comment above; same non-effect, same fix (collection order). -->
-                                        <Canvas Canvas.Left="{Binding LeftPixels}" Canvas.Top="{Binding TopPixels}"
-                                                Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}">
+                                        <Canvas Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}">
                                             <!-- BorderThickness bound to CanvasBorderThicknessPixels via
                                                  DoubleToThicknessConverter (round-3 code-review finding: a bare
                                                  double->Thickness value binding has no implicit conversion path
@@ -420,8 +479,7 @@
                                          this is WYSIWYG for POSITION/SIZE, not yet for Fit mode (Fit
                                          isn't user-editable until Phase 4's style panel). -->
                                     <DataTemplate DataType="vm:ImageElementViewModel">
-                                        <Canvas Canvas.Left="{Binding LeftPixels}" Canvas.Top="{Binding TopPixels}"
-                                                Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}">
+                                        <Canvas Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}">
                                             <!-- Image has NO explicit Width/Height (code-review nit fixed
                                                  here): the text DataTemplate's own TextBlock above doesn't
                                                  set them either, relying on Border's own default
@@ -470,7 +528,13 @@
                              Border, which has no dash support in Avalonia) with StrokeDashArray,
                              matching mock2's own "1px dashed" guide exactly rather than settling for
                              a solid-line concession. -->
-                        <Rectangle IsHitTestVisible="False" Margin="14" IsVisible="{Binding SafeAreaVisible}"
+                        <!-- Margin bound (was a literal Margin="14", correct only when 14 screen px
+                             == 14 image px, i.e. only at 100% zoom before Phase 7) via
+                             DoubleToThicknessConverter, same reasoning as BorderThickness above — a
+                             bare double-to-Thickness value binding fails silently in Avalonia. -->
+                        <Rectangle IsHitTestVisible="False"
+                                   Margin="{Binding SafeAreaInsetPixels, Converter={x:Static conv:DoubleToThicknessConverter.Instance}}"
+                                   IsVisible="{Binding SafeAreaVisible}"
                                    Stroke="{StaticResource IndustryAccent}" Opacity="0.55"
                                    StrokeThickness="1" StrokeDashArray="4,2" />
                         </Panel>
