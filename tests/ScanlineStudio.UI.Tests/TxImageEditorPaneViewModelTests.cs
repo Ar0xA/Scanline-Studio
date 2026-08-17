@@ -609,7 +609,9 @@ public sealed class TxImageEditorPaneViewModelTests
         _ = vm.FrameReadoutText;
 
         Assert.Equal("Panes.TxImageEditor.FrameReadoutFormat", localization.LastKey);
-        Assert.Equal(new object[] { 8, 4, "Wide", 0.0 }, localization.LastArgs);
+        // Mode name uppercased for display (design-fidelity Phase I nit) -- the mock's own readouts
+        // are all-caps mono chrome text.
+        Assert.Equal(new object[] { 8, 4, "WIDE", 0.0 }, localization.LastArgs);
     }
 
     [AvaloniaFact]
@@ -2224,6 +2226,56 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void SafeAreaWidthAndHeightPixels_TrackCanvasDisplaySizeAtAnyZoom()
+    {
+        // Backlog fix (user real-window finding, 2026-08-17): "the blue lines... stay the same place
+        // in the window" instead of tracking zoom -- the guide moved from a Margin-inset Panel
+        // sibling of EditorCanvas to a direct Canvas.Left/Top+Width/Height child, matching the crop
+        // rect's own already-reliable positioning convention. This pins the inset math itself: at
+        // any zoom, the guide's own size must equal the canvas size minus twice the (also
+        // zoom-scaled) inset on each axis, never negative.
+        // A realistically-sized mode (320x256, unlike this file's own SmallMode/WideMode fixtures,
+        // both deliberately tiny for fast unit tests) so the working-copy budget
+        // (mode.ImageWidth/Height * WorkingCopyScaleFactor) comfortably exceeds the 28px total inset
+        // at ZoomFactor=1 -- that budget is keyed off the MODE's own dimensions, not the source's, so
+        // no zoom level can fix an undersized fixture (both CanvasDisplayWidth and SafeAreaInsetPixels
+        // scale by the identical ZoomFactor, so their difference's SIGN is zoom-invariant). The
+        // Math.Max(0, ...) floor this would otherwise trigger is real, correct, separately-pinned
+        // behavior (see the dedicated NeverGoNegative test below), not what THIS test is checking.
+        var realisticMode = new SstvModeDefinition(
+            Id: "realistic", DisplayName: "Realistic", VisCode: 0, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
+        var vm = CreateEditor(CreateSource(320, 256), realisticMode, new FakeTransmitImagePreparer());
+        var baselineWidth = vm.SafeAreaWidthPixels;
+        var baselineHeight = vm.SafeAreaHeightPixels;
+        Assert.True(baselineWidth > 0);
+        Assert.True(baselineHeight > 0);
+        AssertClose(vm.CanvasDisplayWidth - (2 * vm.SafeAreaInsetPixels), baselineWidth);
+        AssertClose(vm.CanvasDisplayHeight - (2 * vm.SafeAreaInsetPixels), baselineHeight);
+
+        vm.ZoomFactor = 3.0;
+
+        AssertClose(vm.CanvasDisplayWidth - (2 * vm.SafeAreaInsetPixels), vm.SafeAreaWidthPixels);
+        AssertClose(vm.CanvasDisplayHeight - (2 * vm.SafeAreaInsetPixels), vm.SafeAreaHeightPixels);
+        // Both terms scale by the SAME zoom factor (14*zoom inset, CanvasDisplay*zoom size), so the
+        // guide's own size scales linearly with zoom too, not just staying non-negative.
+        AssertClose(baselineWidth * 3.0, vm.SafeAreaWidthPixels);
+        AssertClose(baselineHeight * 3.0, vm.SafeAreaHeightPixels);
+    }
+
+    [AvaloniaFact]
+    public void SafeAreaWidthAndHeightPixels_NeverGoNegativeWhenInsetExceedsCanvasSize()
+    {
+        // A working copy smaller than 2x the safe-area inset (28px at ZoomFactor=1) is a real,
+        // reachable state (e.g. a tiny source image) -- the guide must floor at 0, not render with a
+        // negative size (which would be a real Avalonia layout exception, not just a cosmetic bug).
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        Assert.Equal(0, vm.SafeAreaWidthPixels);
+        Assert.Equal(0, vm.SafeAreaHeightPixels);
+    }
+
+    [AvaloniaFact]
     public void ZoomFactorChange_DoesNotAffectTheTransmittedDocument()
     {
         // The whole point of baking zoom into on-screen pixel properties instead of the pipeline: the
@@ -3337,8 +3389,10 @@ public sealed class TxImageEditorPaneViewModelTests
         _ = vm.SendMetaText;
 
         Assert.Equal("Panes.TxImageEditor.SendMetaFormat", localization.LastKey);
+        // Mode name uppercased for display (design-fidelity Phase I nit) -- the mock's own readouts
+        // are all-caps mono chrome text.
         Assert.Equal(
-            new object[] { SmallMode.DisplayName, SmallMode.LineDurationMs * SmallMode.ImageHeight / 1000.0 },
+            new object[] { SmallMode.DisplayName.ToUpperInvariant(), SmallMode.LineDurationMs * SmallMode.ImageHeight / 1000.0 },
             localization.LastArgs);
     }
 
