@@ -162,6 +162,12 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <inheritdoc cref="ITemplateElementViewModel.MoveDownCommand"/>
     public IRelayCommand? MoveDownCommand { get; init; }
 
+    /// <inheritdoc cref="ITemplateElementViewModel.BringToFrontCommand"/>
+    public IRelayCommand? BringToFrontCommand { get; init; }
+
+    /// <inheritdoc cref="ITemplateElementViewModel.SendToBackCommand"/>
+    public IRelayCommand? SendToBackCommand { get; init; }
+
     /// <summary>Set once by <see cref="TxImageEditorPaneViewModel"/> at creation time, same pattern
     /// as <see cref="RemoveCommand"/> -- resolves this element's raw <see cref="Text"/> (which may
     /// contain macro tokens like <c>%m</c>/<c>{name}</c>) against the current operator settings.

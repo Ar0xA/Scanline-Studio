@@ -2379,6 +2379,202 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(restoredBottom.Z < restoredTop.Z);
     }
 
+    [AvaloniaFact]
+    public void BringToFront_MovesElementAboveEveryOtherElementInOneStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var bottom = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var middle = vm.OverlayElements[1];
+        vm.AddOverlayElementCommand.Execute(null);
+        var top = vm.OverlayElements[2];
+
+        vm.BringToFrontCommand.Execute(bottom);
+
+        Assert.True(bottom.Z > middle.Z);
+        Assert.True(bottom.Z > top.Z);
+        Assert.Equal([middle, top, bottom], vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void BringToFront_OnNullElement_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+
+        vm.BringToFrontCommand.Execute(null);
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        Assert.Empty(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void BringToFront_OnAlreadyTopmostElement_IsANoOp_DoesNotPushAnAdditionalUndoStep()
+    {
+        // Code-review finding: an early draft still bumped Z and pushed an undo step even when the
+        // element was already topmost, unlike MoveElementUp's own established no-op-at-boundary
+        // behavior (see MoveElementUp_OnTopmostElement_IsANoOp_... above for the same pattern).
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var only = vm.OverlayElements[0];
+        var zBefore = only.Z;
+
+        vm.BringToFrontCommand.Execute(only);
+        Assert.Equal(zBefore, only.Z);
+
+        vm.UndoCommand.Execute(null);
+        Assert.Empty(vm.OverlayElements);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void SendToBack_NoBackgroundElement_MovesElementBelowEveryOtherElementInOneStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var bottom = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var middle = vm.OverlayElements[1];
+        vm.AddOverlayElementCommand.Execute(null);
+        var top = vm.OverlayElements[2];
+
+        vm.SendToBackCommand.Execute(top);
+
+        Assert.True(top.Z < bottom.Z);
+        Assert.True(top.Z < middle.Z);
+        Assert.Equal([top, bottom, middle], vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void SendToBack_OnNullElement_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.SendToBackCommand.Execute(null);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void SendToBack_WithLockedBackgroundElement_FloorsImmediatelyAboveItInsteadOfBehindIt()
+    {
+        // Explicit user constraint ("obviously can't hide behind the actual background picture"):
+        // SendToBack must never place an element at or below a locked full-frame background image's
+        // own Z -- that element is opaque, so anything placed behind it would simply become
+        // invisible. Also pins the real tie-break bug this method's own doc comment documents and
+        // rejects an alternative implementation for: a naive OrderBy-then-locate-index approach would
+        // leave `top` silently unmoved here, since its floored Z (background.Z + 1) TIES with
+        // `middle`'s already-existing Z, and the tie-break falls back to `top`'s OLD (last) position.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var background = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackgroundCommand.Execute(background);
+        vm.AddOverlayElementCommand.Execute(null);
+        var middle = vm.OverlayElements[1];
+        vm.AddOverlayElementCommand.Execute(null);
+        var top = vm.OverlayElements[2];
+
+        vm.SendToBackCommand.Execute(top);
+
+        Assert.Equal(background.Z + 1, top.Z);
+        Assert.True(top.Z > background.Z);
+        Assert.Equal([background, top, middle], vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void SendToBack_OnTheBackgroundElementItself_IsATrueNoOp_DoesNotDriftZOrPushUndo()
+    {
+        // Auditor code-review finding: the FIRST corrected draft still let this fall through to the
+        // unconditional "no background" branch (Min(Z) - 1), which decremented the background's own
+        // Z (and pushed an undo step) on every single click forever -- a real, if cosmetically
+        // invisible, drift the doc comment at the time incorrectly claimed couldn't happen. This is
+        // now an explicit early-return guard; pin BOTH the Z (unchanged) and the undo depth (no step
+        // pushed), not just "doesn't throw."
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var background = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackgroundCommand.Execute(background);
+        vm.AddOverlayElementCommand.Execute(null);
+        var other = vm.OverlayElements[1];
+        var zBefore = background.Z;
+        var undoDepthBefore = vm.UndoCommand.CanExecute(null);
+
+        var exception = Record.Exception(() => vm.SendToBackCommand.Execute(background));
+
+        Assert.Null(exception);
+        Assert.Equal(zBefore, background.Z);
+        Assert.Equal(undoDepthBefore, vm.UndoCommand.CanExecute(null));
+        Assert.Same(background, vm.OverlayElements[0]);
+        Assert.Same(other, vm.OverlayElements[1]);
+        Assert.True(background.Z < other.Z);
+    }
+
+    [AvaloniaFact]
+    public void BringToFrontOnBackground_ThenSendToBackOnAnother_DoesNotCrashOrLoseTheElement()
+    {
+        // Auditor code-review finding (real crash/data-loss bug in the first corrected draft): if
+        // MoveElementUp/MoveElementDown/BringToFront ever put the background ABOVE the target element
+        // (not gated on IsBackground -- a pre-existing gap this addendum doesn't fix, see SendToBack's
+        // own doc comment), IndexOf(background) + 1 could equal Count, and
+        // ObservableCollection<T>.Move (Remove-then-Insert) throws AFTER the remove already succeeded
+        // -- silently dropping the element with no CollectionChanged notification. This reaches that
+        // exact state in two clicks using ONLY this addendum's own new commands (no pre-existing gap
+        // needs to be separately exploited): BringToFront on the background row puts it topmost, then
+        // SendToBack on anything else must not crash or vanish the element.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var background = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackgroundCommand.Execute(background);
+        vm.AddOverlayElementCommand.Execute(null);
+        var other = vm.OverlayElements[1];
+        vm.BringToFrontCommand.Execute(background);
+        Assert.Same(background, vm.OverlayElements[1]);
+
+        var exception = Record.Exception(() => vm.SendToBackCommand.Execute(other));
+
+        Assert.Null(exception);
+        Assert.Equal(2, vm.OverlayElements.Count);
+        Assert.Contains(other, vm.OverlayElements);
+        Assert.Contains(background, vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void SendToBack_WithMultipleBackgroundElements_FloorsAboveTheNearestOneBelowIt()
+    {
+        // Auditor code-review finding: SetAsBackground never clears a PREVIOUS element's own
+        // IsBackground flag, so multiple backgrounds are reachable (two clicks). A second
+        // SetAsBackground call moves ITS OWN element to the new collection-wide minimum (Min(Z) - 1
+        // over a set that already contains the first background's Z), displacing the first background
+        // from index 0 to index 1 -- so "nearest background below `top`" (firstBackground, correct)
+        // and "lowest-Z background" (secondBackground, what a naive
+        // OfType<ImageElementViewModel>().FirstOrDefault(e => e.IsBackground) picks) are now two
+        // DIFFERENT elements, exactly what this test needs to distinguish. The buggy FirstOrDefault
+        // draft would target IndexOf(secondBackground) + 1 = 1 -- landing `top` BEHIND firstBackground,
+        // the exact invisible-behind-an-opaque-background failure this feature exists to prevent.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var firstBackground = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackgroundCommand.Execute(firstBackground);
+        vm.AddLastRxImageCommand.Execute(null);
+        var secondBackground = (ImageElementViewModel)vm.OverlayElements[1];
+        vm.SetAsBackgroundCommand.Execute(secondBackground);
+        Assert.Equal([secondBackground, firstBackground], vm.OverlayElements);
+        vm.AddOverlayElementCommand.Execute(null);
+        var top = vm.OverlayElements[2];
+
+        vm.SendToBackCommand.Execute(top);
+
+        Assert.True(top.Z > firstBackground.Z);
+        Assert.True(vm.OverlayElements.IndexOf(top) > vm.OverlayElements.IndexOf(firstBackground));
+    }
+
     // Pure math extracted from TxImageEditorPaneView.axaml.cs's OnCanvasPointerMoved (code-review
     // finding: this logic shipped with zero test coverage since it lived entirely in code-behind;
     // splitting it into a public static method makes it testable without simulating real Avalonia

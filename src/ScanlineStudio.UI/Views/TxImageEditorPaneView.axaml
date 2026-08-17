@@ -631,6 +631,14 @@
                                                     Content="{loc:Translate Panes.TxImageEditor.MoveDown}"
                                                     Command="{Binding MoveDownCommand}"
                                                     CommandParameter="{Binding}" />
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
+                                                    Command="{Binding BringToFrontCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
+                                                    Command="{Binding SendToBackCommand}"
+                                                    CommandParameter="{Binding}" />
                                             <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.Remove}"
                                                     Command="{Binding RemoveCommand}"
@@ -658,6 +666,14 @@
                                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
                                                     Content="{loc:Translate Panes.TxImageEditor.MoveDown}"
                                                     Command="{Binding MoveDownCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
+                                                    Command="{Binding BringToFrontCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
+                                                    Command="{Binding SendToBackCommand}"
                                                     CommandParameter="{Binding}" />
                                             <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.Remove}"
@@ -692,6 +708,24 @@
                                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
                                                     Content="{loc:Translate Panes.TxImageEditor.MoveDown}"
                                                     Command="{Binding MoveDownCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <!-- Hidden once IsBackground (code-review finding: an
+                                                 opaque, locked, full-frame background element has no
+                                                 meaningful "front"/"back" of its own, and bringing it
+                                                 to front would cover every other element in one
+                                                 click — also removes the easiest UI path to a
+                                                 SendToBack edge case the VM-level guard already
+                                                 handles defensively, see SendToBack's own doc
+                                                 comment). -->
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    IsVisible="{Binding !IsBackground}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
+                                                    Command="{Binding BringToFrontCommand}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                    IsVisible="{Binding !IsBackground}"
+                                                    Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
+                                                    Command="{Binding SendToBackCommand}"
                                                     CommandParameter="{Binding}" />
                                             <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.Remove}"
