@@ -853,6 +853,40 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        await OpenEditorWithLoadedSourceAsync(original, fileName);
+    }
+
+    /// <summary>Backlog fix (user request, 2026-08-17): "don't leave the TX window completely empty
+    /// until you load an image" -- opens the editor immediately with a solid neutral-gray
+    /// <see cref="BlankImageSource"/> placeholder, sized to the target mode's own frame dimensions,
+    /// instead of requiring Browse/Stock first. The operator can then Load a Ready Rack/Template
+    /// Library entry, or use Browse/Stock inside the editor's own STOCK panel, to swap in a real
+    /// photo -- both already-existing paths, unchanged by this. No RX-history dependency (a
+    /// deliberate, simpler choice over auto-loading the last received image -- user's own call).</summary>
+    [RelayCommand]
+    private async Task OpenBlankEditorAsync()
+    {
+        // Same runtime guard as OpenEditorForSourceAsync's own -- re-entrancy is prevented at the
+        // View level (IsEnabled="{Binding !IsEditorOpen}" on the button, matching Browse/Stock's own
+        // established convention, not a [RelayCommand(CanExecute=...)] gate) but this guard stays as
+        // the real backstop, same reasoning as the sibling method.
+        if (IsEditorOpen || SelectedMode is not { } mode)
+        {
+            return;
+        }
+
+        IsEditorOpen = true;
+        var placeholder = new BlankImageSource(mode.ImageWidth, mode.ImageHeight, BlankPlaceholderColor);
+        await OpenEditorWithLoadedSourceAsync(placeholder, _localization.GetString("Panes.TxControls.BlankImageName"));
+    }
+
+    /// <summary>Light neutral gray (matches this app's own Industry design system's neutral-surface
+    /// family, e.g. AtomsTokens.axaml's IndustrySurfaceColor #E9E9EA) -- reads clearly as "no real
+    /// photo loaded yet" without being visually jarring against the rest of the chrome.</summary>
+    private static readonly Rgb24 BlankPlaceholderColor = new(0xE9, 0xE9, 0xEA);
+
+    private async Task OpenEditorWithLoadedSourceAsync(IImageSource original, string fileName)
+    {
         // SelectedMode may have changed while the original was loading -- always target whatever
         // mode is current NOW, not the one in effect when the pick started.
         if (SelectedMode is not { } mode)
