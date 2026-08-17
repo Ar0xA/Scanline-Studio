@@ -1091,6 +1091,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
+            BringToFrontCommand = BringToFrontCommand,
+            SendToBackCommand = SendToBackCommand,
             // Phase 3: reads _radioSessionService.LastKnownState/_templateVariables FRESH on every
             // ResolvedText access (this delegate re-invokes on every call, not once) -- FREQ/MODE
             // reflect the radio state as of the last element mutation, not a live tick (no
@@ -1131,6 +1133,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
+            BringToFrontCommand = BringToFrontCommand,
+            SendToBackCommand = SendToBackCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
@@ -1159,6 +1163,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
+            BringToFrontCommand = BringToFrontCommand,
+            SendToBackCommand = SendToBackCommand,
             SetAsBackgroundCommand = SetAsBackgroundCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
@@ -1817,6 +1823,109 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         var neighbor = ordered[index - 1];
         (element.Z, neighbor.Z) = (neighbor.Z, element.Z);
         OverlayElements.Move(OverlayElements.IndexOf(element), OverlayElements.IndexOf(neighbor));
+        RecomputePreview();
+    }
+
+    /// <summary>Z-order jump commands (Addendum, spec/15-template-designer.md, explicit user
+    /// request) -- a fast path around <see cref="MoveElementUp"/>/<see cref="MoveElementDown"/>'s own
+    /// one-click-per-neighbour stepping for a large stack. <c>BringToFront</c> reuses <see
+    /// cref="NextZ"/>'s own max+1 top-insert convention exactly (same mechanism <see
+    /// cref="AddOverlayElement"/>/<see cref="AddBoxElement"/>/<see cref="Duplicate"/> already use);
+    /// <c>Max(e => e.Z)</c> safely includes <c>element</c> itself here (unlike those call sites, where
+    /// the new element isn't in <see cref="OverlayElements"/> yet) since Max+1 is still strictly
+    /// greater than every other element's Z regardless of whether it also happens to be the current
+    /// max. Early-returns on an already-topmost element (matches <see cref="MoveElementUp"/>'s own
+    /// no-op-at-boundary behavior -- code-review finding: the first draft pushed an undo step and
+    /// bumped Z even when nothing visibly moved).</summary>
+    [RelayCommand]
+    private void BringToFront(ITemplateElementViewModel? element)
+    {
+        var index = element is null ? -1 : OverlayElements.IndexOf(element);
+        if (index < 0 || index == OverlayElements.Count - 1)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        element!.Z = NextZ();
+        OverlayElements.Move(index, OverlayElements.Count - 1);
+        RecomputePreview();
+    }
+
+    /// <summary>See <see cref="BringToFront"/>'s own doc comment for the general shape.
+    /// <c>SendToBack</c> reuses <see cref="SetAsBackground"/>'s own bottom-insert convention
+    /// (<c>Min(Z) - 1</c> / move to collection index 0) -- EXCEPT it floors above the nearest <see
+    /// cref="ImageElementViewModel.IsBackground"/> element BELOW <c>element</c> in the collection, if
+    /// any (explicit user constraint: "obviously can't hide behind the actual background picture" --
+    /// a background element is full-frame and opaque, so anything placed behind it would simply
+    /// become invisible, defeating what "send to back" is supposed to mean here).
+    /// <para>[Code-review correction -- a first draft of this method assumed "background is always
+    /// the collection-wide strict Z minimum, therefore always at index 0" and used
+    /// <c>OverlayElements.OfType&lt;ImageElementViewModel&gt;().FirstOrDefault(e =&gt; e.IsBackground)</c> +
+    /// <c>Move(index, IndexOf(background) + 1)</c>. Auditor review found that premise false in three
+    /// reachable ways, one a real crash/data-loss bug: (1) <see cref="MoveElementUp"/>/<see
+    /// cref="MoveElementDown"/> are not gated on <c>Locked</c>/<see
+    /// cref="ImageElementViewModel.IsBackground"/>, so a background element can end up off index 0,
+    /// tied in Z with another element, or even ABOVE the element being sent to back -- at which point
+    /// <c>IndexOf(background) + 1</c> can equal <c>Count</c>, and <c>ObservableCollection&lt;T&gt;.Move</c>
+    /// (Remove-then-Insert) throws AFTER the remove already succeeded, silently dropping the element
+    /// from <see cref="OverlayElements"/> with no <c>CollectionChanged</c> notification -- reachable in
+    /// two clicks with THIS feature alone (<see cref="BringToFront"/> on the background row, itself
+    /// ungated, then <see cref="SendToBack"/> on anything else). (2) The same stale-position case also
+    /// INVERTS the floor: a background sitting above the element raises it instead of sending it back.
+    /// (3) Nothing clears a previous element's <c>IsBackground</c> flag on a second
+    /// <see cref="SetAsBackground"/> call, so multiple backgrounds are reachable, and
+    /// <c>FirstOrDefault</c> picks the lowest one rather than the one actually adjacent to
+    /// <c>element</c>.</para>
+    /// <para>Fix: scan BACKWARDS from <c>element</c>'s own position for the nearest background at a
+    /// LOWER index (never higher -- an above-element background is the pre-existing
+    /// MoveUp/Down-gating gap noted above, out of this addendum's own scope, not chased here). The
+    /// target insert index (<c>backgroundIndex + 1</c>) is then always <c>&lt;= index</c>, which is
+    /// always a legal <c>Move</c> target regardless of where <c>element</c> currently sits -- this is
+    /// what actually closes the crash, not a stronger invariant claim. The new Z is clamped to
+    /// <c>Math.Min(background.Z + 1, next.Z)</c> (where <c>next</c> is whatever currently sits
+    /// immediately after the background) rather than assigned outright, so it can never exceed the Z
+    /// of the element it's about to be inserted before -- keeping <see cref="OverlayElements"/>' own
+    /// collection-order-matches-Z invariant intact for this one insertion even when a tie is
+    /// unavoidable, without depending on the disproven strict-minimum premise.</para>
+    /// <para>Sending the background element itself to back is guarded as an explicit no-op (not left
+    /// to fall through to the unconditional branch, which would have quietly decremented its Z by 1
+    /// on every click forever -- a real, if cosmetically invisible, drift the first draft's own doc
+    /// comment incorrectly claimed couldn't happen).</para></summary>
+    [RelayCommand]
+    private void SendToBack(ITemplateElementViewModel? element)
+    {
+        var index = element is null ? -1 : OverlayElements.IndexOf(element);
+        if (index < 0 || element is ImageElementViewModel { IsBackground: true })
+        {
+            return;
+        }
+
+        var backgroundIndex = -1;
+        for (var i = index - 1; i >= 0; i--)
+        {
+            if (OverlayElements[i] is ImageElementViewModel { IsBackground: true })
+            {
+                backgroundIndex = i;
+                break;
+            }
+        }
+
+        PushUndoSnapshot();
+        if (backgroundIndex >= 0)
+        {
+            var target = backgroundIndex + 1;
+            var background = OverlayElements[backgroundIndex];
+            var next = OverlayElements[target];
+            element!.Z = Math.Min(background.Z + 1, next.Z);
+            OverlayElements.Move(index, target);
+        }
+        else
+        {
+            element!.Z = OverlayElements.Min(e => e.Z) - 1;
+            OverlayElements.Move(index, 0);
+        }
+
         RecomputePreview();
     }
 

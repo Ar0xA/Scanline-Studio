@@ -401,6 +401,8 @@
   "Panes.TxImageEditor.Remove": "Remove",
   "Panes.TxImageEditor.MoveUp": "▲",
   "Panes.TxImageEditor.MoveDown": "▼",
+  "Panes.TxImageEditor.BringToFront": "Front",
+  "Panes.TxImageEditor.SendToBack": "Back",
   "Panes.TxImageEditor.Lock": "Lock",
   "Panes.TxImageEditor.Duplicate": "Duplicate",
   "Panes.TxImageEditor.Apply": "Apply",

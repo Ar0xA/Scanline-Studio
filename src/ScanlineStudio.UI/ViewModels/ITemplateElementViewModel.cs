@@ -70,6 +70,18 @@ public interface ITemplateElementViewModel : INotifyPropertyChanged
 
     IRelayCommand? MoveDownCommand { get; init; }
 
+    /// <summary>Z-order jump commands (Addendum, spec/15-template-designer.md) -- same parent-pushed
+    /// pattern as <see cref="MoveUpCommand"/>/<see cref="MoveDownCommand"/>, generalized the same way
+    /// rather than adding element-type-specific variants. <c>BringToFrontCommand</c> reuses
+    /// <c>NextZ()</c>'s own max+1 top-insert convention; <c>SendToBackCommand</c> reuses
+    /// <c>SetAsBackground</c>'s own bottom-insert convention, with a floor at
+    /// <c>background.Z + 1</c> when a locked background image element exists (see
+    /// <c>TxImageEditorPaneViewModel.SendToBack</c>'s own doc comment) so an element can never be
+    /// sent behind -- and made invisible under -- an opaque full-frame background.</summary>
+    IRelayCommand? BringToFrontCommand { get; init; }
+
+    IRelayCommand? SendToBackCommand { get; init; }
+
     /// <summary>Pushes ONE coalesced undo/redo step covering X/Y/Width/Height together (Phase 1
     /// plan-review finding: a diagonal drag-resize must collapse to one undo step, same reasoning as
     /// the pre-Phase-1 X/Y-only version covering a diagonal drag). Fires on <c>On*Changing</c> (before
