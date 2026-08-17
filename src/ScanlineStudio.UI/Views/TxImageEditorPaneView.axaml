@@ -120,21 +120,21 @@
                      Click reads EditorScrollViewer.Bounds in code-behind and calls vm.ApplyFit(w,h)
                      directly — a small necessary deviation from a zero-arg RelayCommand. 100% needs
                      no viewport data, so it stays a plain Command binding. -->
-                <!-- design-fidelity Phase G (#16): FIT/100% joined into a shared-border segmented
-                     pair (mock's own border-left:0 joined-button convention) — FIT keeps its normal
-                     border and loses its own right margin (glues flush to 100%); 100% drops its
-                     left border via a per-instance BorderThickness override so the two buttons don't
-                     double up a 2px seam between them. -->
+                <!-- design-fidelity Phase G (#16), re-grouped 2026-08-17 (user request): FIT is now
+                     joined to the NEW Fit-modes dropdown (not to 100%, which moved out to stand on
+                     its own with normal spacing) — "doesn't make sense to be in between zoom button
+                     and slider". FIT keeps its normal border and loses its own right margin (glues
+                     flush to the dropdown); the dropdown drops its left border via a per-instance
+                     BorderThickness override so the two don't double up a 2px seam, same mechanism
+                     Phase G originally used for FIT/100%. -->
                 <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Click="OnFitButtonClick" Margin="0,0,0,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" />
-                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding ZoomActualCommand}" BorderThickness="0,1,1,1" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
                 <!-- Backlog item (user request, 2026-08-17): 3 more Fit variants (Fit Safe Area/Fit
-                     Width/Fit Height) alongside the existing whole-frame Fit above. A separate small
-                     dropdown button (not a restyle of the Fit/100% segmented pair above, which Phase G
-                     already deliberately joined) — Button.Flyout is Avalonia's own built-in mechanism
-                     for exactly this "click a button, reveal more choices" shape; MenuItem.Click (not
-                     Command) since these need EditorScrollViewer's own runtime viewport size the same
-                     way OnFitButtonClick's own Click handler does, matching TxImageEditorPaneView.axaml.cs. -->
-                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Margin="0,0,4,4"
+                     Width/Fit Height) alongside the existing whole-frame Fit above. Button.Flyout is
+                     Avalonia's own built-in mechanism for exactly this "click a button, reveal more
+                     choices" shape; MenuItem.Click (not Command) since these need EditorScrollViewer's
+                     own runtime viewport size the same way OnFitButtonClick's own Click handler does,
+                     matching TxImageEditorPaneView.axaml.cs. -->
+                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" BorderThickness="0,1,1,1" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.FitModesGlyph}"
                         ToolTip.Tip="{loc:Translate Panes.TxImageEditor.FitModesTooltip}">
                     <Button.Flyout>
@@ -145,6 +145,7 @@
                         </MenuFlyout>
                     </Button.Flyout>
                 </Button>
+                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding ZoomActualCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
                 <!-- Task #23 (zoom slider addendum, plan-reviewed). Minimum/Maximum bound via
                      x:Static to the VM's own public MinZoomFactor/MaxZoomFactor consts — NOT
                      hardcoded XAML literals — since ZoomFactor's own property setter has no clamp;
