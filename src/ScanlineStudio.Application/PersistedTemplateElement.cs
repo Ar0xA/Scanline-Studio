@@ -17,10 +17,29 @@ namespace ScanlineStudio.Application;
 [JsonDerivedType(typeof(PersistedImageElement), "image")]
 public abstract record PersistedTemplateElement(double X, double Y, double Width, double Height, int Z, bool Locked);
 
+/// <summary>Phase 8 (YONIQ-style text-effects follow-up) additions — <paramref name="ShadowColor"/>/
+/// <paramref name="ShadowOffsetX"/>/<paramref name="ShadowOffsetY"/>/<paramref name="RotationDegrees"/>
+/// are flat scalars (mechanical, additive default fields, matching <see cref="PersistedImageElement.IsBackground"/>'s
+/// own already-shipped precedent — missing JSON properties on an older saved template deserialize to
+/// these defaults, no migration needed). <paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
+/// <paramref name="GradientStartColor"/>/<paramref name="GradientEndColor"/> persist
+/// <c>OverlayElementViewModel</c>'s own simplified 2-stop-gradient shape directly as plain scalars —
+/// deliberately NOT a separate <c>PersistedGradientColorStop</c> record + a new
+/// <see cref="PersistedTemplateJsonContext"/> registration (what the Phase 8 plan's own "gradient is
+/// medium cost" note anticipated for an N-stop shape): since the VM itself only ever supports exactly
+/// 2 stops, there is no variable-length list to serialize, and <see cref="Rgb24"/> already round-trips
+/// correctly (proven by <paramref name="StrokeColor"/>/<paramref name="Color"/> above) — so this
+/// sidesteps the "silent missing-registration" failure mode entirely rather than needing a dedicated
+/// discriminator test for it. No mask-related fields — bitmap-mask fill's persistence side was
+/// explicitly re-costed as a real outlier during Phase 8 plan-review and deferred out of this
+/// pass.</summary>
 public sealed record PersistedTextElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,
     string Text, double FontSizeRelative, Rgb24 Color,
-    string FontFamily, Rgb24? StrokeColor, double StrokeThickness)
+    string FontFamily, Rgb24? StrokeColor, double StrokeThickness,
+    Rgb24? ShadowColor = null, double ShadowOffsetX = 0.02, double ShadowOffsetY = 0.02, double RotationDegrees = 0,
+    bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
+    Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 public sealed record PersistedBoxElement(

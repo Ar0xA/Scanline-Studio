@@ -166,6 +166,90 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void AddOverlayElement_DefaultsToNoStrokeAndNoShadow()
+    {
+        // A freshly-added text element must render plain -- no outline, no drop shadow -- until the
+        // operator explicitly turns one on. Companion to the picker-write-guard tests below, which
+        // pin the actual mechanism this depends on.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.AddOverlayElementCommand.Execute(null);
+
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.False(element.HasStroke);
+        Assert.Null(element.StrokeColor);
+        Assert.False(element.HasShadow);
+        Assert.Null(element.ShadowColor);
+    }
+
+    [AvaloniaFact]
+    public void StrokeColorForPicker_WriteWhileHasStrokeIsFalse_DoesNotUnnullStrokeColor()
+    {
+        // Real-window finding: Rgb24ToColorConverter's null -> Colors.Black display fallback gets
+        // written straight back through the ColorPicker's own two-way Color binding, silently
+        // un-nulling StrokeColor with no user action at all -- confirmed live, a freshly-created
+        // text element showed "Outline" checked with a black swatch despite StrokeColor defaulting
+        // to null. StrokeColorForPicker exists specifically to absorb that incidental write while
+        // the picker is disabled/decorative (HasStroke false) -- this pins that guard directly,
+        // since a pure VM-level test can't reproduce the real Avalonia binding round-trip itself.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.False(element.HasStroke);
+
+        element.StrokeColorForPicker = new Rgb24(0, 0, 0);
+
+        Assert.Null(element.StrokeColor);
+        Assert.False(element.HasStroke);
+    }
+
+    [AvaloniaFact]
+    public void StrokeColorForPicker_WriteWhileHasStrokeIsTrue_UpdatesStrokeColor()
+    {
+        // The guard above must not make the picker permanently read-only -- real edits while
+        // actually enabled (HasStroke true) still need to reach StrokeColor.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.HasStroke = true;
+        var chosen = new Rgb24(10, 20, 30);
+
+        element.StrokeColorForPicker = chosen;
+
+        Assert.Equal(chosen, element.StrokeColor);
+    }
+
+    [AvaloniaFact]
+    public void ShadowColorForPicker_WriteWhileHasShadowIsFalse_DoesNotUnnullShadowColor()
+    {
+        // Phase 8: ShadowColor inherited the identical pattern (and identical bug) from StrokeColor
+        // -- same fix, same regression test shape.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.False(element.HasShadow);
+
+        element.ShadowColorForPicker = new Rgb24(0, 0, 0);
+
+        Assert.Null(element.ShadowColor);
+        Assert.False(element.HasShadow);
+    }
+
+    [AvaloniaFact]
+    public void ShadowColorForPicker_WriteWhileHasShadowIsTrue_UpdatesShadowColor()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.HasShadow = true;
+        var chosen = new Rgb24(40, 50, 60);
+
+        element.ShadowColorForPicker = chosen;
+
+        Assert.Equal(chosen, element.ShadowColor);
+    }
+
+    [AvaloniaFact]
     public void OverlayElement_ResolvedTextReflectsMacroTokens_NotTheRawTemplate()
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new OperatorSettings { Callsign = "W1AW" });

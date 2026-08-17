@@ -236,16 +236,23 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     }
 
     public double MeasureFittedFontSize(
-        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0)
+        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0,
+        double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0)
     {
         var fontFamily = ResolveFontFamily(font.Family);
         var startingSizePx = MathF.Max((float)(font.Size * imageHeightPx), MinFontSizePx);
         var strokeThicknessPx = (float)(strokeThicknessRelative * imageHeightPx);
-        var (boundedWidth, boundedHeight) = ShrinkFitBoxForStroke(boundsWidthPx, boundsHeightPx, strokeThicknessPx);
+        var shadowOffsetXPx = (float)(shadowOffsetXRelative * imageHeightPx);
+        var shadowOffsetYPx = (float)(shadowOffsetYRelative * imageHeightPx);
+        var (boundedWidth, boundedHeight) = ShrinkFitBoxForEffects(
+            boundsWidthPx, boundsHeightPx, strokeThicknessPx, shadowOffsetXPx, shadowOffsetYPx, rotationDegrees);
         return ComputeFittedFontSizePx(text, fontFamily, startingSizePx, MinFontSizePx, boundedWidth, boundedHeight);
     }
 
-    /// <summary>Shared by <see cref="MeasureFittedFontSize"/> (canvas-side) and
+    /// <summary>[Code-review nit, fixed here] This doc comment used to sit (misfiled) directly above
+    /// <see cref="ShrinkFitBoxForEffects"/> instead of here, on the actual method it describes --
+    /// moved down when Phase 8 renamed/extended that method and gave it its own, separate doc
+    /// comment. Shared by <see cref="MeasureFittedFontSize"/> (canvas-side) and
     /// <see cref="DrawTemplateText"/> (real pipeline) -- Phase 4 plan-review blocker: these two
     /// MUST apply the identical stroke-allowance correction or the canvas silently desyncs from
     /// the transmitted image (exactly the failure mode <see cref="MeasureFittedFontSize"/> exists
@@ -261,7 +268,12 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// visibly bleeding into the surrounding image -- so the observable defect is an
     /// asymmetrically-clipped/incomplete-looking outline, not out-of-bounds pixels. This method's
     /// own effect is verified directly (the returned FITTED SIZE shrinks with a stroke present),
-    /// not via a pixel-bleed assertion that the clip makes structurally unable to fail.</para></summary>
+    /// not via a pixel-bleed assertion that the clip makes structurally unable to fail.</para>
+    /// <para>[Code-review correction, applies to the sibling <see cref="ShrinkFitBoxForShadow"/> too]
+    /// This symmetric-centered-Pen reasoning is SPECIFIC to stroke -- it does NOT generalize to the
+    /// shadow case, where the copy is TRANSLATED rather than symmetrically grown, and needs DOUBLE
+    /// the offset shrunk on each axis instead (see that method's own doc comment for the real,
+    /// code-review-caught bug this distinction fixed).</para></summary>
     private static (int Width, int Height) ShrinkFitBoxForStroke(int boundsWidthPx, int boundsHeightPx, float strokeThicknessPx)
     {
         // Code-review finding: a negative strokeThicknessPx (nothing upstream validates the
@@ -276,6 +288,106 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         return (Math.Max(1, boundsWidthPx - strokeThicknessPxRounded), Math.Max(1, boundsHeightPx - strokeThicknessPxRounded));
     }
 
+    /// <summary>Phase 8: renamed from <c>ShrinkFitBoxForStroke</c> and extended -- shadow and
+    /// rotation are the SECOND and THIRD occurrences of the identical "an effect pushes ink past
+    /// what a plain-text fit search measures" problem stroke already solved (see this method's own
+    /// callers' doc comments), so all three shrinks are applied here, in sequence, rather than as
+    /// three independently-maintained copies of the same shape of correction. Each shrink only ever
+    /// makes the box smaller, so the RESULT is always a valid (safe, no-bleed-past-clip) bound
+    /// regardless of order. [Code-review correction] An earlier version of this comment claimed order
+    /// "doesn't matter mathematically" — that's true for SAFETY but not for TIGHTNESS: rotation's own
+    /// <c>k</c> factor (<see cref="ShrinkFitBoxForRotation"/>) is computed from whatever box stroke/
+    /// shadow already shrank, so a DIFFERENT order would generally produce a DIFFERENT (still safe,
+    /// but not identically-sized) final box — the three shrinks don't commute in the "produces the
+    /// same answer" sense, only in the "still correct" sense. In the specific combination of rotation
+    /// PLUS an asymmetric (non-both-axes-equal) shadow offset, this can leave a few pixels of
+    /// theoretical over-shrink slack on one axis relative to the other — cosmetic only (the
+    /// unconditional <c>Bounds</c> clip in <see cref="DrawTemplateText"/> means any residual
+    /// imprecision here shows as slightly-smaller-than-necessary text, never as bleed), not tracked as
+    /// a bug to fix, just documented accurately rather than claimed away. Stroke-then-shadow-then-
+    /// rotation is the order effects are actually drawn in (see <see cref="DrawGlyphs"/>'s own doc
+    /// comment), kept parallel for readability.</summary>
+    private static (int Width, int Height) ShrinkFitBoxForEffects(
+        int boundsWidthPx, int boundsHeightPx, float strokeThicknessPx, float shadowOffsetXPx, float shadowOffsetYPx, double rotationDegrees)
+    {
+        var (strokeW, strokeH) = ShrinkFitBoxForStroke(boundsWidthPx, boundsHeightPx, strokeThicknessPx);
+        var (shadowW, shadowH) = ShrinkFitBoxForShadow(strokeW, strokeH, shadowOffsetXPx, shadowOffsetYPx);
+        return ShrinkFitBoxForRotation(shadowW, shadowH, rotationDegrees);
+    }
+
+    /// <summary>[Code-review fix] A shadow offset by (dx,dy) pushes the SHADOW copy's own ink that
+    /// far past the FILL glyph's own footprint -- but the glyph run is drawn CENTER-anchored (origin
+    /// = <c>Bounds</c>'s own center), so the fill already occupies the full available half-width on
+    /// EACH side of center. The shadow copy is the SAME size, just translated by <c>dx</c>: it spans
+    /// <c>[cx - a/2 + dx, cx + a/2 + dx]</c> against a fill spanning <c>[cx - a/2, cx + a/2]</c>. For
+    /// the shadow's own far edge to stay within <c>Bounds</c> (half-width <c>W/2</c> from center),
+    /// the fit box must satisfy <c>a/2 + dx &lt;= W/2</c>, i.e. <c>a &lt;= W - 2*dx</c> -- DOUBLE the
+    /// offset, not the offset itself. An earlier version of this method shrank by just <c>dx</c>/
+    /// <c>dy</c> (correct for the stroke case above, where a <see cref="Pen"/>'s SYMMETRIC centered
+    /// stroke grows ink by the same amount on every side regardless of position -- the shadow's
+    /// asymmetric TRANSLATION is a fundamentally different shape of growth, which the original
+    /// comment here missed) -- a real code-review-caught bug: the shadow's far edge silently bled
+    /// past <c>Bounds</c> by up to <c>dx/2</c>/<c>dy/2</c>, invisible in the shipped regression test
+    /// because the unconditional clip in <see cref="DrawTemplateText"/> eats it (same "clip makes
+    /// bleed structurally undetectable by a pixel-outside-Bounds assertion alone" caveat already
+    /// documented for the stroke case). Negative offsets still clamp via <c>Abs</c> first (an offset
+    /// pushes OUTWARD on one side; the sign only picks which side, magnitude is what matters for the
+    /// shrink), same defensive-clamp shape as the stroke correction above.</summary>
+    private static (int Width, int Height) ShrinkFitBoxForShadow(int boundsWidthPx, int boundsHeightPx, float shadowOffsetXPx, float shadowOffsetYPx)
+    {
+        var dx = Math.Max(0, (int)MathF.Round(MathF.Abs(shadowOffsetXPx)));
+        var dy = Math.Max(0, (int)MathF.Round(MathF.Abs(shadowOffsetYPx)));
+        return (Math.Max(1, boundsWidthPx - (2 * dx)), Math.Max(1, boundsHeightPx - (2 * dy)));
+    }
+
+    /// <summary>Rotation-vs-clip policy (Phase 8 plan-review blocker): shrink the fit box, don't
+    /// widen the clip -- <see cref="DrawTemplateText"/>'s clip stays exactly <c>Bounds</c> for every
+    /// effect, no per-effect exceptions. A box of size (w,h) rotated by <paramref name="rotationDegrees"/>
+    /// has an axis-aligned bounding box of <c>(w*c + h*s, w*s + h*c)</c> where <c>c</c>/<c>s</c> are
+    /// <c>|cos|</c>/<c>|sin|</c> of the angle. Solving for the largest (w,h) -- constrained to the
+    /// SAME aspect ratio as the original <paramref name="boundsWidthPx"/>/<paramref name="boundsHeightPx"/>,
+    /// i.e. <c>(w,h) = k*(boundsWidthPx, boundsHeightPx)</c> for some scalar <c>k</c> -- whose rotated
+    /// bbox fits within the ORIGINAL bounds on both axes simultaneously gives
+    /// <c>k = min(boundsWidthPx / (boundsWidthPx*c + boundsHeightPx*s), boundsHeightPx / (boundsWidthPx*s + boundsHeightPx*c))</c>.
+    /// This is a genuinely conservative (not tight) bound for a non-square box at large angles --
+    /// verified correct by direct substitution, not just derived on paper, and pinned by
+    /// <c>ApplyTemplate_RotatedText_NoInkOutsideBounds</c> (written first, per the plan's own
+    /// discipline for this exact class of ImageSharp/geometry surprise). At 0° (<c>c=1,s=0</c>),
+    /// <c>k=1</c> exactly -- no shrink, so this is a total no-op for every element that doesn't use
+    /// rotation, including every existing test.</summary>
+    private static (int Width, int Height) ShrinkFitBoxForRotation(int boundsWidthPx, int boundsHeightPx, double rotationDegrees)
+    {
+        // [Code-review nit, fixed here] Nothing upstream validates the AXAML TextBox-bound
+        // RotationDegrees property (same gap StrokeThickness's own defensive clamp above already
+        // exists to close) -- a NaN/Infinity value would otherwise propagate through Cos/Sin/Min into
+        // an undefined (int)Math.Floor(NaN) cast on every preview frame. Treat as "no rotation" (the
+        // same safe default 0 already produces via k=1 below), not a thrown exception -- this is
+        // canvas-preview/pipeline code running on every frame, not a validation boundary.
+        if (double.IsNaN(rotationDegrees) || double.IsInfinity(rotationDegrees))
+        {
+            return (boundsWidthPx, boundsHeightPx);
+        }
+
+        var radians = rotationDegrees * Math.PI / 180.0;
+        var c = Math.Abs(Math.Cos(radians));
+        var s = Math.Abs(Math.Sin(radians));
+        var w = (double)boundsWidthPx;
+        var h = (double)boundsHeightPx;
+
+        var widthDenominator = (w * c) + (h * s);
+        var heightDenominator = (w * s) + (h * c);
+        var k1 = widthDenominator > 0 ? w / widthDenominator : 1.0;
+        var k2 = heightDenominator > 0 ? h / heightDenominator : 1.0;
+        var k = Math.Min(1.0, Math.Min(k1, k2));
+
+        return (Math.Max(1, (int)Math.Floor(w * k)), Math.Max(1, (int)Math.Floor(h * k)));
+    }
+
+    /// <summary>Phase 8: extended for shadow/rotation/gradient. Rotation forks into a genuinely
+    /// separate rendering path (an offscreen sub-bitmap render→rotate→composite, since there is no
+    /// GDI-style native rotated-glyph-run primitive here) -- everything else (shadow, stroke,
+    /// gradient) is handled uniformly by <see cref="DrawGlyphs{TPixel}"/> regardless of which
+    /// surface it's drawing onto.</summary>
     private void DrawTemplateText(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateTextElement element, PixelBounds bounds, int imageHeightPx)
     {
         var fontFamily = ResolveFontFamily(element.Font.Family);
@@ -284,27 +396,117 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var boundsHeightPx = Math.Max(1, (int)MathF.Round(bounds.Height));
 
         var strokeThicknessPx = element.StrokeColor is { } ? (float)(element.StrokeThickness * imageHeightPx) : 0f;
-        var (fitWidthPx, fitHeightPx) = ShrinkFitBoxForStroke(boundsWidthPx, boundsHeightPx, strokeThicknessPx);
+        var shadowOffsetXPx = element.ShadowColor is { } ? (float)(element.ShadowOffsetX * imageHeightPx) : 0f;
+        var shadowOffsetYPx = element.ShadowColor is { } ? (float)(element.ShadowOffsetY * imageHeightPx) : 0f;
+        var (fitWidthPx, fitHeightPx) = ShrinkFitBoxForEffects(
+            boundsWidthPx, boundsHeightPx, strokeThicknessPx, shadowOffsetXPx, shadowOffsetYPx, element.RotationDegrees);
         var fittedSizePx = ComputeFittedFontSizePx(element.Content, fontFamily, startingSizePx, MinFontSizePx, fitWidthPx, fitHeightPx);
 
-        var origin = new PointF(bounds.X + (bounds.Width / 2f), bounds.Y + (bounds.Height / 2f));
+        // [Code-review nits, fixed here] `% 360 == 0` rather than `== 0` -- 360/720/etc. are visually
+        // identical to no rotation but previously took the resampling sub-bitmap path anyway (a real,
+        // if minor, quality/perf gap: an extra resample blurs the text slightly for no visual gain).
+        // C#'s `%` on a negative operand can return a negative zero (e.g. -360 % 360 == -0.0), which
+        // compares equal to 0 under IEEE 754, so this also correctly treats negative full-turn values
+        // as unrotated. NaN/Infinity (nothing upstream validates the AXAML TextBox-bound property)
+        // also route through the unrotated path here -- ctx.Rotate(float.NaN) has no defined,
+        // safe-to-assume behavior, unlike ShrinkFitBoxForRotation's own NaN guard, which only had to
+        // pick a safe FIT SIZE, not actually perform a transform.
+        var isUnrotated = element.RotationDegrees % 360 == 0 || double.IsNaN(element.RotationDegrees) || double.IsInfinity(element.RotationDegrees);
 
-        // Render-time overflow policy (Phase 0 plan-review blocker 4): the fit search can bottom
-        // out at MinFontSizePx and the text STILL not fit Bounds -- clip to Bounds rather than
-        // overflow or ellipsize. Clipping unconditionally (not just in the overflow case) is both
-        // simpler and correct: when text already fits, nothing is outside the clip region, so it's
-        // a no-op. Deliberately still exactly Bounds (not widened for the stroke) -- the fit-box
-        // shrink above is what keeps stroke ink inside this same clip rect.
-        var clip = new SixLabors.ImageSharp.Drawing.RectangularPolygon(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-        // hintingMode: HintingMode.None -- code-review round-1 finding: must match
-        // ComputeFittedFontSizePx's own measurement HintingMode exactly, or the fitted size this
-        // method just computed can render slightly larger/smaller than what was actually measured
-        // (hinting's grid-fitting quantization), silently reintroducing the overflow this whole
-        // mechanism exists to prevent.
+        // Gradient coordinates are derived from wherever the glyph run is ACTUALLY drawn -- the main
+        // image's own Bounds when unrotated, or the sub-bitmap's own LOCAL (0,0,boundsWidthPx,
+        // boundsHeightPx) space when rotated, so the gradient rotates WITH the text (Phase 8 plan's
+        // own stated decision, not left implicit).
+        var gradientBounds = isUnrotated ? bounds : new PixelBounds(0, 0, boundsWidthPx, boundsHeightPx);
+        Brush? fillBrush = element.Gradient is { } gradient
+            ? BuildGradientBrush(gradient, gradientBounds, element.Color)
+            : element.StrokeColor is { } ? Brushes.Solid(ToRgba32(element.Color)) : null;
+
+        if (isUnrotated)
+        {
+            var origin = new PointF(bounds.X + (bounds.Width / 2f), bounds.Y + (bounds.Height / 2f));
+
+            // Render-time overflow policy (Phase 0 plan-review blocker 4): the fit search can bottom
+            // out at MinFontSizePx and the text STILL not fit Bounds -- clip to Bounds rather than
+            // overflow or ellipsize. Clipping unconditionally (not just in the overflow case) is both
+            // simpler and correct: when text already fits, nothing is outside the clip region, so it's
+            // a no-op. Deliberately still exactly Bounds (not widened for stroke/shadow) -- the fit-box
+            // shrink above is what keeps their ink inside this same clip rect.
+            var clip = new SixLabors.ImageSharp.Drawing.RectangularPolygon(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+            // hintingMode: HintingMode.None -- code-review round-1 finding: must match
+            // ComputeFittedFontSizePx's own measurement HintingMode exactly, or the fitted size this
+            // method just computed can render slightly larger/smaller than what was actually measured
+            // (hinting's grid-fitting quantization), silently reintroducing the overflow this whole
+            // mechanism exists to prevent.
+            DrawGlyphs(
+                image, element.Content, fontFamily, fittedSizePx, origin, element.Color, wrappingLength: -1f, clip, hintingMode: HintingMode.None,
+                element.StrokeColor, strokeThicknessPx, element.ShadowColor, shadowOffsetXPx, shadowOffsetYPx, fillBrush);
+            return;
+        }
+
+        // Rotation path (Phase 8): render onto an offscreen, transparent Rgba32 sub-bitmap sized to
+        // the ORIGINAL (unshrunk) bounds -- the fit search above already guarantees the fitted glyph
+        // run's own ink, once rotated, stays within Bounds (see ShrinkFitBoxForRotation's own doc
+        // comment); the sub-bitmap canvas itself just needs to be big enough to hold that ink before
+        // rotation, with room to spare -- any transparent margin around it is a no-op once composited
+        // back (alpha=0 blends to nothing). MUST be Rgba32, not Rgb24 -- an opaque sub-bitmap would
+        // composite a visible black box around the rotated text instead of a transparent one.
+        using var subBitmap = new Image<Rgba32>(boundsWidthPx, boundsHeightPx);
+        var subOrigin = new PointF(boundsWidthPx / 2f, boundsHeightPx / 2f);
         DrawGlyphs(
-            image, element.Content, fontFamily, fittedSizePx, origin, element.Color, wrappingLength: -1f, clip, hintingMode: HintingMode.None,
-            element.StrokeColor, strokeThicknessPx);
+            subBitmap, element.Content, fontFamily, fittedSizePx, subOrigin, element.Color, wrappingLength: -1f, clip: null, hintingMode: HintingMode.None,
+            element.StrokeColor, strokeThicknessPx, element.ShadowColor, shadowOffsetXPx, shadowOffsetYPx, fillBrush);
+
+        subBitmap.Mutate(ctx => ctx.Rotate((float)element.RotationDegrees));
+
+        // Composite point recomputed from the ROTATED (post-transform) size, not the original --
+        // ImageSharp's Rotate auto-expands the canvas to the rotated content's own bounding box, so
+        // re-centering on the NEW size is what keeps the visual center anchored at Bounds' own
+        // center. This is also what keeps a later Tier 3 swap from Rotate to the full
+        // ProjectiveTransformBuilder.Transform a one-line change instead of a rework (Phase 8 plan's
+        // own note). The outer Clip is a belt-and-suspenders safety net, not load-bearing given the
+        // fit-box-shrink math above -- but it's what keeps "Bounds is the one, single clip rect
+        // everywhere in this pipeline" literally true with no per-effect exception, cheap when
+        // already correct, and a real backstop if the math has an edge case this session didn't find.
+        var centerX = bounds.X + (bounds.Width / 2f);
+        var centerY = bounds.Y + (bounds.Height / 2f);
+        var compositeLocation = new Point(
+            (int)MathF.Round(centerX - (subBitmap.Width / 2f)),
+            (int)MathF.Round(centerY - (subBitmap.Height / 2f)));
+        var boundsClip = new SixLabors.ImageSharp.Drawing.RectangularPolygon(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        image.Mutate(ctx => ctx.Clip(boundsClip, innerCtx => innerCtx.DrawImage(subBitmap, compositeLocation, 1f)));
     }
+
+    /// <summary>Phase 8: <paramref name="bounds"/> is destination-image-space when drawing directly
+    /// onto the main image, or sub-bitmap-LOCAL space when called from the rotation path -- either
+    /// way it's "wherever the glyph run is actually being drawn," which is exactly what an ImageSharp
+    /// gradient brush's own absolute control points need (confirmed: neither <see cref="LinearGradientBrush"/>
+    /// nor <see cref="RadialGradientBrush"/> has a glyph/bounds-relative mode). Empty
+    /// <see cref="TextGradient.Stops"/> falls back to a single stop at <paramref name="fallbackColor"/>
+    /// (the element's own plain <see cref="TemplateTextElement.Color"/>) -- a gradient with nothing
+    /// configured yet is a degenerate one-color gradient, not an error.</summary>
+    private static Brush BuildGradientBrush(TextGradient gradient, PixelBounds bounds, Abstractions.Imaging.Rgb24 fallbackColor)
+    {
+        var stops = gradient.Stops.Count > 0
+            ? gradient.Stops.Select(s => new ColorStop(s.Offset, ToRgba32(s.Color))).ToArray()
+            : [new ColorStop(0f, ToRgba32(fallbackColor))];
+
+        var centerX = bounds.X + (bounds.Width / 2f);
+        var centerY = bounds.Y + (bounds.Height / 2f);
+
+        return gradient.Kind switch
+        {
+            TextGradientKind.Horizontal => new LinearGradientBrush(
+                new PointF(bounds.X, centerY), new PointF(bounds.X + bounds.Width, centerY), GradientRepetitionMode.None, stops),
+            TextGradientKind.Vertical => new LinearGradientBrush(
+                new PointF(centerX, bounds.Y), new PointF(centerX, bounds.Y + bounds.Height), GradientRepetitionMode.None, stops),
+            TextGradientKind.Radial => new RadialGradientBrush(
+                new PointF(centerX, centerY), MathF.Max(bounds.Width, bounds.Height) / 2f, GradientRepetitionMode.None, stops),
+            _ => throw new NotSupportedException($"Unrecognized {nameof(TextGradientKind)}: {gradient.Kind}."),
+        };
+    }
+
+    private static Rgba32 ToRgba32(Abstractions.Imaging.Rgb24 color) => new(color.R, color.G, color.B, 255);
 
     private void DrawTemplateImage(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateImageElement element, PixelBounds bounds)
     {
@@ -406,15 +608,31 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// portion (the part not already covered by the fill pass) remains visible, which is what a
     /// legible text outline is actually supposed to look like. <see cref="DrawTemplateText"/>'s own
     /// caller is responsible for shrinking the FIT BOX by the stroke width before calling this (a
-    /// separate correction, still needed either way -- see that method's own doc comment).</para></summary>
-    private static void DrawGlyphs(
-        Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, string text, FontFamily fontFamily, float fontSizePx, PointF origin,
+    /// separate correction, still needed either way -- see that method's own doc comment).</para>
+    /// <para>Phase 8: generic over <typeparamref name="TPixel"/> (was fixed to
+    /// <see cref="SixLabors.ImageSharp.PixelFormats.Rgb24"/>) so the SAME method draws both onto the
+    /// main <c>Rgb24</c> image (unrotated text) and an offscreen <see cref="Rgba32"/> sub-bitmap (the
+    /// rotation path) -- one drawing path, not two near-duplicates. <paramref name="shadowColor"/>
+    /// null means no shadow (matches <paramref name="strokeColor"/>'s own null-means-none
+    /// convention); when present, drawn FIRST (a plain filled copy, offset by
+    /// (<paramref name="shadowOffsetXPx"/>,<paramref name="shadowOffsetYPx"/>), no stroke of its
+    /// own) so stroke and fill both paint on top of it, matching the plan's own fixed draw order
+    /// (shadow pre-pass → stroke → fill last). <paramref name="fillBrush"/> non-null overrides the
+    /// plain solid-<paramref name="color"/> fill with a <see cref="Brush"/> (a gradient, or the
+    /// pre-Phase-8 <c>Brushes.Solid(color)</c> stroke-requires-a-brush case) -- null keeps the
+    /// ORIGINAL plain-<c>Rgba32</c>-overload fill call byte-for-byte unchanged, which is what keeps
+    /// <see cref="ApplyOverlay"/>'s own output identical to before any of Phase 4/8's additions.</para></summary>
+    private static void DrawGlyphs<TPixel>(
+        Image<TPixel> image, string text, FontFamily fontFamily, float fontSizePx, PointF origin,
         Abstractions.Imaging.Rgb24 color,
         float wrappingLength, SixLabors.ImageSharp.Drawing.RectangularPolygon? clip, HintingMode? hintingMode,
-        Abstractions.Imaging.Rgb24? strokeColor = null, float strokeThicknessPx = 0)
+        Abstractions.Imaging.Rgb24? strokeColor = null, float strokeThicknessPx = 0,
+        Abstractions.Imaging.Rgb24? shadowColor = null, float shadowOffsetXPx = 0, float shadowOffsetYPx = 0,
+        Brush? fillBrush = null)
+        where TPixel : unmanaged, IPixel<TPixel>
     {
         var font = fontFamily.CreateFont(fontSizePx);
-        var rgba = new Rgba32(color.R, color.G, color.B, 255);
+        var rgba = ToRgba32(color);
         var options = new RichTextOptions(font)
         {
             Origin = origin,
@@ -430,11 +648,32 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
         void Render(IImageProcessingContext ctx)
         {
+            if (shadowColor is { } shadow)
+            {
+                var shadowOptions = new RichTextOptions(font)
+                {
+                    Origin = origin + new PointF(shadowOffsetXPx, shadowOffsetYPx),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    WrappingLength = wrappingLength,
+                };
+                if (hintingMode is { } shadowHinting)
+                {
+                    shadowOptions.HintingMode = shadowHinting;
+                }
+
+                ctx.DrawText(shadowOptions, text, Brushes.Solid(ToRgba32(shadow)));
+            }
+
             if (strokeColor is { } stroke && strokeThicknessPx > 0)
             {
-                var strokeRgba = new Rgba32(stroke.R, stroke.G, stroke.B, 255);
+                var strokeRgba = ToRgba32(stroke);
                 ctx.DrawText(options, text, Pens.Solid(strokeRgba, strokeThicknessPx));
-                ctx.DrawText(options, text, Brushes.Solid(rgba));
+            }
+
+            if (fillBrush is { } brush)
+            {
+                ctx.DrawText(options, text, brush);
             }
             else
             {

@@ -69,7 +69,10 @@ public sealed class TemplateStoreTests : IDisposable
             new PersistedTextElement(
                 X: 0.5, Y: 0.2, Width: 0.3, Height: 0.1, Z: 0, Locked: false,
                 Text: "{his_call}", FontSizeRelative: 0.08, Color: new Rgb24(255, 255, 255),
-                FontFamily: "Barlow", StrokeColor: new Rgb24(0, 0, 0), StrokeThickness: 0.01),
+                FontFamily: "Barlow", StrokeColor: new Rgb24(0, 0, 0), StrokeThickness: 0.01,
+                ShadowColor: new Rgb24(50, 50, 50), ShadowOffsetX: 0.03, ShadowOffsetY: 0.04, RotationDegrees: 15,
+                GradientEnabled: true, GradientKind: TextGradientKind.Radial,
+                GradientStartColor: new Rgb24(255, 0, 0), GradientEndColor: new Rgb24(0, 255, 0)),
             new PersistedBoxElement(
                 X: 0.5, Y: 0.5, Width: 1, Height: 1, Z: -1, Locked: true,
                 FillColor: new Rgb24(20, 20, 20), BorderColor: null, BorderThickness: 0, Opacity: 0.8),
@@ -88,6 +91,19 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.Equal("{his_call}", text.Text);
         Assert.Equal("Barlow", text.FontFamily);
         Assert.Equal(new Rgb24(0, 0, 0), text.StrokeColor);
+        // Phase 8 (YONIQ-style text-effects follow-up): shadow/rotation/gradient all round-trip as
+        // plain scalars on PersistedTextElement -- no new JsonSerializerContext registration needed
+        // since the gradient is the VM's own fixed 2-stop shape, not a variable-length list (see
+        // PersistedTextElement's own doc comment for why that sidesteps the usual "gradient needs a
+        // new record + registration" cost this class of change normally carries).
+        Assert.Equal(new Rgb24(50, 50, 50), text.ShadowColor);
+        Assert.Equal(0.03, text.ShadowOffsetX);
+        Assert.Equal(0.04, text.ShadowOffsetY);
+        Assert.Equal(15, text.RotationDegrees);
+        Assert.True(text.GradientEnabled);
+        Assert.Equal(TextGradientKind.Radial, text.GradientKind);
+        Assert.Equal(new Rgb24(255, 0, 0), text.GradientStartColor);
+        Assert.Equal(new Rgb24(0, 255, 0), text.GradientEndColor);
 
         var box = Assert.IsType<PersistedBoxElement>(loaded.Elements[1]);
         Assert.True(box.Locked);
