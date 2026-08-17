@@ -454,6 +454,39 @@
                                                     <ContextMenu Classes="Industry">
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
                                                         <Separator />
+                                                        <!-- EditWindow redesign Phase 6 (mockups/Editwindow): Insert Field/Align to Crop
+                                                             submenus. Both reuse the SAME parent-pushed/toolbar-shared commands the
+                                                             TEXT STYLE/GEOMETRY tabs already use (InsertFieldCommand,
+                                                             AlignSelectedElementToCropCommand) — right-click already sets
+                                                             SelectedOverlayElement to THIS element before the menu opens (same
+                                                             reasoning as DuplicateCommand's own doc comment), so
+                                                             AlignSelectedElementToCropCommand acts on the right element with no
+                                                             CommandParameter needed for the element itself, only the alignment string.
+                                                             "Edit text… (F2)" and "Apply text preset" from the mock are NOT built here
+                                                             — inline canvas text editing and a text-style-preset system are both
+                                                             genuinely new subsystems, not reachable by relocating existing commands,
+                                                             explicitly deferred rather than silently dropped. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.InsertFieldMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip1}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip2}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip3}" Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip4}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip5}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip6}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip7}" Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip8}" Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip9}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip10}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
+                                                        </MenuItem>
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignToCropMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignLeft}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Left" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignCenter}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Center" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignRight}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Right" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignTop}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Top" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignMiddle}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Middle" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignBottom}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Bottom" />
+                                                        </MenuItem>
+                                                        <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.AddPlate}" Command="{Binding AddPlateCommand}" />
                                                         <Separator />
@@ -537,6 +570,18 @@
                                                     <ContextMenu Classes="Industry">
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
                                                         <Separator />
+                                                        <!-- EditWindow redesign Phase 6: Align to Crop submenu — see the text
+                                                             element's own ContextMenu doc comment for the full reasoning
+                                                             (AlignSelectedElementToCropCommand is generic across element types). -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignToCropMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignLeft}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Left" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignCenter}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Center" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignRight}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Right" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignTop}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Top" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignMiddle}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Middle" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignBottom}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Bottom" />
+                                                        </MenuItem>
+                                                        <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
@@ -597,6 +642,17 @@
                                                 <Border.ContextMenu>
                                                     <ContextMenu Classes="Industry">
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
+                                                        <Separator />
+                                                        <!-- EditWindow redesign Phase 6: Align to Crop submenu — see the text
+                                                             element's own ContextMenu doc comment for the full reasoning. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignToCropMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignLeft}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Left" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignCenter}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Center" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignRight}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Right" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignTop}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Top" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignMiddle}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Middle" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignBottom}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Bottom" />
+                                                        </MenuItem>
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.SetAsBackground}" Command="{Binding SetAsBackgroundCommand}" CommandParameter="{Binding}" />
