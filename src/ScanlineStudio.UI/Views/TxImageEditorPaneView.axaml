@@ -664,6 +664,31 @@
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip9}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip10}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
                                                         </MenuItem>
+                                                        <!-- Backlog item (user request, 2026-08-17): quick-pick submenus for font size/text
+                                                             color, same discrete-CommandParameter shape as Align to Crop above — a native
+                                                             ContextMenu isn't a reliable host for an embedded slider/color-picker, so these
+                                                             are curated presets, not the full continuous control (that stays the TEXT STYLE
+                                                             tab). Font FAMILY is deliberately NOT added here: AvailableFontFamilies' names
+                                                             are platform-dependent (the default entry is the OS's own default family, not a
+                                                             fixed literal), so a static preset list would be wrong, and a dynamically
+                                                             ItemsSource-generated submenu risks the same silently-broken-binding failure
+                                                             class already hit once this session (EditWindow Phase 6's Insert Field/Align to
+                                                             Crop submenus, before their command-wiring fix) — font family selection stays
+                                                             the TEXT STYLE tab's own ComboBox. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.FontSizeMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FontSizeSmall}" Command="{Binding SetFontSizePresetCommand}" CommandParameter="Small" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FontSizeMedium}" Command="{Binding SetFontSizePresetCommand}" CommandParameter="Medium" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FontSizeLarge}" Command="{Binding SetFontSizePresetCommand}" CommandParameter="Large" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FontSizeXLarge}" Command="{Binding SetFontSizePresetCommand}" CommandParameter="XLarge" />
+                                                        </MenuItem>
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.TextColorMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorWhite}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="White" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorBlack}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="Black" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorYellow}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="Yellow" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorRed}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="Red" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorGreen}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="Green" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorBlue}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="Blue" />
+                                                        </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignToCropMenu}">
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignLeft}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Left" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignCenter}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Center" />
