@@ -419,6 +419,7 @@
   "Panes.TxImageEditor.SendToBackMenu": "Send to Back",
   "Panes.TxImageEditor.Lock": "Lock",
   "Panes.TxImageEditor.LockGlyph": "L",
+  "Panes.TxImageEditor.RemoveRowGlyph": "×",
   "Panes.TxImageEditor.Duplicate": "Duplicate",
   "Panes.TxImageEditor.DuplicateHeaderAction": "DUP",
   "Panes.TxImageEditor.Apply": "APPLY",

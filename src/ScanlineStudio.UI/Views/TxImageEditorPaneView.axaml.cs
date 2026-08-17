@@ -388,6 +388,19 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
+        // Backlog item (user request, 2026-08-17): keyboard Delete for the selected canvas element
+        // -- Delete AND Back (Backspace also removes on macOS keyboards, which have no dedicated
+        // forward-delete key without Fn; matches other creative-tool conventions, e.g. Figma treats
+        // both the same way). RemoveOverlayElementCommand already no-ops on a null element, but the
+        // explicit guard here avoids marking a keypress Handled when nothing is selected, letting it
+        // fall through to whatever Avalonia's own default handling would otherwise be.
+        if ((e.Key == Key.Delete || e.Key == Key.Back) && vm.SelectedOverlayElement is not null)
+        {
+            vm.RemoveOverlayElementCommand.Execute(vm.SelectedOverlayElement);
+            e.Handled = true;
+            return;
+        }
+
         var direction = e.Key switch
         {
             Key.Up => NudgeDirection.Up,
