@@ -2073,6 +2073,119 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(zoomBefore, vm.ZoomFactor);
     }
 
+    // Backlog item (user request, 2026-08-17): "Fit safe area"/"Fit width"/"Fit height" alongside
+    // the existing whole-frame Fit above -- same View-owns-viewport-size call convention.
+
+    [AvaloniaFact]
+    public void ApplyFitSafeArea_FitsTheSafeAreaBoxNotTheWholeFrame()
+    {
+        // Realistic mode (see SafeAreaWidthAndHeightPixels_TrackCanvasDisplaySizeAtAnyZoom's own doc
+        // comment for why SmallMode/WideMode are too small here): WorkingCopy is exactly 320x256 (the
+        // 320x256 source is within the mode's own 640x512 downsample budget, so no downsampling
+        // happens), safe box is (320-28)x(256-28) = 292x228. A 292x684 viewport makes WIDTH the
+        // constraining axis (292/292=1.0 vs 684/228=3.0) -- the whole-frame Fit would instead pick
+        // 292/320=0.9125, so this is a real, discriminating check that the SAFE box (not the frame)
+        // drove the computed zoom.
+        var realisticMode = new SstvModeDefinition(
+            Id: "realistic", DisplayName: "Realistic", VisCode: 0, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
+        var vm = CreateEditor(CreateSource(320, 256), realisticMode, new FakeTransmitImagePreparer());
+
+        vm.ApplyFitSafeArea(292, 684);
+
+        AssertClose(1.0, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFitSafeArea_DegenerateSafeArea_FallsBackToWholeFrameFit()
+    {
+        // SmallMode's 4x4 WorkingCopy is smaller than 2x the 14px inset -- the safe box would be
+        // negative-sized, so this must fall back to ApplyFit's own whole-frame math, not divide by
+        // (or against) a non-positive dimension. Same inputs as
+        // ApplyFit_ViewportLargerThanWorkingCopy_ZoomFactorGrowsToFillTheSmallerAxis (expected 2.0)
+        // -- a real regression pin that the fallback actually reaches ApplyFit's own logic.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ApplyFitSafeArea(12, 8);
+
+        AssertClose(2.0, vm.ZoomFactor);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(0, 10)]
+    [InlineData(10, 0)]
+    public void ApplyFitSafeArea_NonPositiveViewportDimension_IsANoOp(double width, double height)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        var zoomBefore = vm.ZoomFactor;
+
+        vm.ApplyFitSafeArea(width, height);
+
+        AssertClose(zoomBefore, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFitWidth_SetsZoomFactorToViewportWidthOverWorkingCopyWidth()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ApplyFitWidth(10);
+
+        AssertClose(2.5, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFitWidth_ComputedRatioAboveMaxZoomFactor_ClampsToMax()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ApplyFitWidth(4000);
+
+        AssertClose(4.0, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFitWidth_NonPositiveViewportDimension_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        var zoomBefore = vm.ZoomFactor;
+
+        vm.ApplyFitWidth(0);
+
+        AssertClose(zoomBefore, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFitHeight_SetsZoomFactorToViewportHeightOverWorkingCopyHeight()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ApplyFitHeight(10);
+
+        AssertClose(2.5, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFitHeight_ComputedRatioBelowMinZoomFactor_ClampsToMin()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ApplyFitHeight(0.01);
+
+        AssertClose(0.1, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFitHeight_NonPositiveViewportDimension_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        var zoomBefore = vm.ZoomFactor;
+
+        vm.ApplyFitHeight(0);
+
+        AssertClose(zoomBefore, vm.ZoomFactor);
+    }
+
     [AvaloniaFact]
     public void ZoomActualCommand_SetsZoomFactorToOne()
     {
