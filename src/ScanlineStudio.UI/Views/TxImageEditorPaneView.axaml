@@ -43,7 +43,13 @@
                  stay ALSO usable from the stage toolbar below (Row 1) — this is an added, more
                  discoverable location, not a relocation; removing them from the toolbar would be a
                  real functional regression for muscle memory built on the toolbar-Ctrl+Z pattern. -->
-            <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" Margin="0,0,0,6" VerticalAlignment="Center">
+            <!-- design-fidelity Phase I (minor #2): hairline under the context bar (mock line 24's
+                 own border-bottom) — was a bare bottom Margin with no rule at all, sampled as
+                 uniform background across the full span in a real-window pixel check. Border wraps
+                 the row instead of adding a sibling, so the rule spans the same Padding-inset width
+                 the row's own content already does. -->
+            <Border Grid.Row="0" BorderThickness="0,0,0,1" BorderBrush="{StaticResource IndustryChromeBorder}" Padding="0,0,0,6" Margin="0,0,0,6">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" VerticalAlignment="Center">
                 <TextBlock Classes="IndustryGbTitle" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ContextBarTitle}" />
                 <Border Grid.Column="1" Width="1" Height="16" Margin="10,0" Background="{StaticResource IndustryChromeBorder}" />
                 <!-- design-fidelity Phase H (final confirming pass finding #5): IndustryRowValue is
@@ -54,8 +60,18 @@
                      correct atom here. Fixed at this call site only, not the shared atom itself,
                      which is correct for its real value-cell consumers elsewhere in the app. -->
                 <TextBlock Grid.Column="2" Classes="IndustryKicker" VerticalAlignment="Center" Text="{Binding FrameReadoutText}" />
-                <Border Grid.Column="3" Classes="Industry IndustryMini" Margin="10,0,0,0" IsVisible="{Binding HasUnsavedEdits}">
-                    <TextBlock Text="{loc:Translate Panes.TxImageEditor.UnsavedEditsChip}" />
+                <!-- design-fidelity Phase I (minor #4): tint + leading square marker (mock line 28),
+                     matching the mock's own #d6ebff/#5980a6 tint pair — reused IndustrySelectTint/
+                     IndustrySelectTintBorder directly (same tokens the segmented-control :checked
+                     state already uses for "this is currently true," which is exactly the semantic
+                     an unsaved-edits flag needs) rather than Border.IndustryMini.active's own
+                     green/healthy tint, which means something else entirely (receiving status). -->
+                <Border Grid.Column="3" Classes="Industry IndustryMini" Margin="10,0,0,0" IsVisible="{Binding HasUnsavedEdits}"
+                        Background="{StaticResource IndustrySelectTint}" BorderBrush="{StaticResource IndustrySelectTintBorder}">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <Border Width="6" Height="6" Background="{StaticResource IndustryAccent}" />
+                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.UnsavedEditsChip}" Foreground="{StaticResource IndustrySelectTintText}" />
+                    </StackPanel>
                 </Border>
                 <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding UndoCommand}" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
@@ -64,6 +80,7 @@
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RevertCommand}" Content="{loc:Translate Panes.TxImageEditor.Revert}" />
                 </StackPanel>
             </Grid>
+            </Border>
 
             <!-- Merged tool strip: Move/Crop/Scale/.../Pick RadioButton group, IndustryMiniRadioTheme
                  (GroupName="EditorTool"). Only "Move" reflects real behavior (the default/only tool
@@ -143,7 +160,13 @@
                      structural gap in this fix. -->
                 <Border Width="1" Height="18" Margin="6,0" Background="{StaticResource IndustryChromeBorder}" />
                 <TextBlock Classes="IndustryKicker" VerticalAlignment="Center" Margin="0,0,4,4" Text="{loc:Translate Panes.TxImageEditor.CropLabel}" />
-                <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{Binding DimensionsChipText}" /></Border>
+                <!-- design-fidelity Phase I (minor #1): Height="26" local override — every other
+                     toolbar item in this row is IndustryBtn26 (26px); this chip was the 17px
+                     Border.IndustryMini default, one of 3 different heights measured in this single
+                     row (real-window finding). Local Height wins over the class's own Height=17
+                     Setter (same precedence this codebase already relies on for Padding overrides
+                     elsewhere), so IndustryMini's border/padding/font stay, only the height changes. -->
+                <Border Classes="Industry IndustryMini" Height="26" Margin="0,0,4,4"><TextBlock VerticalAlignment="Center" Text="{Binding DimensionsChipText}" /></Border>
 
                 <!-- Real, wired: aspect toggle + add-text + apply/cancel. PreserveAspect has no
                      mockup equivalent (mock2's own row ends at the dimensions chip) — reuses
@@ -177,7 +200,9 @@
                      adjustment, not a per-element operation, so it stays here). Apply/Cancel ALSO
                      moved out, into the new SEND panel at the bottom of the card (Phase 4) — same
                      "object/frame action, not view state" reasoning. -->
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
+                <!-- design-fidelity Phase I (minor #1): IndustryBtn22 -> IndustryBtn26, matching
+                     every other item in this row (mock's own toolbar is a uniform height:26px). -->
+                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.ToolRotate}"
                         Command="{Binding RotateCommand}" />
             </WrapPanel>
@@ -232,14 +257,41 @@
                             <ItemsControl ItemsSource="{Binding ReadyRack.Slots}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="vm:ReadyRackSlotViewModel">
-                                    <Button Classes="Industry IndustryBtn IndustryBtnSecondary" Padding="4,3" Margin="0,0,0,2"
+                                    <!-- design-fidelity Phase I (minor #5, nit: padding order): Margin
+                                         dropped to 0 (rows touch instead of sitting in individually
+                                         detached boxes) and BorderThickness reduced to bottom-only, a
+                                         local override that wins over the theme's own implicit border
+                                         via TemplateBinding (same local-value-wins precedence this
+                                         codebase already relies on for Padding overrides elsewhere) —
+                                         closer to the mock's own flush, hairline-separated list (mock
+                                         lines 48-56) than the previous individually-boxed rows. The
+                                         mock's own additional "active slot" tint + left accent bar
+                                         needs a real IsCurrent/currently-loaded concept this app's
+                                         ReadyRackSlotViewModel doesn't track — new state, not a style
+                                         tweak, left out of this pass. Padding "4,3"->"6,4": Avalonia's
+                                         2-value Thickness is (horizontal,vertical), the mock's own CSS
+                                         pair (padding:4px 6px) is (vertical,horizontal) — the value
+                                         had been carried across in the wrong order. -->
+                                    <Button Classes="Industry IndustryBtn IndustryBtnSecondary" Padding="6,4" Margin="0" BorderThickness="0,0,0,1" CornerRadius="0"
                                             HorizontalContentAlignment="Stretch" HorizontalAlignment="Stretch"
                                             Command="{Binding RecallCommand}" CommandParameter="{Binding SlotNumber}"
                                             ToolTip.Tip="{Binding Template.Name}">
                                         <Grid ColumnDefinitions="16,50,*" ColumnSpacing="7">
                                             <TextBlock Classes="IndustryKicker" Text="{Binding SlotNumber}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                             <Panel Grid.Column="1" Width="50" Height="36">
-                                                <Border Classes="IndustryHatchPanel" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}" />
+                                                <!-- design-fidelity Phase I (nit): dashed box + "+" glyph
+                                                     (mock lines 54-56), replacing the solid-bordered
+                                                     IndustryHatchPanel — Border has no dash support in
+                                                     Avalonia (same reason the safe-area guide elsewhere
+                                                     on this screen uses a Rectangle), so a Rectangle +
+                                                     centered TextBlock overlay replaces it AT THIS CALL
+                                                     SITE only; IndustryHatchPanel itself stays untouched
+                                                     for its other consumers (e.g. the Receive tab's own
+                                                     empty session-frames slots). -->
+                                                <Grid IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}">
+                                                    <Rectangle Stroke="{StaticResource IndustryTextMuted55}" StrokeThickness="1" StrokeDashArray="3,2" />
+                                                    <TextBlock Text="{loc:Translate Panes.TxImageEditor.EmptySlotGlyph}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource IndustryTextMuted55}" />
+                                                </Grid>
                                                 <Image Source="{Binding Template.Thumbnail}" Stretch="Uniform" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                             </Panel>
                                             <!-- design-fidelity Phase H (final confirming pass finding #5):
@@ -437,6 +489,30 @@
                                     Width="10" Height="10"
                                     Background="{StaticResource IndustryAccent}"
                                     PointerPressed="OnCropHandlePointerPressed" />
+
+                            <!-- Safe-area guide: a visual crop-boundary indicator only (dashed
+                                 rectangle), not fake content — kept. Rectangle (not a Border, which
+                                 has no dash support in Avalonia) with StrokeDashArray, matching
+                                 mock2's own "1px dashed" guide. Backlog fix (user real-window
+                                 finding, 2026-08-17): moved from being a Margin-inset Panel sibling
+                                 of EditorCanvas to a direct Canvas.Left/Top+Width/Height child of
+                                 EditorCanvas itself — the same pixel-space positioning convention
+                                 already proven reliable here for the crop rect/handle above and the
+                                 overlay elements/selection badge below. The old Panel-sibling
+                                 approach measured/arranged unreliably under the ScrollViewer's own
+                                 viewport-driven sizing (confirmed via two rounds of real-window
+                                 screenshot comparison): "the blue lines... stay the same place in
+                                 the window" instead of tracking zoom was the reported symptom.
+                                 IsHitTestVisible="False" so the real crop/overlay pointer handlers
+                                 are unaffected. -->
+                            <Rectangle IsHitTestVisible="False"
+                                       Canvas.Left="{Binding SafeAreaInsetPixels}"
+                                       Canvas.Top="{Binding SafeAreaInsetPixels}"
+                                       Width="{Binding SafeAreaWidthPixels}"
+                                       Height="{Binding SafeAreaHeightPixels}"
+                                       IsVisible="{Binding SafeAreaVisible}"
+                                       Stroke="{StaticResource IndustryAccent}" Opacity="0.55"
+                                       StrokeThickness="1" StrokeDashArray="4,2" />
 
                             <!-- Width/Height bound explicitly (real-window code-review finding, via
                                  Avalonia DevTools): a Canvas ItemsPanel does NOT auto-size to its
@@ -806,28 +882,6 @@
                             </Border>
 
                         </Canvas>
-
-                        <!-- Safe-area guide: a visual crop-boundary indicator only (dashed rectangle),
-                             not fake content — kept. The mock2-derived callsign/caption "plate" text
-                             overlays that used to sit here (Panes.TxImageEditor.PlateCallsign/
-                             PlateCaption, literal "DL2QSK" / "EA7KDT · RSV 595 · 14.230 USB") were
-                             removed: they read as callsign/report text burned into the outgoing
-                             image, but no MyCallsign/CaptionLine binding ever existed — the real
-                             overlay-text path is the "Add text" button + OverlayElements above, which
-                             this did not affect. IsHitTestVisible="False" so the real crop/overlay
-                             pointer handlers on the Canvas above are unaffected. Rectangle (not a
-                             Border, which has no dash support in Avalonia) with StrokeDashArray,
-                             matching mock2's own "1px dashed" guide exactly rather than settling for
-                             a solid-line concession. -->
-                        <!-- Margin bound (was a literal Margin="14", correct only when 14 screen px
-                             == 14 image px, i.e. only at 100% zoom before Phase 7) via
-                             DoubleToThicknessConverter, same reasoning as BorderThickness above — a
-                             bare double-to-Thickness value binding fails silently in Avalonia. -->
-                        <Rectangle IsHitTestVisible="False"
-                                   Margin="{Binding SafeAreaInsetPixels, Converter={x:Static conv:DoubleToThicknessConverter.Instance}}"
-                                   IsVisible="{Binding SafeAreaVisible}"
-                                   Stroke="{StaticResource IndustryAccent}" Opacity="0.55"
-                                   StrokeThickness="1" StrokeDashArray="4,2" />
 
                         <!-- Design-fidelity Phase C (mockups/Editwindow line 99): a thin frame around
                              the working-copy bounds. The mock's own 4 corner "+" marks (lines
@@ -1420,7 +1474,11 @@
                  stacked full-width buttons, plus a compact mode/duration meta line (SWR omitted, see
                  SendMetaText's own doc comment for why). -->
             <Border Grid.Row="3" Margin="0,8,0,0" Padding="8" Background="{StaticResource IndustryAccent100}" BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1">
-                <Grid ColumnDefinitions="*,220" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
+                <!-- design-fidelity Phase I (minor #3): explicit Auto divider column added (mock's
+                     own full-height 1px rule between the two halves, line 251) — ColumnSpacing
+                     alone (still kept, for the gap either side of the divider) left no visible rule
+                     between QSO FILL and SEND. -->
+                <Grid ColumnDefinitions="*,Auto,220" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
                     <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                         <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.QsoFillHeader}" />
@@ -1457,7 +1515,8 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </StackPanel>
-                    <StackPanel Grid.Column="1" Spacing="{StaticResource IndustrySpacingTight}">
+                    <Border Grid.Column="1" Width="1" Background="{StaticResource IndustryChromeBorder}" />
+                    <StackPanel Grid.Column="2" Spacing="{StaticResource IndustrySpacingTight}">
                         <Grid ColumnDefinitions="Auto,*">
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.SendHeader}" />
                             <TextBlock Grid.Column="1" Classes="IndustryKicker" HorizontalAlignment="Right" VerticalAlignment="Center" Text="{Binding SendMetaText}" />

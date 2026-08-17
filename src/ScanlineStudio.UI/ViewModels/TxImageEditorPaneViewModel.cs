@@ -463,9 +463,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// <summary>Design-fidelity Phase F (#9, mockups/Editwindow line 239) -- SEND side's compact
     /// mode/duration meta line. The mock's own version also shows SWR, which this VM has no access
     /// to (a TX-hardware meter reading that lives on <c>TxControlsPaneViewModel</c>, cross-VM data
-    /// this pass doesn't wire up) -- a real, deliberate scope cut, not silently dropped.</summary>
+    /// this pass doesn't wire up) -- a real, deliberate scope cut, not silently dropped. Mode name
+    /// uppercased for DISPLAY only (Phase I, final confirming pass nit) -- SSTV mode display names
+    /// are fixed Latin protocol abbreviations, never user data, so <c>ToUpperInvariant</c> is a safe
+    /// display-side transform, not a rename of <see cref="SstvModeDefinition.DisplayName"/> itself.</summary>
     public string SendMetaText => _localization.GetString(
-        "Panes.TxImageEditor.SendMetaFormat", _targetMode.DisplayName, _targetMode.LineDurationMs * _targetMode.ImageHeight / 1000.0);
+        "Panes.TxImageEditor.SendMetaFormat", _targetMode.DisplayName.ToUpperInvariant(), _targetMode.LineDurationMs * _targetMode.ImageHeight / 1000.0);
 
     /// <summary>Snapshot of the current template-variable value map, for a host
     /// (<see cref="TxControlsPaneViewModel"/>) to capture alongside <see cref="RawOverlayElements"/>
@@ -505,7 +508,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// -- not a new computation, just applied to THIS editor's own fixed <see cref="_targetMode"/>.</summary>
     public string FrameReadoutText => _localization.GetString(
         "Panes.TxImageEditor.FrameReadoutFormat",
-        _targetMode.ImageWidth, _targetMode.ImageHeight, _targetMode.DisplayName,
+        _targetMode.ImageWidth, _targetMode.ImageHeight, _targetMode.DisplayName.ToUpperInvariant(),
         _targetMode.LineDurationMs * _targetMode.ImageHeight / 1000.0);
 
     /// <summary>EditWindow redesign, design-fidelity Phase B -- backs the context bar's "UNSAVED
@@ -595,6 +598,25 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// literal XAML <c>Margin="14"</c> (screen px, correct only at the zoom that didn't exist yet).</summary>
     public double SafeAreaInsetPixels => 14 * ZoomFactor;
 
+    /// <summary>Backlog fix (user real-window finding, 2026-08-17): the safe-area guide's own
+    /// Width/Height, for Canvas.Left/Top+Width/Height positioning DIRECTLY INSIDE EditorCanvas --
+    /// the same pixel-space convention already proven reliable for the crop rect/overlay elements/
+    /// selection badge elsewhere on this canvas, rather than the Margin-on-a-Stretch-child-of-a-
+    /// bare-Panel approach the guide used before. That approach measured/arranged unreliably (empty
+    /// ScrollViewer-viewport-driven Panel sizing produced a near-zero-size guide pinned near the
+    /// Panel's own top-left corner instead of an inset box around the actual photo -- confirmed via
+    /// two rounds of real-window screenshot comparison, not assumed). <see cref="Math.Max(double,
+    /// double)"/> floors at 0 -- a real, reachable case, not just theoretical: the working-copy
+    /// downsample budget is keyed off the target MODE's own dimensions
+    /// (<c>mode.ImageWidth/Height * WorkingCopyScaleFactor</c>), so a small mode's canvas can be
+    /// smaller than 2x the 14px-times-zoom inset regardless of source image size or zoom level
+    /// (confirmed via <c>SafeAreaWidthAndHeightPixels_NeverGoNegativeWhenInsetExceedsCanvasSize</c>,
+    /// using this codebase's own SmallMode test fixture). Without the floor this would be a real
+    /// negative-size Avalonia layout exception, not just a cosmetic bug.</summary>
+    public double SafeAreaWidthPixels => Math.Max(0, CanvasDisplayWidth - (2 * SafeAreaInsetPixels));
+
+    public double SafeAreaHeightPixels => Math.Max(0, CanvasDisplayHeight - (2 * SafeAreaInsetPixels));
+
     /// <summary>Task #23 (zoom slider addendum) -- the pre-existing "Fit"/"100%" button labels are
     /// always shown as a percentage, never a raw factor; this is the same convention for the new
     /// slider's own numeric readout. A plain VM property (not a XAML <c>StringFormat</c>) since the
@@ -606,6 +628,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanvasDisplayWidth));
         OnPropertyChanged(nameof(CanvasDisplayHeight));
         OnPropertyChanged(nameof(SafeAreaInsetPixels));
+        OnPropertyChanged(nameof(SafeAreaWidthPixels));
+        OnPropertyChanged(nameof(SafeAreaHeightPixels));
         OnPropertyChanged(nameof(ZoomPercentText));
         OnPropertyChanged(nameof(CropLeftPixels));
         OnPropertyChanged(nameof(CropTopPixels));
@@ -2276,9 +2300,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         // Phase 7 rearchitecture: WorkingCopyWidth/Height changing also changes CanvasDisplayWidth/
         // Height even though ZoomFactor itself didn't move, and nothing else notifies it on this path
         // (Crop*Pixels get their own re-notify from the CropRect reassignment in the Rotate() caller;
-        // SafeAreaInsetPixels is zoom-only, unaffected by a working-copy dimension change).
+        // SafeAreaInsetPixels is zoom-only, unaffected by a working-copy dimension change --
+        // SafeAreaWidthPixels/HeightPixels DO depend on CanvasDisplayWidth/Height though, same as
+        // any other CanvasDisplay-derived pixel property, so they need the same re-raise here).
         OnPropertyChanged(nameof(CanvasDisplayWidth));
         OnPropertyChanged(nameof(CanvasDisplayHeight));
+        OnPropertyChanged(nameof(SafeAreaWidthPixels));
+        OnPropertyChanged(nameof(SafeAreaHeightPixels));
 
         foreach (var element in OverlayElements)
         {
