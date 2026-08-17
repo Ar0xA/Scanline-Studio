@@ -250,48 +250,13 @@
                          elsewhere, removed outright rather than left as a disabled ghost (matches
                          this project's own precedent for confirmed-duplicate stub UI). -->
 
-                    <!-- Adjustments row: real ITransmitImagePreparer.ApplyAdjustments backing
-                         (spec/18-path-to-1.0.md Medium item), wired 2026-08-16. 3-per-row x 2 rows
-                         (UniformGrid Columns=3, auto-flows 6 children into 2 rows), matching mock2's
-                         own grid-template-columns:repeat(3,1fr) intent — IndustrySliderTheme h6
-                         variant + Label/Value flanking it, same 3-cell composition as the Output
-                         card's real Drive slider (TxControlsPaneView.axaml). Value readouts use
-                         StringFormat={}{0:0} (MainWindow.axaml's own ModeTimingRowViewModel rows
-                         are the precedent for this exact pattern in this codebase) since these
-                         sliders have no TickFrequency/IsSnapToTickEnabled and would otherwise show
-                         raw double noise. -->
-                    <UniformGrid DockPanel.Dock="Bottom" Columns="3" Margin="0,6,0,0">
-                        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,10,0">
-                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Brightness}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Brightness}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Brightness, StringFormat={}{0:0}}" />
-                        </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,10,0">
-                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Contrast}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Contrast}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Contrast, StringFormat={}{0:0}}" />
-                        </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto">
-                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Saturation}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Saturation}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Saturation, StringFormat={}{0:0}}" />
-                        </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,10,0">
-                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Gamma}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-100" Maximum="100" Value="{Binding Gamma}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Gamma, StringFormat={}{0:0}}" />
-                        </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,10,0">
-                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Sharpen}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="0" Maximum="100" Value="{Binding Sharpen}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Sharpen, StringFormat={}{0:0}}" />
-                        </Grid>
-                        <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,4,0,0">
-                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Denoise}" />
-                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="0" Maximum="100" Value="{Binding Denoise}" VerticalAlignment="Center" />
-                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Denoise, StringFormat={}{0:0}}" />
-                        </Grid>
-                    </UniformGrid>
+                    <!-- EditWindow redesign Phase 3 (mockups/Editwindow): the 6 adjustment sliders
+                         moved from here into the new IMAGE inspector tab — frees real canvas height
+                         (one of the user's own stated complaints about the pre-redesign layout being
+                         crowded/too horizontal) and matches the mock's own IA (adjustments are an
+                         INSPECT-column concern, not something docked under the COMPOSE canvas). Same
+                         bindings, same VM properties, just relocated — see the IMAGE tab's own block
+                         further down in this file. -->
 
                     <!-- Instructional caption: NOT in mock2 (app-added disclaimer, real information
                          not mockup scaffolding) — kept, re-skinned with IndustryRowLabel (closest
@@ -949,11 +914,34 @@
                          codebase has already hit elsewhere (see ITemplateElementViewModel.RemoveCommand's
                          own doc comment) — not the same shape here (this isn't inside an
                          ItemsControl DataTemplate), but the same simpler-binding preference applies. -->
+                    <!-- EditWindow redesign Phase 3 (mockups/Editwindow): TEXT STYLE (Phase 4/8's own
+                         content, unchanged) is now one of three tabs — GEOMETRY (new, this phase:
+                         numeric X/Y/W/H + align-to-crop) and IMAGE (the 6 adjustment sliders,
+                         relocated here from below the canvas) join it. Three plain bool
+                         ObservableProperty flags drive tab selection (see
+                         TxImageEditorPaneViewModel.IsTextStyleTabSelected's own doc comment for why
+                         not an enum+converter) — Button.Click-style Commands, not a real TabControl,
+                         to keep every tab's own content a plain IsVisible-gated StackPanel (matches
+                         this file's own established preference for simple path bindings over
+                         template/selector machinery elsewhere). -->
                     <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
-                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.TextStyleHeader}" />
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InspectorHeader}" />
                         </HeaderedContentControl.Header>
-                        <StackPanel Classes="Industry IndustryRows">
+                        <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                        Content="{loc:Translate Panes.TxImageEditor.InspectorTabText}"
+                                        Command="{Binding SelectTextStyleTabCommand}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                        Content="{loc:Translate Panes.TxImageEditor.InspectorTabGeometry}"
+                                        Command="{Binding SelectGeometryTabCommand}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                        Content="{loc:Translate Panes.TxImageEditor.InspectorTabImage}"
+                                        Command="{Binding SelectImageTabCommand}" />
+                            </StackPanel>
+
+                    <StackPanel Classes="Industry IndustryRows" IsVisible="{Binding IsTextStyleTabSelected}">
                             <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoTextSelected}"
                                        IsVisible="{Binding SelectedTextElement, Converter={x:Static ObjectConverters.IsNull}}" />
                             <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
@@ -1053,6 +1041,98 @@
                                         Content="{loc:Translate Panes.TxImageEditor.AddPlate}"
                                         Command="{Binding AddPlateBehindTextCommand}" />
                             </StackPanel>
+                    </StackPanel>
+
+                    <!-- GEOMETRY tab (EditWindow redesign Phase 3, new): numeric X/Y/W/H bound
+                         through SelectedOverlayElement — the SHARED ITemplateElementViewModel
+                         interface, so this works for any element type (text/box/image), not just
+                         text (unlike the TEXT STYLE tab above, which is real text-only). Align-to-
+                         crop calls the new AlignSelectedElementToCropCommand (see its own doc
+                         comment for the center-vs-top-left-anchored coordinate conversion). Snap
+                         reuses the SAME SnapToGrid property the STAGE toolbar's own toggle already
+                         writes — one piece of state, two surfaces, not a duplicate. -->
+                    <StackPanel Classes="Industry IndustryRows" Spacing="{StaticResource IndustrySpacingTight}" IsVisible="{Binding IsGeometryTabSelected}">
+                        <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoElementSelected}"
+                                   IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNull}}" />
+                        <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
+                                    IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="4">
+                                <StackPanel>
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GeometryXLabel}" />
+                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedOverlayElement.X}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GeometryYLabel}" />
+                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedOverlayElement.Y}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GeometryWidthLabel}" />
+                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedOverlayElement.Width}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="3">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GeometryHeightLabel}" />
+                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedOverlayElement.Height}" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Classes="IndustryRowLabel" Margin="0,4,0,0" Text="{loc:Translate Panes.TxImageEditor.AlignToCropLabel}" />
+                            <Grid ColumnDefinitions="*,*,*,*,*,*" ColumnSpacing="3">
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.AlignLeft}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Left" />
+                                <Button Grid.Column="1" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.AlignCenter}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Center" />
+                                <Button Grid.Column="2" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.AlignRight}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Right" />
+                                <Button Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.AlignTop}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Top" />
+                                <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.AlignMiddle}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Middle" />
+                                <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.AlignBottom}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Bottom" />
+                            </Grid>
+                            <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,4,0,0"
+                                          IsChecked="{Binding SnapToGrid}" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SnapGrid.Help}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- IMAGE tab (EditWindow redesign Phase 3): the 6 adjustment sliders, relocated
+                         here from below the canvas — same bindings, same VM properties (they apply
+                         to the whole working-copy photo, not per-element; this tab is the same
+                         global adjustment surface just given a real home instead of being docked
+                         under the canvas). See the original block's own doc comment (removed from
+                         its old location, preserved in spirit here) for why StringFormat={}{0:0} is
+                         used on every readout. -->
+                    <StackPanel Spacing="{StaticResource IndustrySpacingTight}" IsVisible="{Binding IsImageTabSelected}">
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Brightness}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Brightness}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Brightness, StringFormat={}{0:0}}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Contrast}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Contrast}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Contrast, StringFormat={}{0:0}}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Saturation}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-50" Maximum="50" Value="{Binding Saturation}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Saturation, StringFormat={}{0:0}}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Gamma}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="-100" Maximum="100" Value="{Binding Gamma}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Gamma, StringFormat={}{0:0}}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Sharpen}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="0" Maximum="100" Value="{Binding Sharpen}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Sharpen, StringFormat={}{0:0}}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.Denoise}" />
+                            <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0" Minimum="0" Maximum="100" Value="{Binding Denoise}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding Denoise, StringFormat={}{0:0}}" />
+                        </Grid>
+                    </StackPanel>
                         </StackPanel>
                     </HeaderedContentControl>
 
