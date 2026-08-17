@@ -192,6 +192,21 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// element (same reasoning as <see cref="DuplicateCommand"/>'s own doc comment).</summary>
     public IRelayCommand? InsertFieldCommand { get; init; }
 
+    /// <summary>Backlog item (user request, 2026-08-17) -- text-only, same precedent as
+    /// <see cref="InsertFieldCommand"/>. Parent-pushed the SAME
+    /// <c>TxImageEditorPaneViewModel.SetFontSizePresetCommand</c> instance, bound in the context
+    /// menu with a size-key string as <c>CommandParameter</c> (matches
+    /// <see cref="AlignSelectedElementToCropCommand"/>'s own discrete-choice-via-CommandParameter
+    /// shape, not a slider -- a native <c>ContextMenu</c> is not a reliable host for an embedded
+    /// drag control). Full continuous control stays the TEXT STYLE tab's own <c>FontSizeRelative</c>
+    /// TextBox; this is a quick-pick shortcut, not a replacement.</summary>
+    public IRelayCommand? SetFontSizePresetCommand { get; init; }
+
+    /// <summary>Same reasoning as <see cref="SetFontSizePresetCommand"/>, for
+    /// <see cref="Color"/> -- a curated swatch list, not a full spectrum (the TEXT STYLE tab's own
+    /// <c>ColorPicker</c> stays the full-control path).</summary>
+    public IRelayCommand? SetTextColorPresetCommand { get; init; }
+
     /// <summary>Set once by <see cref="TxImageEditorPaneViewModel"/> at creation time, same pattern
     /// as <see cref="RemoveCommand"/> -- resolves this element's raw <see cref="Text"/> (which may
     /// contain macro tokens like <c>%m</c>/<c>{name}</c>) against the current operator settings.

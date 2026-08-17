@@ -2361,6 +2361,105 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotNull(text.InsertFieldCommand);
     }
 
+    // Backlog item (user request, 2026-08-17): context-menu font size/text color quick-pick
+    // submenus, same wiring precedent/regression risk as InsertFieldCommand/
+    // AlignSelectedElementToCropCommand above -- a forgotten parent-pushed assignment renders the
+    // menu item permanently disabled without throwing anywhere, so a wiring test is the only thing
+    // that catches it.
+
+    [AvaloniaFact]
+    public void SetFontSizePresetCommand_IsWiredOnTextElements()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.AddOverlayElementCommand.Execute(null);
+
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.NotNull(text.SetFontSizePresetCommand);
+    }
+
+    [AvaloniaFact]
+    public void SetTextColorPresetCommand_IsWiredOnTextElements()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.AddOverlayElementCommand.Execute(null);
+
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.NotNull(text.SetTextColorPresetCommand);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("Small", 0.06)]
+    [InlineData("Medium", 0.10)]
+    [InlineData("Large", 0.16)]
+    [InlineData("XLarge", 0.24)]
+    public void SetFontSizePresetCommand_SetsFontSizeRelativeToThePresetValue(string presetKey, double expected)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        vm.SetFontSizePresetCommand.Execute(presetKey);
+
+        Assert.Equal(expected, text.FontSizeRelative);
+    }
+
+    [AvaloniaFact]
+    public void SetFontSizePresetCommand_UnrecognizedKey_LeavesFontSizeRelativeUnchanged()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        var before = text.FontSizeRelative;
+
+        vm.SetFontSizePresetCommand.Execute("not-a-real-key");
+
+        Assert.Equal(before, text.FontSizeRelative);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("White", 255, 255, 255)]
+    [InlineData("Black", 0, 0, 0)]
+    [InlineData("Yellow", 234, 179, 8)]
+    [InlineData("Red", 220, 38, 38)]
+    [InlineData("Green", 34, 197, 94)]
+    [InlineData("Blue", 59, 130, 246)]
+    public void SetTextColorPresetCommand_SetsColorToThePresetValue(string presetKey, byte r, byte g, byte b)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        vm.SetTextColorPresetCommand.Execute(presetKey);
+
+        Assert.Equal(new Rgb24(r, g, b), text.Color);
+    }
+
+    [AvaloniaFact]
+    public void SetTextColorPresetCommand_UnrecognizedKey_LeavesColorUnchanged()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        var before = text.Color;
+
+        vm.SetTextColorPresetCommand.Execute("not-a-real-key");
+
+        Assert.Equal(before, text.Color);
+    }
+
+    [AvaloniaFact]
+    public void SetFontSizePresetCommand_NoTextElementSelected_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+
+        vm.SetFontSizePresetCommand.Execute("Large");
+
+        Assert.False(vm.SetFontSizePresetCommand.CanExecute("Large"));
+    }
+
     // EditWindow redesign Phase 3 (mockups/Editwindow), GEOMETRY tab's align-to-crop actions.
     // CropRect defaults to the full frame (0,0,1,1) in these tests, matching
     // TxImageEditorPaneViewModel's own default -- Left/Right land at exactly element.Width/2 from

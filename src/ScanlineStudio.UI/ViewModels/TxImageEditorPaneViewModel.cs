@@ -1254,6 +1254,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             AlignSelectedElementToCropCommand = AlignSelectedElementToCropCommand,
             AddPlateCommand = AddPlateBehindTextCommand,
             InsertFieldCommand = InsertFieldCommand,
+            SetFontSizePresetCommand = SetFontSizePresetCommand,
+            SetTextColorPresetCommand = SetTextColorPresetCommand,
             // Phase 3: reads _radioSessionService.LastKnownState/_templateVariables FRESH on every
             // ResolvedText access (this delegate re-invokes on every call, not once) -- FREQ/MODE
             // reflect the radio state as of the last element mutation, not a live tick (no
@@ -1570,9 +1572,64 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         element.Text += token;
     }
 
+    /// <summary>Backlog item (user request, 2026-08-17) -- context-menu quick-pick for
+    /// <see cref="OverlayElementViewModel.FontSizeRelative"/>, same gate/shape as
+    /// <see cref="InsertField"/> (text-only, <see cref="CanInsertField"/>). Unrecognized/null keys
+    /// are a no-op (matches <see cref="SetTextColorPreset"/>'s own default-arm behavior) rather than
+    /// throwing, since <c>CommandParameter</c> is caller-supplied XAML, not internal state.
+    /// Deliberately does NOT call <see cref="PushUndoSnapshotCoalesced"/> -- the TEXT STYLE tab's own
+    /// <c>FontSizeRelative</c>/<c>Color</c> two-way bindings have no undo hook of their own today
+    /// either (unlike <c>Width</c>/<c>Height</c>/<c>X</c>/<c>Y</c>'s <c>OnXxxChanging</c> push), so
+    /// this stays consistent with that existing gap rather than fixing it as an unrelated
+    /// side-effect of this task.</summary>
+    [RelayCommand(CanExecute = nameof(CanInsertField))]
+    private void SetFontSizePreset(string? sizeKey)
+    {
+        if (SelectedOverlayElement is not OverlayElementViewModel element)
+        {
+            return;
+        }
+
+        element.FontSizeRelative = sizeKey switch
+        {
+            "Small" => 0.06,
+            "Medium" => 0.10,
+            "Large" => 0.16,
+            "XLarge" => 0.24,
+            _ => element.FontSizeRelative,
+        };
+    }
+
+    /// <summary>Backlog item (user request, 2026-08-17) -- context-menu quick-pick for
+    /// <see cref="OverlayElementViewModel.Color"/>, same gate/shape/undo-consistency reasoning as
+    /// <see cref="SetFontSizePreset"/>. A curated 6-swatch set (white/black/yellow/red/green/blue),
+    /// not the full spectrum -- the TEXT STYLE tab's own <c>ColorPicker</c> stays the full-control
+    /// path.</summary>
+    [RelayCommand(CanExecute = nameof(CanInsertField))]
+    private void SetTextColorPreset(string? colorKey)
+    {
+        if (SelectedOverlayElement is not OverlayElementViewModel element)
+        {
+            return;
+        }
+
+        element.Color = colorKey switch
+        {
+            "White" => new Rgb24(255, 255, 255),
+            "Black" => new Rgb24(0, 0, 0),
+            "Yellow" => new Rgb24(234, 179, 8),
+            "Red" => new Rgb24(220, 38, 38),
+            "Green" => new Rgb24(34, 197, 94),
+            "Blue" => new Rgb24(59, 130, 246),
+            _ => element.Color,
+        };
+    }
+
     partial void OnSelectedOverlayElementChanged(ITemplateElementViewModel? value)
     {
         InsertFieldCommand.NotifyCanExecuteChanged();
+        SetFontSizePresetCommand.NotifyCanExecuteChanged();
+        SetTextColorPresetCommand.NotifyCanExecuteChanged();
         AddPlateBehindTextCommand.NotifyCanExecuteChanged();
         DuplicateCommand.NotifyCanExecuteChanged();
         // Code-review finding: FontFamilyPickerItems/IsFontUnavailable MUST raise BEFORE
