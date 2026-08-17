@@ -411,26 +411,56 @@
                                                  White pre-Phase-1 despite Color being a real,
                                                  editable, undo-tracked property — same fix class as
                                                  the box fill/border below, not a separate concern). -->
+                                            <!-- RenderTransform bound to RotationTransform (Phase 8
+                                                 canvas-preview amendment) — on the OUTER Border, not
+                                                 either TextBlock individually, so rotation carries the
+                                                 shadow copy along with the real text as one unit,
+                                                 matching the real pipeline's own behavior of rotating
+                                                 the whole offscreen sub-bitmap together. -->
                                             <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
+                                                    RenderTransform="{Binding RotationTransform}"
                                                     Background="#33FFFFFF"
                                                     BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
                                                     PointerPressed="OnOverlayElementPointerPressed">
-                                                <!-- Phase 4: FontFamily now bound to the element's own
-                                                     selected family (was hardcoded IndustryMonoFontFamily)
-                                                     via PipelineFontFamilyNameConverter, mapping the
-                                                     pipeline's plain family name to the matching bundled
-                                                     avares:// resource. Stroke is NOT shown here (Avalonia's
-                                                     plain TextBlock has no outline capability) — a stated,
-                                                     accepted scope decision (Phase 4 plan-review finding),
-                                                     not a silent gap; the mini-preview (real ApplyTemplate
-                                                     pipeline) shows the actual stroked result. -->
-                                                <TextBlock Text="{Binding ResolvedText}"
-                                                           FontSize="{Binding CanvasFontSize}"
-                                                           FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
-                                                           Foreground="{Binding Color, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
-                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                           TextWrapping="NoWrap"
-                                                           IsHitTestVisible="False" />
+                                                <!-- Phase 8 canvas-preview amendment: shadow copy,
+                                                     drawn BEHIND the real text (declared first, same
+                                                     draw-order convention as the real pipeline's own
+                                                     shadow-pre-pass), offset via ShadowRenderTransform,
+                                                     IsVisible-gated on HasShadow. Avalonia's TextBlock
+                                                     has no native drop-shadow primitive, so this fakes
+                                                     it the same way the real pipeline does: a second,
+                                                     offset copy of the glyph run. -->
+                                                <Panel>
+                                                    <TextBlock Text="{Binding ResolvedText}"
+                                                               FontSize="{Binding CanvasFontSize}"
+                                                               FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
+                                                               Foreground="{Binding ShadowColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
+                                                               RenderTransform="{Binding ShadowRenderTransform}"
+                                                               IsVisible="{Binding HasShadow}"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               TextWrapping="NoWrap"
+                                                               IsHitTestVisible="False" />
+                                                    <!-- Phase 4: FontFamily now bound to the element's own
+                                                         selected family (was hardcoded IndustryMonoFontFamily)
+                                                         via PipelineFontFamilyNameConverter, mapping the
+                                                         pipeline's plain family name to the matching bundled
+                                                         avares:// resource. Foreground bound to ForegroundBrush
+                                                         (Phase 8 canvas-preview amendment — a plain solid
+                                                         brush from Color, or a real Avalonia gradient brush
+                                                         when GradientEnabled is set). Stroke is NOT shown here
+                                                         (Avalonia's plain TextBlock has no outline capability)
+                                                         — a stated, accepted scope decision (Phase 4
+                                                         plan-review finding), not a silent gap; the
+                                                         mini-preview (real ApplyTemplate pipeline) shows the
+                                                         actual stroked result. -->
+                                                    <TextBlock Text="{Binding ResolvedText}"
+                                                               FontSize="{Binding CanvasFontSize}"
+                                                               FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
+                                                               Foreground="{Binding ForegroundBrush}"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               TextWrapping="NoWrap"
+                                                               IsHitTestVisible="False" />
+                                                </Panel>
                                             </Border>
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
@@ -810,13 +840,67 @@
                                               IsChecked="{Binding SelectedTextElement.HasStroke}" />
                                     <ColorPicker Grid.Column="2" HorizontalAlignment="Right"
                                                  IsEnabled="{Binding SelectedTextElement.HasStroke}"
-                                                 Color="{Binding SelectedTextElement.StrokeColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                                 Color="{Binding SelectedTextElement.StrokeColorForPicker, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
                                 </Grid></Border>
                                 <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.HasStroke}"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.OutlineThicknessLabel}" />
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
                                              Text="{Binding SelectedTextElement.StrokeThickness}" />
                                 </Grid></Border>
+
+                                <!-- Phase 8 (spec/15-template-designer.md, YONIQ-style text-effects
+                                     follow-up): Shadow/Rotation/Gradient rows, same
+                                     HasStroke/StrokeColor/StrokeThickness row pattern as Outline
+                                     above — a checkbox-wrapped nullable color (HasShadow/
+                                     ShadowColor, same reasoning as HasStroke) plus two offset
+                                     TextBoxes. Canvas TextBlock cannot preview any of shadow/
+                                     rotation/gradient (Avalonia's plain TextBlock has none of these
+                                     capabilities) — same stated, accepted scope decision Phase 4
+                                     already made for stroke; only the mini-preview (real
+                                     ApplyTemplate pipeline) shows the actual result. -->
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
+                                    <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.ShadowLabel}"
+                                              IsChecked="{Binding SelectedTextElement.HasShadow}" />
+                                    <ColorPicker Grid.Column="2" HorizontalAlignment="Right"
+                                                 IsEnabled="{Binding SelectedTextElement.HasShadow}"
+                                                 Color="{Binding SelectedTextElement.ShadowColorForPicker, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.HasShadow}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.ShadowOffsetXLabel}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                             Text="{Binding SelectedTextElement.ShadowOffsetX}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.HasShadow}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.ShadowOffsetYLabel}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                             Text="{Binding SelectedTextElement.ShadowOffsetY}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.RotationLabel}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                             Text="{Binding SelectedTextElement.RotationDegrees}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.GradientLabel}"
+                                              IsChecked="{Binding SelectedTextElement.GradientEnabled}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.GradientEnabled}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GradientKindLabel}" />
+                                    <ComboBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch"
+                                              ItemsSource="{Binding AvailableGradientKinds}"
+                                              SelectedItem="{Binding SelectedTextElement.GradientKind}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.GradientEnabled}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GradientStartColorLabel}" />
+                                    <ColorPicker Grid.Column="1" HorizontalAlignment="Right"
+                                                 Color="{Binding SelectedTextElement.GradientStartColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.GradientEnabled}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GradientEndColorLabel}" />
+                                    <ColorPicker Grid.Column="1" HorizontalAlignment="Right"
+                                                 Color="{Binding SelectedTextElement.GradientEndColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                </Grid></Border>
+
                                 <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AddPlate}"
                                         Command="{Binding AddPlateBehindTextCommand}" />

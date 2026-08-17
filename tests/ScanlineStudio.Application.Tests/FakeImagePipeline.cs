@@ -75,7 +75,8 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
     }
 
     public double MeasureFittedFontSize(
-        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0)
+        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0,
+        double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0)
         => font.Size * imageHeightPx;
 
     public IReadOnlyList<string> AvailableFontFamilies { get; } = ["DejaVu Sans Mono"];

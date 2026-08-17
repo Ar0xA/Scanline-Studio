@@ -651,7 +651,8 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
     }
 
     public double MeasureFittedFontSize(
-        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0)
+        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0,
+        double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0)
         => font.Size * imageHeightPx;
 
     // Phase 4: two plain names, no real font loading -- this fake never touches SixLabors.Fonts, so

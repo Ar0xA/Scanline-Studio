@@ -79,6 +79,25 @@ public sealed record FontSpec(string Family, double Size);
 /// ordinary z-order, not a flag).</summary>
 public abstract record TemplateElement(NormalizedRect Bounds, int Z);
 
+/// <summary>Which axis (or radial center) a <see cref="TextGradient"/> fills across a text
+/// element's own <see cref="TemplateElement.Bounds"/>.</summary>
+public enum TextGradientKind { Horizontal, Vertical, Radial }
+
+/// <summary><paramref name="Offset"/> is 0..1 along the gradient's own axis (matches ImageSharp's
+/// own <c>ColorStop</c> convention, which this maps directly onto at render time).</summary>
+public readonly record struct GradientColorStop(float Offset, Rgb24 Color);
+
+/// <summary>Phase 8 (spec/15-template-designer.md, YONIQ-style text-effects follow-up). Coordinates
+/// are derived from the element's own pixel <see cref="TemplateElement.Bounds"/> at render time (an
+/// ImageSharp gradient brush's own control points are in absolute destination-image space, not
+/// glyph/bounds-relative) — when the SAME element also has <see cref="TemplateTextElement.RotationDegrees"/>
+/// set, those points are computed against the ROTATION SUB-BITMAP's own local space instead, so the
+/// gradient rotates WITH the text (a deliberate choice, stated here rather than left implicit).
+/// <paramref name="Stops"/> empty falls back to the element's own solid <see cref="TemplateTextElement.Color"/>
+/// as a single stop — a gradient with no stops configured isn't a distinct error case, just a
+/// degenerate one-color gradient.</summary>
+public sealed record TextGradient(TextGradientKind Kind, IReadOnlyList<GradientColorStop> Stops);
+
 /// <summary><paramref name="Content"/> may contain macro/variable tokens (spec/15's fill-bar
 /// mechanism, Phase 3) — resolution happens above this layer, same as
 /// <see cref="ImageOverlayElement.Text"/> today; by the time a <see cref="TemplateDocument"/>
@@ -91,12 +110,26 @@ public abstract record TemplateElement(NormalizedRect Bounds, int Z);
 /// own null-means-none convention) — Phase 4 (spec/15-template-designer.md, user-requested
 /// legibility mechanism for text against varying backgrounds). <paramref name="StrokeThickness"/>
 /// is relative to the target image's HEIGHT, same convention as <see cref="FontSpec.Size"/>/
-/// <see cref="TemplateBoxElement.BorderThickness"/>. No drop-shadow fields here — deliberately
-/// NOT staged for a later phase (Phase 0's own precedent: "add later if actually wanted, not
-/// speculatively now" — see the Phase 4 plan's own note on this).</summary>
+/// <see cref="TemplateBoxElement.BorderThickness"/>.
+/// <para>Phase 8 additions (YONIQ-style text-effects follow-up — this record's own doc comment used
+/// to say drop-shadow fields were "deliberately NOT staged for a later phase"; that decision is
+/// reversed here, not silently). <paramref name="ShadowColor"/> null means no shadow (same
+/// null-means-none convention as <paramref name="StrokeColor"/>) — a plain offset-duplicate-glyph
+/// draw (legacy YONIQ's own real mechanism, confirmed via <c>Draw.cpp</c>: hard-edged, no blur), NOT
+/// the soft <c>GaussianBlur</c> shadow Phase 4 originally sketched — a stated tradeoff (cheaper,
+/// visibly different look), not a silent substitution. <paramref name="ShadowOffsetX"/>/
+/// <paramref name="ShadowOffsetY"/> are relative to the target image's HEIGHT, same convention as
+/// <see cref="FontSpec.Size"/>/<paramref name="StrokeThickness"/> (both axes, so a template saved at
+/// one SSTV mode renders correctly at another). <paramref name="RotationDegrees"/> is in-plane
+/// (2D) rotation only, clockwise-positive — true 3D/perspective is an explicit, separate future
+/// phase (Tier 3, not this one); rendered via an offscreen sub-bitmap render→rotate→composite path,
+/// not a GDI-style native rotated draw (no equivalent primitive here). <paramref name="Gradient"/>
+/// null means a plain solid <paramref name="Color"/> fill (today's existing behavior, unchanged).</para></summary>
 public sealed record TemplateTextElement(
     NormalizedRect Bounds, int Z, string Content, FontSpec Font, Rgb24 Color,
-    Rgb24? StrokeColor = null, double StrokeThickness = 0)
+    Rgb24? StrokeColor = null, double StrokeThickness = 0,
+    Rgb24? ShadowColor = null, double ShadowOffsetX = 0, double ShadowOffsetY = 0,
+    double RotationDegrees = 0, TextGradient? Gradient = null)
     : TemplateElement(Bounds, Z);
 
 /// <summary><paramref name="Source"/> is an already-resolved <see cref="IImageSource"/>, not a
@@ -191,9 +224,17 @@ public interface ITransmitImagePreparer
     /// this or the canvas-side fitted size will disagree with what <see cref="ApplyTemplate"/>
     /// actually renders (Phase 4 plan-review blocker: this is exactly the kind of silent
     /// canvas/pipeline desync this method exists to prevent in the first place). Pass 0 (the
-    /// default) when the element has no stroke.</summary>
+    /// default) when the element has no stroke.
+    /// <para>Phase 8: <paramref name="shadowOffsetXRelative"/>/<paramref name="shadowOffsetYRelative"/>
+    /// and <paramref name="rotationDegrees"/> are the THIRD occurrence of this same fit-box-shrink
+    /// requirement (stroke was the first, Phase 4) — both effects push ink past what a plain-text fit
+    /// search measures (shadow offsets the whole glyph; rotation's own bounding box grows for any
+    /// non-zero angle), so both must be passed here whenever the element has them, for the same
+    /// canvas/pipeline-desync reason as <paramref name="strokeThicknessRelative"/>. All three
+    /// defaults (0) mean "this effect is not active."</para></summary>
     double MeasureFittedFontSize(
-        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0);
+        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0,
+        double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0);
 
     /// <summary>Font family names available for <see cref="FontSpec.Family"/>/
     /// <see cref="TemplateTextElement.Font"/> — the TX template editor's font-family picker's

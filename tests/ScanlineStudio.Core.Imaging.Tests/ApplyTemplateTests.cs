@@ -534,6 +534,274 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
+    public async Task ApplyTemplate_TextWithShadow_ShadowColorVisibleInside_NoInkOutsideBounds()
+    {
+        // Phase 8: the shadow pre-pass draws a plain filled copy offset by (ShadowOffsetX,
+        // ShadowOffsetY) BEFORE stroke/fill -- this pins both halves of that mechanism: the shadow
+        // color is actually visible (not silently skipped or fully overdrawn by the later fill pass,
+        // the same class of bug Phase 5's stroke-overdraw incident found), and the fit-box shrink for
+        // shadow offset keeps ALL of it (shadow ink included, not just the fill) inside Bounds -- a
+        // large offset relative to the bounds size is deliberately chosen so an unshrunk fit box
+        // would visibly bleed the shadow copy outside Bounds if the shrink were missing or wrong.
+        var path = await WriteFixturePngAsync(120, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 120, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.3, 0.3, 0.4, 0.4);
+            var fill = new Rgb24(0, 0, 255);
+            var shadow = new Rgb24(255, 0, 0);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "W1AW", new FontSpec("DejaVu Sans Mono", 0.2), fill,
+                    ShadowColor: shadow, ShadowOffsetX: 0.08, ShadowOffsetY: 0.08),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertAtLeastOnePixelOfColorInsideBounds(result, bounds, shadow);
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_WithShadowOffset_ShrinksFurtherThanWithoutOne()
+    {
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", 0.3);
+
+        var withoutShadow = preparer.MeasureFittedFontSize("W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20);
+        var withShadow = preparer.MeasureFittedFontSize(
+            "W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20,
+            shadowOffsetXRelative: 0.15, shadowOffsetYRelative: 0.15);
+
+        Assert.True(withShadow < withoutShadow, $"Expected the shadow allowance to shrink the fitted size below {withoutShadow}, got {withShadow}.");
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_RotatedText_VisibleInside_NoInkOutsideBounds()
+    {
+        // Phase 8 plan-review blocker: rotation-vs-clip policy is "shrink the fit box," not "widen
+        // the clip" -- ShrinkFitBoxForRotation's own doc comment derives the exact formula; this is
+        // the regression test that formula is pinned against (written before trusting the derivation
+        // on paper alone, same discipline as the stroke-bleed test). 45 degrees on a non-square
+        // bounds box is deliberately the case the formula's own doc comment calls out as the
+        // genuinely-conservative (not just trivially-safe) case.
+        var path = await WriteFixturePngAsync(120, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 120, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.25, 0.35, 0.5, 0.3);
+            var fill = new Rgb24(0, 200, 0);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "W1AW", new FontSpec("DejaVu Sans Mono", 0.2), fill, RotationDegrees: 45),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertAtLeastOnePixelOfColorInsideBounds(result, bounds, fill);
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_RotatedText_DirectionAndMagnitudeAffectInkPosition_NotJustANoOp()
+    {
+        // Code-review finding: the test above (ink-inside/none-outside) cannot distinguish an actual
+        // rotation from an accidental no-op, a wrong-sign rotation, or a composite point computed
+        // from the ORIGINAL (pre-rotation) size instead of the rotated one -- all of those would
+        // still pass "some ink inside Bounds, none outside." This test instead compares the LEFT-half
+        // vs RIGHT-half ink centroid (row index) of a wide horizontal text run across 0/+45/-45
+        // degrees: an unrotated run has both halves roughly level (near-zero skew); a real rotation
+        // tilts the run, so the two halves' centroids diverge, and +45 vs -45 must diverge in
+        // OPPOSITE directions. Deliberately convention-agnostic about which sign is "clockwise" (that
+        // was flagged as an unverified assumption during code-review, not something to hard-code a
+        // guess for) -- only that +45 and -45 are each other's mirror image, which any correct
+        // sign-respecting rotation must produce regardless of which way is "positive."
+        var path = await WriteFixturePngAsync(200, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 200, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.1, 0.35, 0.8, 0.3);
+            var fill = new Rgb24(0, 200, 0);
+
+            double SkewAt(double degrees)
+            {
+                var document = new TemplateDocument(null, [
+                    new TemplateTextElement(
+                        bounds, Z: 0, "WWWWWWWW", new FontSpec("DejaVu Sans Mono", 0.15), fill, RotationDegrees: degrees),
+                ]);
+                var result = preparer.ApplyTemplate(source, document);
+                return LeftMinusRightCentroidY(result, bounds, fill);
+            }
+
+            var skewAt0 = SkewAt(0);
+            var skewAtPlus45 = SkewAt(45);
+            var skewAtMinus45 = SkewAt(-45);
+
+            Assert.True(
+                Math.Abs(skewAtPlus45) > Math.Abs(skewAt0) + 1,
+                $"Expected +45° to visibly tilt the text (skew={skewAtPlus45}) more than unrotated (skew={skewAt0}).");
+            Assert.True(
+                Math.Abs(skewAtMinus45) > Math.Abs(skewAt0) + 1,
+                $"Expected -45° to visibly tilt the text (skew={skewAtMinus45}) more than unrotated (skew={skewAt0}).");
+            Assert.True(
+                Math.Sign(skewAtPlus45) != Math.Sign(skewAtMinus45),
+                $"Expected +45° (skew={skewAtPlus45}) and -45° (skew={skewAtMinus45}) to tilt in opposite directions.");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Average row index of LEFT-half fill-colored pixels minus the same for the RIGHT half,
+    /// within <paramref name="bounds"/> -- near zero for level (unrotated) text, non-zero and
+    /// direction-sensitive once the text run is tilted. Returns 0 (no signal) if either half has no
+    /// matching ink, rather than throwing -- a real result of some rotation angles/fit sizes, not
+    /// something callers need to special-case.</summary>
+    private static double LeftMinusRightCentroidY(IImageSource image, NormalizedRect bounds, Rgb24 color)
+    {
+        var minX = Math.Clamp((int)(bounds.X * image.Width), 0, image.Width - 1);
+        var minY = Math.Clamp((int)(bounds.Y * image.Height), 0, image.Height - 1);
+        var maxX = Math.Clamp((int)((bounds.X + bounds.Width) * image.Width), 0, image.Width);
+        var maxY = Math.Clamp((int)((bounds.Y + bounds.Height) * image.Height), 0, image.Height);
+        var midX = (minX + maxX) / 2;
+
+        double leftSumY = 0, rightSumY = 0;
+        var leftCount = 0;
+        var rightCount = 0;
+
+        for (var y = minY; y < maxY; y++)
+        {
+            var row = image.GetScanline(y);
+            for (var x = minX; x < maxX; x++)
+            {
+                if (row[x].R != color.R || row[x].G != color.G || row[x].B != color.B)
+                {
+                    continue;
+                }
+
+                if (x < midX)
+                {
+                    leftSumY += y;
+                    leftCount++;
+                }
+                else
+                {
+                    rightSumY += y;
+                    rightCount++;
+                }
+            }
+        }
+
+        return leftCount == 0 || rightCount == 0 ? 0 : (leftSumY / leftCount) - (rightSumY / rightCount);
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_WithRotation_ShrinksFurtherThanWithoutOne()
+    {
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", 0.3);
+
+        var withoutRotation = preparer.MeasureFittedFontSize("W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20);
+        var withRotation = preparer.MeasureFittedFontSize(
+            "W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20, rotationDegrees: 45);
+
+        Assert.True(withRotation < withoutRotation, $"Expected the rotation allowance to shrink the fitted size below {withoutRotation}, got {withRotation}.");
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_ZeroRotation_IsANoOp()
+    {
+        // ShrinkFitBoxForRotation's own doc comment claims k=1 exactly at 0 degrees -- pins that
+        // claim directly (every existing, pre-Phase-8 element implicitly passes rotationDegrees: 0,
+        // so this is also what proves Phase 8 didn't quietly shrink every non-rotated element too).
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", 0.3);
+
+        var withoutRotationParam = preparer.MeasureFittedFontSize("W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20);
+        var withZeroRotation = preparer.MeasureFittedFontSize(
+            "W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20, rotationDegrees: 0);
+
+        Assert.Equal(withoutRotationParam, withZeroRotation);
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithHorizontalGradient_LeftInkIsReddishRightInkIsBluish_NoInkOutsideBounds()
+    {
+        // Confirms the gradient brush is actually applied across the glyph run (not silently falling
+        // back to a solid Color) by checking the LEFTMOST ink pixel is redder than blue and the
+        // RIGHTMOST ink pixel is bluer than red -- a directional/relative check, not an exact-stop-
+        // color match: the fitted glyph run is centered within Bounds and doesn't necessarily reach
+        // Bounds' own edges (side bearing, fit-to-box padding), so the true endpoint stop colors
+        // (pure red at offset 0, pure blue at offset 1) aren't guaranteed to land on actual ink --
+        // this was confirmed empirically (an earlier version of this test asserting exact stop colors
+        // failed even though the gradient was rendering correctly, per manual pixel inspection).
+        var path = await WriteFixturePngAsync(160, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 160, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.15, 0.3, 0.7, 0.4);
+            var stopA = new Rgb24(255, 0, 0);
+            var stopB = new Rgb24(0, 0, 255);
+            var gradient = new TextGradient(TextGradientKind.Horizontal, [new GradientColorStop(0f, stopA), new GradientColorStop(1f, stopB)]);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "WWWWWW", new FontSpec("DejaVu Sans Mono", 0.25), new Rgb24(0, 0, 0), Gradient: gradient),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertLeftmostInkPixelIsRedderThanRightmostInkPixel(result, bounds, background: (255, 255, 255));
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithEmptyGradientStops_FallsBackToElementColor()
+    {
+        // TextGradient's own doc comment: empty Stops is a degenerate one-color gradient, not an
+        // error -- falls back to the element's own solid Color.
+        var path = await WriteFixturePngAsync(120, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 120, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.3, 0.3, 0.4, 0.4);
+            var fill = new Rgb24(0, 200, 0);
+            var gradient = new TextGradient(TextGradientKind.Horizontal, []);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, "W1AW", new FontSpec("DejaVu Sans Mono", 0.2), fill, Gradient: gradient),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertAtLeastOnePixelOfColorInsideBounds(result, bounds, fill);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void MeasureFittedFontSize_NegativeStrokeThickness_DoesNotGrowTheFitBoxPastUnstrokedSize()
     {
         // Code-review finding: nothing upstream (the AXAML TextBox binding) validates
@@ -773,6 +1041,57 @@ public sealed class ApplyTemplateTests
         }
 
         Assert.Fail($"Expected at least one pixel of color ({color.R},{color.G},{color.B}) inside Bounds ({bounds.X},{bounds.Y},{bounds.Width},{bounds.Height}); found none.");
+    }
+
+    /// <summary>Scans left-to-right and right-to-left within Bounds for the first non-background
+    /// (ink) pixel from each side, then asserts the LEFT one is redder-than-blue and the RIGHT one is
+    /// bluer-than-red -- see <see cref="ApplyTemplateTests.ApplyTemplate_TextWithHorizontalGradient_LeftInkIsReddishRightInkIsBluish_NoInkOutsideBounds"/>'s
+    /// own doc comment for why this is a relative/directional check rather than an exact-color one.</summary>
+    private static void AssertLeftmostInkPixelIsRedderThanRightmostInkPixel(IImageSource image, NormalizedRect bounds, (byte R, byte G, byte B) background)
+    {
+        var minX = Math.Clamp((int)Math.Floor(bounds.X * image.Width), 0, image.Width - 1);
+        var minY = Math.Clamp((int)Math.Floor(bounds.Y * image.Height), 0, image.Height - 1);
+        var maxX = Math.Clamp((int)Math.Ceiling((bounds.X + bounds.Width) * image.Width), 0, image.Width);
+        var maxY = Math.Clamp((int)Math.Ceiling((bounds.Y + bounds.Height) * image.Height), 0, image.Height);
+
+        (byte R, byte G, byte B)? leftmost = null;
+        (byte R, byte G, byte B)? rightmost = null;
+        var leftmostX = int.MaxValue;
+        var rightmostX = int.MinValue;
+
+        for (var y = minY; y < maxY; y++)
+        {
+            var row = image.GetScanline(y);
+            for (var x = minX; x < maxX; x++)
+            {
+                var pixel = row[x];
+                if (pixel.R == background.R && pixel.G == background.G && pixel.B == background.B)
+                {
+                    continue;
+                }
+
+                if (x < leftmostX)
+                {
+                    leftmostX = x;
+                    leftmost = (pixel.R, pixel.G, pixel.B);
+                }
+
+                if (x > rightmostX)
+                {
+                    rightmostX = x;
+                    rightmost = (pixel.R, pixel.G, pixel.B);
+                }
+            }
+        }
+
+        if (leftmost is not { } left || rightmost is not { } right)
+        {
+            Assert.Fail("Expected at least one non-background (ink) pixel inside Bounds; found none.");
+            return;
+        }
+
+        Assert.True(left.R > left.B, $"Expected the leftmost ink pixel to be redder than blue, got ({left.R},{left.G},{left.B}).");
+        Assert.True(right.B > right.R, $"Expected the rightmost ink pixel to be bluer than red, got ({right.R},{right.G},{right.B}).");
     }
 
     private static void AssertNoNonBackgroundPixelOutsideBounds(IImageSource image, NormalizedRect bounds, (byte R, byte G, byte B) background)
