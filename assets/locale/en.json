@@ -427,6 +427,7 @@
   "Panes.TxImageEditor.Redo": "Redo",
   "Panes.TxImageEditor.Fit": "Fit",
   "Panes.TxImageEditor.ZoomActual": "100%",
+  "Panes.TxImageEditor.Zoom": "Zoom",
   "Panes.TxImageEditor.SnapGrid": "Snap grid",
   "Panes.TxImageEditor.SnapGrid.Help": "Snap the selected element to a 5% grid when you release a drag or resize.",
   "Panes.TxImageEditor.SafeArea": "Safe area",
