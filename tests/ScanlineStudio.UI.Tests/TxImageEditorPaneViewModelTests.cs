@@ -1407,6 +1407,51 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(countBeforeDirectSet, preparer.ApplyTemplateCallCount);
     }
 
+    // Backlog item (user request, 2026-08-17): canvas-preview outline fix -- CanvasStrokeThicknessPixels
+    // mirrors CanvasFontSize's own real-pixel-space/chrome-only/recompute-trigger contract exactly,
+    // same test shape as the 3 CanvasFontSize siblings above.
+
+    [AvaloniaFact]
+    public void CanvasStrokeThicknessPixels_ZeroWhenStrokeColorIsNull()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        Assert.Null(element.StrokeColor);
+        Assert.Equal(0, element.CanvasStrokeThicknessPixels);
+    }
+
+    [AvaloniaFact]
+    public void CanvasStrokeThicknessPixels_ReflectsStrokeThicknessAndTargetModeHeight_RecomputedAfterCropRectChange()
+    {
+        // Same crop/mode setup as CanvasFontSize_ReflectsFontSizeRelativeAndCropDimensions above
+        // (scaleY = 1, width-constrained -- see that test's own doc comment for the full derivation).
+        // StrokeThickness defaults to 0.02, WideMode.ImageHeight is 4 -> (0.02 * 4) / 1 = 0.08.
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.StrokeColor = new Rgb24(0, 0, 0);
+
+        vm.CropRect = new NormalizedRect(0.0, 0.375, 1.0, 0.25);
+
+        AssertClose(0.08, element.CanvasStrokeThicknessPixels);
+    }
+
+    [AvaloniaFact]
+    public void CanvasStrokeThicknessPixels_DoesNotTriggerAPreviewRecompute()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        var countBeforeDirectSet = preparer.ApplyTemplateCallCount;
+
+        element.CanvasStrokeThicknessPixels = 12.34;
+
+        Assert.Equal(countBeforeDirectSet, preparer.ApplyTemplateCallCount);
+    }
+
     [AvaloniaFact]
     public void AddOverlayElement_SeedsPositionAtCropCenter_NotPhotoCenter()
     {

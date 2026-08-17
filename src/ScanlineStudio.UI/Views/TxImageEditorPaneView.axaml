@@ -3,6 +3,7 @@
              xmlns:loc="using:ScanlineStudio.UI.Localization"
              xmlns:conv="using:ScanlineStudio.UI.Converters"
              xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+             xmlns:controls="using:ScanlineStudio.UI.Controls"
              x:Class="ScanlineStudio.UI.Views.TxImageEditorPaneView"
              x:DataType="vm:TxImageEditorPaneViewModel"
              KeyDown="OnRootKeyDown">
@@ -748,21 +749,27 @@
                                                          selected family (was hardcoded IndustryMonoFontFamily)
                                                          via PipelineFontFamilyNameConverter, mapping the
                                                          pipeline's plain family name to the matching bundled
-                                                         avares:// resource. Foreground bound to ForegroundBrush
+                                                         avares:// resource. Fill bound to ForegroundBrush
                                                          (Phase 8 canvas-preview amendment — a plain solid
                                                          brush from Color, or a real Avalonia gradient brush
-                                                         when GradientEnabled is set). Stroke is NOT shown here
-                                                         (Avalonia's plain TextBlock has no outline capability)
-                                                         — a stated, accepted scope decision (Phase 4
-                                                         plan-review finding), not a silent gap; the
-                                                         mini-preview (real ApplyTemplate pipeline) shows the
-                                                         actual stroked result. -->
-                                                    <TextBlock Text="{Binding ResolvedText}"
+                                                         when GradientEnabled is set). Backlog item (user
+                                                         request, 2026-08-17): stroke now DOES render here too
+                                                         — StrokedTextBlock (draws fill+stroke via
+                                                         FormattedText.BuildGeometry, stroke first per its own
+                                                         doc comment) replaces the plain TextBlock this used to
+                                                         be; superseded the prior "stroke isn't shown here,
+                                                         Avalonia's TextBlock has no outline capability" scope
+                                                         note. CanvasStrokeThicknessPixels is 0 whenever
+                                                         StrokeColor is null, so StrokedTextBlock's own
+                                                         `Stroke is not null && StrokeThickness > 0` guard means
+                                                         no-stroke elements render byte-identically to before. -->
+                                                    <controls:StrokedTextBlock Text="{Binding ResolvedText}"
                                                                FontSize="{Binding CanvasFontSize}"
                                                                FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
-                                                               Foreground="{Binding ForegroundBrush}"
+                                                               Fill="{Binding ForegroundBrush}"
+                                                               Stroke="{Binding StrokeColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
+                                                               StrokeThickness="{Binding CanvasStrokeThicknessPixels}"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                               TextWrapping="NoWrap"
                                                                IsHitTestVisible="False" />
                                                 </Panel>
                                             </Border>
