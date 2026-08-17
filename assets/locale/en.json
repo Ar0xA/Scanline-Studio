@@ -401,6 +401,8 @@
   "Panes.TxImageEditor.CropFooterFormat": "CROP {0}×{1}",
   "Panes.TxImageEditor.LockedToModeSuffix": "LOCKED TO MODE",
   "Panes.TxImageEditor.WorkingCopyFooterFormat": "WORKING COPY {0:0}×{1:0} · RENDER {2}×{3}",
+  "Panes.TxImageEditor.SelectionReadoutFormat": "{0} z{1} · x{2} y{3} · w{4} h{5}",
+  "Panes.TxImageEditor.SelectionReadoutWithRotationFormat": "{0} z{1} · x{2} y{3} · w{4} h{5} · {6}°",
   "Panes.TxImageEditor.PreserveAspect": "PRESERVE ASPECT (LETTERBOX)",
   "Panes.TxImageEditor.LockAspectToMode": "LOCK CROP TO MODE",
   "Panes.TxImageEditor.LockAspectToMode.Help": "Constrains the crop rectangle to the selected mode's own aspect ratio. Combine with Preserve aspect OFF to fill the frame edge-to-edge with no distortion and no letterboxing.",

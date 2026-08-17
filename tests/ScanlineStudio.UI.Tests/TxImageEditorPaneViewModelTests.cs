@@ -2411,6 +2411,55 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void SelectionReadoutText_NothingSelected_IsEmpty()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        Assert.Equal(string.Empty, vm.SelectionReadoutText);
+    }
+
+    [AvaloniaFact]
+    public void SelectionReadoutText_TextElementSelected_UsesRotationFormatWithZAndPixelGeometry()
+    {
+        // FakeLocalizationService.GetString returns the raw key, not a real formatted string --
+        // asserting on LastKey/LastArgs (this project's established pattern, e.g.
+        // TxControlsTransmitProgressTests) is what actually proves the VM picked the rotation-aware
+        // format and computed the right arguments, not the localization plumbing.
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.SelectedOverlayElement!;
+        element.RotationDegrees = 15;
+
+        _ = vm.SelectionReadoutText;
+
+        Assert.Equal("Panes.TxImageEditor.SelectionReadoutWithRotationFormat", localization.LastKey);
+        Assert.Equal(
+            new object[] { "Panes.TxImageEditor.TypeBadgeText", element.Z, (int)Math.Round(element.LeftPixels), (int)Math.Round(element.TopPixels), (int)Math.Round(element.CanvasWidthPixels), (int)Math.Round(element.CanvasHeightPixels), 15 },
+            localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public void SelectionReadoutText_BoxElementSelected_UsesFormatWithoutRotation()
+    {
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+        vm.AddBoxElementCommand.Execute(null);
+
+        _ = vm.SelectionReadoutText;
+
+        Assert.Equal("Panes.TxImageEditor.SelectionReadoutFormat", localization.LastKey);
+    }
+
+    [AvaloniaFact]
     public void IsFontUnavailable_SelectedTextElementFontNotInAvailableFamilies_ReturnsTrue()
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
