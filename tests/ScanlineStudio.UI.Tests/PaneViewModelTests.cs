@@ -1235,6 +1235,111 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CancellingEditor_WithNothingEverApplied_ReopensBlankEditorAutomatically()
+    {
+        // Backlog item (user request, 2026-08-17): "should ALWAYS open the editor by default" --
+        // backing out via Cancel must not leave the center column empty again (SelectedFileName is
+        // null here since nothing has ever been applied).
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editorOpenedCount = 0;
+        vm.EditorOpened += _ => editorOpenedCount++;
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+
+        editor.CancelCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsEditorOpen);
+        Assert.Equal(2, editorOpenedCount);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CancellingReEditOfAnAlreadyAppliedImage_DoesNotReopenBlankEditor()
+    {
+        // Must NOT auto-reopen blank here -- SelectedFileName is set (something was already
+        // applied), so an auto-reopen would silently discard the applied state the operator is
+        // still meant to see/transmit.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        firstEditor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var reopenedEditor = await OpenEditorAsync(vm, () => vm.EditCurrentImageCommand.ExecuteAsync(null));
+
+        reopenedEditor.CancelCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsEditorOpen);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectFavoriteMode_AllowedWhileTheBlankPlaceholderEditorIsOpenAndUntouched()
+    {
+        // AskUserQuestion decision (2026-08-17, recommended option): a BLANK auto-opened editor is
+        // safe to switch mode away from, unlike a manually-picked real photo (see the sibling
+        // "DisablesTheFavoriteModeCommand" test below, which still asserts CanExecute false for
+        // exactly that SelectImageCommand case).
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+
+        Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeB));
+        vm.SelectFavoriteModeCommand.Execute(modeB);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("other", vm.SelectedMode?.Id);
+        Assert.True(vm.IsEditorOpen);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectFavoriteMode_DisallowedOnceTheBlankEditorHasARealEdit()
+    {
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        var canExecuteChangedCount = 0;
+        vm.SelectFavoriteModeCommand.CanExecuteChanged += (_, _) => canExecuteChangedCount++;
+
+        editor.AddOverlayElementCommand.Execute(null);
+
+        Assert.True(editor.HasUnsavedEdits);
+        Assert.False(vm.SelectFavoriteModeCommand.CanExecute(modeB));
+        Assert.True(canExecuteChangedCount > 0, "HasUnsavedEdits flipping must re-notify CanExecute via OnCurrentEditorPropertyChanged, or a bound Button would never actually disable.");
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectingANewMode_WhileTheBlankPlaceholderEditorIsOpen_ReopensAtTheNewModesSize()
+    {
+        // Backlog item (user request, 2026-08-17): "make sure to update the editor window when
+        // another mode is selected".
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 5, ImageHeight = 3 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        var firstEditor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        Assert.Equal(modeA.ImageWidth, firstEditor.CurrentSource.Width);
+
+        var secondEditor = await OpenEditorAsync(vm, () =>
+        {
+            vm.SelectedMode = modeB;
+            return Task.CompletedTask;
+        });
+
+        Assert.Equal(modeB.ImageWidth, secondEditor.CurrentSource.Width);
+        Assert.Equal(modeB.ImageHeight, secondEditor.CurrentSource.Height);
+        Assert.True(vm.IsEditorOpen);
+    }
+
+    [AvaloniaFact]
     public void TxControlsPaneViewModel_SelectingANewMode_ClearsAlreadyLoadedImage()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
@@ -1562,7 +1667,11 @@ public sealed class PaneViewModelTests
         editor.CancelCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.False(vm.IsEditorOpen);
+        // Backlog item (user request, 2026-08-17): Cancel now auto-reopens a fresh BLANK editor
+        // (nothing was ever applied here) rather than leaving the column empty -- IsEditorOpen goes
+        // back to true, but CanExecute stays true too, since the freshly reopened editor is itself
+        // blank/untouched (IsCurrentEditorBlankAndUntouched).
+        Assert.True(vm.IsEditorOpen);
         Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeB));
     }
 
@@ -1627,7 +1736,10 @@ public sealed class PaneViewModelTests
         editor.CancelCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.False(vm.IsEditorOpen);
+        // Backlog item (user request, 2026-08-17): same reasoning as
+        // TxControlsPaneViewModel_EditorOpen_DisablesTheFavoriteModeCommand's own sibling assertion
+        // -- Cancel now auto-reopens a fresh BLANK editor rather than leaving the column empty.
+        Assert.True(vm.IsEditorOpen);
         Assert.True(vm.QuickSelectModeCommand.CanExecute("other"));
     }
 

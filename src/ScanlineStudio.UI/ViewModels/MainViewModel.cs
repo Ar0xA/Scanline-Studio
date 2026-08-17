@@ -72,6 +72,18 @@ public partial class MainViewModel : ViewModelBase
         txControls.EditorOpened += editor => ActiveEditor = editor;
         txControls.EditorClosed += () => ActiveEditor = null;
 
+        // Backlog item (user request, 2026-08-17): "it should ALWAYS open the editor by default, no
+        // need for a button" -- auto-open the blank-placeholder editor immediately so the Transmit
+        // tab's center column is never empty on first landing. Triggered HERE, not from
+        // TxControlsPaneViewModel's own constructor: EditorOpened needs a subscriber attached
+        // before OpenBlankEditorCommand's own async chain reaches its EditorOpened?.Invoke(editor)
+        // call, and TxControlsPaneViewModel's constructor runs (as a DI-resolved parameter) BEFORE
+        // this constructor -- and therefore before the subscription two lines above -- even exists.
+        // No persisted "last loaded image" restoration happens anywhere at startup (confirmed via
+        // LoadTxPaneUiSettingsAsync, which only restores AutoFollowRxMode/favorite-mode picks), so
+        // this can never clobber a remembered real image -- there isn't one.
+        _ = txControls.OpenBlankEditorCommand.ExecuteAsync(null);
+
         RadioStatus = new RadioStatusViewModel(radioSession, sstvSession, localization, radioStatusLogger);
 
         // Plain reference hand-off, not an XAML ancestor-lookup binding -- see
