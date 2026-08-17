@@ -168,6 +168,18 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <inheritdoc cref="ITemplateElementViewModel.SendToBackCommand"/>
     public IRelayCommand? SendToBackCommand { get; init; }
 
+    /// <inheritdoc cref="ITemplateElementViewModel.DuplicateCommand"/>
+    public IRelayCommand? DuplicateCommand { get; init; }
+
+    /// <summary>Task #24 (right-click context menu addendum) -- text-only (matches
+    /// <see cref="ImageElementViewModel.SetAsBackgroundCommand"/>'s own image-only precedent for
+    /// exactly the same reason: not part of the shared <see cref="ITemplateElementViewModel"/>
+    /// interface since box/image elements have no text to plate). Same parent-pushed pattern as
+    /// <see cref="DuplicateCommand"/> -- parent-pushed the SAME parameterless
+    /// <c>TxImageEditorPaneViewModel.AddPlateBehindTextCommand</c> instance the toolbar already uses,
+    /// bound with no <c>CommandParameter</c>.</summary>
+    public IRelayCommand? AddPlateCommand { get; init; }
+
     /// <summary>Set once by <see cref="TxImageEditorPaneViewModel"/> at creation time, same pattern
     /// as <see cref="RemoveCommand"/> -- resolves this element's raw <see cref="Text"/> (which may
     /// contain macro tokens like <c>%m</c>/<c>{name}</c>) against the current operator settings.

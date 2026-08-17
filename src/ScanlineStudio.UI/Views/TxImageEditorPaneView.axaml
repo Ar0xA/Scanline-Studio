@@ -444,6 +444,39 @@
                                                     Background="#33FFFFFF"
                                                     BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
                                                     PointerPressed="OnOverlayElementPointerPressed">
+                                                <!-- Task #24 (right-click context menu addendum, plan-reviewed):
+                                                     declared INLINE (not a shared resource) so DataContext
+                                                     inheritance resolves {Binding XCommand} against THIS
+                                                     element (plan-review finding: a shared instance would be
+                                                     reparented to whichever control attached last, silently
+                                                     breaking every binding — same failure class RemoveCommand's
+                                                     own doc comment already documents for $parent bindings).
+                                                     Lock uses MenuItem's native ToggleType="CheckBox" +
+                                                     IsChecked (plan-review finding: no new command needed,
+                                                     mirrors the sidebar's own ToggleButton exactly — Locked has
+                                                     no undo/preview hook, confirmed via OnOverlayElementPropertyChanged's
+                                                     own filter list). Duplicate/AddPlate bind the SAME
+                                                     parameterless VM-level commands the toolbar already uses,
+                                                     with NO CommandParameter (see DuplicateCommand's own
+                                                     interface doc comment for why this is still correct). A
+                                                     LOCKED background image element is unreachable by
+                                                     right-click here (IsHitTestVisible="{Binding !BlocksHitTesting}"
+                                                     on the image template) — a stated, known limitation, not
+                                                     fixed by this addendum; the sidebar's own Lock toggle stays
+                                                     the recovery path for that one case. -->
+                                                <Border.ContextMenu>
+                                                    <ContextMenu Classes="Industry">
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.AddPlate}" Command="{Binding AddPlateCommand}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
                                                 <!-- Phase 8 canvas-preview amendment: shadow copy,
                                                      drawn BEHIND the real text (declared first, same
                                                      draw-order convention as the real pipeline's own
@@ -510,7 +543,23 @@
                                                     BorderBrush="{Binding BorderColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
                                                     BorderThickness="{Binding CanvasBorderThicknessPixels, Converter={x:Static conv:DoubleToThicknessConverter.Instance}}"
                                                     Opacity="{Binding Opacity}"
-                                                    PointerPressed="OnOverlayElementPointerPressed" />
+                                                    PointerPressed="OnOverlayElementPointerPressed">
+                                                <!-- Task #24: same inline-ContextMenu reasoning as the text
+                                                     DataTemplate above — no Add Plate item (text-only) or
+                                                     Set as Background item (image-only). -->
+                                                <Border.ContextMenu>
+                                                    <ContextMenu Classes="Industry">
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                            </Border>
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
@@ -551,6 +600,27 @@
                                                     BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
                                                     IsHitTestVisible="{Binding !BlocksHitTesting}"
                                                     PointerPressed="OnOverlayElementPointerPressed">
+                                                <!-- Task #24: same inline-ContextMenu reasoning as the text
+                                                     DataTemplate above, plus Set as Background (image-only).
+                                                     Known, stated limitation (plan-review finding, not fixed
+                                                     by this addendum): a LOCKED background element has
+                                                     IsHitTestVisible="{Binding !BlocksHitTesting}" = False on
+                                                     this same Border, so right-click can never reach it while
+                                                     it's in that state — the sidebar's own Lock toggle stays
+                                                     the only way to unlock a background element once set. -->
+                                                <Border.ContextMenu>
+                                                    <ContextMenu Classes="Industry">
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SetAsBackground}" Command="{Binding SetAsBackgroundCommand}" CommandParameter="{Binding}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
                                                 <Image Source="{Binding CanvasBitmap}"
                                                        Stretch="Fill"
                                                        IsHitTestVisible="False" />

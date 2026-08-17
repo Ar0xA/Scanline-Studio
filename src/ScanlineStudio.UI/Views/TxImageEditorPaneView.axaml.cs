@@ -137,6 +137,16 @@ public partial class TxImageEditorPaneView : UserControl
     /// <c>SelectedOverlayElement</c> except the "Add" commands, so once a second element was added,
     /// the insert-field chips -- gated on a TEXT element being selected -- became permanently
     /// unreachable with no way to re-select the first one).</para></summary>
+    /// <summary>Task #24 (right-click context menu addendum, plan-reviewed) -- selection stays
+    /// UNGATED (any button, including right, selects this element) since that's what lets the
+    /// context menu's own bindings/CanExecute states already be correct by the time it opens
+    /// (PointerPressed fires before the native ContextMenu opens on PointerReleased). The DRAG start
+    /// below is gated to the LEFT button only -- a real blocker the plan-review caught: without this
+    /// gate, a right-press here calls StartDrag, which captures the pointer on EditorCanvas; Avalonia
+    /// then routes PointerReleased to EditorCanvas (the capturing element), never to this element's
+    /// own Border, so the native ContextMenu (which opens off PointerReleased when the INITIAL press
+    /// was the right button) never gets a chance to fire at all -- right-click silently did a
+    /// (right-button) drag instead of opening a menu.</summary>
     private void OnOverlayElementPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (sender is not Control { DataContext: ITemplateElementViewModel element } || ViewModel is not { } vm)
@@ -146,7 +156,7 @@ public partial class TxImageEditorPaneView : UserControl
 
         vm.SelectedOverlayElement = element;
 
-        if (element.Locked)
+        if (element.Locked || !e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed)
         {
             return;
         }
@@ -158,10 +168,13 @@ public partial class TxImageEditorPaneView : UserControl
     /// <summary>Single bottom-right resize handle per element (Phase 1 plan-review finding: mirrors
     /// the crop rect's own existing single-corner-handle convention rather than a 4-corner/8-handle
     /// system). Same <see cref="ITemplateElementViewModel.Locked"/> real-gate reasoning as
-    /// <see cref="OnOverlayElementPointerPressed"/> above.</summary>
+    /// <see cref="OnOverlayElementPointerPressed"/> above -- same left-button gate too (task #24
+    /// plan-review finding: a right-press here would otherwise start a resize drag instead of letting
+    /// the parent element's own context menu handle the release).</summary>
     private void OnElementResizeHandlePointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is not Control { DataContext: ITemplateElementViewModel element } || element.Locked)
+        if (sender is not Control { DataContext: ITemplateElementViewModel element } || element.Locked
+            || !e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed)
         {
             return;
         }
