@@ -401,6 +401,31 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
+        // Backlog item (user request, 2026-08-17): in-editor Copy/Cut/Paste for the selected canvas
+        // element. Control OR Meta (task #23's own Ctrl/Cmd+wheel precedent) -- Ctrl on Windows/
+        // Linux, Cmd on macOS.
+        var ctrlOrCmd = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        if (ctrlOrCmd && e.Key == Key.C && vm.SelectedOverlayElement is not null)
+        {
+            vm.CopySelectedElementCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        if (ctrlOrCmd && e.Key == Key.X && vm.SelectedOverlayElement is not null)
+        {
+            vm.CutSelectedElementCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        if (ctrlOrCmd && e.Key == Key.V && vm.PasteElementCommand.CanExecute(null))
+        {
+            vm.PasteElementCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
         var direction = e.Key switch
         {
             Key.Up => NudgeDirection.Up,

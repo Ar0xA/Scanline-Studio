@@ -2924,6 +2924,110 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.False(copy.Locked);
     }
 
+    // Backlog item (user request, 2026-08-17): in-editor Copy/Cut/Paste, reusing Duplicate's own
+    // InsertClonedSnapshot helper (offset/Z/background-clearing logic identical, only the snapshot
+    // source differs).
+
+    [AvaloniaFact]
+    public void CopyAndPaste_ClonesTheCopiedElement_LeavingTheOriginalInPlace()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var original = (OverlayElementViewModel)vm.OverlayElements[0];
+        original.Text = "Original";
+        vm.SelectedOverlayElement = original;
+
+        vm.CopySelectedElementCommand.Execute(null);
+        vm.PasteElementCommand.Execute(null);
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        Assert.Same(original, vm.OverlayElements[0]);
+        var copy = Assert.IsType<OverlayElementViewModel>(vm.OverlayElements[1]);
+        Assert.Same(copy, vm.SelectedOverlayElement);
+        Assert.Equal("Original", copy.Text);
+        Assert.True(copy.Z > original.Z);
+    }
+
+    [AvaloniaFact]
+    public void CopyThenPasteTwice_InsertsTwoIndependentCopies()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.SelectedOverlayElement = vm.OverlayElements[0];
+
+        vm.CopySelectedElementCommand.Execute(null);
+        vm.PasteElementCommand.Execute(null);
+        vm.PasteElementCommand.Execute(null);
+
+        Assert.Equal(3, vm.OverlayElements.Count);
+    }
+
+    [AvaloniaFact]
+    public void CutSelectedElement_RemovesItAndPasteReinsertsAClone()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var original = (OverlayElementViewModel)vm.OverlayElements[0];
+        original.Text = "Cut me";
+        vm.SelectedOverlayElement = original;
+
+        vm.CutSelectedElementCommand.Execute(null);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.Null(vm.SelectedOverlayElement);
+
+        vm.PasteElementCommand.Execute(null);
+
+        var pasted = Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements));
+        Assert.Equal("Cut me", pasted.Text);
+        Assert.NotSame(original, pasted);
+    }
+
+    [AvaloniaFact]
+    public void PasteElementCommand_CanExecute_FalseUntilSomethingHasBeenCopiedOrCut()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.PasteElementCommand.CanExecute(null));
+
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.SelectedOverlayElement = vm.OverlayElements[0];
+        vm.CopySelectedElementCommand.Execute(null);
+
+        Assert.True(vm.PasteElementCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void CopyAndCutSelectedElementCommands_CanExecute_FalseWhenNothingSelected()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.CopySelectedElementCommand.CanExecute(null));
+        Assert.False(vm.CutSelectedElementCommand.CanExecute(null));
+
+        vm.AddBoxElementCommand.Execute(null);
+        vm.SelectedOverlayElement = vm.OverlayElements[0];
+
+        Assert.True(vm.CopySelectedElementCommand.CanExecute(null));
+        Assert.True(vm.CutSelectedElementCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void PasteElement_BackgroundImageElementWasCopied_CloneIsNotBackgroundAndNotLocked()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackgroundCommand.Execute(image);
+        vm.SelectedOverlayElement = image;
+
+        vm.CopySelectedElementCommand.Execute(null);
+        vm.PasteElementCommand.Execute(null);
+
+        var copy = Assert.IsType<ImageElementViewModel>(vm.OverlayElements[1]);
+        Assert.False(copy.IsBackground);
+        Assert.False(copy.Locked);
+    }
+
     [AvaloniaFact]
     public void AddLastRxImage_WithNothingEverReceived_IsANoOp()
     {
