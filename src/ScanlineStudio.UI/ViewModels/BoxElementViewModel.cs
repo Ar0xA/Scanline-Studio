@@ -62,6 +62,8 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
 
     public IRelayCommand? DuplicateCommand { get; init; }
 
+    public IRelayCommand? AlignSelectedElementToCropCommand { get; init; }
+
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
 
     public double LeftPixels => (X - (Width / 2)) * ImageWidth;

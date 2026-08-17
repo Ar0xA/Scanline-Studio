@@ -96,6 +96,16 @@ public interface ITemplateElementViewModel : INotifyPropertyChanged
     /// button), which fires before the native <c>ContextMenu</c> opens on <c>PointerReleased</c>.</summary>
     IRelayCommand? DuplicateCommand { get; init; }
 
+    /// <summary>EditWindow redesign Phase 6 (mockups/Editwindow) -- parent-pushed the SAME
+    /// parameterless <c>TxImageEditorPaneViewModel.AlignSelectedElementToCropCommand</c> instance the
+    /// GEOMETRY tab's own align-to-crop buttons already use (which reads this element via
+    /// <c>SelectedOverlayElement</c>, not a bound parameter -- same reasoning as
+    /// <see cref="DuplicateCommand"/>'s own doc comment). Bound in the context menu with the
+    /// alignment string as <c>CommandParameter</c> (the only real argument; the element itself is
+    /// implicit via selection). On the shared interface, not text-only like <c>AddPlateCommand</c>,
+    /// because all three element types' context menus offer "Align to Crop."</summary>
+    IRelayCommand? AlignSelectedElementToCropCommand { get; init; }
+
     /// <summary>Pushes ONE coalesced undo/redo step covering X/Y/Width/Height together (Phase 1
     /// plan-review finding: a diagonal drag-resize must collapse to one undo step, same reasoning as
     /// the pre-Phase-1 X/Y-only version covering a diagonal drag). Fires on <c>On*Changing</c> (before

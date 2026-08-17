@@ -171,6 +171,9 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <inheritdoc cref="ITemplateElementViewModel.DuplicateCommand"/>
     public IRelayCommand? DuplicateCommand { get; init; }
 
+    /// <inheritdoc cref="ITemplateElementViewModel.AlignSelectedElementToCropCommand"/>
+    public IRelayCommand? AlignSelectedElementToCropCommand { get; init; }
+
     /// <summary>Task #24 (right-click context menu addendum) -- text-only (matches
     /// <see cref="ImageElementViewModel.SetAsBackgroundCommand"/>'s own image-only precedent for
     /// exactly the same reason: not part of the shared <see cref="ITemplateElementViewModel"/>
@@ -179,6 +182,15 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <c>TxImageEditorPaneViewModel.AddPlateBehindTextCommand</c> instance the toolbar already uses,
     /// bound with no <c>CommandParameter</c>.</summary>
     public IRelayCommand? AddPlateCommand { get; init; }
+
+    /// <summary>EditWindow redesign Phase 6 (mockups/Editwindow) -- text-only (matches
+    /// <see cref="AddPlateCommand"/>'s own image/box-excluded precedent: only text elements have a
+    /// <see cref="Text"/> to insert a macro token into). Parent-pushed the SAME
+    /// <c>TxImageEditorPaneViewModel.InsertFieldCommand</c> instance the TEXT STYLE tab's own chips
+    /// already use, bound in the context menu with the token string as <c>CommandParameter</c> --
+    /// correctness depends on right-click having already set <c>SelectedOverlayElement</c> to THIS
+    /// element (same reasoning as <see cref="DuplicateCommand"/>'s own doc comment).</summary>
+    public IRelayCommand? InsertFieldCommand { get; init; }
 
     /// <summary>Set once by <see cref="TxImageEditorPaneViewModel"/> at creation time, same pattern
     /// as <see cref="RemoveCommand"/> -- resolves this element's raw <see cref="Text"/> (which may

@@ -2161,6 +2161,38 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotNull(text.AddPlateCommand);
     }
 
+    // EditWindow redesign Phase 6 (mockups/Editwindow): the context menu's "Insert field"/"Align to
+    // crop" submenus bind {Binding InsertFieldCommand}/{Binding AlignSelectedElementToCropCommand}
+    // against the ELEMENT's own DataContext (same inline-per-DataTemplate resolution as
+    // DuplicateCommand/AddPlateCommand above) -- these must be parent-pushed the same way, or the
+    // binding resolves to null and the menu items render permanently disabled (a real regression this
+    // pair of tests caught live: both submenus were unclickable until these assignments were added).
+
+    [AvaloniaFact]
+    public void AlignSelectedElementToCropCommand_IsWiredOnAllThreeElementTypes()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.AddBoxElementCommand.Execute(null);
+        vm.AddLastRxImageCommand.Execute(null);
+
+        Assert.Equal(3, vm.OverlayElements.Count);
+        Assert.All(vm.OverlayElements, e => Assert.NotNull(e.AlignSelectedElementToCropCommand));
+    }
+
+    [AvaloniaFact]
+    public void InsertFieldCommand_IsWiredOnTextElements()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.AddOverlayElementCommand.Execute(null);
+
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.NotNull(text.InsertFieldCommand);
+    }
+
     // EditWindow redesign Phase 3 (mockups/Editwindow), GEOMETRY tab's align-to-crop actions.
     // CropRect defaults to the full frame (0,0,1,1) in these tests, matching
     // TxImageEditorPaneViewModel's own default -- Left/Right land at exactly element.Width/2 from

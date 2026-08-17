@@ -1138,7 +1138,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             BringToFrontCommand = BringToFrontCommand,
             SendToBackCommand = SendToBackCommand,
             DuplicateCommand = DuplicateCommand,
+            AlignSelectedElementToCropCommand = AlignSelectedElementToCropCommand,
             AddPlateCommand = AddPlateBehindTextCommand,
+            InsertFieldCommand = InsertFieldCommand,
             // Phase 3: reads _radioSessionService.LastKnownState/_templateVariables FRESH on every
             // ResolvedText access (this delegate re-invokes on every call, not once) -- FREQ/MODE
             // reflect the radio state as of the last element mutation, not a live tick (no
@@ -1182,6 +1184,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             BringToFrontCommand = BringToFrontCommand,
             SendToBackCommand = SendToBackCommand,
             DuplicateCommand = DuplicateCommand,
+            AlignSelectedElementToCropCommand = AlignSelectedElementToCropCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
@@ -1213,6 +1216,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             BringToFrontCommand = BringToFrontCommand,
             SendToBackCommand = SendToBackCommand,
             DuplicateCommand = DuplicateCommand,
+            AlignSelectedElementToCropCommand = AlignSelectedElementToCropCommand,
             SetAsBackgroundCommand = SetAsBackgroundCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
