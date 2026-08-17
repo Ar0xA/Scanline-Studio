@@ -485,6 +485,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     public string HeaderText => _localization.GetString(
         "Panes.TxImageEditor.CardHeaderFormat", _targetMode.ImageWidth, _targetMode.ImageHeight, _targetMode.DisplayName);
 
+    /// <summary>Design-fidelity Phase H (final confirming pass finding #6) -- the PREVIEW panel's
+    /// own MaxHeight, bound to the real target mode height rather than a hardcoded 200 (which
+    /// downscaled every 256-line mode's "mode-exact" preview to 78%, defeating its own point --
+    /// the mock renders this panel at literal 1:1). Same frozen-for-the-editor's-lifetime reasoning
+    /// as <see cref="HeaderText"/> -- a plain computed property, not observable.</summary>
+    public double PreviewMaxHeight => _targetMode.ImageHeight;
+
     /// <summary>Same real-dimensions fix as <see cref="HeaderText"/>, for the separate dimensions
     /// chip lower in the tool strip (mock2's own layout keeps both -- the chip is a compact
     /// at-a-glance readout next to the aspect/text/apply controls, not a duplicate of the header).</summary>
