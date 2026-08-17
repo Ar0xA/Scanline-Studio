@@ -125,75 +125,15 @@
                      tool/mode the way Move conceptually is. Reuses the same
                      Panes.TxImageEditor.ToolRotate localization key the removed disabled
                      RadioButton used to occupy — that was its only other reference. -->
+                <!-- EditWindow redesign Phase 2 (mockups/Editwindow): Add Text/Box/Image and
+                     Duplicate moved OUT of this toolbar and into the ELEMENTS panel's own header
+                     action group / insert row (mock's own IA rule, README gap #10: "view state and
+                     object state are separated" — this toolbar is STAGE/view-state only now: zoom,
+                     snap, safe-area, crop, and the whole-photo Rotate below, which is a crop/source
+                     adjustment, not a per-element operation, so it stays here). -->
                 <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.ToolRotate}"
                         Command="{Binding RotateCommand}" />
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
-                        Content="{loc:Translate Panes.TxImageEditor.AddText}"
-                        Command="{Binding AddOverlayElementCommand}" />
-                <!-- Phase 1: reuses the ToolBox locale key freed up by the tool-strip removal above
-                     (same reuse pattern ToolRotate's own comment already established for this
-                     card). -->
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
-                        Content="{loc:Translate Panes.TxImageEditor.ToolBox}"
-                        Command="{Binding AddBoxElementCommand}" />
-                <!-- Phase 2 (spec/15-template-designer.md): 3-source picker (file / last RX image /
-                     RX history) — clipboard-paste and OS drag-drop deliberately deferred, see the
-                     plan's own scope-cut reasoning (zero existing precedent for either anywhere in
-                     this codebase). The "From RX history" row's own nested Flyout opens a second
-                     picker list; its Command ALSO triggers a refresh on open (Button.Flyout opening
-                     doesn't itself run any VM code — the Command binding is what does). -->
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
-                        Content="{loc:Translate Panes.TxImageEditor.AddImage}">
-                    <Button.Flyout>
-                        <Flyout Placement="Bottom">
-                            <StackPanel Spacing="4" MinWidth="180">
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                        Content="{loc:Translate Panes.TxImageEditor.AddImageFromFile}"
-                                        Command="{Binding AddImageFromFileCommand}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                        Content="{loc:Translate Panes.TxImageEditor.AddImageFromLastRx}"
-                                        Command="{Binding AddLastRxImageCommand}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                        Content="{loc:Translate Panes.TxImageEditor.AddImageFromRxHistory}"
-                                        Command="{Binding RefreshRxHistoryPickerCommand}">
-                                    <Button.Flyout>
-                                        <Flyout Placement="RightEdgeAlignedTop">
-                                            <ScrollViewer MaxHeight="280">
-                                                <ItemsControl ItemsSource="{Binding RxHistoryPickerEntries}">
-                                                    <ItemsControl.ItemTemplate>
-                                                        <!-- SelectCommand is parent-pushed on the entry
-                                                             record itself (see its own doc comment) —
-                                                             not a $parent[ItemsControl] binding path. -->
-                                                        <DataTemplate DataType="vm:TxImageEditorPaneViewModel+RxHistoryPickerEntry">
-                                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                                                    Margin="0,0,0,2"
-                                                                    Command="{Binding SelectCommand}" CommandParameter="{Binding}">
-                                                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                                                    <Image Source="{Binding Thumbnail}" Width="32" Height="32" Stretch="Uniform" />
-                                                                    <TextBlock Text="{Binding Id}" VerticalAlignment="Center" />
-                                                                </StackPanel>
-                                                            </Button>
-                                                        </DataTemplate>
-                                                    </ItemsControl.ItemTemplate>
-                                                </ItemsControl>
-                                            </ScrollViewer>
-                                        </Flyout>
-                                    </Button.Flyout>
-                                </Button>
-                            </StackPanel>
-                        </Flyout>
-                    </Button.Flyout>
-                </Button>
-                <!-- Phase 6 (spec/15-template-designer.md): acts on whatever is currently selected
-                     (any element type) — CanExecute-gated, not text-only like "Add plate" below. -->
-                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4"
-                        Content="{loc:Translate Panes.TxImageEditor.Duplicate}"
-                        Command="{Binding DuplicateCommand}" />
                 <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" Margin="0,0,4,4"
                         Content="{loc:Translate Panes.TxImageEditor.Apply}"
                         Command="{Binding ApplyCommand}" />
@@ -773,152 +713,149 @@
                                RenderOptions.BitmapInterpolationMode="None" />
                     </HeaderedContentControl>
 
-                    <!-- Overlay-element edit rows: no mock2 equivalent (real app-added editing UI).
-                         Plain bordered box, not a titled group box — IndustryBlueprintBorderTheme
-                         WITHOUT Classes="blueprint" is exactly this ("plain bordered, no title
-                         notch"), matching the old design's own untitled "cardInner" semantic. -->
-                    <ItemsControl ItemsSource="{Binding OverlayElements}">
-                        <!-- Phase 1: polymorphic per-type DataTemplates (same technique as the
-                             canvas ItemsControl above), each row now also exposing Width/Height
-                             (Phase 1's real resizable box, not just a point), Lock, and layer-order
-                             (Up/Down) — this row list IS the "element list panel" Phase 1 called
-                             for, not a separate new panel (this one already existed pre-Phase-1;
-                             extending it is the reuse). Box rows expose geometry/lock/reorder only
-                             for now — fill/border COLOR editing is Phase 4's "real style panel"
-                             scope, not front-run here. -->
-                        <ItemsControl.DataTemplates>
-                            <DataTemplate DataType="vm:OverlayElementViewModel">
-                                <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Margin="0,0,0,4" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
-                                    <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                        <TextBox Classes="Industry IndustryInput" Text="{Binding Text}" IsEnabled="{Binding !Locked}" />
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding X}" Width="50" IsEnabled="{Binding !Locked}" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Y}" Width="50" IsEnabled="{Binding !Locked}" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Width}" Width="50" IsEnabled="{Binding !Locked}" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Height}" Width="50" IsEnabled="{Binding !Locked}" />
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                            <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}"
-                                                          IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.Lock}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.MoveUp}"
-                                                    Command="{Binding MoveUpCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.MoveDown}"
-                                                    Command="{Binding MoveDownCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
-                                                    Command="{Binding BringToFrontCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
-                                                    Command="{Binding SendToBackCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
-                                                    Content="{loc:Translate Panes.TxImageEditor.Remove}"
-                                                    Command="{Binding RemoveCommand}"
-                                                    CommandParameter="{Binding}" />
-                                        </StackPanel>
-                                    </StackPanel>
-                                </ContentControl>
-                            </DataTemplate>
-                            <DataTemplate DataType="vm:BoxElementViewModel">
-                                <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Margin="0,0,0,4" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
-                                    <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding X}" Width="50" IsEnabled="{Binding !Locked}" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Y}" Width="50" IsEnabled="{Binding !Locked}" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Width}" Width="50" IsEnabled="{Binding !Locked}" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Height}" Width="50" IsEnabled="{Binding !Locked}" />
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                            <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}"
-                                                          IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.Lock}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.MoveUp}"
-                                                    Command="{Binding MoveUpCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.MoveDown}"
-                                                    Command="{Binding MoveDownCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
-                                                    Command="{Binding BringToFrontCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
-                                                    Command="{Binding SendToBackCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
-                                                    Content="{loc:Translate Panes.TxImageEditor.Remove}"
-                                                    Command="{Binding RemoveCommand}"
-                                                    CommandParameter="{Binding}" />
-                                        </StackPanel>
-                                    </StackPanel>
-                                </ContentControl>
-                            </DataTemplate>
-                            <!-- Phase 2: third polymorphic branch, image elements — WITHOUT this,
-                                 an inserted image would still render fine on the canvas (that
-                                 ItemsControl has its own separate 3rd DataTemplate above) but show
-                                 as an uncontrollable fallback row here (no Lock/Up/Down/Remove) —
-                                 real-window-review-caught bug class from Phase 1, avoided here by
-                                 doing both ItemsControls in the same pass. -->
-                            <DataTemplate DataType="vm:ImageElementViewModel">
-                                <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Margin="0,0,0,4" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
-                                    <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding X}" Width="50" IsEnabled="{Binding !Locked}" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Y}" Width="50" IsEnabled="{Binding !Locked}" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Width}" Width="50" IsEnabled="{Binding !Locked}" />
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding Height}" Width="50" IsEnabled="{Binding !Locked}" />
-                                        </StackPanel>
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                            <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}"
-                                                          IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.Lock}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.MoveUp}"
-                                                    Command="{Binding MoveUpCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.MoveDown}"
-                                                    Command="{Binding MoveDownCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <!-- Hidden once IsBackground (code-review finding: an
-                                                 opaque, locked, full-frame background element has no
-                                                 meaningful "front"/"back" of its own, and bringing it
-                                                 to front would cover every other element in one
-                                                 click — also removes the easiest UI path to a
-                                                 SendToBack edge case the VM-level guard already
-                                                 handles defensively, see SendToBack's own doc
-                                                 comment). -->
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    IsVisible="{Binding !IsBackground}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
-                                                    Command="{Binding BringToFrontCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                    IsVisible="{Binding !IsBackground}"
-                                                    Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
-                                                    Command="{Binding SendToBackCommand}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
-                                                    Content="{loc:Translate Panes.TxImageEditor.Remove}"
-                                                    Command="{Binding RemoveCommand}"
-                                                    CommandParameter="{Binding}" />
-                                        </StackPanel>
-                                        <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                                Content="{loc:Translate Panes.TxImageEditor.SetAsBackground}"
-                                                Command="{Binding SetAsBackgroundCommand}"
-                                                CommandParameter="{Binding}" />
-                                    </StackPanel>
-                                </ContentControl>
-                            </DataTemplate>
-                        </ItemsControl.DataTemplates>
-                    </ItemsControl>
+                    <!-- ELEMENTS panel (EditWindow redesign Phase 2, mockups/Editwindow): header
+                         action group (Front/Back/Duplicate/Remove, acting on whatever is currently
+                         selected — CommandParameter="{Binding SelectedOverlayElement}" reaches the
+                         pane VM's own property since this Grid's DataContext is the pane itself, not
+                         a per-element DataTemplate) + an insert row (+Text/+Image/+Box, reusing the
+                         SAME AddOverlayElement/AddBoxElement commands and Add-Image flyout the
+                         toolbar already had) + compact single-line rows below (type badge, name/text
+                         preview, z-index, Lock toggle) — replaces the old bulky per-element card
+                         (X/Y/W/H TextBoxes + a stack of buttons stacked vertically). Numeric
+                         X/Y/W/H moves to the new GEOMETRY inspector tab (task #27, a later sub-phase
+                         of this same redesign) — not dropped, just relocated; deliberately NOT
+                         removed from here until that tab actually ships, to avoid a real gap where
+                         numeric placement is briefly unreachable from anywhere.
+                         [Deferred, noted not silently dropped] Two mock behaviors NOT built in this
+                         pass: (1) the "V" (visible/hidden) toggle — genuinely new VM state, no
+                         IsVisible/Hidden concept exists anywhere in this codebase's element model
+                         today; (2) click-a-row-to-select / highlighting the selected row — the
+                         canvas's own existing click-to-select already covers the core workflow
+                         (selection is shared VM state, so a canvas click already updates what THIS
+                         list implicitly reflects via its Lock/Front/Back state), row-click is a
+                         smaller, separable follow-up. -->
+                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
+                        <HeaderedContentControl.Header>
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.ElementsHeader}" />
+                        </HeaderedContentControl.Header>
+                        <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="{StaticResource IndustrySpacingTight}">
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                        Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
+                                        Command="{Binding BringToFrontCommand}" CommandParameter="{Binding SelectedOverlayElement}"
+                                        ToolTip.Tip="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                        Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
+                                        Command="{Binding SendToBackCommand}" CommandParameter="{Binding SelectedOverlayElement}"
+                                        ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                        Content="{loc:Translate Panes.TxImageEditor.Duplicate}"
+                                        Command="{Binding DuplicateCommand}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                        Content="{loc:Translate Panes.TxImageEditor.Remove}"
+                                        Command="{Binding RemoveOverlayElementCommand}" CommandParameter="{Binding SelectedOverlayElement}" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.AddText}"
+                                        Command="{Binding AddOverlayElementCommand}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.AddImage}">
+                                    <Button.Flyout>
+                                        <Flyout Placement="Bottom">
+                                            <StackPanel Spacing="4" MinWidth="180">
+                                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                        Content="{loc:Translate Panes.TxImageEditor.AddImageFromFile}"
+                                                        Command="{Binding AddImageFromFileCommand}" />
+                                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                        Content="{loc:Translate Panes.TxImageEditor.AddImageFromLastRx}"
+                                                        Command="{Binding AddLastRxImageCommand}" />
+                                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                        Content="{loc:Translate Panes.TxImageEditor.AddImageFromRxHistory}"
+                                                        Command="{Binding RefreshRxHistoryPickerCommand}">
+                                                    <Button.Flyout>
+                                                        <Flyout Placement="RightEdgeAlignedTop">
+                                                            <ScrollViewer MaxHeight="280">
+                                                                <ItemsControl ItemsSource="{Binding RxHistoryPickerEntries}">
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate DataType="vm:TxImageEditorPaneViewModel+RxHistoryPickerEntry">
+                                                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                                                    Margin="0,0,0,2"
+                                                                                    Command="{Binding SelectCommand}" CommandParameter="{Binding}">
+                                                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                                    <Image Source="{Binding Thumbnail}" Width="32" Height="32" Stretch="Uniform" />
+                                                                                    <TextBlock Text="{Binding Id}" VerticalAlignment="Center" />
+                                                                                </StackPanel>
+                                                                            </Button>
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </ScrollViewer>
+                                                        </Flyout>
+                                                    </Button.Flyout>
+                                                </Button>
+                                            </StackPanel>
+                                        </Flyout>
+                                    </Button.Flyout>
+                                </Button>
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.ToolBox}"
+                                        Command="{Binding AddBoxElementCommand}" />
+                            </StackPanel>
+                            <ItemsControl ItemsSource="{Binding OverlayElements}">
+                                <!-- Phase 1: polymorphic per-type DataTemplates (same technique as the
+                                     canvas ItemsControl above) — geometry/lock/reorder/etc. now live
+                                     on the header action group and the (future) GEOMETRY tab, not
+                                     duplicated per row; extending/replacing the original Phase 1 row
+                                     layout, not a separate new panel. -->
+                                <ItemsControl.DataTemplates>
+                                    <DataTemplate DataType="vm:OverlayElementViewModel">
+                                        <Grid ColumnDefinitions="26,*,Auto,20" Margin="0,0,0,2">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeText}" />
+                                            <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding Text}" IsEnabled="{Binding !Locked}" Margin="2,0" />
+                                            <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
+                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
+                                                          IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
+                                                          ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                    <DataTemplate DataType="vm:BoxElementViewModel">
+                                        <Grid ColumnDefinitions="26,*,Auto,20" Margin="0,0,0,2">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeBox}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ToolBox}" />
+                                            <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
+                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
+                                                          IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
+                                                          ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                    <!-- Phase 2: third polymorphic branch, image elements — WITHOUT this,
+                                         an inserted image would still render fine on the canvas (that
+                                         ItemsControl has its own separate 3rd DataTemplate above) but show
+                                         as an uncontrollable fallback row here — real-window-review-caught
+                                         bug class from Phase 1, avoided here by doing both in the same pass.
+                                         "Set as background" has no room in the compact row (it's
+                                         image-only and not part of the shared header group) — reachable
+                                         via the row's own context menu instead (Task #24, already ships
+                                         this item). -->
+                                    <DataTemplate DataType="vm:ImageElementViewModel">
+                                        <Grid ColumnDefinitions="26,*,Auto,20" Margin="0,0,0,2">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeImage}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.AddImage}" />
+                                            <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
+                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
+                                                          IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
+                                                          ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.DataTemplates>
+                            </ItemsControl>
+                        </StackPanel>
+                    </HeaderedContentControl>
 
                     <!-- Insert-field token chips. Only the 5 backed by real data this pass (MY CALL/MY
                          GRID/MY NAME/DATE/UTC, sourced from OperatorSettings + system clock via
