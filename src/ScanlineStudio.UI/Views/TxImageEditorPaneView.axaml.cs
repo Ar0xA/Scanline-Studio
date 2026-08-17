@@ -69,6 +69,15 @@ public partial class TxImageEditorPaneView : UserControl
 
     private void ApplyFitFromViewport() => ViewModel?.ApplyFit(EditorScrollViewer.Bounds.Width, EditorScrollViewer.Bounds.Height);
 
+    // Backlog item (user request, 2026-08-17): 3 more Fit variants, same View-owns-viewport-size
+    // Click-handler pattern as OnFitButtonClick above -- a plain Command binding can't reach
+    // EditorScrollViewer.Bounds.
+    private void OnFitSafeAreaClick(object? sender, RoutedEventArgs e) => ViewModel?.ApplyFitSafeArea(EditorScrollViewer.Bounds.Width, EditorScrollViewer.Bounds.Height);
+
+    private void OnFitWidthClick(object? sender, RoutedEventArgs e) => ViewModel?.ApplyFitWidth(EditorScrollViewer.Bounds.Width);
+
+    private void OnFitHeightClick(object? sender, RoutedEventArgs e) => ViewModel?.ApplyFitHeight(EditorScrollViewer.Bounds.Height);
+
     /// <summary>Task #23 (zoom slider addendum, plan-reviewed) -- Ctrl/Cmd+wheel zooms, anchored so
     /// the canvas pixel under the pointer stays under the pointer (near-universal convention for
     /// scroll-wheel zoom in image editors/maps/browsers; plain center-anchored zoom would lose track
