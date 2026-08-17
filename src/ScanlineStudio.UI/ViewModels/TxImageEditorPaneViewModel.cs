@@ -509,6 +509,42 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     public string WorkingCopyFooterText => _localization.GetString(
         "Panes.TxImageEditor.WorkingCopyFooterFormat", WorkingCopyWidth, WorkingCopyHeight, _targetMode.ImageWidth, _targetMode.ImageHeight);
 
+    /// <summary>Design-fidelity Phase E (#15, mockups/Editwindow line 108) -- a small mono readout
+    /// above the selected element on the interactive canvas: type/z-order + pixel geometry, plus
+    /// rotation for text elements only (the only kind that has any). All-existing properties
+    /// (LeftPixels/TopPixels/CanvasWidthPixels/CanvasHeightPixels/Z/RotationDegrees), reused rather
+    /// than duplicated. Raised on selection change (<see cref="OnSelectedOverlayElementChanged"/>)
+    /// and on every geometry-driving PropertyChanged of the CURRENTLY selected element (see
+    /// <see cref="OnOverlayElementPropertyChanged"/>'s own end-of-method raise).</summary>
+    public string SelectionReadoutText
+    {
+        get
+        {
+            if (SelectedOverlayElement is not { } element)
+            {
+                return string.Empty;
+            }
+
+            var typeLabel = element switch
+            {
+                OverlayElementViewModel => _localization.GetString("Panes.TxImageEditor.TypeBadgeText"),
+                BoxElementViewModel => _localization.GetString("Panes.TxImageEditor.TypeBadgeBox"),
+                ImageElementViewModel => _localization.GetString("Panes.TxImageEditor.TypeBadgeImage"),
+                _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
+            };
+
+            return element is OverlayElementViewModel text
+                ? _localization.GetString(
+                    "Panes.TxImageEditor.SelectionReadoutWithRotationFormat",
+                    typeLabel, element.Z, (int)Math.Round(element.LeftPixels), (int)Math.Round(element.TopPixels),
+                    (int)Math.Round(element.CanvasWidthPixels), (int)Math.Round(element.CanvasHeightPixels), (int)Math.Round(text.RotationDegrees))
+                : _localization.GetString(
+                    "Panes.TxImageEditor.SelectionReadoutFormat",
+                    typeLabel, element.Z, (int)Math.Round(element.LeftPixels), (int)Math.Round(element.TopPixels),
+                    (int)Math.Round(element.CanvasWidthPixels), (int)Math.Round(element.CanvasHeightPixels));
+        }
+    }
+
     /// <summary>The live, current-orientation source -- reflects any <see cref="RotateCommand"/>
     /// calls so far. Round-1 plan-review finding on spec/18-path-to-1.0.md High item 3: a host
     /// (<see cref="TxControlsPaneViewModel"/>) that captured the ORIGINAL constructor argument
@@ -1508,6 +1544,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsFontUnavailable));
         OnPropertyChanged(nameof(FontFamilyPickerItems));
         OnPropertyChanged(nameof(SelectedTextElement));
+        OnPropertyChanged(nameof(SelectionReadoutText));
     }
 
     /// <summary>Phase 4 (spec/15-template-designer.md) -- <see cref="SelectedOverlayElement"/>
@@ -2420,6 +2457,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         {
             OnPropertyChanged(nameof(IsFontUnavailable));
             OnPropertyChanged(nameof(FontFamilyPickerItems));
+        }
+
+        // design-fidelity Phase E (#15): keep the canvas selection readout live across every
+        // geometry-driving change on the CURRENTLY selected element (drag/resize/rotate) -- cheap
+        // (a string format, not a Crop->Resize->ApplyTemplate pass), so raised unconditionally here
+        // rather than added to the early-return filter list above, sidestepping that filter's own
+        // documented "a new derived property must be remembered by hand" failure mode.
+        if (ReferenceEquals(sender, SelectedOverlayElement))
+        {
+            OnPropertyChanged(nameof(SelectionReadoutText));
         }
 
         RecomputePreview();
