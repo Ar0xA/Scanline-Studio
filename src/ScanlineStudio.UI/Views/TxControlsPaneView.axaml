@@ -57,26 +57,26 @@
                      the real R24/PD240 modes (see the plan doc). IsEnabled mirrors the ComboBox's own
                      !IsEditorOpen gate below: High item 2's stale-mode transmit crash fix. -->
                 <UniformGrid Columns="4" Rows="4">
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC1}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-s1" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC2}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-s2" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SCDX}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-dx" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M1}" Command="{Binding QuickSelectModeCommand}" CommandParameter="martin-m1" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M2}" Command="{Binding QuickSelectModeCommand}" CommandParameter="martin-m2" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M3}" Command="{Binding QuickSelectModeCommand}" CommandParameter="r24" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M4}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd240" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.R36}" Command="{Binding QuickSelectModeCommand}" CommandParameter="robot-36" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.R72}" Command="{Binding QuickSelectModeCommand}" CommandParameter="robot-72" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD50}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd50" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD90}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd90" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD120}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd120" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD160}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd160" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD180}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd180" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD290}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd290" IsEnabled="{Binding !IsEditorOpen}" />
-                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC2180}" Command="{Binding QuickSelectModeCommand}" CommandParameter="sc2-180" IsEnabled="{Binding !IsEditorOpen}" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC1}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-s1" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC2}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-s2" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SCDX}" Command="{Binding QuickSelectModeCommand}" CommandParameter="scottie-dx" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M1}" Command="{Binding QuickSelectModeCommand}" CommandParameter="martin-m1" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M2}" Command="{Binding QuickSelectModeCommand}" CommandParameter="martin-m2" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M3}" Command="{Binding QuickSelectModeCommand}" CommandParameter="r24" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.M4}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd240" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.R36}" Command="{Binding QuickSelectModeCommand}" CommandParameter="robot-36" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.R72}" Command="{Binding QuickSelectModeCommand}" CommandParameter="robot-72" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD50}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd50" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD90}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd90" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD120}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd120" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD160}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd160" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD180}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd180" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD290}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd290" />
+                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC2180}" Command="{Binding QuickSelectModeCommand}" CommandParameter="sc2-180" />
                 </UniformGrid>
                 <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}"
                           SelectedItem="{Binding SelectedMode}"
-                          IsEnabled="{Binding !IsEditorOpen}"
+                          IsEnabled="{Binding CanChangeSourceOrMode}"
                           HorizontalAlignment="Stretch">
                     <ComboBox.ItemTemplate>
                         <DataTemplate x:DataType="sstv:SstvModeDefinition">
@@ -273,17 +273,25 @@
             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                 <!-- spec/18-path-to-1.0.md Medium item 5: OpenEditorForSourceAsync already guards
                      against picking a new image while the editor is open (a silent no-op). These
-                     IsEnabled bindings are the missing visual half, matching the mode
-                     ComboBox's/quick-mode-grid's own established !IsEditorOpen XAML binding
-                     pattern (code-review correction: the FAVORITES row gates via CanExecute in the
-                     ViewModel instead, no XAML IsEnabled binding of its own; not the same
-                     mechanism, don't cite it as a third precedent). Disabling the ListBox itself
-                     (not each item) disables every generated child Button too: a DataTemplate
-                     ancestor-binding would be both more fragile and unnecessary here, since each
-                     item's own DataContext is StockEntryViewModel, which has no IsEditorOpen at
-                     all. The File > Open image menu item (Ctrl+O, MainWindow.axaml) reaches this
-                     same SelectImageCommand and needs the identical gate, fixed there too. -->
-                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120" IsEnabled="{Binding !IsEditorOpen}">
+                     IsEnabled bindings are the missing visual half, matching the mode ComboBox's
+                     own established XAML binding pattern (code-review correction: the FAVORITES
+                     row gates via CanExecute in the ViewModel instead, no XAML IsEnabled binding
+                     of its own; not the same mechanism, don't cite it as a third precedent).
+                     Disabling the ListBox itself (not each item) disables every generated child
+                     Button too: a DataTemplate ancestor-binding would be both more fragile and
+                     unnecessary here, since each item's own DataContext is StockEntryViewModel,
+                     which has no IsEditorOpen at all. The File > Open image menu item (Ctrl+O,
+                     MainWindow.axaml) reaches this same SelectImageCommand and needs the identical
+                     gate, fixed there too.
+                     Auditor-found regression (2026-08-17): a bare !IsEditorOpen here made Browse/
+                     STOCK permanently unreachable once the editor started opening by default —
+                     see TxControlsPaneViewModel.CanChangeSourceOrMode's own doc comment for the
+                     fix (relaxed the same way mode-select already was, while a genuinely
+                     in-progress edit still refuses). The quick-mode-grid buttons needed no
+                     equivalent XAML change — their own redundant !IsEditorOpen IsEnabled override
+                     was simply removed, letting the already-correct QuickSelectModeCommand
+                     CanExecute drive them directly. -->
+                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120" IsEnabled="{Binding CanChangeSourceOrMode}">
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
                             <WrapPanel />
@@ -307,7 +315,7 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
                 <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.SelectImage}"
-                        Command="{Binding SelectImageCommand}" IsEnabled="{Binding !IsEditorOpen}"
+                        Command="{Binding SelectImageCommand}" IsEnabled="{Binding CanChangeSourceOrMode}"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                 <!-- Backlog fix (user request, 2026-08-17): opens the editor directly with a blank
                      neutral-gray placeholder instead of requiring Browse/Stock first — "don't leave
@@ -316,7 +324,7 @@
                      Rack/Template Library entry, or use Browse/Stock inside the editor's own STOCK
                      panel, to swap in a real photo. Same IsEnabled gate as Browse/Stock above. -->
                 <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.OpenBlankEditor}"
-                        Command="{Binding OpenBlankEditorCommand}" IsEnabled="{Binding !IsEditorOpen}"
+                        Command="{Binding OpenBlankEditorCommand}" IsEnabled="{Binding CanChangeSourceOrMode}"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                 <TextBlock Classes="IndustryRowLabel" Text="{Binding SelectedFileName}"
                            IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
