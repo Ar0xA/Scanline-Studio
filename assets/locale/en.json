@@ -425,6 +425,8 @@
   "Panes.TxImageEditor.GeometryWidthLabel": "W",
   "Panes.TxImageEditor.GeometryHeightLabel": "H",
   "Panes.TxImageEditor.AlignToCropLabel": "ALIGN TO CROP",
+  "Panes.TxImageEditor.AlignToCropMenu": "Align to crop",
+  "Panes.TxImageEditor.InsertFieldMenu": "Insert field",
   "Panes.TxImageEditor.AlignLeft": "LEFT",
   "Panes.TxImageEditor.AlignCenter": "CENT",
   "Panes.TxImageEditor.AlignRight": "RIGHT",
