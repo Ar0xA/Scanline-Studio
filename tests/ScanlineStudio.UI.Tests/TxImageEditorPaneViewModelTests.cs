@@ -1822,6 +1822,172 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void ApplyFit_ViewportLargerThanWorkingCopy_ZoomFactorGrowsToFillTheSmallerAxis()
+    {
+        // WorkingCopy is 4x4 (SmallMode, within-budget original); a 12x8 viewport is the
+        // constraining (narrower relative) axis on height (8/4=2) vs width (12/4=3) -- Fit takes
+        // the MINIMUM of the two so the whole working copy stays visible on both axes, same
+        // reasoning as PreserveAspect's own Math.Min. (Deliberately within MaxZoomFactor -- the
+        // clamp itself is covered separately below.)
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ApplyFit(12, 8);
+
+        AssertClose(2.0, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFit_ComputedRatioAboveMaxZoomFactor_ClampsToMax()
+    {
+        // 4x4 working copy against a huge viewport would compute a huge ratio unclamped.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ApplyFit(4000, 4000);
+
+        AssertClose(4.0, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFit_ComputedRatioBelowMinZoomFactor_ClampsToMin()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ApplyFit(0.01, 0.01);
+
+        AssertClose(0.1, vm.ZoomFactor);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(0, 10)]
+    [InlineData(10, 0)]
+    [InlineData(-5, 10)]
+    public void ApplyFit_NonPositiveViewportDimension_IsANoOp(double width, double height)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        var zoomBefore = vm.ZoomFactor;
+
+        vm.ApplyFit(width, height);
+
+        AssertClose(zoomBefore, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ZoomActualCommand_SetsZoomFactorToOne()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.ApplyFit(8, 8);
+        AssertClose(2.0, vm.ZoomFactor);
+
+        vm.ZoomActualCommand.Execute(null);
+
+        AssertClose(1.0, vm.ZoomFactor);
+    }
+
+    [AvaloniaFact]
+    public void ZoomFactorChange_PushesZoomedCanvasSizeOntoEveryExistingElement()
+    {
+        // Phase 7 rearchitecture: zoom is baked directly into each element's own ImageWidth/
+        // ImageHeight (= parent's CanvasDisplayWidth/Height) rather than a separate InverseZoomScale
+        // channel -- see TxImageEditorPaneViewModel.ZoomFactor's own doc comment for why.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        vm.AddOverlayElementCommand.Execute(null);
+        var box = vm.OverlayElements[0];
+        var text = vm.OverlayElements[1];
+
+        vm.ZoomFactor = 2.0;
+
+        AssertClose(vm.WorkingCopyWidth * 2.0, vm.CanvasDisplayWidth);
+        AssertClose(vm.WorkingCopyHeight * 2.0, vm.CanvasDisplayHeight);
+        AssertClose(vm.CanvasDisplayWidth, box.ImageWidth);
+        AssertClose(vm.CanvasDisplayHeight, box.ImageHeight);
+        AssertClose(vm.CanvasDisplayWidth, text.ImageWidth);
+        AssertClose(vm.CanvasDisplayHeight, text.ImageHeight);
+    }
+
+    [AvaloniaFact]
+    public void AddElement_AfterZoomChange_NewElementIsSeededWithTheCurrentZoomedCanvasSize()
+    {
+        // The 3 creation sites (CreateOverlayElement/CreateBoxElement/CreateImageElement) push the
+        // parent's CURRENT CanvasDisplayWidth/Height at construction time -- a freshly-added element
+        // must not default back to the unzoomed working-copy size while the editor is already zoomed.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.ZoomFactor = 4.0;
+
+        vm.AddBoxElementCommand.Execute(null);
+
+        var box = vm.OverlayElements[0];
+        AssertClose(vm.CanvasDisplayWidth, box.ImageWidth);
+        AssertClose(vm.CanvasDisplayHeight, box.ImageHeight);
+    }
+
+    [AvaloniaFact]
+    public void ZoomFactorChange_CanvasFontSizeScalesLinearlyWithZoom_NotQuadratically()
+    {
+        // Code-review regression test: an earlier version of ComputeCanvasFontSize multiplied by
+        // ZoomFactor a SECOND time on top of the factor it already inherits implicitly through
+        // CropHeightPixels (zoom-premultiplied per the Phase 7 rearchitecture) -- a real Z^2 bug,
+        // invisible in manual testing done at exactly 1.0 zoom (where Z^2 == Z == 1) but wrong at
+        // every other zoom (e.g. 2.0 would have produced 4x the correct size, not 2x).
+        // FakeTransmitImagePreparer.MeasureFittedFontSize returns a value with no zoom-dependence of
+        // its own (font.Size * imageHeightPx, imageHeightPx is the fixed target-mode height), so any
+        // observed non-linearity here can only come from ComputeCanvasFontSize's own math.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        var baselineFontSize = text.CanvasFontSize;
+
+        vm.ZoomFactor = 2.0;
+
+        AssertClose(baselineFontSize * 2.0, text.CanvasFontSize);
+    }
+
+    [AvaloniaFact]
+    public void ZoomFactorChange_CropPixelsScaleWithZoom()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        var baselineWidth = vm.CropWidthPixels;
+        var baselineHeight = vm.CropHeightPixels;
+
+        vm.ZoomFactor = 2.0;
+
+        AssertClose(baselineWidth * 2.0, vm.CropWidthPixels);
+        AssertClose(baselineHeight * 2.0, vm.CropHeightPixels);
+    }
+
+    [AvaloniaFact]
+    public void SafeAreaInsetPixels_ScalesLinearlyWithZoom()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ZoomFactor = 2.0;
+
+        AssertClose(28.0, vm.SafeAreaInsetPixels);
+    }
+
+    [AvaloniaFact]
+    public void ZoomFactorChange_DoesNotAffectTheTransmittedDocument()
+    {
+        // The whole point of baking zoom into on-screen pixel properties instead of the pipeline: the
+        // operator's current canvas zoom must never change what actually gets transmitted. Z cancels
+        // algebraically inside ProjectRectToCropRelative (see that method's own doc comment) -- this
+        // pins the observable guarantee, not just the internal algebra.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.AddBoxElementCommand.Execute(null);
+        var documentBefore = vm.Document;
+
+        vm.ZoomFactor = 3.0;
+
+        var documentAfter = vm.Document;
+        Assert.Equal(documentBefore.Elements.Count, documentAfter.Elements.Count);
+        for (var i = 0; i < documentBefore.Elements.Count; i++)
+        {
+            Assert.Equal(documentBefore.Elements[i], documentAfter.Elements[i]);
+        }
+    }
+
+    [AvaloniaFact]
     public void IsFontUnavailable_SelectedTextElementFontNotInAvailableFamilies_ReturnsTrue()
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
