@@ -1511,6 +1511,90 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             ? [.. AvailableFontFamilies, text.FontFamily]
             : AvailableFontFamilies;
 
+    /// <summary>EditWindow redesign Phase 3 (mockups/Editwindow) -- three mutually-exclusive flags
+    /// rather than an enum + converter (simpler to bind directly as three IsVisible targets in
+    /// AXAML, matches this codebase's own existing preference for plain bool ObservableProperty
+    /// state over enum-plus-converter machinery elsewhere in this file). Defaults to Text Style,
+    /// matching the mock's own default. "The tab set follows the selected type" (mock's own
+    /// interaction spec) is NOT auto-switched here -- deliberately left as a manual tab click, since
+    /// auto-switching would fight a user who deliberately left GEOMETRY open while clicking between
+    /// several elements to compare positions.</summary>
+    [ObservableProperty]
+    private bool _isTextStyleTabSelected = true;
+
+    [ObservableProperty]
+    private bool _isGeometryTabSelected;
+
+    [ObservableProperty]
+    private bool _isImageTabSelected;
+
+    [RelayCommand]
+    private void SelectTextStyleTab()
+    {
+        IsTextStyleTabSelected = true;
+        IsGeometryTabSelected = false;
+        IsImageTabSelected = false;
+    }
+
+    [RelayCommand]
+    private void SelectGeometryTab()
+    {
+        IsTextStyleTabSelected = false;
+        IsGeometryTabSelected = true;
+        IsImageTabSelected = false;
+    }
+
+    [RelayCommand]
+    private void SelectImageTab()
+    {
+        IsTextStyleTabSelected = false;
+        IsGeometryTabSelected = false;
+        IsImageTabSelected = true;
+    }
+
+    /// <summary>EditWindow redesign Phase 3, GEOMETRY tab -- aligns the selected element to one edge/
+    /// center of the crop rect. <see cref="CropRect"/> is TOP-LEFT-anchored (<c>NormalizedRect.X/Y</c>
+    /// is the left/top edge, confirmed via <see cref="CropLeftPixels"/>'s own
+    /// <c>CropRect.X * CanvasDisplayWidth</c> formula) but element X/Y are CENTER-anchored
+    /// (<see cref="ITemplateElementViewModel"/>'s own doc comment) -- the two conventions differ, so
+    /// "align left" is <c>CropRect.X + element.Width / 2</c>, not a bare <c>CropRect.X</c> copy.
+    /// A single coalesced undo step (<see cref="PushUndoSnapshot"/>, not
+    /// <see cref="ITemplateElementViewModel.PushUndoSnapshotForGeometryChange"/>'s own per-property
+    /// coalescing) since this assigns exactly one property per call, never both X and Y at once.</summary>
+    [RelayCommand]
+    private void AlignSelectedElementToCrop(string alignment)
+    {
+        if (SelectedOverlayElement is not { } element)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        switch (alignment)
+        {
+            case "Left":
+                element.X = CropRect.X + (element.Width / 2);
+                break;
+            case "Center":
+                element.X = CropRect.X + (CropRect.Width / 2);
+                break;
+            case "Right":
+                element.X = CropRect.X + CropRect.Width - (element.Width / 2);
+                break;
+            case "Top":
+                element.Y = CropRect.Y + (element.Height / 2);
+                break;
+            case "Middle":
+                element.Y = CropRect.Y + (CropRect.Height / 2);
+                break;
+            case "Bottom":
+                element.Y = CropRect.Y + CropRect.Height - (element.Height / 2);
+                break;
+        }
+
+        RecomputePreview();
+    }
+
     private bool CanAddPlateBehindText() => SelectedOverlayElement is OverlayElementViewModel;
 
     /// <summary>Phase 4 "plate" (background box behind text) -- DECIDED as a one-shot BUTTON action,

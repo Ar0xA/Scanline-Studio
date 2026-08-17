@@ -2161,6 +2161,107 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotNull(text.AddPlateCommand);
     }
 
+    // EditWindow redesign Phase 3 (mockups/Editwindow), GEOMETRY tab's align-to-crop actions.
+    // CropRect defaults to the full frame (0,0,1,1) in these tests, matching
+    // TxImageEditorPaneViewModel's own default -- Left/Right land at exactly element.Width/2 from
+    // each edge, Top/Bottom at element.Height/2, Center/Middle at exactly 0.5, which is what makes
+    // these good discriminating assertions (a bug that used the WRONG anchor convention -- e.g.
+    // copying CropRect.X directly instead of offsetting by half the element's own size -- would fail
+    // every one of these except Center/Middle, which happen to coincide either way at this crop).
+
+    [AvaloniaTheory]
+    [InlineData("Left", 0.15)]
+    [InlineData("Center", 0.5)]
+    [InlineData("Right", 0.85)]
+    public void AlignSelectedElementToCrop_HorizontalAlignments_SetExpectedX(string alignment, double expectedX)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        element.Width = 0.3;
+        var yBefore = element.Y;
+
+        vm.AlignSelectedElementToCropCommand.Execute(alignment);
+
+        AssertClose(expectedX, element.X);
+        AssertClose(yBefore, element.Y);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("Top", 0.1)]
+    [InlineData("Middle", 0.5)]
+    [InlineData("Bottom", 0.9)]
+    public void AlignSelectedElementToCrop_VerticalAlignments_SetExpectedY(string alignment, double expectedY)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        element.Height = 0.2;
+        var xBefore = element.X;
+
+        vm.AlignSelectedElementToCropCommand.Execute(alignment);
+
+        AssertClose(expectedY, element.Y);
+        AssertClose(xBefore, element.X);
+    }
+
+    [AvaloniaFact]
+    public void AlignSelectedElementToCrop_OnNullSelection_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        var exception = Record.Exception(() => vm.AlignSelectedElementToCropCommand.Execute("Left"));
+
+        Assert.Null(exception);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void AlignSelectedElementToCrop_PushesExactlyOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var undoDepthBeforeAlign = vm.UndoCommand.CanExecute(null);
+
+        vm.AlignSelectedElementToCropCommand.Execute("Left");
+        vm.UndoCommand.Execute(null);
+
+        Assert.Equal(undoDepthBeforeAlign, vm.UndoCommand.CanExecute(null));
+    }
+
+    // EditWindow redesign Phase 3, Inspector tab-selection flags.
+
+    [AvaloniaFact]
+    public void InspectorTabSelection_DefaultsToTextStyle()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        Assert.True(vm.IsTextStyleTabSelected);
+        Assert.False(vm.IsGeometryTabSelected);
+        Assert.False(vm.IsImageTabSelected);
+    }
+
+    [AvaloniaFact]
+    public void InspectorTabSelection_SwitchingTabs_IsMutuallyExclusive()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.SelectGeometryTabCommand.Execute(null);
+        Assert.False(vm.IsTextStyleTabSelected);
+        Assert.True(vm.IsGeometryTabSelected);
+        Assert.False(vm.IsImageTabSelected);
+
+        vm.SelectImageTabCommand.Execute(null);
+        Assert.False(vm.IsTextStyleTabSelected);
+        Assert.False(vm.IsGeometryTabSelected);
+        Assert.True(vm.IsImageTabSelected);
+
+        vm.SelectTextStyleTabCommand.Execute(null);
+        Assert.True(vm.IsTextStyleTabSelected);
+        Assert.False(vm.IsGeometryTabSelected);
+        Assert.False(vm.IsImageTabSelected);
+    }
+
     [AvaloniaFact]
     public void IsFontUnavailable_SelectedTextElementFontNotInAvailableFamilies_ReturnsTrue()
     {
