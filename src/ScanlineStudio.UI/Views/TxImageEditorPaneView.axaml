@@ -1140,23 +1140,45 @@
                                      layout, not a separate new panel. -->
                                 <ItemsControl.DataTemplates>
                                     <DataTemplate DataType="vm:OverlayElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20" Margin="0,0,0,2">
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeText}" />
                                             <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding Text}" IsEnabled="{Binding !Locked}" Margin="2,0" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
                                             <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                            <!-- Backlog item (user request, 2026-08-17): per-row delete, no
+                                                 header-group-only path needed. RemoveCommand is the SAME
+                                                 parent-pushed instance the context menu's own Remove item
+                                                 already binds — CommandParameter="{Binding}" resolves
+                                                 against this row's own DataContext (the element itself,
+                                                 not SelectedOverlayElement), matching that item's own
+                                                 precedent exactly. -->
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                                    Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
+                                                    Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />
                                         </Grid>
                                     </DataTemplate>
                                     <DataTemplate DataType="vm:BoxElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20" Margin="0,0,0,2">
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeBox}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ToolBox}" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
                                             <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                            <!-- Backlog item (user request, 2026-08-17): per-row delete, no
+                                                 header-group-only path needed. RemoveCommand is the SAME
+                                                 parent-pushed instance the context menu's own Remove item
+                                                 already binds — CommandParameter="{Binding}" resolves
+                                                 against this row's own DataContext (the element itself,
+                                                 not SelectedOverlayElement), matching that item's own
+                                                 precedent exactly. -->
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                                    Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
+                                                    Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />
                                         </Grid>
                                     </DataTemplate>
                                     <!-- Phase 2: third polymorphic branch, image elements — WITHOUT this,
@@ -1169,13 +1191,24 @@
                                          via the row's own context menu instead (Task #24, already ships
                                          this item). -->
                                     <DataTemplate DataType="vm:ImageElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20" Margin="0,0,0,2">
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeImage}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.AddImage}" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
                                             <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                            <!-- Backlog item (user request, 2026-08-17): per-row delete, no
+                                                 header-group-only path needed. RemoveCommand is the SAME
+                                                 parent-pushed instance the context menu's own Remove item
+                                                 already binds — CommandParameter="{Binding}" resolves
+                                                 against this row's own DataContext (the element itself,
+                                                 not SelectedOverlayElement), matching that item's own
+                                                 precedent exactly. -->
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                                    Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
+                                                    Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />
                                         </Grid>
                                     </DataTemplate>
                                 </ItemsControl.DataTemplates>
