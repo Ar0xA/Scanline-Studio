@@ -66,15 +66,15 @@
                      the 8th (Move) had no distinct behavior of its own to keep (drag always works
                      regardless of any "tool" selection) — a lone surviving radio with no group
                      siblings would look broken, not minimal. -->
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding UndoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding RedoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
+                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding UndoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
+                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RedoCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
                 <!-- Phase 7 (spec/15-template-designer.md): Fit needs the ScrollViewer's own runtime
                      viewport size (View knowledge), which a plain Command binding can't supply, so
                      Click reads EditorScrollViewer.Bounds in code-behind and calls vm.ApplyFit(w,h)
                      directly — a small necessary deviation from a zero-arg RelayCommand. 100% needs
                      no viewport data, so it stays a plain Command binding. -->
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Click="OnFitButtonClick" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" />
-                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Command="{Binding ZoomActualCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
+                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Click="OnFitButtonClick" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.Fit}" />
+                <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding ZoomActualCommand}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.ZoomActual}" />
                 <!-- Task #23 (zoom slider addendum, plan-reviewed). Minimum/Maximum bound via
                      x:Static to the VM's own public MinZoomFactor/MaxZoomFactor consts — NOT
                      hardcoded XAML literals — since ZoomFactor's own property setter has no clamp;
@@ -97,15 +97,15 @@
                             VerticalAlignment="Center" />
                     <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding ZoomPercentText}" />
                 </StackPanel>
-                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="{Binding SnapToGrid}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SnapGrid.Help}" />
-                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" IsChecked="{Binding SafeAreaVisible}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" />
+                <ToggleButton Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" IsChecked="{Binding SnapToGrid}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SnapGrid.Help}" />
+                <ToggleButton Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" IsChecked="{Binding SafeAreaVisible}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" />
                 <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{Binding DimensionsChipText}" /></Border>
 
                 <!-- Real, wired: aspect toggle + add-text + apply/cancel. PreserveAspect has no
                      mockup equivalent (mock2's own row ends at the dimensions chip) — reuses
                      IndustryMiniToggleTheme per its own established "checkbox-like toggle with no
                      mockup equivalent" precedent (Peak-hold/SWR-cutoff), not a new CheckBox atom. -->
-                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="12,0,4,4"
+                <ToggleButton Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Margin="12,0,4,4"
                               IsChecked="{Binding PreserveAspect}"
                               Content="{loc:Translate Panes.TxImageEditor.PreserveAspect}" />
                 <!-- Real, wired (spec/18-path-to-1.0.md High item 4): constrains crop-rect drag-resize
@@ -115,7 +115,7 @@
                      edge-to-edge with zero distortion and zero letterboxing — the tooltip states
                      that combination explicitly since the two toggles' relationship isn't obvious
                      from the labels alone. -->
-                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4"
+                <ToggleButton Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Margin="0,0,4,4"
                               IsChecked="{Binding LockAspectToMode}"
                               Content="{loc:Translate Panes.TxImageEditor.LockAspectToMode}"
                               ToolTip.Tip="{loc:Translate Panes.TxImageEditor.LockAspectToMode.Help}" />
@@ -158,7 +158,12 @@
                      ITemplateStore-backed ReadyRackViewModel wiring — this phase only moves it, see
                      each control's own doc comment further down for why it's built the way it is. -->
                 <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
-                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="0,0,4,0">
+                <!-- Margin top=6 (Phase A design-fidelity fix): same clip this ScrollViewer-wraps-
+                     content pattern already established at TxControlsPaneView.axaml:16-22 — the
+                     ScrollViewer clips to its own viewport regardless of ClipToBounds="False" on the
+                     HeaderedContentControl itself, so the first card's -5px title notch needs literal
+                     headroom on the scrolled CONTENT, not the ScrollViewer element. -->
+                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,4,0">
                     <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.TemplatesHeader}" />
@@ -717,8 +722,9 @@
                 <!-- Margin right of 12 clears Fluent's overlay vertical scrollbar (it floats over
                      content rather than reserving a column) — confirmed via real-window testing
                      that without this, the scrollbar thumb visually overlaps and silently eats
-                     clicks on the right-edge Save button (Phase 5). -->
-                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="0,0,12,0">
+                     clicks on the right-edge Save button (Phase 5). Margin top=6 (Phase A design-
+                     fidelity fix): same first-card title-notch clip fix as the rail column above. -->
+                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,12,0">
 
                     <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
@@ -757,39 +763,46 @@
                         </HeaderedContentControl.Header>
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="{StaticResource IndustrySpacingTight}">
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
                                         Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
                                         Command="{Binding BringToFrontCommand}" CommandParameter="{Binding SelectedOverlayElement}"
                                         ToolTip.Tip="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
                                         Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
                                         Command="{Binding SendToBackCommand}" CommandParameter="{Binding SelectedOverlayElement}"
                                         ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        Content="{loc:Translate Panes.TxImageEditor.Duplicate}"
+                                <!-- Phase A design-fidelity fix: dedicated Header-action keys
+                                     (DuplicateHeaderAction/RemoveHeaderAction), NOT the shared
+                                     Duplicate/Remove keys the context menu (Task #24) also binds —
+                                     those stay sentence-case matching the mock's own context-menu
+                                     convention, while these compact 21px header buttons need the
+                                     mock's own abbreviated DUP/DEL to avoid clipping ("DUPLICATE"
+                                     visibly overflowed this button width at this font size). -->
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
+                                        Content="{loc:Translate Panes.TxImageEditor.DuplicateHeaderAction}"
                                         Command="{Binding DuplicateCommand}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        Content="{loc:Translate Panes.TxImageEditor.Remove}"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
+                                        Content="{loc:Translate Panes.TxImageEditor.RemoveHeaderAction}"
                                         Command="{Binding RemoveOverlayElementCommand}" CommandParameter="{Binding SelectedOverlayElement}" />
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AddText}"
                                         Command="{Binding AddOverlayElementCommand}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AddImage}">
                                     <Button.Flyout>
                                         <Flyout Placement="Bottom">
                                             <StackPanel Spacing="4" MinWidth="180">
-                                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
                                                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                                         Content="{loc:Translate Panes.TxImageEditor.AddImageFromFile}"
                                                         Command="{Binding AddImageFromFileCommand}" />
-                                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
                                                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                                         Content="{loc:Translate Panes.TxImageEditor.AddImageFromLastRx}"
                                                         Command="{Binding AddLastRxImageCommand}" />
-                                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
                                                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                                         Content="{loc:Translate Panes.TxImageEditor.AddImageFromRxHistory}"
                                                         Command="{Binding RefreshRxHistoryPickerCommand}">
@@ -799,7 +812,7 @@
                                                                 <ItemsControl ItemsSource="{Binding RxHistoryPickerEntries}">
                                                                     <ItemsControl.ItemTemplate>
                                                                         <DataTemplate DataType="vm:TxImageEditorPaneViewModel+RxHistoryPickerEntry">
-                                                                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
                                                                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                                                                     Margin="0,0,0,2"
                                                                                     Command="{Binding SelectCommand}" CommandParameter="{Binding}">
@@ -819,7 +832,7 @@
                                         </Flyout>
                                     </Button.Flyout>
                                 </Button>
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.ToolBox}"
                                         Command="{Binding AddBoxElementCommand}" />
                             </StackPanel>
@@ -1017,35 +1030,35 @@
                                      panel, unchanged otherwise) for the full reasoning. -->
                                 <Border Classes="IndustryRow"><TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" /></Border>
                                 <WrapPanel>
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 </WrapPanel>
                                 <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.SourceLabel}" />
                                     <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.SourceValue}" />
                                 </Grid></Border>
 
-                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AddPlate}"
                                         Command="{Binding AddPlateBehindTextCommand}" />
                             </StackPanel>
@@ -1084,20 +1097,20 @@
                             </Grid>
                             <TextBlock Classes="IndustryRowLabel" Margin="0,4,0,0" Text="{loc:Translate Panes.TxImageEditor.AlignToCropLabel}" />
                             <Grid ColumnDefinitions="*,*,*,*,*,*" ColumnSpacing="3">
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AlignLeft}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Left" />
-                                <Button Grid.Column="1" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AlignCenter}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Center" />
-                                <Button Grid.Column="2" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AlignRight}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Right" />
-                                <Button Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AlignTop}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Top" />
-                                <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AlignMiddle}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Middle" />
-                                <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Grid.Column="5" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AlignBottom}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Bottom" />
                             </Grid>
-                            <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,4,0,0"
+                            <ToggleButton Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Margin="0,4,0,0"
                                           IsChecked="{Binding SnapToGrid}" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SnapGrid.Help}" />
                         </StackPanel>
                     </StackPanel>
@@ -1197,10 +1210,10 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Spacing="{StaticResource IndustrySpacingTight}">
                         <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.SendHeader}" />
-                        <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                        <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                 Content="{loc:Translate Panes.TxImageEditor.Cancel}"
                                 Command="{Binding CancelCommand}" />
-                        <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                        <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                 Content="{loc:Translate Panes.TxImageEditor.Apply}"
                                 Command="{Binding ApplyCommand}" />
                     </StackPanel>
