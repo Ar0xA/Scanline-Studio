@@ -1690,6 +1690,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         SetTextColorPresetCommand.NotifyCanExecuteChanged();
         AddPlateBehindTextCommand.NotifyCanExecuteChanged();
         DuplicateCommand.NotifyCanExecuteChanged();
+        CopySelectedElementCommand.NotifyCanExecuteChanged();
+        CutSelectedElementCommand.NotifyCanExecuteChanged();
         // Code-review finding: FontFamilyPickerItems/IsFontUnavailable MUST raise BEFORE
         // SelectedTextElement -- the Font ComboBox's ItemsSource is bound to
         // FontFamilyPickerItems and its SelectedItem (two-way) to SelectedTextElement.FontFamily.
@@ -1948,8 +1950,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             return;
         }
 
+        InsertClonedSnapshot(BuildRawSnapshot(selected));
+    }
+
+    /// <summary>Backlog item (user request, 2026-08-17): factored out of <see cref="Duplicate"/> so
+    /// <see cref="PasteElement"/> (Copy/Cut/Paste addendum) can reuse the identical
+    /// offset/Z/background-clearing logic instead of a second, driftable copy -- both commands mean
+    /// the exact same thing ("insert an independent clone of this snapshot"), just sourced
+    /// differently (the currently-selected element vs. <see cref="_clipboardSnapshot"/>).</summary>
+    private void InsertClonedSnapshot(RawElementSnapshot snapshot)
+    {
         const double offset = 0.02;
-        var snapshot = BuildRawSnapshot(selected) switch
+        var offsetSnapshot = snapshot switch
         {
             RawImageElementSnapshot image => image with
             {
@@ -1975,10 +1987,56 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         };
 
         PushUndoSnapshot();
-        var copy = CreateElementFromSnapshot(snapshot);
+        var copy = CreateElementFromSnapshot(offsetSnapshot);
         OverlayElements.Add(copy);
         SelectedOverlayElement = copy;
         RecomputePreview();
+    }
+
+    /// <summary>Backlog item (user request, 2026-08-17): in-editor Copy/Cut/Paste for canvas
+    /// elements -- NOT the OS clipboard (no cross-app paste target exists for a
+    /// <see cref="RawElementSnapshot"/>), a plain in-memory field, same scope as every other
+    /// element-manipulation command in this file. Copy/Cut/Paste are wired to Ctrl/Cmd+C/X/V in
+    /// <c>TxImageEditorPaneView.axaml.cs</c>'s <c>OnCanvasKeyDown</c>, the same handler as the
+    /// existing Delete/arrow-key/Escape bindings.</summary>
+    private RawElementSnapshot? _clipboardSnapshot;
+
+    private bool CanCopyOrCutSelectedElement() => SelectedOverlayElement is not null;
+
+    [RelayCommand(CanExecute = nameof(CanCopyOrCutSelectedElement))]
+    private void CopySelectedElement()
+    {
+        if (SelectedOverlayElement is not { } selected)
+        {
+            return;
+        }
+
+        _clipboardSnapshot = BuildRawSnapshot(selected);
+        PasteElementCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanCopyOrCutSelectedElement))]
+    private void CutSelectedElement()
+    {
+        if (SelectedOverlayElement is not { } selected)
+        {
+            return;
+        }
+
+        _clipboardSnapshot = BuildRawSnapshot(selected);
+        RemoveOverlayElement(selected);
+        PasteElementCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CanPasteElement() => _clipboardSnapshot is not null;
+
+    [RelayCommand(CanExecute = nameof(CanPasteElement))]
+    private void PasteElement()
+    {
+        if (_clipboardSnapshot is { } snapshot)
+        {
+            InsertClonedSnapshot(snapshot);
+        }
     }
 
     /// <summary>Phase 3 (spec/15-template-designer.md) -- discovers which template-variable KEYS are
