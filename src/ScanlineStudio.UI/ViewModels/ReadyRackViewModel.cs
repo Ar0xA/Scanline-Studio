@@ -105,11 +105,51 @@ public sealed partial class ReadyRackViewModel : ObservableObject
 
     public ObservableCollection<TemplateListRowViewModel> AllTemplates { get; } = [];
 
+    /// <summary>The TEMPLATE LIBRARY panel's own filtered view of <see cref="AllTemplates"/>
+    /// (design-fidelity Phase D, mockups/Editwindow) -- case-insensitive substring match against
+    /// <see cref="TemplateListRowViewModel.Name"/>, empty filter shows all. First text-filter UI in
+    /// this codebase (no <c>ICollectionView</c>/existing filter precedent to copy -- confirmed via
+    /// grep before writing this), so kept as a plain re-populated collection matching this project's
+    /// own established "no CollectionView" convention rather than introducing one for a single call
+    /// site.</summary>
+    public ObservableCollection<TemplateListRowViewModel> FilteredTemplates { get; } = [];
+
+    [ObservableProperty]
+    private string _libraryFilterText = string.Empty;
+
+    partial void OnLibraryFilterTextChanged(string value) => RefreshFilteredTemplates();
+
     /// <summary>Backs the Templates panel's empty-state text -- explicitly re-raised at the end of
     /// <see cref="RefreshAsync"/> (a plain computed property over <see cref="AllTemplates"/>.Count
     /// has no INotifyPropertyChanged of its own; <see cref="ObservableCollection{T}.CollectionChanged"/>
     /// isn't the same event WPF/Avalonia bindings listen for on a property path).</summary>
     public bool HasNoTemplates => AllTemplates.Count == 0;
+
+    /// <summary>Backs the TEMPLATE LIBRARY header's count readout -- same re-raise-after-RefreshAsync
+    /// discipline as <see cref="HasNoTemplates"/>, same reason (a plain <c>AllTemplates.Count</c>
+    /// computed property has no property-changed notification of its own).</summary>
+    public int TemplateCount => AllTemplates.Count;
+
+    /// <summary>Distinct from <see cref="HasNoTemplates"/> -- that one covers a genuinely empty
+    /// library (nothing saved yet); this one covers a non-empty library that the active
+    /// <see cref="LibraryFilterText"/> happens to exclude entirely, which would otherwise render as
+    /// a silent blank list with no explanation (found during Phase D real-window verification).</summary>
+    public bool HasNoFilteredTemplates => AllTemplates.Count > 0 && FilteredTemplates.Count == 0;
+
+    private void RefreshFilteredTemplates()
+    {
+        FilteredTemplates.Clear();
+        var filter = LibraryFilterText.Trim();
+        foreach (var row in AllTemplates)
+        {
+            if (filter.Length == 0 || row.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+            {
+                FilteredTemplates.Add(row);
+            }
+        }
+
+        OnPropertyChanged(nameof(HasNoFilteredTemplates));
+    }
 
     /// <summary>Fired when a template should be loaded into the live editor -- a rack slot
     /// click/number-key (<see cref="RecallSlot"/>) or an "All templates" row's Load action
@@ -157,7 +197,9 @@ public sealed partial class ReadyRackViewModel : ObservableObject
                     : null;
             }
 
+            RefreshFilteredTemplates();
             OnPropertyChanged(nameof(HasNoTemplates));
+            OnPropertyChanged(nameof(TemplateCount));
         }
         catch (Exception ex)
         {

@@ -163,4 +163,62 @@ public sealed class ReadyRackViewModelTests
         Assert.NotNull(section);
         Assert.Empty(section!.PinnedTemplateIds);
     }
+
+    [Fact]
+    public async Task FilteredTemplates_LibraryFilterText_NarrowsCaseInsensitiveSubstringMatch()
+    {
+        // Design-fidelity Phase D (mockups/Editwindow): the TEMPLATE LIBRARY panel's own filter box
+        // -- first text-filter surface in this codebase, no ICollectionView precedent to copy.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "CQ Call · Wide");
+        await SaveTemplateAsync(templateStore, "QSO Reply");
+        await SaveTemplateAsync(templateStore, "73 / Thanks");
+        await readyRack.RefreshAsync();
+        Assert.Equal(3, readyRack.FilteredTemplates.Count);
+
+        readyRack.LibraryFilterText = "cq";
+
+        Assert.Equal(["CQ Call · Wide"], readyRack.FilteredTemplates.Select(t => t.Name));
+        Assert.False(readyRack.HasNoFilteredTemplates);
+
+        readyRack.LibraryFilterText = "  ";
+
+        Assert.Equal(3, readyRack.FilteredTemplates.Count);
+    }
+
+    [Fact]
+    public async Task HasNoFilteredTemplates_TrueOnlyWhenLibraryIsNonEmptyButFilterExcludesEverything()
+    {
+        var readyRack = CreateReadyRack();
+        Assert.False(readyRack.HasNoFilteredTemplates);
+        Assert.True(readyRack.HasNoTemplates);
+
+        var templateStore = new FakeTemplateStore();
+        readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "CQ Call");
+        await readyRack.RefreshAsync();
+        Assert.False(readyRack.HasNoFilteredTemplates);
+
+        readyRack.LibraryFilterText = "nomatch";
+
+        Assert.True(readyRack.HasNoFilteredTemplates);
+        Assert.False(readyRack.HasNoTemplates);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_ReappliesTheActiveFilter_SoANewlySavedTemplateRespectsIt()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "Contest Serial");
+        await readyRack.RefreshAsync();
+        readyRack.LibraryFilterText = "contest";
+        Assert.Single(readyRack.FilteredTemplates);
+
+        await SaveTemplateAsync(templateStore, "DX Pool · Slow");
+        await readyRack.RefreshAsync();
+
+        Assert.Equal(["Contest Serial"], readyRack.FilteredTemplates.Select(t => t.Name));
+    }
 }
