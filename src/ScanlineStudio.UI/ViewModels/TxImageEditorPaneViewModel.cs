@@ -453,6 +453,20 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// conversion, so a real bool property is the correct fix here, not a shortcut.</summary>
     public bool HasNoTemplateVariableRows => TemplateVariableRows.Count == 0;
 
+    /// <summary>Design-fidelity Phase F (#9, mockups/Editwindow line 239) -- QSO FILL header's
+    /// compact token-count note. Same re-raise-alongside-<see cref="HasNoTemplateVariableRows"/>
+    /// discipline (both derive from <see cref="TemplateVariableRows"/>.Count, which has no
+    /// property-changed notification of its own).</summary>
+    public string TemplateVariableCountText => _localization.GetString(
+        "Panes.TxImageEditor.TemplateVariableCountFormat", TemplateVariableRows.Count);
+
+    /// <summary>Design-fidelity Phase F (#9, mockups/Editwindow line 239) -- SEND side's compact
+    /// mode/duration meta line. The mock's own version also shows SWR, which this VM has no access
+    /// to (a TX-hardware meter reading that lives on <c>TxControlsPaneViewModel</c>, cross-VM data
+    /// this pass doesn't wire up) -- a real, deliberate scope cut, not silently dropped.</summary>
+    public string SendMetaText => _localization.GetString(
+        "Panes.TxImageEditor.SendMetaFormat", _targetMode.DisplayName, _targetMode.LineDurationMs * _targetMode.ImageHeight / 1000.0);
+
     /// <summary>Snapshot of the current template-variable value map, for a host
     /// (<see cref="TxControlsPaneViewModel"/>) to capture alongside <see cref="RawOverlayElements"/>
     /// when building its own re-open <c>EditState</c> -- same "read-only snapshot for callers that
@@ -1855,6 +1869,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
 
         OnPropertyChanged(nameof(HasNoTemplateVariableRows));
+        OnPropertyChanged(nameof(TemplateVariableCountText));
     }
 
     /// <summary>Fired by a <see cref="TemplateVariableRowViewModel"/>'s own

@@ -3303,6 +3303,46 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void TemplateVariableCountText_TracksTemplateVariableRowsCount()
+    {
+        // design-fidelity Phase F (#9): TemplateVariableCountText is a plain computed property with
+        // no property-changed notification of its own -- RescanTemplateVariables (the one place
+        // TemplateVariableRows changes) is the one place it needs raising, same discipline already
+        // established for HasNoTemplateVariableRows.
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{his_call}";
+
+        _ = vm.TemplateVariableCountText;
+
+        Assert.Equal("Panes.TxImageEditor.TemplateVariableCountFormat", localization.LastKey);
+        Assert.Equal(new object[] { 1 }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public void SendMetaText_UsesTargetModeDisplayNameAndDuration()
+    {
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+
+        _ = vm.SendMetaText;
+
+        Assert.Equal("Panes.TxImageEditor.SendMetaFormat", localization.LastKey);
+        Assert.Equal(
+            new object[] { SmallMode.DisplayName, SmallMode.LineDurationMs * SmallMode.ImageHeight / 1000.0 },
+            localization.LastArgs);
+    }
+
+    [AvaloniaFact]
     public void ClearTemplateVariablesCommand_CanExecute_FalseUntilAValueIsActuallyTyped()
     {
         // Real-window finding: merely REFERENCING a token (a row appearing) must NOT be enough to
