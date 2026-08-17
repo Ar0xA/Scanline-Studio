@@ -593,10 +593,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     public double CanvasDisplayHeight => WorkingCopyHeight * ZoomFactor;
 
+    /// <summary>The safe-area inset in WORKING-COPY (unzoomed) units -- shared by
+    /// <see cref="SafeAreaInsetPixels"/> (display) and <see cref="ApplyFitSafeArea"/> (which needs
+    /// the zoom-INDEPENDENT inset to avoid a circular "zoom depends on safe-area size which depends
+    /// on zoom" dependency).</summary>
+    private const double SafeAreaInsetWorkingCopyUnits = 14;
+
     /// <summary>Safe-area guide inset (<c>TxImageEditorPaneView.axaml</c>'s dashed <c>Rectangle</c>),
     /// zoom-scaled so it still marks the same IMAGE-relative region at any zoom -- 14 was previously a
     /// literal XAML <c>Margin="14"</c> (screen px, correct only at the zoom that didn't exist yet).</summary>
-    public double SafeAreaInsetPixels => 14 * ZoomFactor;
+    public double SafeAreaInsetPixels => SafeAreaInsetWorkingCopyUnits * ZoomFactor;
 
     /// <summary>Backlog fix (user real-window finding, 2026-08-17): the safe-area guide's own
     /// Width/Height, for Canvas.Left/Top+Width/Height positioning DIRECTLY INSIDE EditorCanvas --
@@ -698,6 +704,57 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         var fit = Math.Min(viewportWidth / WorkingCopyWidth, viewportHeight / WorkingCopyHeight);
         ZoomFactor = Math.Clamp(fit, MinZoomFactor, MaxZoomFactor);
+    }
+
+    /// <summary>Backlog item (user request, 2026-08-17) -- "Fit" variant that fits the SAFE-AREA box
+    /// (not the whole frame) into the viewport, so the safe-area guide itself fills the available
+    /// space. The safe area's own working-copy-space size (<see cref="SafeAreaInsetWorkingCopyUnits"/>,
+    /// not <see cref="SafeAreaInsetPixels"/>) is zoom-INDEPENDENT by construction -- using the
+    /// zoom-scaled inset here would make the target depend on the very zoom being solved for. Falls
+    /// back to whole-frame <see cref="ApplyFit"/> when the safe-area box would be degenerate (a mode
+    /// small enough that twice the inset exceeds its own dimensions -- the same real, reachable floor
+    /// case <see cref="SafeAreaWidthPixels"/>/<see cref="SafeAreaHeightPixels"/> already guard).</summary>
+    public void ApplyFitSafeArea(double viewportWidth, double viewportHeight)
+    {
+        if (viewportWidth <= 0 || viewportHeight <= 0 || WorkingCopyWidth <= 0 || WorkingCopyHeight <= 0)
+        {
+            return;
+        }
+
+        var safeWidth = WorkingCopyWidth - (2 * SafeAreaInsetWorkingCopyUnits);
+        var safeHeight = WorkingCopyHeight - (2 * SafeAreaInsetWorkingCopyUnits);
+        if (safeWidth <= 0 || safeHeight <= 0)
+        {
+            ApplyFit(viewportWidth, viewportHeight);
+            return;
+        }
+
+        var fit = Math.Min(viewportWidth / safeWidth, viewportHeight / safeHeight);
+        ZoomFactor = Math.Clamp(fit, MinZoomFactor, MaxZoomFactor);
+    }
+
+    /// <summary>Backlog item (user request, 2026-08-17) -- fits ONLY the working copy's width into
+    /// the viewport (height may overflow into the ScrollViewer's own native vertical scroll) -- same
+    /// View-owns-viewport-size call convention as <see cref="ApplyFit"/>.</summary>
+    public void ApplyFitWidth(double viewportWidth)
+    {
+        if (viewportWidth <= 0 || WorkingCopyWidth <= 0)
+        {
+            return;
+        }
+
+        ZoomFactor = Math.Clamp(viewportWidth / WorkingCopyWidth, MinZoomFactor, MaxZoomFactor);
+    }
+
+    /// <summary>Same reasoning as <see cref="ApplyFitWidth"/>, for height.</summary>
+    public void ApplyFitHeight(double viewportHeight)
+    {
+        if (viewportHeight <= 0 || WorkingCopyHeight <= 0)
+        {
+            return;
+        }
+
+        ZoomFactor = Math.Clamp(viewportHeight / WorkingCopyHeight, MinZoomFactor, MaxZoomFactor);
     }
 
     public double CropLeftPixels => CropRect.X * CanvasDisplayWidth;
