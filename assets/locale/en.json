@@ -298,6 +298,8 @@
   "QsoLink.Error.LoggedButLinkFailed": "The QSO was logged, but this frame could no longer be linked -- it may have aged out of history. Link it from the Logbook tab instead.",
   "Panes.TxControls.ModeLabel": "MODE",
   "Panes.TxControls.SelectImage": "Browse...",
+  "Panes.TxControls.OpenBlankEditor": "Open editor",
+  "Panes.TxControls.BlankImageName": "Blank",
   "Panes.TxControls.EditImage": "Edit...",
   "Panes.TxControls.StockLabel": "STOCK",
   "Panes.TxControls.Transmit": "Transmit",

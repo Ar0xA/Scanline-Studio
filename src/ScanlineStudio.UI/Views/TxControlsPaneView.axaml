@@ -309,6 +309,15 @@
                 <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.SelectImage}"
                         Command="{Binding SelectImageCommand}" IsEnabled="{Binding !IsEditorOpen}"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                <!-- Backlog fix (user request, 2026-08-17): opens the editor directly with a blank
+                     neutral-gray placeholder instead of requiring Browse/Stock first — "don't leave
+                     the TX window completely empty until you load an image, that makes no sense when
+                     you have ready images already/templates." The operator can then Load a Ready
+                     Rack/Template Library entry, or use Browse/Stock inside the editor's own STOCK
+                     panel, to swap in a real photo. Same IsEnabled gate as Browse/Stock above. -->
+                <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.OpenBlankEditor}"
+                        Command="{Binding OpenBlankEditorCommand}" IsEnabled="{Binding !IsEditorOpen}"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                 <TextBlock Classes="IndustryRowLabel" Text="{Binding SelectedFileName}"
                            IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
                 <Image Source="{Binding PreviewImage}"

@@ -1203,6 +1203,38 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_OpensTheEditorWithAModeSizedNeutralPlaceholder()
+    {
+        // Backlog fix (user request, 2026-08-17): "don't leave the TX window completely empty until
+        // you load an image" -- opens the editor without any Browse/Stock pick, using a solid
+        // neutral-gray placeholder sized to the target mode's own frame dimensions.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+
+        Assert.Equal(TestMode.ImageWidth, editor.CurrentSource.Width);
+        Assert.Equal(TestMode.ImageHeight, editor.CurrentSource.Height);
+        Assert.True(vm.IsEditorOpen);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_ReentrantCall_IsANoOp()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editorOpenedCount = 0;
+        vm.EditorOpened += _ => editorOpenedCount++;
+
+        await vm.OpenBlankEditorCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        await vm.OpenBlankEditorCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, editorOpenedCount);
+    }
+
+    [AvaloniaFact]
     public void TxControlsPaneViewModel_SelectingANewMode_ClearsAlreadyLoadedImage()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
