@@ -173,90 +173,118 @@
                  redesign, not yet done here — this phase is the 3-column skeleton only. -->
             <Grid Grid.Row="2" ColumnDefinitions="212,*,364" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
 
-                <!-- RECALL rail (EditWindow redesign Phase 1): the ready rack + template library,
-                     relocated here from the bottom of the old single sidebar (mockups/Editwindow
-                     README's own stated gap: "the rack is a same-window action, treat it as such,"
-                     i.e. give it a permanent, dedicated home rather than burying it below a scrolled
-                     stack of unrelated panels). Content unchanged from Phase 5's own real
-                     ITemplateStore-backed ReadyRackViewModel wiring — this phase only moves it, see
-                     each control's own doc comment further down for why it's built the way it is. -->
-                <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
-                <!-- Margin top=6 (Phase A design-fidelity fix): same clip this ScrollViewer-wraps-
-                     content pattern already established at TxControlsPaneView.axaml:16-22 — the
-                     ScrollViewer clips to its own viewport regardless of ClipToBounds="False" on the
-                     HeaderedContentControl itself, so the first card's -5px title notch needs literal
-                     headroom on the scrolled CONTENT, not the ScrollViewer element. -->
-                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,4,0">
-                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
+                <!-- RECALL rail (EditWindow redesign Phase 1, reshaped by design-fidelity Phase D,
+                     mockups/Editwindow lines 42-73): two independent bordered panels, not one —
+                     fixed READY RACK (9 numbered rows) on top, flex TEMPLATE LIBRARY (filter +
+                     scrolling name list + save footer) filling the rest of the column. The rail's
+                     own root is a plain Grid now, not an outer ScrollViewer — RACK has a fixed,
+                     bounded height (always exactly 9 rows) and LIBRARY owns its own internal scroll
+                     region instead (below), matching the mock's own two-block layout rather than one
+                     scrolled stack. -->
+                <Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,4,0">
+
+                    <!-- READY RACK: vertical list of 9 rows (design-fidelity Phase D reshape of the
+                         old 3x3 button grid, mock lines 47-56), 1 = top, matching the same reading
+                         order as the number-key accelerators (D1..D9, see
+                         TxImageEditorPaneView.axaml.cs's OnRootKeyDown). An empty slot renders a
+                         dashed placeholder + a "pin from library" hint (mock's own decorative label
+                         for the same underlying action — pinning a template from the LIBRARY list
+                         below fills the first empty slot, see ReadyRackViewModel.TogglePinAsync; this
+                         row has no command of its own, same as before). RecallCommand no-ops on click
+                         for an empty slot (see ReadyRackViewModel.RecallSlot's own doc comment). -->
+                    <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
-                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.TemplatesHeader}" />
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.ReadyRackHeader}" />
                         </HeaderedContentControl.Header>
+                        <!-- KEYS 1-9 hint moved from the header tab into the content's own top row
+                             (real-window finding): the group-box title tab (IndustryGroupBoxTheme)
+                             auto-sizes to its Header content instead of stretching to the card's own
+                             width (it's a floating top-left tab, not a full-width bar like the mock's
+                             own header row) — a Grid.ColumnDefinitions="*,Auto" inside it measures
+                             under effectively infinite available width, so the star column collapses
+                             to its content's own size instead of pushing the Auto column to the right
+                             edge, and the two TextBlocks render jammed together with no gap. Every
+                             other panel in this codebase already lives with a title-only tab for the
+                             same reason — this is the first one that also needed a trailing badge. -->
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="4">
+                            <TextBlock Classes="IndustryKicker" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxImageEditor.ReadyRackKeysHint}" />
+                            <ItemsControl ItemsSource="{Binding ReadyRack.Slots}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ReadyRackSlotViewModel">
+                                    <Button Classes="Industry IndustryBtn IndustryBtnSecondary" Padding="4,3" Margin="0,0,0,2"
+                                            HorizontalContentAlignment="Stretch" HorizontalAlignment="Stretch"
+                                            Command="{Binding RecallCommand}" CommandParameter="{Binding SlotNumber}"
+                                            ToolTip.Tip="{Binding Template.Name}">
+                                        <Grid ColumnDefinitions="16,50,*" ColumnSpacing="7">
+                                            <TextBlock Classes="IndustryKicker" Text="{Binding SlotNumber}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            <Panel Grid.Column="1" Width="50" Height="36">
+                                                <Border Classes="IndustryHatchPanel" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}" />
+                                                <Image Source="{Binding Template.Thumbnail}" Stretch="Uniform" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                            </Panel>
+                                            <TextBlock Grid.Column="2" Classes="IndustryRowValue" HorizontalAlignment="Left" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                       Text="{Binding Template.Name}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                            <TextBlock Grid.Column="2" Classes="IndustryKicker" VerticalAlignment="Center"
+                                                       Text="{loc:Translate Panes.TxImageEditor.PinFromLibraryHint}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}" />
+                                        </Grid>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </HeaderedContentControl>
+
+                    <!-- TEMPLATE LIBRARY: independent scrolling panel, mock lines 60-72. Filter box
+                         is a NEW, first-of-its-kind text-filter surface in this codebase (design-
+                         fidelity Phase D plan's own note — no ICollectionView/FilterText precedent
+                         anywhere else to copy), case-insensitive substring match against Name, empty
+                         filter shows all (ReadyRackViewModel.RefreshFilteredTemplates). Save action
+                         (name TextBox + Save button) moved here from the old panel's own top slot to
+                         match the mock's own footer position — the mock's second footer action,
+                         `UPDATE "<name>"` (overwrite the currently-loaded template in place), is real
+                         NEW functionality with no existing command anywhere in this codebase (only
+                         save-as-new exists); omitted, not stubbed, per this plan's own scope-
+                         discipline note. -->
+                    <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
+                        <HeaderedContentControl.Header>
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.TemplateLibraryHeader}" />
+                        </HeaderedContentControl.Header>
+                        <!-- Count badge moved from the header tab into row 0 of the content Grid —
+                             same title-tab-doesn't-stretch finding as the READY RACK panel above. -->
+                        <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
+                            <TextBlock Grid.Row="0" Classes="IndustryKicker" HorizontalAlignment="Right" Text="{Binding ReadyRack.TemplateCount}" />
+                            <TextBox Grid.Row="1" Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.LibraryFilterPlaceholder}" Text="{Binding ReadyRack.LibraryFilterText}" />
+
+                            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                    <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesYet}" IsVisible="{Binding ReadyRack.HasNoTemplates}" />
+                                    <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesMatchFilter}" IsVisible="{Binding ReadyRack.HasNoFilteredTemplates}" />
+                                    <ItemsControl ItemsSource="{Binding ReadyRack.FilteredTemplates}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:TemplateListRowViewModel">
+                                                <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,2" ColumnSpacing="4">
+                                                    <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
+                                                    <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                                            Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding LoadCommand}" CommandParameter="{Binding}" />
+                                                    <ToggleButton Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                                                  IsChecked="{Binding IsPinned, Mode=OneWay}" Command="{Binding TogglePinCommand}" CommandParameter="{Binding}"
+                                                                  Content="{loc:Translate Panes.TxImageEditor.PinTemplate}" />
+                                                    <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                                            Content="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" Command="{Binding DeleteCommand}" CommandParameter="{Binding}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </ScrollViewer>
+
+                            <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="4">
                                 <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.TemplateNamePlaceholder}" Text="{Binding NewTemplateName}" />
                                 <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0"
                                         Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" Command="{Binding SaveTemplateCommand}" />
                             </Grid>
-
-                            <!-- Ready rack: fixed 3x3 grid, 1 = top-left, matching the same reading
-                                 order as the number-key accelerators (D1..D9, see
-                                 TxImageEditorPaneView.axaml.cs's OnRootKeyDown). An empty slot renders
-                                 a bare numbered placeholder (IndustryHatchPanel, same "nothing here
-                                 yet" texture the Receive tab's own empty session-frames slots use) —
-                                 RecallCommand no-ops on click for an empty slot (see
-                                 ReadyRackViewModel.RecallSlot's own doc comment). -->
-                            <ItemsControl ItemsSource="{Binding ReadyRack.Slots}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <UniformGrid Columns="3" Rows="3" />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:ReadyRackSlotViewModel">
-                                        <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Margin="2" Padding="0"
-                                                HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
-                                                Command="{Binding RecallCommand}" CommandParameter="{Binding SlotNumber}"
-                                                ToolTip.Tip="{Binding Template.Name}">
-                                            <Panel>
-                                                <Border Classes="IndustryHatchPanel" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}" MinHeight="34" />
-                                                <Image Source="{Binding Template.Thumbnail}" Stretch="Uniform" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
-                                                <!-- NOT Classes="Industry IndustryMini" here (real-window finding, Phase 5): that chip
-                                                     style's fixed Height="17" (AtomsTokens.axaml) is sized for use inside normal-height
-                                                     controls, but IndustryBtn22's own Height is only 22px total — the chip badge ate
-                                                     most of the slot and visually hid the thumbnail underneath it. A purpose-built
-                                                     small corner tag instead, sized for THIS 22px button specifically. -->
-                                                <Border Background="{StaticResource IndustryBg}" BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1"
-                                                        Padding="2,0" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="1" IsHitTestVisible="False">
-                                                    <TextBlock Text="{Binding SlotNumber}" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="8" Foreground="{StaticResource IndustryText}" />
-                                                </Border>
-                                            </Panel>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-
-                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesYet}" IsVisible="{Binding ReadyRack.HasNoTemplates}" />
-
-                            <ItemsControl ItemsSource="{Binding ReadyRack.AllTemplates}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate x:DataType="vm:TemplateListRowViewModel">
-                                        <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,2" ColumnSpacing="4">
-                                            <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
-                                            <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                                    Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding LoadCommand}" CommandParameter="{Binding}" />
-                                            <ToggleButton Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                                          IsChecked="{Binding IsPinned, Mode=OneWay}" Command="{Binding TogglePinCommand}" CommandParameter="{Binding}"
-                                                          Content="{loc:Translate Panes.TxImageEditor.PinTemplate}" />
-                                            <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                                    Content="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" Command="{Binding DeleteCommand}" CommandParameter="{Binding}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
+                        </Grid>
                     </HeaderedContentControl>
-                </StackPanel>
-                </ScrollViewer>
+                </Grid>
 
                 <!-- Interactive canvas: crop rectangle (drag body to move, drag the corner handle to
                      resize; legacy's own real precedent has resize on the bottom-right corner only,
