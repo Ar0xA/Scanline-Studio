@@ -2129,6 +2129,38 @@ public sealed class TxImageEditorPaneViewModelTests
         }
     }
 
+    // Task #24 (right-click context menu addendum, plan-reviewed): DuplicateCommand/AddPlateCommand
+    // are parent-pushed the SAME way RemoveCommand/MoveUpCommand/etc. already are -- the established
+    // failure mode for this pattern (per RemoveCommand's own doc comment, and the sidebar's own
+    // Phase-2 image-DataTemplate comment) is a forgotten assignment at exactly one of the three
+    // Create* call sites, which shows up as a silently-inert context-menu item rather than a build
+    // error or an exception. Pin all three paths explicitly rather than trusting a read-through.
+
+    [AvaloniaFact]
+    public void DuplicateCommand_IsWiredOnAllThreeElementTypes()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.AddBoxElementCommand.Execute(null);
+        vm.AddLastRxImageCommand.Execute(null);
+
+        Assert.Equal(3, vm.OverlayElements.Count);
+        Assert.All(vm.OverlayElements, e => Assert.NotNull(e.DuplicateCommand));
+    }
+
+    [AvaloniaFact]
+    public void AddPlateCommand_IsWiredOnTextElements()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.AddOverlayElementCommand.Execute(null);
+
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.NotNull(text.AddPlateCommand);
+    }
+
     [AvaloniaFact]
     public void IsFontUnavailable_SelectedTextElementFontNotInAvailableFamilies_ReturnsTrue()
     {

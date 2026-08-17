@@ -1381,6 +1381,26 @@
         <Setter Property="Margin" Value="0,2" />
     </Style>
 
+    <!-- Task #24 (right-click context menu addendum): same Setter-only, no-template-replacement
+         reasoning as Menu.Industry above (this app's ContextMenu popups have no submenus, but the
+         Popup-hosting risk that justified avoiding a template replacement for Menu/MenuItem applies
+         identically here — same caution, not re-derived). No prior ContextMenu anywhere in this
+         codebase to collide with (grepped). OverlayCornerRadius=0 (App.axaml) already squares the
+         popup itself; only Background/Padding/MenuItem typography need setting here. -->
+    <Style Selector="ContextMenu.Industry">
+        <Setter Property="Background" Value="{StaticResource IndustryBg}" />
+        <Setter Property="Padding" Value="{StaticResource IndustryMenuPadding}" />
+    </Style>
+    <Style Selector="ContextMenu.Industry MenuItem">
+        <Setter Property="Padding" Value="{StaticResource IndustryMenuItemPadding}" />
+        <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+    </Style>
+    <Style Selector="ContextMenu.Industry MenuItem:disabled">
+        <Setter Property="Opacity" Value="0.45" />
+    </Style>
+
     <!-- ═══════════════════════ Phase 2: TabControl / TabItem ═══════════════════════
          DEVIATION from mockups/guidance/PHASE2-CHROME-DESIGN.md's suggested mechanism, same
          reasoning class as Menu/MenuItem above but with stronger in-repo evidence it's safe:
