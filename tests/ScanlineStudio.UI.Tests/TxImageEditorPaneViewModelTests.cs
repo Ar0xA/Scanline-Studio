@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Linq;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
@@ -537,6 +538,78 @@ public sealed class TxImageEditorPaneViewModelTests
 
         Assert.False(vm.UndoCommand.CanExecute(null));
         Assert.False(vm.RedoCommand.CanExecute(null));
+    }
+
+    // Design-fidelity Phase B (mockups/Editwindow): HasUnsavedEdits/RevertCommand are a thin proxy
+    // over the existing undo stack -- these tests pin that proxy relationship, not undo/redo's own
+    // correctness (already covered by the Rotate_ThenUndo_* tests above).
+
+    [AvaloniaFact]
+    public void HasUnsavedEdits_IsFalseInitially_TrueAfterAMutation_FalseAfterUndoingItBack()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.HasUnsavedEdits);
+
+        vm.RotateCommand.Execute(null);
+        Assert.True(vm.HasUnsavedEdits);
+
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.HasUnsavedEdits);
+    }
+
+    [AvaloniaFact]
+    public void RevertCommand_CanExecute_MirrorsUndoCommand()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.RevertCommand.CanExecute(null));
+
+        vm.RotateCommand.Execute(null);
+        Assert.True(vm.RevertCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void RevertCommand_PopsTheEntireUndoStack_RestoringThePreEditState()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        AssertClose(6, vm.WorkingCopyWidth);
+        AssertClose(4, vm.WorkingCopyHeight);
+
+        vm.RotateCommand.Execute(null);
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.True(vm.HasUnsavedEdits);
+
+        vm.RevertCommand.Execute(null);
+
+        Assert.False(vm.HasUnsavedEdits);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        AssertClose(6, vm.WorkingCopyWidth);
+        AssertClose(4, vm.WorkingCopyHeight);
+        Assert.Empty(vm.OverlayElements);
+        // Deliberate, documented consequence of reusing Undo's own machinery (RevertCommand's own
+        // doc comment) -- the discarded history stays fully Redo-able, Revert doesn't clear it.
+        Assert.True(vm.RedoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void FrameReadoutText_ReflectsTheActualTargetModesDimensionsNameAndDuration()
+    {
+        // Same FakeLocalizationService pattern as HeaderText_ReflectsTheActualTargetModesDimensionsAndName
+        // above -- verifies the CALLER passes the right computed args, not the real interpolated
+        // string (that's HeaderAndDimensionsChipLocaleFormats_MatchEnJsonsRealValues's own job,
+        // extended below for this new key). WideMode's LineSegments is empty ([]) so the expected
+        // duration is exactly 0 -- a real, if degenerate, value from the SAME LineDurationMs *
+        // ImageHeight / 1000.0 formula TxControlsPaneViewModel's own Mode Timing Reference table uses.
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+
+        _ = vm.FrameReadoutText;
+
+        Assert.Equal("Panes.TxImageEditor.FrameReadoutFormat", localization.LastKey);
+        Assert.Equal(new object[] { 8, 4, "Wide", 0.0 }, localization.LastArgs);
     }
 
     [AvaloniaFact]
@@ -1160,6 +1233,9 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(
             "320×240",
             string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}×{1}", 320, 240));
+        Assert.Equal(
+            "OUTGOING FRAME 320×256 · Martin M1 · 114.3 s",
+            string.Format(CultureInfo.InvariantCulture, "OUTGOING FRAME {0}×{1} · {2} · {3:0.0} s", 320, 256, "Martin M1", 114.3));
     }
 
     [AvaloniaFact]

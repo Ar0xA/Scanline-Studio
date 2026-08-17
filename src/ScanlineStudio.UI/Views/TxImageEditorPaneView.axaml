@@ -29,11 +29,34 @@
          element in the centre column, so it only ever had the outer Grid's raw top margin. Same
          "headroom on the card itself, not just the ancestor" fix as TxControlsPaneView's own
          root Margin. -->
+    <!-- Design-fidelity Phase B (mockups/Editwindow): the outer blueprint frame's own title notch
+         (HeaderText: "640×496 · PD120"-style) is BLANKED here, not kept alongside the new context-bar
+         row below — the mock's own outer corner-marked frame (mock lines 20-21) has no notch-title at
+         that level either; "TX Image Editor" + the frame readout live as an ordinary content row
+         instead (Grid.Row="0" below), matching the mock's own structure rather than showing the same
+         dims/mode information twice in two different chrome idioms. -->
     <HeaderedContentControl Classes="Industry blueprint" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWideDeep}" ClipToBounds="False" Margin="0,6,0,0">
-        <HeaderedContentControl.Header>
-            <TextBlock Classes="IndustryGbTitle" Text="{Binding HeaderText}" />
-        </HeaderedContentControl.Header>
-        <Grid RowDefinitions="Auto,*,Auto">
+        <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+            <!-- Context bar (design-fidelity Phase B, mockups/Editwindow lines 24-37): title + mono
+                 frame readout + unsaved-edits chip, then right-grouped Undo/Redo/Revert. Undo/Redo
+                 stay ALSO usable from the stage toolbar below (Row 1) — this is an added, more
+                 discoverable location, not a relocation; removing them from the toolbar would be a
+                 real functional regression for muscle memory built on the toolbar-Ctrl+Z pattern. -->
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" Margin="0,0,0,6" VerticalAlignment="Center">
+                <TextBlock Classes="IndustryGbTitle" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ContextBarTitle}" />
+                <Border Grid.Column="1" Width="1" Height="16" Margin="10,0" Background="{StaticResource IndustryChromeBorder}" />
+                <TextBlock Grid.Column="2" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding FrameReadoutText}" />
+                <Border Grid.Column="3" Classes="Industry IndustryMini" Margin="10,0,0,0" IsVisible="{Binding HasUnsavedEdits}">
+                    <TextBlock Text="{loc:Translate Panes.TxImageEditor.UnsavedEditsChip}" />
+                </Border>
+                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                    <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding UndoCommand}" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
+                    <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RedoCommand}" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
+                    <Border Width="1" Height="18" Margin="6,0" Background="{StaticResource IndustryChromeBorder}" />
+                    <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RevertCommand}" Content="{loc:Translate Panes.TxImageEditor.Revert}" />
+                </StackPanel>
+            </Grid>
 
             <!-- Merged tool strip: Move/Crop/Scale/.../Pick RadioButton group, IndustryMiniRadioTheme
                  (GroupName="EditorTool"). Only "Move" reflects real behavior (the default/only tool
@@ -59,7 +82,7 @@
                  design canvas, this column is far narrower at runtime, so a non-wrapping row would
                  clip; WrapPanel degrades to extra lines instead (containment over an exact 1-line
                  match, this project's #1 priority). -->
-            <WrapPanel Grid.Row="0" Margin="0,0,0,6">
+            <WrapPanel Grid.Row="1" Margin="0,0,0,6">
                 <!-- Phase 1 (spec/15-template-designer.md): the old EditorTool RadioButton group
                      (Move/Crop/Scale/Text/Box/Line/Mask/Pick) removed outright — 7 of its 8
                      members were already dead stubs implying tool-switching that doesn't exist, and
@@ -148,7 +171,7 @@
                  so exact px values are a starting point, not a contract. Fill/QSO-fill/Send bottom
                  bar restructuring and inspector TAB splitting are later sub-phases of the same
                  redesign, not yet done here — this phase is the 3-column skeleton only. -->
-            <Grid Grid.Row="1" ColumnDefinitions="212,*,364" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
+            <Grid Grid.Row="2" ColumnDefinitions="212,*,364" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
 
                 <!-- RECALL rail (EditWindow redesign Phase 1): the ready rack + template library,
                      relocated here from the bottom of the old single sidebar (mockups/Editwindow
@@ -1179,7 +1202,7 @@
                  two separate VMs today — TxImageEditorPaneViewModel.Applied is an event the PARENT
                  TxControlsPaneViewModel subscribes to, with no existing "apply then transmit" chain),
                  not pure layout — out of this redesign pass's own scope. -->
-            <Border Grid.Row="2" Margin="0,8,0,0" Padding="8" Background="{StaticResource IndustryAccent100}" BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1">
+            <Border Grid.Row="3" Margin="0,8,0,0" Padding="8" Background="{StaticResource IndustryAccent100}" BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1">
                 <Grid ColumnDefinitions="*,220" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
                     <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                         <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.QsoFillHeader}" />
