@@ -144,6 +144,15 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     [ObservableProperty]
     private double _canvasFontSize;
 
+    /// <summary>Backlog item (user request, 2026-08-17) -- canvas-preview outline fix
+    /// (Avalonia's plain <c>TextBlock</c> has no native stroke API; the real fix is a custom
+    /// <c>StrokedTextBlock</c> control, see the canvas DataTemplate's own comment). Same
+    /// parent-pushed, pure-canvas-chrome pattern as <see cref="CanvasFontSize"/> (0 when
+    /// <see cref="StrokeColor"/> is null), computed in the identical pixel space so a 0-thickness
+    /// stroke never accidentally shows.</summary>
+    [ObservableProperty]
+    private double _canvasStrokeThicknessPixels;
+
     /// <summary>Set once by <see cref="TxImageEditorPaneViewModel.CreateOverlayElement"/> at creation
     /// time (its own <c>RemoveOverlayElementCommand</c>), not bound in XAML via
     /// `$parent[ItemsControl].((vm:TxImageEditorPaneViewModel)DataContext)...` -- that pattern
