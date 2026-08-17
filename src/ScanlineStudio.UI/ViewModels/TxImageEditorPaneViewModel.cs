@@ -477,6 +477,24 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     public string DimensionsChipText => _localization.GetString(
         "Panes.TxImageEditor.DimensionsChipFormat", _targetMode.ImageWidth, _targetMode.ImageHeight);
 
+    /// <summary>EditWindow redesign, design-fidelity Phase B (mockups/Editwindow) -- the new context
+    /// bar's mono frame readout ("OUTGOING FRAME 320×256 · MARTIN M1 · 114.3 s"). Duration reuses the
+    /// SAME <c>LineDurationMs * ImageHeight / 1000.0</c> formula <c>TxControlsPaneViewModel</c>'s own
+    /// Mode Timing Reference table already computes per mode (<see cref="SstvModeDefinition.LineDurationMs"/>)
+    /// -- not a new computation, just applied to THIS editor's own fixed <see cref="_targetMode"/>.</summary>
+    public string FrameReadoutText => _localization.GetString(
+        "Panes.TxImageEditor.FrameReadoutFormat",
+        _targetMode.ImageWidth, _targetMode.ImageHeight, _targetMode.DisplayName,
+        _targetMode.LineDurationMs * _targetMode.ImageHeight / 1000.0);
+
+    /// <summary>EditWindow redesign, design-fidelity Phase B -- backs the context bar's "UNSAVED
+    /// EDITS" chip. A free proxy over the EXISTING undo stack (no new dirty-tracking mechanism):
+    /// true the instant any edit has been pushed, false once undone back to the editor's opened (or
+    /// last-Applied) state. Raised at the same 4 call sites <see cref="UndoCommand"/>'s own
+    /// <c>NotifyCanExecuteChanged</c> already fires from -- both conditions flip on exactly the same
+    /// <c>_undoStack.Count &gt; 0</c> transition, so they're always in lockstep.</summary>
+    public bool HasUnsavedEdits => _undoStack.Count > 0;
+
     /// <summary>The live, current-orientation source -- reflects any <see cref="RotateCommand"/>
     /// calls so far. Round-1 plan-review finding on spec/18-path-to-1.0.md High item 3: a host
     /// (<see cref="TxControlsPaneViewModel"/>) that captured the ORIGINAL constructor argument
@@ -2547,6 +2565,27 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         ApplyState(previous);
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
+        RevertCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasUnsavedEdits));
+    }
+
+    /// <summary>EditWindow redesign, design-fidelity Phase B -- the context bar's REVERT action.
+    /// Pops the undo stack down to empty via the existing <see cref="Undo"/> path (one call per
+    /// step, each already-correct: detach/reapply/redo-stack-push), rather than a separate
+    /// "snapshot the state at editor-open" mechanism -- reuses machinery this editor already has.
+    /// Two bounded, INTENTIONAL consequences of that reuse, not bugs: (1) <see cref="MaxUndoDepth"/>
+    /// (50) means a session with more than 50 pushed edits reverts to the OLDEST RETAINED snapshot,
+    /// not the true pre-open state -- the same bound every other Undo call already has. (2) each
+    /// <see cref="Undo"/> call pushes its own discarded state onto <see cref="_redoStack"/>, so the
+    /// entire reverted history stays Redo-able afterward -- deliberately not cleared, since Revert is
+    /// just "Undo, repeatedly," not a distinct semantic that should behave differently.</summary>
+    [RelayCommand(CanExecute = nameof(CanUndo))]
+    private void Revert()
+    {
+        while (CanUndo())
+        {
+            Undo();
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanRedo))]
@@ -2563,6 +2602,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         ApplyState(next);
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
+        RevertCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasUnsavedEdits));
     }
 
     /// <summary>Pushes the CURRENT state (before the caller's own change) as one undo step and
@@ -2595,6 +2636,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         _pendingCoalesceProperty = null; // a real, non-coalesced push always resets coalescing state
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
+        RevertCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasUnsavedEdits));
     }
 
     /// <summary>Same contract as <see cref="PushUndoSnapshot"/>, but coalesces a rapid BURST of
@@ -2644,6 +2687,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             DispatcherPriority.Background);
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
+        RevertCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(HasUnsavedEdits));
     }
 
     /// <summary>Restores the editor to a previously-captured <see cref="EditorSnapshot"/> -- shared
