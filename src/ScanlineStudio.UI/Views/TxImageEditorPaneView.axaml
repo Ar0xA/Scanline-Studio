@@ -873,6 +873,16 @@
                          (selection is shared VM state, so a canvas click already updates what THIS
                          list implicitly reflects via its Lock/Front/Back state), row-click is a
                          smaller, separable follow-up. -->
+                    <!-- design-fidelity Phase F (#8): the plan's own original text called for moving
+                         this action group ONTO THE SAME LINE as the "ELEMENTS" title (mock's own
+                         flex header bar, title-left/actions-right). Not achievable with this shared
+                         IndustryGroupBoxTheme: its title tab is a floating, Left/Top-aligned Border
+                         sized purely to its own Header content (see Phase E's own doc comment on the
+                         READY RACK/TEMPLATE LIBRARY headers for the first time this was hit) — it
+                         never stretches to the card's real width, so there is no "right edge of the
+                         card" for a right-aligned action group inside Header to hug. Kept as today's
+                         top-of-content row (already right-aligned) instead of a deeper theme change
+                         that would ripple to every other panel using this same template. -->
                     <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.ElementsHeader}" />
@@ -901,11 +911,17 @@
                                         Content="{loc:Translate Panes.TxImageEditor.RemoveHeaderAction}"
                                         Command="{Binding RemoveOverlayElementCommand}" CommandParameter="{Binding SelectedOverlayElement}" />
                             </StackPanel>
-                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                            <!-- design-fidelity Phase F (#8): StackPanel -> UniformGrid. A Button's
+                                 own HorizontalAlignment="Stretch" is a no-op on a StackPanel's stack
+                                 axis (Orientation="Horizontal" here means Width, the axis Stretch
+                                 can't affect) — confirmed real, the 3 buttons rendered at their own
+                                 content-driven widths, not equal thirds. UniformGrid genuinely divides
+                                 its own width into N equal columns, which Stretch then fills. -->
+                            <UniformGrid Columns="3">
+                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="0,0,4,0"
                                         Content="{loc:Translate Panes.TxImageEditor.AddText}"
                                         Command="{Binding AddOverlayElementCommand}" />
-                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="0,0,4,0"
                                         Content="{loc:Translate Panes.TxImageEditor.AddImage}">
                                     <Button.Flyout>
                                         <Flyout Placement="Bottom">
@@ -951,7 +967,7 @@
                                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.ToolBox}"
                                         Command="{Binding AddBoxElementCommand}" />
-                            </StackPanel>
+                            </UniformGrid>
                             <ItemsControl ItemsSource="{Binding OverlayElements}">
                                 <!-- Phase 1: polymorphic per-type DataTemplates (same technique as the
                                      canvas ItemsControl above) — geometry/lock/reorder/etc. now live
@@ -1309,10 +1325,33 @@
                  two separate VMs today — TxImageEditorPaneViewModel.Applied is an event the PARENT
                  TxControlsPaneViewModel subscribes to, with no existing "apply then transmit" chain),
                  not pure layout — out of this redesign pass's own scope. -->
+            <!-- design-fidelity Phase F (#9, mockups/Editwindow line 239/255): QSO FILL's title row
+                 becomes a real flex header (title + token-count note + spacer + Clear), matching the
+                 mock's own header-bar shape — this Grid is a plain StackPanel child, not inside a
+                 HeaderedContentControl.Header slot, so the "*,Auto doesn't stretch" constraint
+                 Phase D/E/F's own group-box headers hit does NOT apply here; a bare Grid genuinely
+                 gets the StackPanel's own available width. Clear moved here from its old bottom-left
+                 spot (Phase 3). SEND side becomes a real side-by-side row (110px secondary + flex
+                 primary, matching the mock's own APPLY-ONLY/QUEUE-&amp;-TRANSMIT proportions) instead of
+                 stacked full-width buttons, plus a compact mode/duration meta line (SWR omitted, see
+                 SendMetaText's own doc comment for why). -->
             <Border Grid.Row="3" Margin="0,8,0,0" Padding="8" Background="{StaticResource IndustryAccent100}" BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1">
                 <Grid ColumnDefinitions="*,220" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
                     <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                        <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.QsoFillHeader}" />
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.QsoFillHeader}" />
+                            <TextBlock Grid.Column="1" Classes="IndustryKicker" VerticalAlignment="Center"
+                                       Text="{Binding TemplateVariableCountText}" IsVisible="{Binding !HasNoTemplateVariableRows}" />
+                            <!-- "Fill all" dropped outright (Phase 3 plan-review decision, not just left
+                                 disabled) — no real default-value source exists yet (OperatorSettings is
+                                 MY-side only; spec/15 frames any logbook-based prefill as future/
+                                 additive). "Clear" is the one real, spec-backed action (spec/15: "one
+                                 'clear fields' action after the QSO") — moved here (Phase F) from its
+                                 old bottom-left spot to match the mock's own header-row placement. -->
+                            <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
+                                    Content="{loc:Translate Panes.TxImageEditor.ClearFields}"
+                                    Command="{Binding ClearTemplateVariablesCommand}" />
+                        </Grid>
                         <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.NoQsoFields}" IsVisible="{Binding HasNoTemplateVariableRows}" />
                         <ItemsControl ItemsSource="{Binding TemplateVariableRows}">
                             <ItemsControl.ItemsPanel>
@@ -1329,23 +1368,20 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <!-- "Fill all" dropped outright (Phase 3 plan-review decision, not just left
-                             disabled) — no real default-value source exists yet (OperatorSettings is
-                             MY-side only; spec/15 frames any logbook-based prefill as future/
-                             additive). "Clear" is the one real, spec-backed action (spec/15: "one
-                             'clear fields' action after the QSO"). -->
-                        <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
-                                Content="{loc:Translate Panes.TxImageEditor.ClearFields}"
-                                Command="{Binding ClearTemplateVariablesCommand}" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Spacing="{StaticResource IndustrySpacingTight}">
-                        <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.SendHeader}" />
-                        <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                Content="{loc:Translate Panes.TxImageEditor.Cancel}"
-                                Command="{Binding CancelCommand}" />
-                        <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                Content="{loc:Translate Panes.TxImageEditor.Apply}"
-                                Command="{Binding ApplyCommand}" />
+                        <Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.SendHeader}" />
+                            <TextBlock Grid.Column="1" Classes="IndustryKicker" HorizontalAlignment="Right" VerticalAlignment="Center" Text="{Binding SendMetaText}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="110,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                            <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Content="{loc:Translate Panes.TxImageEditor.Cancel}"
+                                    Command="{Binding CancelCommand}" />
+                            <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Content="{loc:Translate Panes.TxImageEditor.Apply}"
+                                    Command="{Binding ApplyCommand}" />
+                        </Grid>
                     </StackPanel>
                 </Grid>
             </Border>
