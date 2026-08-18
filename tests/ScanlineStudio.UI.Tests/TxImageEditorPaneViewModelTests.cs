@@ -2047,7 +2047,7 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(image.BlocksHitTesting);
     }
 
-    [Theory]
+    [AvaloniaTheory]
     [InlineData(false, false, false)]
     [InlineData(true, false, false)]
     [InlineData(false, true, false)]

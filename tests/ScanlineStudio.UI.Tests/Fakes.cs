@@ -110,7 +110,13 @@ internal sealed class FakeReceivedImageBuffer : IReceivedImageBuffer
 
     public event Action<string, int>? Saved;
 
-    public Task SaveAsync(string path, CancellationToken ct = default) => Task.CompletedTask;
+    public List<string> SavedPaths { get; } = [];
+
+    public Task SaveAsync(string path, CancellationToken ct = default)
+    {
+        SavedPaths.Add(path);
+        return Task.CompletedTask;
+    }
 
     public void RaiseUpdated() => Updated?.Invoke();
 
