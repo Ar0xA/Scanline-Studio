@@ -45,8 +45,19 @@ internal interface IHamlibNative
     /// vs 64-bit on Linux/macOS/LP64 -- <c>setting_t</c> has no such platform-width ambiguity to guard
     /// against). Only the float arm of the <c>value_t</c> union is exposed here -- every level this
     /// project reads (SWR/ALC/RFPOWER_METER) is documented in rig.h as "arg float"; the union-vs-struct
-    /// marshaling detail lives in <see cref="HamlibNative"/>, not this seam.</summary>
+    /// marshaling detail lives in <see cref="HamlibNative"/>, not this seam. See
+    /// <see cref="RigGetLevelInt"/> for the sibling int arm (<c>RIG_LEVEL_STRENGTH</c>).</summary>
     int RigGetLevel(nint rig, uint vfo, ulong level, out float value);
+
+    /// <summary>Same underlying <c>rig_get_level</c> call as <see cref="RigGetLevel"/> above, but reads
+    /// the union's <c>int i</c> arm instead of its <c>float f</c> arm -- <c>RIG_LEVEL_STRENGTH</c> is
+    /// documented in rig.h as "arg int (dB)", NOT float, unlike every other level this project reads.
+    /// A real, easy-to-miss bug class this exists to avoid: <c>value_t</c> is a genuine C union (both
+    /// arms occupy the SAME 4 bytes at offset 0), so reading an int-typed level's raw bytes back out
+    /// as <see langword="float"/> would silently reinterpret its bit pattern as an unrelated IEEE-754
+    /// value instead of throwing or producing an obviously-wrong number -- see
+    /// <see cref="HamlibNative"/>'s own marshaling struct for where this is actually read.</summary>
+    int RigGetLevelInt(nint rig, uint vfo, ulong level, out int value);
 
     /// <summary><c>const char *rig_version(void)</c> -- <b>not</b> <c>hamlib_version2</c>, which is a
     /// data export, not a function (see spec/03-cat-layer.md's "Version gate"). Already decoded;

@@ -20,14 +20,21 @@ internal sealed class HamlibNative : IHamlibNative
     /// <summary>Marshals Hamlib's <c>value_t</c> union (rig.h) -- a C union whose largest member is
     /// the nested <c>{int l; unsigned char *d;}</c> struct (4-byte int + padding + 8-byte pointer =
     /// 16 bytes on both LP64 and LLP64). <c>Size = 16</c> so the native side never writes past the
-    /// marshaled buffer regardless of which arm it actually touches, even though only
-    /// <see cref="FloatValue"/> (offset 0, matching the union's <c>float f</c> arm) is ever read --
-    /// every level this project queries (SWR/ALC/RFPOWER_METER) is documented "arg float."</summary>
+    /// marshaled buffer regardless of which arm it actually touches. <see cref="FloatValue"/> and
+    /// <see cref="IntValue"/> both sit at offset 0 (the union's <c>float f</c>/<c>signed int i</c>
+    /// arms) -- a caller must read whichever one matches the specific <c>RIG_LEVEL_*</c> just
+    /// queried (float for SWR/ALC/RFPOWER_METER, int for STRENGTH, both per rig.h's own per-level
+    /// "arg float"/"arg int" documentation) -- reading the wrong arm reinterprets the same 4 raw
+    /// bytes as an unrelated value, not a type error, so this has no compiler-catchable failure
+    /// mode if a caller ever gets it backwards.</summary>
     [StructLayout(LayoutKind.Explicit, Size = 16)]
     private struct HamlibValue
     {
         [FieldOffset(0)]
         public float FloatValue;
+
+        [FieldOffset(0)]
+        public int IntValue;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -132,6 +139,13 @@ internal sealed class HamlibNative : IHamlibNative
     {
         var code = _rigGetLevel(rig, vfo, level, out var native);
         value = native.FloatValue;
+        return code;
+    }
+
+    public int RigGetLevelInt(nint rig, uint vfo, ulong level, out int value)
+    {
+        var code = _rigGetLevel(rig, vfo, level, out var native);
+        value = native.IntValue;
         return code;
     }
 

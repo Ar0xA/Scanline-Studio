@@ -47,6 +47,7 @@ internal sealed class FakeHamlibNative : IHamlibNative
 
     public Dictionary<ulong, int> LevelCodes { get; } = new();
     public Dictionary<ulong, float> LevelValues { get; } = new();
+    public Dictionary<ulong, int> LevelIntValues { get; } = new();
 
     public nint RigInit(uint model) => Enter(() =>
     {
@@ -153,6 +154,17 @@ internal sealed class FakeHamlibNative : IHamlibNative
             return LevelCodes.GetValueOrDefault(level, 0);
         });
         value = LevelValues.GetValueOrDefault(level, 0f);
+        return code;
+    }
+
+    public int RigGetLevelInt(nint rig, uint vfo, ulong level, out int value)
+    {
+        var code = Enter(() =>
+        {
+            CallLog.Add($"rig_get_level:{level}");
+            return LevelCodes.GetValueOrDefault(level, 0);
+        });
+        value = LevelIntValues.GetValueOrDefault(level, 0);
         return code;
     }
 

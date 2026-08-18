@@ -131,16 +131,53 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// <see cref="RadioState.PowerPercent"/> are real, live, already-polled TX-only meter readings
     /// (real `l SWR`/`l ALC`/`l RFPOWER_METER` rigctld queries, gated on <c>IsTransmitting</c> +
     /// per-meter capability flags) -- this VM's own <see cref="OnStateChanged"/> just never read them
-    /// out. (By contrast, the ADJACENT "RX level" meter, a SEPARATE stub in the Transceiver card, is
-    /// genuinely still a stub: <see cref="RadioState.SignalStrengthDb"/> IS hardcoded <see langword="null"/>
-    /// in both protocol implementations today -- not touched here, still a real gap, not a trivial
-    /// bind like this one turned out to be.)
+    /// out. (The ADJACENT "RX level" meter, a SEPARATE stub in the Transceiver card, was genuinely
+    /// still a stub at the time this comment was written -- see <see cref="RxLevelDb"/> below for
+    /// that gap's own since-closed follow-up.)
     /// <para>Joins whichever of the three meters are actually non-null this poll (independently
     /// absent per <see cref="RadioState"/>'s own doc comment -- capability absent, RX-time, or a
     /// failed read), "—" only when none are -- a rig missing one meter capability still shows the
     /// other two instead of the whole pill going blank.</para></summary>
     [ObservableProperty]
     private string _rigMetersDisplay = "—";
+
+    /// <summary>Tier 2/3 follow-up to <see cref="RigMetersDisplay"/> above: the Transceiver card's
+    /// "RX level" meter was a literal fixed-63%/78% stub with no real gain parameter behind it
+    /// (<see cref="RadioState.SignalStrengthDb"/> was hardcoded <see langword="null"/> in both
+    /// protocol implementations). Now real: <c>l STRENGTH</c> (rigctld) / <c>RIG_LEVEL_STRENGTH</c>
+    /// (Hamlib), RX-time-gated (opposite of the TX-only meters above -- see
+    /// <see cref="RadioState.SignalStrengthDb"/>'s own doc comment). Raw dB-relative-to-S9 value;
+    /// see <see cref="RxLevelDisplay"/>/<see cref="RxLevelFillPercent"/> for the derived, bindable
+    /// display forms.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RxLevelDisplay))]
+    [NotifyPropertyChangedFor(nameof(RxLevelFillPercent))]
+    private int? _rxLevelDb;
+
+    /// <summary>"+14 dB"/"−14 dB"/"0 dB" (relative to S9, matching Hamlib's own documented unit --
+    /// see <see cref="RadioState.SignalStrengthDb"/>'s own doc comment), "—" when
+    /// <see cref="RxLevelDb"/> is <see langword="null"/> (RX capability absent, currently
+    /// transmitting, or a failed read this poll -- all indistinguishable here by design, same as
+    /// every other per-poll-optional field on this VM).</summary>
+    public string RxLevelDisplay => RxLevelDb is { } db ? $"{db:+0;−0;0} dB" : "—";
+
+    /// <summary>Standard ham-radio S-meter convention (not a legacy port -- this is new UI, no
+    /// legacy precedent to match): S0..S9 spans roughly 54 dB at ~6 dB/S-unit, and S9+60 is a common
+    /// real bargraph max on modern rigs -- so this meter's track spans S0 (-54 dB relative to S9) to
+    /// S9+60 (+60 dB), clamped at both ends rather than pinning silently past either edge. Design
+    /// decision, not a measured fact -- a specific rig's own S-meter calibration may differ; this is
+    /// a reasonable, commonly-used default for a generic cross-rig display.</summary>
+    private const int SMeterFloorDb = -54;
+    private const int SMeterCeilingDb = 60;
+
+    /// <summary>0-100 fill fraction for the meter <c>Border</c>'s Star-weighted column (see
+    /// <see cref="ScanlineStudio.UI.Converters.DoubleToStarGridLengthConverter"/>) -- <c>0</c> (empty bar, not a
+    /// missing-data indicator of its own) when <see cref="RxLevelDb"/> is <see langword="null"/>,
+    /// same "unknown reads as the low end, not a special state" convention <see cref="RxLevelDisplay"/>'s
+    /// sibling "—" text already carries the actual missing-data signal for.</summary>
+    public double RxLevelFillPercent => RxLevelDb is { } db
+        ? Math.Clamp((db - SMeterFloorDb) / (double)(SMeterCeilingDb - SMeterFloorDb) * 100.0, 0.0, 100.0)
+        : 0.0;
 
     /// <summary>Raw Hz mirror of <see cref="FrequencyDisplay"/> -- that property is a formatted
     /// string, not round-trippable, so <see cref="StoreCurrentPresetAsync"/> needs its own copy of
@@ -237,6 +274,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
             IsKeyed = state.IsTransmitting;
             RigMetersDisplay = FormatRigMeters(state);
+            RxLevelDb = state.SignalStrengthDb;
         });
     }
 
@@ -289,9 +327,16 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             // NOT clear IsKeyed either -- accepted, documented residual gap: polling continues, the
             // next good poll self-heals it; a staleness timer for that narrower case is
             // disproportionate to this item's scope.
+            // Auditor-caught (2026-08-18, RX signal-strength meter review): RigMetersDisplay/
+            // RxLevelDb had the exact same staleness gap as IsKeyed above -- both are only ever
+            // refreshed by OnStateChanged, so without this a rig that read "SWR 1.2 · PWR 75%" or
+            // "−14 dB" when the link dropped would keep showing that live-looking reading
+            // indefinitely with nothing behind it. Same CommandFailed-only exemption as IsKeyed.
             if (!CatLinked)
             {
                 IsKeyed = false;
+                RigMetersDisplay = "—";
+                RxLevelDb = null;
             }
         });
     }

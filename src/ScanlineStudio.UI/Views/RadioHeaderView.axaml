@@ -298,30 +298,38 @@
                     </Grid>
                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.RxLevelLabel}" VerticalAlignment="Center" />
-                        <!-- Fill/marker positions are mockup percentages (63%/78% of track width, LAYOUT-SPEC
-                             §7's own real example) — a literal pixel Width/Margin only matched by
-                             coincidence when the track happened to be ~100px wide; this column is
-                             actually "*" (stretchy), so proportional star-column Grids are used instead
-                             of a literal pixel value (design-fidelity-agent-caught fix).
-                             FAKE-LIVE fix (0.9-beta pass): fill/marker are fixed literals, not bound
-                             to any real RX gain parameter (none exists on IRadioSessionService today)
-                             — disabled + tooltipped so this reads as a stub, not live meter data. -->
-                        <Grid Grid.Column="1" Classes="IndustryMeter" VerticalAlignment="Center"
-                              IsEnabled="False" Opacity="0.45"
-                              ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                        <!-- Tier 2/3 follow-up (2026-08-18): fill/marker were fixed 63%/78% literals,
+                             not bound to any real RX gain parameter (RadioState.SignalStrengthDb was
+                             hardcoded null in both protocol implementations). Now real:
+                             RadioStatusViewModel.RxLevelFillPercent (own doc comment has the
+                             S0..S9+60 dB-to-percent convention this meter uses) drives BOTH the fill
+                             AND the marker at the same position — every other fill/marker pair in
+                             the source mockup (SSTV Console.dc.html) uses identical width%/left%
+                             values; only this one row's static demo numbers happened to differ
+                             (63/78), most plausibly a copy-paste inconsistency in placeholder data
+                             rather than a deliberate distinct-value design (no OTHER row in that
+                             mockup ever gives fill and marker different values). DoubleToStarGridLengthConverter
+                             replaces the two separate literal-percent Grids with one pair of
+                             individually-bound ColumnDefinition.Widths (same technique as
+                             WaterfallViewModeToColumnWidthConverter). -->
+                        <Grid Grid.Column="1" Classes="IndustryMeter" VerticalAlignment="Center">
                             <Border Classes="IndustryMeterTrack" Height="8" />
-                            <Grid ColumnDefinitions="63*,37*">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="{Binding RxLevelFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}}" />
+                                    <ColumnDefinition Width="{Binding RxLevelFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}, ConverterParameter=Remainder}" />
+                                </Grid.ColumnDefinitions>
                                 <Border Grid.Column="0" Classes="IndustryMeterFill" Height="8" HorizontalAlignment="Stretch" />
                             </Grid>
-                            <Grid ColumnDefinitions="78*,22*">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="{Binding RxLevelFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}}" />
+                                    <ColumnDefinition Width="{Binding RxLevelFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}, ConverterParameter=Remainder}" />
+                                </Grid.ColumnDefinitions>
                                 <Border Grid.Column="1" Classes="IndustryMeterMarker" HorizontalAlignment="Left" />
                             </Grid>
                         </Grid>
-                        <!-- Same FAKE-LIVE fix as the meter above: this literal numerically matched
-                             the fixed 63% fill by coincidence, not by binding. -->
-                        <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{loc:Translate RadioStatus.RxLevelValue}"
-                                   VerticalAlignment="Center" IsEnabled="False" Opacity="0.45"
-                                   ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                        <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{Binding RxLevelDisplay}" VerticalAlignment="Center" />
                     </Grid>
                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.TxVolumeLabel}" VerticalAlignment="Center" />
