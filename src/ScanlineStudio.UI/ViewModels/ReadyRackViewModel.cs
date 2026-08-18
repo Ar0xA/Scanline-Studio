@@ -3,6 +3,7 @@ using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
 
@@ -33,6 +34,26 @@ public sealed partial class TemplateListRowViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isPinned;
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "PIN silently no-ops on a full
+    /// (9-slot) rack but the toggle visually latches 'pinned' anyway." Root cause: <c>ToggleButton</c>
+    /// flips its own local <c>IsChecked</c> on click regardless of a <c>Mode=OneWay</c> binding, and
+    /// with the command itself a no-op (<see cref="ReadyRackViewModel.TogglePinAsync"/> returns
+    /// without saving on a full rack), nothing ever pushed <see cref="IsPinned"/> back through to
+    /// correct the now-desynced visual state. Fixed at the SOURCE instead of chasing that desync:
+    /// disabling the button pre-emptively (bound to this) means the no-op click can never happen in
+    /// the first place. Computed fresh by <see cref="ReadyRackViewModel.RefreshAsync"/> alongside
+    /// <see cref="IsPinned"/> itself, not a live subscription -- same "no lifecycle hook, recomputed
+    /// on each real refresh" convention already used throughout this VM.</summary>
+    [ObservableProperty]
+    private bool _canPin = true;
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Template DELETE is a single
+    /// unconfirmed click ... in a dense row." Arm/confirm (see <see cref="ReadyRackViewModel.DeleteAsync"/>'s
+    /// own doc comment) -- no dialog-service precedent exists anywhere in this codebase, same
+    /// reasoning as <c>TxImageEditorPaneViewModel.IsCancelArmed</c>'s own doc comment.</summary>
+    [ObservableProperty]
+    private bool _isPendingDelete;
 
     // Assigned by ReadyRackViewModel right after construction -- same "child VM holds a direct
     // reference to the parent's command" wiring TxImageEditorPaneViewModel's own CreateOverlayElement
@@ -91,12 +112,14 @@ public sealed partial class ReadyRackViewModel : ObservableObject
 
     private readonly ITemplateStore _templateStore;
     private readonly ISettingsStore _settingsStore;
+    private readonly ILocalizationService _localization;
     private readonly ILogger<ReadyRackViewModel> _logger;
 
-    public ReadyRackViewModel(ITemplateStore templateStore, ISettingsStore settingsStore, ILogger<ReadyRackViewModel> logger)
+    public ReadyRackViewModel(ITemplateStore templateStore, ISettingsStore settingsStore, ILocalizationService localization, ILogger<ReadyRackViewModel> logger)
     {
         _templateStore = templateStore;
         _settingsStore = settingsStore;
+        _localization = localization;
         _logger = logger;
         Slots = new ObservableCollection<ReadyRackSlotViewModel>(Enumerable.Range(1, SlotCount).Select(n => new ReadyRackSlotViewModel(n, RecallSlotCommand)));
     }
@@ -116,6 +139,20 @@ public sealed partial class ReadyRackViewModel : ObservableObject
 
     [ObservableProperty]
     private string _libraryFilterText = string.Empty;
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): error surface for a failed
+    /// Refresh/Delete -- same plain nullable-string shape as
+    /// <c>TxImageEditorPaneViewModel.StatusMessage</c>, kept separate rather than threaded up to the
+    /// parent VM (this VM already owns its own failure logging; a local status string is the smaller
+    /// change and matches this codebase's own established per-VM ErrorMessage/StatusMessage
+    /// convention, e.g. RadioStatusViewModel/LogbookPaneViewModel).</summary>
+    [ObservableProperty]
+    private string? _statusMessage;
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): arm/confirm target for
+    /// <see cref="DeleteAsync"/> -- see <see cref="TemplateListRowViewModel.IsPendingDelete"/>'s own
+    /// doc comment.</summary>
+    private string? _pendingDeleteId;
 
     partial void OnLibraryFilterTextChanged(string value) => RefreshFilteredTemplates();
 
@@ -186,7 +223,11 @@ public sealed partial class ReadyRackViewModel : ObservableObject
             AllTemplates.Clear();
             foreach (var metadata in metadataList)
             {
-                AllTemplates.Add(WireRowCommands(new TemplateListRowViewModel(metadata, validPinnedIds.Contains(metadata.Id))));
+                var isPinned = validPinnedIds.Contains(metadata.Id);
+                var row = WireRowCommands(new TemplateListRowViewModel(metadata, isPinned));
+                row.CanPin = isPinned || validPinnedIds.Count < SlotCount;
+                row.IsPendingDelete = metadata.Id == _pendingDeleteId;
+                AllTemplates.Add(row);
             }
 
             for (var i = 0; i < SlotCount; i++)
@@ -204,6 +245,7 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         catch (Exception ex)
         {
             Log.RefreshFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.RackRefreshFailed");
         }
     }
 
@@ -271,6 +313,15 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         await RefreshAsync();
     }
 
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Template DELETE is a single
+    /// unconfirmed click ... in a dense row." Arm/confirm, not a modal dialog (no precedent anywhere
+    /// in this codebase -- same reasoning as <c>TxImageEditorPaneViewModel.IsCancelArmed</c>'s own
+    /// doc comment): the first click on a row arms it (<see cref="TemplateListRowViewModel.IsPendingDelete"/>
+    /// flips true for THAT row only, false for every other -- clicking a different row's Delete re-arms
+    /// for the new target rather than confirming an unrelated one), the second click on the SAME
+    /// already-armed row actually deletes. <see cref="RefreshAsync"/>'s own re-populate naturally
+    /// clears the pending state on success (fresh rows default <c>IsPendingDelete</c> false unless
+    /// <see cref="_pendingDeleteId"/> still matches).</summary>
     [RelayCommand]
     private async Task DeleteAsync(TemplateListRowViewModel? row)
     {
@@ -279,13 +330,27 @@ public sealed partial class ReadyRackViewModel : ObservableObject
             return;
         }
 
+        if (_pendingDeleteId != row.Id)
+        {
+            _pendingDeleteId = row.Id;
+            foreach (var candidate in AllTemplates)
+            {
+                candidate.IsPendingDelete = candidate.Id == row.Id;
+            }
+
+            return;
+        }
+
+        _pendingDeleteId = null;
         try
         {
             await _templateStore.DeleteAsync(row.Id);
+            StatusMessage = null;
         }
         catch (Exception ex)
         {
             Log.DeleteFailed(_logger, row.Id, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.DeleteTemplateFailed");
             return;
         }
 
