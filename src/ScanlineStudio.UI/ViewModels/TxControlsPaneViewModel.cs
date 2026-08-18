@@ -989,7 +989,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             var editor = new TxImageEditorPaneViewModel(
                 original, mode, _preparer, _macroTextResolver, operatorSettings, _radioSession, _localization, _imageEditorLogger,
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
-                _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _readyRackLogger));
+                _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _readyRackLogger));
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
@@ -1138,7 +1138,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             var editor = new TxImageEditorPaneViewModel(
                 edit.Original, mode, _preparer, _macroTextResolver, operatorSettings, _radioSession, _localization, _imageEditorLogger,
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
-                _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _readyRackLogger),
+                _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _readyRackLogger),
                 new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay, edit.TemplateVariables));
             // SelectedFileName! is safe here: only OnEditorApplied ever writes it, always in the
             // same assignment that sets _editState (:868-871 below) -- _editState being non-null at

@@ -79,7 +79,7 @@ public sealed class TxImageEditorPaneViewModelTests
             templateStore, imageSourceWriter, readyRack ?? CreateReadyRack(templateStore));
 
     private static ReadyRackViewModel CreateReadyRack(ITemplateStore? templateStore = null) =>
-        new(templateStore ?? new FakeTemplateStore(), new FakeSettingsStore(), NullLogger<ReadyRackViewModel>.Instance);
+        new(templateStore ?? new FakeTemplateStore(), new FakeSettingsStore(), new FakeLocalizationService(), NullLogger<ReadyRackViewModel>.Instance);
 
     [AvaloniaFact]
     public void Constructor_OriginalLargerThanWorkingCopyBudget_DownsamplesBeforeUse()
@@ -370,6 +370,56 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(cropCountBefore, preparer.CropCallCount);
         Assert.Equal(resizeCountBefore, preparer.ResizeCallCount);
         Assert.Equal(overlayCountBefore, preparer.ApplyTemplateCallCount);
+    }
+
+    // Backlog item (auditor usability review, 2026-08-17): "Cancel discards all edits with no
+    // confirmation, even though HasUnsavedEdits already exists." Arm/confirm -- see IsCancelArmed's
+    // own doc comment.
+
+    [AvaloniaFact]
+    public void Cancel_WithUnsavedEdits_FirstClickArmsWithoutCancelling_SecondClickCancels()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.True(vm.HasUnsavedEdits);
+        var cancelled = false;
+        vm.Cancelled += () => cancelled = true;
+
+        vm.CancelCommand.Execute(null);
+        Assert.False(cancelled);
+        Assert.True(vm.IsCancelArmed);
+
+        vm.CancelCommand.Execute(null);
+        Assert.True(cancelled);
+    }
+
+    [AvaloniaFact]
+    public void Cancel_WithoutUnsavedEdits_CancelsImmediatelyWithNoArmStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.HasUnsavedEdits);
+        var cancelled = false;
+        vm.Cancelled += () => cancelled = true;
+
+        vm.CancelCommand.Execute(null);
+
+        Assert.True(cancelled);
+        Assert.False(vm.IsCancelArmed);
+    }
+
+    [AvaloniaFact]
+    public void Cancel_ArmedThenARealEditHappens_DisarmsTheConfirm()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.CancelCommand.Execute(null);
+        Assert.True(vm.IsCancelArmed);
+
+        // Any real edit (another undo-pushing action) disarms a stale confirm -- otherwise a Cancel
+        // click long before an unrelated later Cancel click would silently skip its own warning.
+        vm.AddBoxElementCommand.Execute(null);
+
+        Assert.False(vm.IsCancelArmed);
     }
 
     // spec/18-path-to-1.0.md High item 3. All rotate tests below use a non-square 6x4 source
@@ -2068,6 +2118,75 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotEqual(xBefore, element.X);
     }
 
+    // Backlog item (auditor usability review, 2026-08-17, item 18): "no keyboard element-resize path
+    // at all." Ctrl+Shift+arrow (TxImageEditorPaneView.OnRootKeyDown) resizes instead of moves --
+    // same DirectionToPixelDelta sign convention as ApplyCropResize's own bottom-right-corner-grow.
+
+    [AvaloniaFact]
+    public void NudgeElementResize_NoSelection_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        var widthBefore = element.Width;
+        vm.SelectedOverlayElement = null;
+
+        vm.NudgeElementResize(NudgeDirection.Right);
+
+        AssertClose(widthBefore, element.Width);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(NudgeDirection.Right, 1)]
+    [InlineData(NudgeDirection.Left, -1)]
+    public void NudgeElementResize_Horizontal_GrowsOnRightAndShrinksOnLeft(NudgeDirection direction, int expectedPixels)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        vm.SelectedOverlayElement = element;
+        var widthBefore = element.Width;
+        var heightBefore = element.Height;
+
+        vm.NudgeElementResize(direction);
+
+        AssertClose(widthBefore + ((double)expectedPixels / vm.WorkingCopyWidth), element.Width);
+        AssertClose(heightBefore, element.Height); // horizontal direction leaves Height untouched
+    }
+
+    [AvaloniaTheory]
+    [InlineData(NudgeDirection.Down, 1)]
+    [InlineData(NudgeDirection.Up, -1)]
+    public void NudgeElementResize_Vertical_GrowsOnDownAndShrinksOnUp(NudgeDirection direction, int expectedPixels)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        element.Height = 0.8; // well clear of the floor -- SmallMode's tiny 4px working copy means a
+                               // 1px shrink from the default 0.2 would otherwise hit it immediately
+                               // (see the dedicated floor test below), which isn't what this test means to check.
+        vm.SelectedOverlayElement = element;
+        var heightBefore = element.Height;
+
+        vm.NudgeElementResize(direction);
+
+        AssertClose(heightBefore + ((double)expectedPixels / vm.WorkingCopyHeight), element.Height);
+    }
+
+    [AvaloniaFact]
+    public void NudgeElementResize_FloorsAtMinNormalizedElementSize_NeverShrinksToZeroOrNegative()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = vm.OverlayElements[0];
+        element.Width = 0.001;
+        vm.SelectedOverlayElement = element;
+
+        vm.NudgeElementResize(NudgeDirection.Left);
+
+        Assert.True(element.Width > 0);
+    }
+
     [AvaloniaFact]
     public void ApplyFit_ViewportLargerThanWorkingCopy_ZoomFactorGrowsToFillTheSmallerAxis()
     {
@@ -2809,6 +2928,192 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(0, vm.SelectedTextElementFontSizePx);
     }
 
+    // Backlog item (auditor usability review, 2026-08-17): "Stroke thickness / shadow offsets in TEXT
+    // STYLE are still raw relative fractions ... outline width shows '0.004' with no unit." Same
+    // target-mode-height px conversion as SelectedTextElementFontSizePx above.
+
+    [AvaloniaFact]
+    public void SelectedTextElementStrokeThicknessPx_And_ShadowOffsetPx_ConvertAgainstTargetModeHeight()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = text;
+
+        AssertClose(text.StrokeThickness * WideMode.ImageHeight, vm.SelectedTextElementStrokeThicknessPx);
+        AssertClose(text.ShadowOffsetX * WideMode.ImageHeight, vm.SelectedTextElementShadowOffsetXPx);
+        AssertClose(text.ShadowOffsetY * WideMode.ImageHeight, vm.SelectedTextElementShadowOffsetYPx);
+
+        vm.SelectedTextElementStrokeThicknessPx = 2.0;
+        vm.SelectedTextElementShadowOffsetXPx = 1.0;
+        vm.SelectedTextElementShadowOffsetYPx = 0.5;
+
+        AssertClose(2.0 / WideMode.ImageHeight, text.StrokeThickness);
+        AssertClose(1.0 / WideMode.ImageHeight, text.ShadowOffsetX);
+        AssertClose(0.5 / WideMode.ImageHeight, text.ShadowOffsetY);
+    }
+
+    // Backlog item (auditor usability review, 2026-08-17): "GEOMETRY X/Y/W/H are raw full-precision
+    // doubles, no px option." Converted against WorkingCopyWidth/Height (zoom-independent), not
+    // ImageWidth/Height (the zoom-premultiplied canvas display size) -- see SelectedElementLeftPx's
+    // own doc comment for why.
+
+    [AvaloniaFact]
+    public void SelectedElementLeftTopWidthHeightPx_ReflectTheWorkingCopyPixelGeometry()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = vm.OverlayElements[0];
+        vm.SelectedOverlayElement = box;
+
+        AssertClose((box.X - (box.Width / 2)) * vm.WorkingCopyWidth, vm.SelectedElementLeftPx);
+        AssertClose((box.Y - (box.Height / 2)) * vm.WorkingCopyHeight, vm.SelectedElementTopPx);
+        AssertClose(box.Width * vm.WorkingCopyWidth, vm.SelectedElementWidthPx);
+        AssertClose(box.Height * vm.WorkingCopyHeight, vm.SelectedElementHeightPx);
+    }
+
+    [AvaloniaFact]
+    public void SelectedElementWidthHeightPx_Set_WritesBackToNormalizedWidthAndHeight()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = vm.OverlayElements[0];
+        vm.SelectedOverlayElement = box;
+
+        vm.SelectedElementWidthPx = 4.0;
+        vm.SelectedElementHeightPx = 2.0;
+
+        AssertClose(4.0 / vm.WorkingCopyWidth, box.Width);
+        AssertClose(2.0 / vm.WorkingCopyHeight, box.Height);
+    }
+
+    [AvaloniaFact]
+    public void SelectedElementLeftTopPx_Set_MovesTheElementsTopLeftCornerToThatPixel()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = vm.OverlayElements[0];
+        vm.SelectedOverlayElement = box;
+        var widthBefore = box.Width;
+        var heightBefore = box.Height;
+
+        vm.SelectedElementLeftPx = 0;
+        vm.SelectedElementTopPx = 0;
+
+        AssertClose(widthBefore / 2, box.X);
+        AssertClose(heightBefore / 2, box.Y);
+    }
+
+    [AvaloniaFact]
+    public void SelectedElementPx_NoSelection_GetIsZeroAndSetIsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+
+        Assert.Equal(0, vm.SelectedElementLeftPx);
+        Assert.Equal(0, vm.SelectedElementTopPx);
+        Assert.Equal(0, vm.SelectedElementWidthPx);
+        Assert.Equal(0, vm.SelectedElementHeightPx);
+
+        vm.SelectedElementLeftPx = 5;
+        vm.SelectedElementWidthPx = 5;
+
+        Assert.Equal(0, vm.SelectedElementLeftPx);
+        Assert.Equal(0, vm.SelectedElementWidthPx);
+    }
+
+    // Backlog item (auditor usability review, 2026-08-17): "Box elements have no style UI at all" /
+    // "Image elements' Fit mode isn't editable" -- SelectedBoxElement/SelectedImageElement narrow
+    // SelectedOverlayElement the same way SelectedTextElement already did.
+
+    [AvaloniaFact]
+    public void SelectedBoxElement_And_SelectedImageElement_NarrowSelectedOverlayElementByType()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = vm.OverlayElements[0];
+        vm.SelectedOverlayElement = box;
+
+        Assert.Same(box, vm.SelectedBoxElement);
+        Assert.Null(vm.SelectedImageElement);
+        Assert.Null(vm.SelectedTextElement);
+    }
+
+    [AvaloniaFact]
+    public void SelectedImageElement_ImageElementSelected_ExposesItsFitForEditing()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = image;
+
+        Assert.Same(image, vm.SelectedImageElement);
+        Assert.Contains(ImageFitMode.Cover, vm.AvailableImageFitModes);
+
+        vm.SelectedImageElement!.Fit = ImageFitMode.Cover;
+
+        Assert.Equal(ImageFitMode.Cover, image.Fit);
+    }
+
+    [AvaloniaFact]
+    public void SelectedBoxElementBorderThicknessPx_ConvertsAgainstTargetModeHeight()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = (BoxElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = box;
+
+        vm.SelectedBoxElementBorderThicknessPx = 2.0;
+
+        AssertClose(2.0 / WideMode.ImageHeight, box.BorderThickness);
+        AssertClose(2.0, vm.SelectedBoxElementBorderThicknessPx);
+    }
+
+    [AvaloniaFact]
+    public void BoxElementViewModel_HasBorder_TogglesBorderColorAndRoundTripsThroughBorderColorForPicker()
+    {
+        var box = new BoxElementViewModel();
+        Assert.False(box.HasBorder);
+
+        box.HasBorder = true;
+        Assert.NotNull(box.BorderColor);
+
+        box.BorderColorForPicker = new Rgb24(10, 20, 30);
+        Assert.Equal(new Rgb24(10, 20, 30), box.BorderColor);
+
+        box.HasBorder = false;
+        Assert.Null(box.BorderColor);
+        // Setter is a no-op while disabled -- same "disabled picker write is dropped" contract as
+        // OverlayElementViewModel.StrokeColorForPicker's own doc comment.
+        box.BorderColorForPicker = new Rgb24(1, 1, 1);
+        Assert.Null(box.BorderColor);
+    }
+
+    // Backlog item (auditor usability review, 2026-08-17): "ELEMENTS rows don't select or highlight
+    // on click." IsSelected is set by OnSelectedOverlayElementChanged's own loop over every element.
+
+    [AvaloniaFact]
+    public void SelectedOverlayElementChanged_UpdatesIsSelectedOnEveryElement()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.AddBoxElementCommand.Execute(null);
+        var first = vm.OverlayElements[0];
+        var second = vm.OverlayElements[1];
+
+        vm.SelectedOverlayElement = first;
+        Assert.True(first.IsSelected);
+        Assert.False(second.IsSelected);
+
+        vm.SelectedOverlayElement = second;
+        Assert.False(first.IsSelected);
+        Assert.True(second.IsSelected);
+
+        vm.SelectedOverlayElement = null;
+        Assert.False(first.IsSelected);
+        Assert.False(second.IsSelected);
+    }
+
     [AvaloniaFact]
     public void IsFontUnavailable_SelectedTextElementFontNotInAvailableFamilies_ReturnsTrue()
     {
@@ -3008,6 +3313,53 @@ public sealed class TxImageEditorPaneViewModelTests
 
         Assert.True(vm.CopySelectedElementCommand.CanExecute(null));
         Assert.True(vm.CutSelectedElementCommand.CanExecute(null));
+    }
+
+    // Backlog item (auditor usability review, 2026-08-17): "Repeated Paste stacks copies at the
+    // identical offset from the clipboard snapshot (not incrementing per paste), so 3x Ctrl+V looks
+    // like paste only worked once." Each paste now re-snapshots the just-pasted element back into the
+    // clipboard, so the NEXT paste offsets from the PREVIOUS paste (cascading), not the original.
+
+    [AvaloniaFact]
+    public void CopyThenPasteThreeTimes_EachPasteOffsetsFromThePreviousPaste_NotAllAtTheSameSpot()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var original = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = original;
+        vm.CopySelectedElementCommand.Execute(null);
+
+        vm.PasteElementCommand.Execute(null);
+        var firstPaste = vm.OverlayElements[1];
+        vm.PasteElementCommand.Execute(null);
+        var secondPaste = vm.OverlayElements[2];
+        vm.PasteElementCommand.Execute(null);
+        var thirdPaste = vm.OverlayElements[3];
+
+        Assert.Equal(4, vm.OverlayElements.Count);
+        // Each paste is strictly farther from the original than the last, not identical (the bug's
+        // exact symptom: all copies landing on top of each other at the same offset).
+        Assert.True(firstPaste.X < secondPaste.X);
+        Assert.True(secondPaste.X < thirdPaste.X);
+    }
+
+    [AvaloniaFact]
+    public void CopyAgainAfterPasting_ResetsTheClipboardToTheLiveSourcePosition()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var original = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = original;
+        vm.CopySelectedElementCommand.Execute(null);
+        vm.PasteElementCommand.Execute(null);
+        vm.PasteElementCommand.Execute(null); // clipboard is now cascaded away from `original`
+
+        vm.SelectedOverlayElement = original;
+        vm.CopySelectedElementCommand.Execute(null); // fresh copy from the ORIGINAL position again
+        vm.PasteElementCommand.Execute(null);
+        var freshPaste = vm.OverlayElements[^1];
+
+        AssertClose(original.X + 0.02, freshPaste.X);
     }
 
     [AvaloniaFact]
@@ -4214,6 +4566,67 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(string.Empty, vm.NewTemplateName);
     }
 
+    // Backlog item (auditor usability review, 2026-08-17): "Saving a template under an existing name
+    // creates a duplicate entry, not an update/rename." CreateTemplateId always mints a fresh id
+    // (guid8 suffix) -- saving under a name that already exists in the rack's own list must reuse
+    // THAT id instead, so the save overwrites in place.
+
+    [AvaloniaFact]
+    public async Task SaveTemplateAsync_SameNameTwice_OverwritesInPlaceInsteadOfCreatingADuplicate()
+    {
+        var templateStore = new FakeTemplateStore();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.NewTemplateName = "Contest card";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var firstSaved = Assert.Single(await templateStore.ListAsync());
+
+        vm.AddBoxElementCommand.Execute(null); // change the content before the second save
+        vm.NewTemplateName = "Contest card";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+        var secondSaved = Assert.Single(await templateStore.ListAsync());
+        Assert.Equal(firstSaved.Id, secondSaved.Id);
+        var document = await templateStore.LoadAsync(secondSaved.Id);
+        Assert.Equal(2, document.Elements.Count); // reflects the SECOND save's content
+    }
+
+    [AvaloniaFact]
+    public async Task SaveTemplateAsync_DifferentName_CreatesASeparateEntry()
+    {
+        var templateStore = new FakeTemplateStore();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.NewTemplateName = "First";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+        vm.NewTemplateName = "Second";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, (await templateStore.ListAsync()).Count);
+    }
+
+    // Backlog item (auditor usability review, 2026-08-17): "No error surface anywhere in the editor
+    // -- a failed Save/Load/add-image is ILogger-only, invisible to the operator."
+
+    [AvaloniaFact]
+    public async Task AddImageFromFileAsync_LoadThrows_SetsStatusMessageInsteadOfFailingSilently()
+    {
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+        var loader = new FakeImageFileLoader(); // ResultToReturn unset -> throws
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+        Assert.Null(vm.StatusMessage);
+
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+
+        Assert.False(string.IsNullOrEmpty(vm.StatusMessage));
+        Assert.Empty(vm.OverlayElements);
+    }
+
     [AvaloniaFact]
     public async Task SaveTemplateAsync_ImageElement_WritesItsAssetBeforeCallingStoreSaveAsync()
     {
@@ -4316,6 +4729,13 @@ public sealed class TxImageEditorPaneViewModelTests
         await readyRack.RefreshAsync();
         var row = Assert.Single(readyRack.AllTemplates);
 
+        // Backlog item (auditor usability review, 2026-08-17): loading a template while the editor
+        // HasUnsavedEdits (AddOverlayElementCommand above pushed one) now arms a confirm instead of
+        // loading immediately -- see OnReadyRackTemplateSelected's own doc comment. The FIRST click
+        // only arms; the SECOND click on the SAME row actually loads.
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(originalElementCount, vm.OverlayElements.Count);
         readyRack.LoadCommand.Execute(row);
         Dispatcher.UIThread.RunJobs();
         Dispatcher.UIThread.RunJobs();
@@ -4327,6 +4747,58 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(vm.UndoCommand.CanExecute(null));
         vm.UndoCommand.Execute(null);
         Assert.Equal(originalElementCount, vm.OverlayElements.Count);
+    }
+
+    // Backlog item (auditor usability review, 2026-08-17): "Ready Rack ... recall silently replaces
+    // the whole layout with no confirmation."
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_WithUnsavedEdits_ArmingSetsAWarningStatusMessage()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        var templateId = templateStore.CreateTemplateId("Loadable");
+        await templateStore.SaveAsync(templateId, "Loadable", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        Assert.Null(vm.StatusMessage);
+
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(string.IsNullOrEmpty(vm.StatusMessage));
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_WithUnsavedEdits_SelectingADifferentTemplateReArmsInsteadOfConfirmingTheOldOne()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        var originalElementCount = vm.OverlayElements.Count;
+        var firstId = templateStore.CreateTemplateId("First");
+        await templateStore.SaveAsync(firstId, "First", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        var secondId = templateStore.CreateTemplateId("Second");
+        await templateStore.SaveAsync(secondId, "Second", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(4, 5, 6), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var first = readyRack.AllTemplates.Single(r => r.Id == firstId);
+        var second = readyRack.AllTemplates.Single(r => r.Id == secondId);
+
+        readyRack.LoadCommand.Execute(first); // arms for `first`
+        Dispatcher.UIThread.RunJobs();
+        readyRack.LoadCommand.Execute(second); // a DIFFERENT template re-arms instead of confirming `first`
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(originalElementCount, vm.OverlayElements.Count); // neither loaded yet
     }
 
     [AvaloniaFact]

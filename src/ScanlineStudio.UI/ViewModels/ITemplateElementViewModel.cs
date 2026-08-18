@@ -29,6 +29,16 @@ public interface ITemplateElementViewModel : INotifyPropertyChanged
 
     bool Locked { get; set; }
 
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): true for exactly the element
+    /// currently equal to <see cref="TxImageEditorPaneViewModel.SelectedOverlayElement"/> -- set by
+    /// the parent VM's own <c>OnSelectedOverlayElementChanged</c> (a loop over every live element,
+    /// same "parent pushes shared state down" convention as <see cref="RemoveCommand"/>'s own
+    /// init-property wiring, just a plain settable property instead of a command since there's no
+    /// per-element action here). Lets the ELEMENTS panel's own row highlight the currently-selected
+    /// element without a <c>$parent</c>/ancestor-cast binding path (this codebase's own documented
+    /// crash class, see <see cref="RemoveCommand"/>'s own doc comment).</summary>
+    bool IsSelected { get; set; }
+
     /// <summary>Pixel-space canvas dimensions, parent-pushed at creation and on every rotate/zoom
     /// change — same pattern as <see cref="OverlayElementViewModel"/>'s pre-Phase-1 fields,
     /// generalized. Since Phase 7's rearchitecture (see <see

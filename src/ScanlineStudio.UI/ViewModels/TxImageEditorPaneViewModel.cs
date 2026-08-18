@@ -298,6 +298,35 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(SaveTemplateCommand))]
     private bool _isSavingTemplate;
 
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "No error surface anywhere in
+    /// the editor -- a failed Save/Load/add-image is ILogger-only, invisible to the operator." A
+    /// plain nullable status string, same established shape as <c>RadioStatusViewModel.ErrorMessage</c>/
+    /// <c>LogbookPaneViewModel.StatusMessage</c> elsewhere in this codebase -- no new subsystem.
+    /// Doubles as the surface for the arm/confirm prompts below (Cancel/Recall-overwrite) -- both are
+    /// "the editor needs to tell the operator something transient," the same real UI need.</summary>
+    [ObservableProperty]
+    private string? _statusMessage;
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Cancel discards all edits with
+    /// no confirmation, even though HasUnsavedEdits already exists." Arm/confirm, not a modal dialog
+    /// (no dialog-service precedent exists anywhere in this codebase -- see <see cref="Cancel"/>'s own
+    /// doc comment) -- the first click with unsaved edits pending arms (shows a warning in
+    /// <see cref="StatusMessage"/>, changes nothing else), the second click actually cancels. Reset by
+    /// any real edit (<see cref="PushUndoSnapshot"/>/<see cref="PushUndoSnapshotCoalesced"/>), not just
+    /// consumed by Cancel itself -- otherwise a stale arm from long before would silently skip the
+    /// warning on a LATER, unrelated Cancel click.</summary>
+    [ObservableProperty]
+    private bool _isCancelArmed;
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Ready Rack number keys ...
+    /// recall silently replaces the whole layout with no confirmation." Same arm/confirm shape as
+    /// <see cref="IsCancelArmed"/>, keyed by template id so pressing a DIFFERENT slot/row re-arms for
+    /// the new target rather than confirming an unrelated one. Lives here (not on <see cref="ReadyRack"/>)
+    /// since only this VM knows <see cref="HasUnsavedEdits"/> -- both the rack's numbered slots and the
+    /// Template Library's own Load button funnel through the same <see cref="ReadyRackViewModel.TemplateSelected"/>
+    /// event into <see cref="OnReadyRackTemplateSelected"/>, so one guard there covers both surfaces.</summary>
+    private string? _pendingRecallTemplateId;
+
     // Adjustment sliders (spec/18-path-to-1.0.md Medium item) -- 0 is each one's own no-op
     // default (see ImageAdjustments' own doc comment for the exact per-field mapping). Applied
     // between Resize and ApplyOverlay (never touching already-burned-in overlay text pixels) --
@@ -421,8 +450,23 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// in this constructor for why no unsubscribe/IDisposable is needed either (both die together).</summary>
     public ReadyRackViewModel ReadyRack { get; }
 
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "recall silently replaces the
+    /// whole layout with no confirmation" -- arm/confirm gate (see <see cref="_pendingRecallTemplateId"/>'s
+    /// own doc comment), applied uniformly to BOTH the rack's numbered-slot recall and the Template
+    /// Library's own Load button (both funnel through <see cref="ReadyRackViewModel.TemplateSelected"/>
+    /// into this one handler). Also the error-surface fix for a failed load (item 11) -- previously
+    /// ILogger-only.</summary>
     private async void OnReadyRackTemplateSelected(string templateId)
     {
+        if (HasUnsavedEdits && _pendingRecallTemplateId != templateId)
+        {
+            _pendingRecallTemplateId = templateId;
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.ConfirmRecallOverwrite");
+            return;
+        }
+
+        _pendingRecallTemplateId = null;
+        StatusMessage = null;
         try
         {
             await LoadTemplateAsync(templateId);
@@ -430,6 +474,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.LoadTemplateFailed(_logger, templateId, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.LoadTemplateFailed");
         }
     }
 
@@ -856,6 +901,42 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         element.Y += dyPixels / WorkingCopyHeight;
     }
 
+    /// <summary>Floor for <see cref="NudgeElementResize"/> -- same value as
+    /// <c>TxImageEditorPaneView.MinNormalizedElementSize</c> (a SEPARATE, deliberately identical
+    /// constant, not a shared reference, per that field's own doc comment: the drag-resize floor is
+    /// View-local, this one guards the new keyboard path instead).</summary>
+    private const double MinNormalizedElementResizeSize = 0.02;
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Shift+arrow is permanently
+    /// bound to crop resize (never element resize) with no keyboard element-resize path at all."
+    /// Ctrl+Shift+arrow (see <c>TxImageEditorPaneView.OnRootKeyDown</c>) resizes the selected,
+    /// unlocked element instead -- same 1px/Ctrl+16px precision as <see cref="NudgeElement"/>, but
+    /// note Ctrl here is already consumed by the existing 1px/16px distinction, so this path is
+    /// always 1px (matches plain Shift+arrow's own crop-resize precision, which has no Ctrl-fast
+    /// variant either). Growing on Right/Down and shrinking on Left/Up mirrors
+    /// <see cref="ApplyCropResize"/>'s own bottom-right-corner-grow convention exactly (same
+    /// <see cref="DirectionToPixelDelta"/> sign, applied to Width/Height instead of the crop rect).
+    /// Deliberately scoped to size only, not a 4-corner/8-handle drag system or an aspect-lock toggle
+    /// (auditor's own item 18 also asked for those) -- <see cref="OnOverlayElementPointerPressed"/>'s
+    /// own doc comment documents the single-corner-handle drag convention as an intentional,
+    /// plan-reviewed design decision (mirrors legacy PicRect.cpp), not a gap; reversing that needs its
+    /// own dedicated design pass, not a same-batch addition alongside 17 smaller, independent fixes.</summary>
+    public void NudgeElementResize(NudgeDirection direction)
+    {
+        // Deliberately does NOT guard on Locked -- same division of responsibility as NudgeElement's
+        // own doc comment: the real gate is the call site's own SelectedOverlayElement is { Locked:
+        // false } check (TxImageEditorPaneView.OnRootKeyDown), matching every other Locked check in
+        // this editor living at the call site, not duplicated inside the mutation method itself.
+        if (SelectedOverlayElement is not { } element || WorkingCopyWidth <= 0 || WorkingCopyHeight <= 0)
+        {
+            return;
+        }
+
+        var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, 1);
+        element.Width = Math.Max(element.Width + (dxPixels / WorkingCopyWidth), MinNormalizedElementResizeSize);
+        element.Height = Math.Max(element.Height + (dyPixels / WorkingCopyHeight), MinNormalizedElementResizeSize);
+    }
+
     /// <summary>Applies <see cref="TxImageEditorPaneView.SnapElementBoundsToGrid"/>'s own already-
     /// computed result to <paramref name="element"/> as ONE atomic undo step (code-review finding):
     /// each of the 4 property assignments below has its own <c>On*Changing</c> hook that pushes a
@@ -1011,6 +1092,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.AddImageFromFileFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
             return;
         }
 
@@ -1027,9 +1109,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.AddImageFromFileFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
             return;
         }
 
+        StatusMessage = null;
         InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.File, path));
     }
 
@@ -1153,9 +1237,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.AddImageFromRxHistoryFailed(_logger, entry.Id, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
             return;
         }
 
+        StatusMessage = null;
         InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.RxHistory, entry.Id));
     }
 
@@ -1433,9 +1519,24 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
 
         IsSavingTemplate = true;
-        var templateId = _templateStore.CreateTemplateId(name);
+
+        // Backlog item (auditor usability review, 2026-08-17): "Saving a template under an existing
+        // name creates a duplicate entry, not an update/rename." CreateTemplateId always mints a
+        // fresh guid8-suffixed id (see its own doc comment) -- saving under a name that already
+        // exists in the rack's own list reuses THAT existing id instead, so the save overwrites in
+        // place (also preserves any pin referencing it, since pins are keyed by id). The old folder
+        // is deleted first (same DeleteAsync-then-write cleanup already used in the catch block
+        // below) so a save with FEWER elements than before doesn't leave orphaned asset PNGs behind
+        // under the reused id.
+        var existingId = ReadyRack.AllTemplates.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))?.Id;
+        var templateId = existingId ?? _templateStore.CreateTemplateId(name);
         try
         {
+            if (existingId is { } idToReplace)
+            {
+                await _templateStore.DeleteAsync(idToReplace);
+            }
+
             var elements = new List<PersistedTemplateElement>(OverlayElements.Count);
             foreach (var raw in RawOverlayElements)
             {
@@ -1444,11 +1545,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
             await _templateStore.SaveAsync(templateId, name, new PersistedTemplateDocument(elements));
             NewTemplateName = string.Empty;
+            StatusMessage = null;
             await ReadyRack.RefreshAsync();
         }
         catch (Exception ex)
         {
             Log.SaveTemplateFailed(_logger, name, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.SaveTemplateFailed");
 
             // Code-review finding: a failure partway through the foreach above (e.g. WritePngAsync
             // throws on element 2 of 3) already wrote element 1's asset PNG under this freshly-minted
@@ -1685,6 +1788,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     partial void OnSelectedOverlayElementChanged(ITemplateElementViewModel? value)
     {
+        // Backlog item (auditor usability review, 2026-08-17): ELEMENTS panel row highlight -- a
+        // plain loop over every live element, same "parent pushes shared state down" convention as
+        // every command on ITemplateElementViewModel, just a settable property instead of a command
+        // (see IsSelected's own doc comment). O(n) in element count, which this editor's whole
+        // undo/redo snapshot mechanism already treats as small/cheap (CaptureSnapshot copies the
+        // full element list on every edit).
+        foreach (var element in OverlayElements)
+        {
+            element.IsSelected = ReferenceEquals(element, value);
+        }
+
         InsertFieldCommand.NotifyCanExecuteChanged();
         SetFontSizePresetCommand.NotifyCanExecuteChanged();
         SetTextColorPresetCommand.NotifyCanExecuteChanged();
@@ -1706,8 +1820,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsFontUnavailable));
         OnPropertyChanged(nameof(FontFamilyPickerItems));
         OnPropertyChanged(nameof(SelectedTextElement));
+        OnPropertyChanged(nameof(SelectedImageElement));
+        OnPropertyChanged(nameof(SelectedBoxElement));
         OnPropertyChanged(nameof(SelectionReadoutText));
         OnPropertyChanged(nameof(SelectedTextElementFontSizePx));
+        OnPropertyChanged(nameof(SelectedTextElementStrokeThicknessPx));
+        OnPropertyChanged(nameof(SelectedTextElementShadowOffsetXPx));
+        OnPropertyChanged(nameof(SelectedTextElementShadowOffsetYPx));
+        OnPropertyChanged(nameof(SelectedBoxElementBorderThicknessPx));
+        OnPropertyChanged(nameof(SelectedElementLeftPx));
+        OnPropertyChanged(nameof(SelectedElementTopPx));
+        OnPropertyChanged(nameof(SelectedElementWidthPx));
+        OnPropertyChanged(nameof(SelectedElementHeightPx));
     }
 
     /// <summary>Phase 4 (spec/15-template-designer.md) -- <see cref="SelectedOverlayElement"/>
@@ -1745,6 +1869,157 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             text.FontSizeRelative = value / _targetMode.ImageHeight;
         }
     }
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Stroke thickness / shadow
+    /// offsets in TEXT STYLE are still raw relative fractions ... outline width shows '0.004' with no
+    /// unit" -- same target-mode-height px conversion as <see cref="SelectedTextElementFontSizePx"/>,
+    /// same reasoning (the size this actually renders at in the TRANSMITTED image, zoom-independent).</summary>
+    public double SelectedTextElementStrokeThicknessPx
+    {
+        get => SelectedTextElement is { } text ? text.StrokeThickness * _targetMode.ImageHeight : 0;
+        set
+        {
+            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            {
+                return;
+            }
+
+            text.StrokeThickness = value / _targetMode.ImageHeight;
+        }
+    }
+
+    /// <inheritdoc cref="SelectedTextElementStrokeThicknessPx"/>
+    public double SelectedTextElementShadowOffsetXPx
+    {
+        get => SelectedTextElement is { } text ? text.ShadowOffsetX * _targetMode.ImageHeight : 0;
+        set
+        {
+            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            {
+                return;
+            }
+
+            text.ShadowOffsetX = value / _targetMode.ImageHeight;
+        }
+    }
+
+    /// <inheritdoc cref="SelectedTextElementStrokeThicknessPx"/>
+    public double SelectedTextElementShadowOffsetYPx
+    {
+        get => SelectedTextElement is { } text ? text.ShadowOffsetY * _targetMode.ImageHeight : 0;
+        set
+        {
+            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            {
+                return;
+            }
+
+            text.ShadowOffsetY = value / _targetMode.ImageHeight;
+        }
+    }
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "GEOMETRY X/Y/W/H are raw full-
+    /// precision doubles, no px option" -- same conversion shape as <see cref="SelectedTextElementFontSizePx"/>,
+    /// generalized to <see cref="SelectedOverlayElement"/> (the shared <see cref="ITemplateElementViewModel"/>
+    /// interface, so this works for text/box/image alike, unlike the text-only SIZE field). Converted
+    /// against <see cref="WorkingCopyWidth"/>/<see cref="WorkingCopyHeight"/> (zoom-independent native
+    /// pixels), NOT <see cref="ITemplateElementViewModel.ImageWidth"/>/<c>ImageHeight</c> (those are
+    /// the zoom-premultiplied CANVAS DISPLAY size -- typing a px value would drift with the zoom
+    /// slider if this used those instead, the same zoom-independence <see cref="ZoomFactor"/>'s own
+    /// doc comment establishes for undo/redo/snap/the pipeline). Left/Top (not center X/Y) since a
+    /// px-based GEOMETRY field is most useful matching <see cref="ITemplateElementViewModel.LeftPixels"/>/
+    /// <c>TopPixels</c>'s own top-left convention -- <see cref="ITemplateElementViewModel.X"/>/<c>Y</c>
+    /// themselves stay center-anchored underneath (unchanged, see that interface's own doc comment),
+    /// this is a display/edit-side conversion only, same as every other *Px property here.</summary>
+    public double SelectedElementLeftPx
+    {
+        get => SelectedOverlayElement is { } element ? (element.X - (element.Width / 2)) * WorkingCopyWidth : 0;
+        set
+        {
+            if (SelectedOverlayElement is not { } element || WorkingCopyWidth <= 0)
+            {
+                return;
+            }
+
+            element.X = (value / WorkingCopyWidth) + (element.Width / 2);
+        }
+    }
+
+    /// <inheritdoc cref="SelectedElementLeftPx"/>
+    public double SelectedElementTopPx
+    {
+        get => SelectedOverlayElement is { } element ? (element.Y - (element.Height / 2)) * WorkingCopyHeight : 0;
+        set
+        {
+            if (SelectedOverlayElement is not { } element || WorkingCopyHeight <= 0)
+            {
+                return;
+            }
+
+            element.Y = (value / WorkingCopyHeight) + (element.Height / 2);
+        }
+    }
+
+    /// <inheritdoc cref="SelectedElementLeftPx"/>
+    public double SelectedElementWidthPx
+    {
+        get => SelectedOverlayElement is { } element ? element.Width * WorkingCopyWidth : 0;
+        set
+        {
+            if (SelectedOverlayElement is not { } element || WorkingCopyWidth <= 0)
+            {
+                return;
+            }
+
+            element.Width = value / WorkingCopyWidth;
+        }
+    }
+
+    /// <inheritdoc cref="SelectedElementLeftPx"/>
+    public double SelectedElementHeightPx
+    {
+        get => SelectedOverlayElement is { } element ? element.Height * WorkingCopyHeight : 0;
+        set
+        {
+            if (SelectedOverlayElement is not { } element || WorkingCopyHeight <= 0)
+            {
+                return;
+            }
+
+            element.Height = value / WorkingCopyHeight;
+        }
+    }
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Image elements' Fit mode isn't
+    /// editable" -- same narrowed-cast shape as <see cref="SelectedTextElement"/>, for the GEOMETRY
+    /// tab's new image-only Fit row.</summary>
+    public ImageElementViewModel? SelectedImageElement => SelectedOverlayElement as ImageElementViewModel;
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Box elements have no style UI
+    /// at all" -- same narrowed-cast shape as <see cref="SelectedTextElement"/>/<see cref="SelectedImageElement"/>,
+    /// for the GEOMETRY tab's new box-only style block.</summary>
+    public BoxElementViewModel? SelectedBoxElement => SelectedOverlayElement as BoxElementViewModel;
+
+    /// <summary>Same target-mode-height px conversion as <see cref="SelectedTextElementStrokeThicknessPx"/>,
+    /// for <see cref="BoxElementViewModel.BorderThickness"/> (same relative-to-image-height convention,
+    /// see that property's own doc comment).</summary>
+    public double SelectedBoxElementBorderThicknessPx
+    {
+        get => SelectedBoxElement is { } box ? box.BorderThickness * _targetMode.ImageHeight : 0;
+        set
+        {
+            if (SelectedBoxElement is not { } box || _targetMode.ImageHeight <= 0)
+            {
+                return;
+            }
+
+            box.BorderThickness = value / _targetMode.ImageHeight;
+        }
+    }
+
+    /// <summary>The Fit ComboBox's own ItemsSource -- plain <c>Enum.GetValues</c> property, same
+    /// pattern as <see cref="AvailableGradientKinds"/>.</summary>
+    public IReadOnlyList<ImageFitMode> AvailableImageFitModes { get; } = Enum.GetValues<ImageFitMode>();
 
     /// <summary>Phase 4 -- the TEXT STYLE panel's font-family picker ItemsSource. Forwards
     /// <see cref="ITransmitImagePreparer.AvailableFontFamilies"/> rather than the VM hardcoding its
@@ -1957,8 +2232,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// <see cref="PasteElement"/> (Copy/Cut/Paste addendum) can reuse the identical
     /// offset/Z/background-clearing logic instead of a second, driftable copy -- both commands mean
     /// the exact same thing ("insert an independent clone of this snapshot"), just sourced
-    /// differently (the currently-selected element vs. <see cref="_clipboardSnapshot"/>).</summary>
-    private void InsertClonedSnapshot(RawElementSnapshot snapshot)
+    /// differently (the currently-selected element vs. <see cref="_clipboardSnapshot"/>). Returns the
+    /// newly-created element (auditor usability review, 2026-08-17 -- <see cref="PasteElement"/> uses
+    /// this to cascade repeated pastes, see its own doc comment).</summary>
+    private ITemplateElementViewModel InsertClonedSnapshot(RawElementSnapshot snapshot)
     {
         const double offset = 0.02;
         var offsetSnapshot = snapshot switch
@@ -1991,6 +2268,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         OverlayElements.Add(copy);
         SelectedOverlayElement = copy;
         RecomputePreview();
+        return copy;
     }
 
     /// <summary>Backlog item (user request, 2026-08-17): in-editor Copy/Cut/Paste for canvas
@@ -2030,12 +2308,22 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
     private bool CanPasteElement() => _clipboardSnapshot is not null;
 
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Repeated Paste stacks copies at
+    /// the identical offset from the clipboard snapshot (not incrementing per paste), so 3x Ctrl+V
+    /// looks like paste only worked once." Root cause: <see cref="_clipboardSnapshot"/> never changed
+    /// across repeated pastes, so every paste re-applied <see cref="InsertClonedSnapshot"/>'s own
+    /// fixed offset from the SAME original position. Fixed by re-snapshotting the just-pasted element
+    /// back into <see cref="_clipboardSnapshot"/> after each paste -- the NEXT paste then offsets from
+    /// the PREVIOUS paste, cascading diagonally (the common paste-in-place-then-offset convention),
+    /// while a fresh Copy/Cut still resets the clipboard to the live source position exactly as
+    /// before (both set <see cref="_clipboardSnapshot"/> directly, not through this method).</summary>
     [RelayCommand(CanExecute = nameof(CanPasteElement))]
     private void PasteElement()
     {
         if (_clipboardSnapshot is { } snapshot)
         {
-            InsertClonedSnapshot(snapshot);
+            var pasted = InsertClonedSnapshot(snapshot);
+            _clipboardSnapshot = BuildRawSnapshot(pasted);
         }
     }
 
@@ -2394,9 +2682,22 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         Applied?.Invoke(final);
     }
 
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): arm/confirm before discarding
+    /// unsaved edits -- see <see cref="IsCancelArmed"/>'s own doc comment for why this isn't a modal
+    /// dialog. A Cancel with nothing unsaved still cancels immediately (no confirmation needed for a
+    /// no-op discard).</summary>
     [RelayCommand]
     private void Cancel()
     {
+        if (HasUnsavedEdits && !IsCancelArmed)
+        {
+            IsCancelArmed = true;
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.ConfirmCancelDiscard");
+            return;
+        }
+
+        IsCancelArmed = false;
+        StatusMessage = null;
         Log.CancelInvoked(_logger);
         Cancelled?.Invoke();
     }
@@ -2725,6 +3026,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         {
             OnPropertyChanged(nameof(SelectionReadoutText));
             OnPropertyChanged(nameof(SelectedTextElementFontSizePx));
+            OnPropertyChanged(nameof(SelectedTextElementStrokeThicknessPx));
+            OnPropertyChanged(nameof(SelectedTextElementShadowOffsetXPx));
+            OnPropertyChanged(nameof(SelectedTextElementShadowOffsetYPx));
+            OnPropertyChanged(nameof(SelectedElementLeftPx));
+            OnPropertyChanged(nameof(SelectedElementTopPx));
+            OnPropertyChanged(nameof(SelectedElementWidthPx));
+            OnPropertyChanged(nameof(SelectedElementHeightPx));
+            OnPropertyChanged(nameof(SelectedBoxElementBorderThicknessPx));
         }
 
         RecomputePreview();
@@ -2946,6 +3255,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             return;
         }
 
+        // Backlog item (auditor usability review, 2026-08-17): any real edit disarms a pending
+        // Cancel/Recall confirmation -- see IsCancelArmed's own doc comment for why a stale arm from
+        // long before a later, unrelated Cancel click would otherwise silently skip its warning.
+        IsCancelArmed = false;
+        _pendingRecallTemplateId = null;
+
         _undoStack.Add(CaptureSnapshot());
         if (_undoStack.Count > MaxUndoDepth)
         {
@@ -2987,6 +3302,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         {
             return;
         }
+
+        // Same disarm reasoning as PushUndoSnapshot's own -- see that method's own comment.
+        IsCancelArmed = false;
+        _pendingRecallTemplateId = null;
 
         _undoStack.Add(CaptureSnapshot());
         if (_undoStack.Count > MaxUndoDepth)

@@ -33,6 +33,9 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     [ObservableProperty]
     private bool _locked;
 
+    [ObservableProperty]
+    private bool _isSelected;
+
     /// <summary>Set by <see cref="TxImageEditorPaneViewModel.SetAsBackground"/> (Phase 6,
     /// spec/15-template-designer.md) -- NOT inferred structurally from full-frame bounds (a manual
     /// drag could coincidentally produce the same bounds without meaning "background"). Combined
