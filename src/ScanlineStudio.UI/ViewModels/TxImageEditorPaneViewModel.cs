@@ -74,16 +74,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
-    /// <summary>Which of Phase 2's 3 sources an image element was resolved from, plus enough to
-    /// re-resolve it later (spec/15-template-designer.md, plan-review finding) -- a resolved
-    /// <see cref="IImageSource"/> alone can't tell Phase 5's persisted-template format whether to
-    /// serialize a file reference or embed the pixels, and would foreclose ever re-resolving the
-    /// "last RX image" case against a NEW picture on a future render (not built in Phase 2, but the
-    /// origin field keeps that door open instead of silently designing it out).
+    /// <summary>Which source an image element was resolved from, plus enough to re-resolve it later
+    /// (spec/15-template-designer.md, plan-review finding) -- a resolved <see cref="IImageSource"/>
+    /// alone can't tell Phase 5's persisted-template format whether to serialize a file reference or
+    /// embed the pixels, and would foreclose ever re-resolving the "last RX image" case against a NEW
+    /// picture on a future render (not built in Phase 2, but the origin field keeps that door open
+    /// instead of silently designing it out).
     /// <see cref="Payload"/> is the file path for <see cref="ImageSourceKind.File"/>, the
     /// <see cref="ReceiveHistoryEntry.Id"/> for <see cref="ImageSourceKind.RxHistory"/>, and unused
-    /// (null) for <see cref="ImageSourceKind.LastRx"/>.</summary>
-    public enum ImageSourceKind { File, RxHistory, LastRx }
+    /// (null) for <see cref="ImageSourceKind.LastRx"/>/<see cref="ImageSourceKind.Clipboard"/> --
+    /// both are inherently ephemeral, one-time snapshots with nothing stable to re-fetch later.
+    /// <see cref="ImageSourceKind.Clipboard"/> (auditor usability review follow-up, 2026-08-18,
+    /// Phase 2's own logged scope cut, picked back up) is the 4th source.</summary>
+    public enum ImageSourceKind { File, RxHistory, LastRx, Clipboard }
 
     public sealed record ImageSourceOrigin(ImageSourceKind Kind, string? Payload);
 
@@ -1159,6 +1162,73 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         InsertImageElement(_receivedImageBuffer.Current, new ImageSourceOrigin(ImageSourceKind.LastRx, null));
     }
 
+    /// <summary>Auditor usability review follow-up (2026-08-18) -- the "+ IMAGE" flyout's 4th source
+    /// (clipboard paste, Phase 2's own logged scope cut, picked back up: "zero precedent for either
+    /// [clipboard-paste/OS drag-drop] anywhere in this codebase" at the time; Avalonia's own
+    /// <c>ClipboardExtensions.TryGetBitmapAsync</c> is real, cross-platform precedent now used here).
+    /// Same shape as <see cref="AddImageFromFileAsync"/> (picker call -> loader call -> insert), just
+    /// via <see cref="IFilePickerService.PickClipboardImageAsync"/> instead of
+    /// <see cref="IFilePickerService.PickImageFileAsync"/> -- reuses the SAME
+    /// <see cref="_imageFileLoader"/> call, one image-loading code path (EXIF orientation included),
+    /// not a second one. The picker's own returned path is a throwaway temp PNG file (see that
+    /// method's own doc comment) -- deleted here once loaded, success or failure, since nothing else
+    /// ever needs it again (<see cref="ImageSourceKind.Clipboard"/>'s own Payload is always null, same
+    /// "ephemeral, nothing to re-resolve" tier as <see cref="ImageSourceKind.LastRx"/>).</summary>
+    [RelayCommand]
+    private async Task AddImageFromClipboardAsync()
+    {
+        string? tempPath;
+        try
+        {
+            tempPath = await _filePickerService.PickClipboardImageAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.AddImageFromClipboardFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
+            return;
+        }
+
+        if (tempPath is null)
+        {
+            // No image on the clipboard right now -- a normal, silent no-op (same "nothing to add
+            // yet" shape as AddLastRxImage's own empty-buffer case), not an error.
+            return;
+        }
+
+        try
+        {
+            IImageSource source;
+            try
+            {
+                source = await _imageFileLoader.LoadOriginalAsync(tempPath);
+            }
+            catch (Exception ex)
+            {
+                Log.AddImageFromClipboardFailed(_logger, ex);
+                StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
+                return;
+            }
+
+            StatusMessage = null;
+            InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.Clipboard, null));
+        }
+        finally
+        {
+            // Best-effort cleanup -- a failure here must not mask or replace whatever result the
+            // load attempt above already produced (same reasoning as SaveTemplateCommand's own
+            // cleanup-on-failure path).
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch (Exception ex)
+            {
+                Log.ClipboardTempFileCleanupFailed(_logger, tempPath, ex);
+            }
+        }
+    }
+
     private const int RxHistoryPickerMaxEntries = 20;
     private const int RxHistoryPickerThumbnailMaxDimension = 96;
 
@@ -1633,6 +1703,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                     ImageSourceKind.File => (PersistedImageSourceKind.File, image.Origin.Payload),
                     ImageSourceKind.RxHistory => (PersistedImageSourceKind.RxHistory, image.Origin.Payload),
                     ImageSourceKind.LastRx => (PersistedImageSourceKind.LastRx, image.Origin.Payload),
+                    ImageSourceKind.Clipboard => (PersistedImageSourceKind.Clipboard, image.Origin.Payload),
                     _ => throw new NotSupportedException($"Unrecognized {nameof(ImageSourceKind)}: {image.Origin.Kind}."),
                 };
                 return new PersistedImageElement(
@@ -1680,9 +1751,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath);
                 // Plan-review decision: a LOADED image element's Origin always points at its own
                 // copied asset file, never whatever Kind/Payload it originally had when first saved
-                // (a File/RxHistory/LastRx origin recorded on the persisted DTO is informational only
-                // -- see PersistedImageElement's own doc comment for why none of the three are safe
-                // to re-resolve from later).
+                // (a File/RxHistory/LastRx/Clipboard origin recorded on the persisted DTO is
+                // informational only -- see PersistedImageElement's own doc comment for why none of
+                // the four are safe to re-resolve from later).
                 var origin = new ImageSourceOrigin(ImageSourceKind.File, assetPath);
                 return new RawImageElementSnapshot(
                     image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, source, image.Fit, origin, image.IsBackground);
@@ -3812,6 +3883,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "AddImageFromFile failed")]
         public static partial void AddImageFromFileFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "AddImageFromClipboard failed")]
+        public static partial void AddImageFromClipboardFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "AddImageFromClipboard: temp file cleanup failed: path={TempPath}")]
+        public static partial void ClipboardTempFileCleanupFailed(ILogger logger, string tempPath, Exception exception);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "RefreshRxHistoryPicker failed")]
         public static partial void RefreshRxHistoryPickerFailed(ILogger logger, Exception exception);

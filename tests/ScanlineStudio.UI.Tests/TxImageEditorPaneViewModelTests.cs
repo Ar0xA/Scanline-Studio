@@ -1806,6 +1806,45 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Empty(vm.OverlayElements);
     }
 
+    // Auditor usability review follow-up (2026-08-18): 4th image source, clipboard paste -- Phase 2's
+    // own logged scope cut, picked back up. Same shape as AddImageFromFileAsync's own tests just
+    // above, since AddImageFromClipboardAsync reuses the identical picker-call -> loader-call ->
+    // insert pipeline (see that command's own doc comment).
+
+    [AvaloniaFact]
+    public async Task AddImageFromClipboardAsync_LoadsThePastedImageAndAddsSelectsElement()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var picker = new FakeFilePickerService { ClipboardPathToReturn = "/tmp/clipboard-paste.png" };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        var countBefore = preparer.ApplyTemplateCallCount;
+
+        await vm.AddImageFromClipboardCommand.ExecuteAsync(null);
+
+        var element = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.Same(element, vm.SelectedOverlayElement);
+        Assert.True(preparer.ApplyTemplateCallCount > countBefore);
+        var image = Assert.IsType<TemplateImageElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
+        Assert.Same(loader.ResultToReturn, image.Source);
+        // Clipboard's own Origin has a null Payload (same "ephemeral, nothing to re-resolve" tier as
+        // LastRx), NOT the throwaway temp file path -- that path is deleted immediately after load,
+        // so persisting it here would be a dangling reference.
+        Assert.Equal(new TxImageEditorPaneViewModel.ImageSourceOrigin(TxImageEditorPaneViewModel.ImageSourceKind.Clipboard, null), element.Origin);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImageFromClipboardAsync_NothingOnClipboard_IsANoOp()
+    {
+        // Default FakeFilePickerService.ClipboardPathToReturn is null -- "nothing image-shaped on
+        // the clipboard right now" is a normal, silent state, not an error.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImageFromClipboardCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.OverlayElements);
+    }
+
     [AvaloniaFact]
     public void AddLastRxImage_InsertsReceivedImageBufferCurrentAsASnapshot()
     {

@@ -674,6 +674,25 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
+        // Auditor usability review follow-up (2026-08-18): OS-clipboard image paste, the keyboard
+        // counterpart to the "+ IMAGE" flyout's own FROM CLIPBOARD button. Falls through to here only
+        // when the branch above didn't fire (the in-editor copy/cut element clipboard is empty) --
+        // the internal element paste wins first, matching mainstream creative-tool convention (Ctrl+V
+        // pastes whichever clipboard is actually relevant right now, element over raw image).
+        // AddImageFromClipboardCommand has no CanExecute predicate to gate on here -- it's always
+        // "executable," a real no-op only discovered ASYNCHRONOUSLY once it actually queries the OS
+        // clipboard and finds nothing image-shaped there (same as clicking FROM CLIPBOARD with an
+        // empty/non-image clipboard) -- so this fires unconditionally rather than trying to
+        // synchronously pre-check clipboard content. Still marks Handled unconditionally: this pane
+        // owns Ctrl+V within its own bounds regardless of outcome (same reasoning as this whole
+        // method's own class doc comment for why these shortcuts are intercepted at the root).
+        if (ctrlOrCmd && e.Key == Key.V)
+        {
+            vm.AddImageFromClipboardCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
         var direction = e.Key switch
         {
             Key.Up => NudgeDirection.Up,
