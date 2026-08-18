@@ -73,6 +73,20 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     [ObservableProperty]
     private string _fontFamily = string.Empty;
 
+    /// <summary>Auditor usability review follow-up (2026-08-18) -- from the user's original
+    /// 2026-08-16 "yoniq text features" checklist (color/shadow/gradient/rotation shipped in Phase
+    /// 4/8, bold/italic never started). Requires a real, separately-bundled Bold font FILE for
+    /// whichever family is selected (<see cref="ITransmitImagePreparer"/>'s own constructor
+    /// registers one per bundled family) -- an unavailable combination throws at Apply/preview time
+    /// rather than silently faking a bold look, same "no invented rendering technique, real font
+    /// variant or nothing" choice this project already made for stroke/shadow (a plain
+    /// offset-duplicate-glyph draw, not a synthesized effect).</summary>
+    [ObservableProperty]
+    private bool _bold;
+
+    [ObservableProperty]
+    private bool _italic;
+
     /// <summary>Null means no outline (matches <see cref="TemplateBoxElement.BorderColor"/>'s own
     /// null-means-none convention) -- Phase 4, the user-requested legibility mechanism for text
     /// against varying backgrounds (this session's own real-window testing hit white-on-white text
@@ -101,6 +115,21 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
 
     [ObservableProperty]
     private double _shadowOffsetY = 0.02;
+
+    /// <summary>Auditor usability review follow-up (2026-08-18) -- legacy YONIQ's "3D" text option
+    /// (confirmed via <c>TextIn.cpp</c>/<c>Draw.cpp</c>'s <c>CBStack</c>/<c>m_Stack</c>: a stepped
+    /// stack of offset solid-color copies, NOT a real 3D transform). Null means no stack effect, same
+    /// null-means-none convention as <see cref="ShadowColor"/>.</summary>
+    [ObservableProperty]
+    private Rgb24? _stackColor;
+
+    /// <summary>Relative to the image's HEIGHT, same convention as <see cref="ShadowOffsetX"/>/Y.
+    /// Meaningless while <see cref="StackColor"/> is null.</summary>
+    [ObservableProperty]
+    private double _stackStepX = 0.02;
+
+    [ObservableProperty]
+    private double _stackStepY = 0.02;
 
     /// <summary>Phase 8: in-plane (2D) rotation only, clockwise-positive degrees -- true 3D/
     /// perspective is a separate, deferred future phase (Tier 3).</summary>
@@ -317,6 +346,26 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
         }
     }
 
+    /// <inheritdoc cref="HasShadow"/>
+    public bool HasStack
+    {
+        get => StackColor is not null;
+        set => StackColor = value ? (StackColor ?? new Rgb24(0, 0, 0)) : null;
+    }
+
+    /// <inheritdoc cref="StrokeColorForPicker"/>
+    public Rgb24 StackColorForPicker
+    {
+        get => StackColor ?? new Rgb24(0, 0, 0);
+        set
+        {
+            if (HasStack)
+            {
+                StackColor = value;
+            }
+        }
+    }
+
     /// <summary>Canvas-preview amendment (user explicitly asked for real WYSIWYG here, overriding
     /// this phase's own original "canvas can't show rotation/shadow/gradient, only the mini-preview
     /// can" scope decision -- Phase 4 made the identical call for stroke and it's STILL true that a
@@ -328,6 +377,14 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// (no transform needed for the common case) -- Avalonia's own <c>RenderTransform</c> accepts a
     /// null value as "identity," so this is not a special case, just an optimization.</summary>
     public Transform? RotationTransform => RotationDegrees != 0 ? new RotateTransform(RotationDegrees) : null;
+
+    /// <summary>Auditor usability review follow-up (2026-08-18) -- Bold/Italic canvas WYSIWYG, bound
+    /// by <see cref="Controls.StrokedTextBlock.FontWeight"/>/<c>FontStyle</c> and the shadow
+    /// TextBlock's own matching properties. Same "expose the Avalonia type directly from this VM"
+    /// precedent as <see cref="RotationTransform"/> just above.</summary>
+    public FontWeight CanvasFontWeight => Bold ? FontWeight.Bold : FontWeight.Normal;
+
+    public FontStyle CanvasFontStyle => Italic ? FontStyle.Italic : FontStyle.Normal;
 
     /// <summary>Canvas-preview amendment, shadow half -- Avalonia's <c>TextBlock</c> has no native
     /// drop-shadow primitive (confirmed, same as the stroke case), so this fakes it the same way the
@@ -342,6 +399,24 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     public Transform? ShadowRenderTransform => HasShadow
         ? new TranslateTransform(ShadowOffsetX * ImageHeight, ShadowOffsetY * ImageHeight)
         : null;
+
+    /// <summary>Canvas-preview amendment, stack half -- auditor usability review follow-up
+    /// (2026-08-18): upgraded from an earlier single-offset "directional hint" to the REAL N-copy
+    /// preview (user-reported, comparing the canvas against the mode-exact mini-preview side by
+    /// side: "stack text looks off in the edit window vs the preview... noticable difference" -- a
+    /// real gap, not a false alarm). Rendered by <see cref="Controls.StrokedTextBlock"/> itself (its
+    /// own new <c>StackFill</c>/<c>StackStepXPixels</c>/<c>StackStepYPixels</c> properties), NOT an
+    /// <c>ItemsControl</c> of generated copies -- this codebase has a documented, real crash from
+    /// binding a generated DataTemplate's item back up to its parent VM (see
+    /// <see cref="RemoveCommand"/>'s own doc comment), so plain direct StyledProperty bindings on a
+    /// single control (the same pattern <c>StrokedTextBlock</c> already uses for Stroke) sidesteps
+    /// that landmine entirely. These two are the PIXEL-space step (canvas-display pixels, same space
+    /// <see cref="ImageHeight"/> itself is in), not the raw relative <see cref="StackStepX"/>/Y --
+    /// Avalonia bindings have no arithmetic syntax, so the multiply-by-ImageHeight has to happen
+    /// here, not in the binding expression.</summary>
+    public double CanvasStackStepXPixels => HasStack ? StackStepX * ImageHeight : 0;
+
+    public double CanvasStackStepYPixels => HasStack ? StackStepY * ImageHeight : 0;
 
     /// <summary>Canvas-preview amendment, gradient half -- the main TextBlock's own
     /// <c>Foreground</c>: a plain solid brush from <see cref="Color"/> (identical to the pre-Phase-8
@@ -386,7 +461,59 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
                 RadiusY = new RelativeScalar(0.5, RelativeUnit.Relative),
                 GradientStops = stops,
             },
+            // Auditor usability review follow-up (2026-08-18): reuses GradientStartColor/EndColor as
+            // the pattern's fore/back colors (same param order as TransmitImagePreparer.
+            // BuildGradientBrush's real Brushes.Percent20(stops[0], stops[^1]) call) -- see
+            // TextGradientKind.BitmapPattern's own doc comment for why there's no separate color
+            // pair. BitmapPatternGrid is the EXACT 4x4 bool pattern ImageSharp.Drawing's own
+            // Brushes.Percent20 uses internally (confirmed via reflection against the pinned 2.1.7
+            // package before hardcoding it here, not assumed) -- Avalonia has no built-in tiled
+            // pattern brush equivalent, so this reproduces the identical bit layout via a tiled
+            // DrawingBrush instead of an approximate stand-in shape.
+            TextGradientKind.BitmapPattern => BuildPatternBrush(),
             _ => throw new NotSupportedException($"Unrecognized {nameof(TextGradientKind)}: {GradientKind}."),
+        };
+    }
+
+    /// <summary>ImageSharp.Drawing's <c>Brushes.Percent20</c> own internal 4x4 tile (reflected off a
+    /// real <c>PatternBrush</c> instance against the pinned 2.1.7 package -- see
+    /// <see cref="BuildForegroundGradientBrush"/>'s own doc comment). <see langword="true"/> = fore
+    /// color cell, <see langword="false"/> = back color cell.</summary>
+    private static readonly bool[,] BitmapPatternGrid =
+    {
+        { true, false, false, false },
+        { false, false, true, false },
+        { true, false, false, false },
+        { false, false, true, false },
+    };
+
+    private DrawingBrush BuildPatternBrush()
+    {
+        var foreBrush = new SolidColorBrush(ToAvaloniaColor(GradientStartColor));
+        var backBrush = new SolidColorBrush(ToAvaloniaColor(GradientEndColor));
+        var tile = new Rect(0, 0, 4, 4);
+        var drawingGroup = new DrawingGroup
+        {
+            Children = { new GeometryDrawing { Brush = backBrush, Geometry = new RectangleGeometry(tile) } },
+        };
+
+        for (var y = 0; y < BitmapPatternGrid.GetLength(0); y++)
+        {
+            for (var x = 0; x < BitmapPatternGrid.GetLength(1); x++)
+            {
+                if (BitmapPatternGrid[y, x])
+                {
+                    drawingGroup.Children.Add(new GeometryDrawing { Brush = foreBrush, Geometry = new RectangleGeometry(new Rect(x, y, 1, 1)) });
+                }
+            }
+        }
+
+        return new DrawingBrush
+        {
+            Drawing = drawingGroup,
+            TileMode = TileMode.Tile,
+            DestinationRect = new RelativeRect(tile, RelativeUnit.Absolute),
+            Stretch = Stretch.None,
         };
     }
 
@@ -447,6 +574,8 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
         OnPropertyChanged(nameof(CanvasHeightPixels));
         // Canvas-preview amendment: ShadowRenderTransform's own offset scales off ImageHeight too.
         OnPropertyChanged(nameof(ShadowRenderTransform));
+        OnPropertyChanged(nameof(CanvasStackStepXPixels));
+        OnPropertyChanged(nameof(CanvasStackStepYPixels));
     }
 
     partial void OnTextChanged(string value) => OnPropertyChanged(nameof(ResolvedText));
@@ -471,9 +600,25 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     // established for LeftPixels/TopPixels/CanvasWidthPixels/CanvasHeightPixels above.
     partial void OnRotationDegreesChanged(double value) => OnPropertyChanged(nameof(RotationTransform));
 
+    partial void OnBoldChanged(bool value) => OnPropertyChanged(nameof(CanvasFontWeight));
+
+    partial void OnItalicChanged(bool value) => OnPropertyChanged(nameof(CanvasFontStyle));
+
     partial void OnShadowOffsetXChanged(double value) => OnPropertyChanged(nameof(ShadowRenderTransform));
 
     partial void OnShadowOffsetYChanged(double value) => OnPropertyChanged(nameof(ShadowRenderTransform));
+
+    partial void OnStackColorChanged(Rgb24? value)
+    {
+        OnPropertyChanged(nameof(HasStack));
+        OnPropertyChanged(nameof(StackColorForPicker));
+        OnPropertyChanged(nameof(CanvasStackStepXPixels));
+        OnPropertyChanged(nameof(CanvasStackStepYPixels));
+    }
+
+    partial void OnStackStepXChanged(double value) => OnPropertyChanged(nameof(CanvasStackStepXPixels));
+
+    partial void OnStackStepYChanged(double value) => OnPropertyChanged(nameof(CanvasStackStepYPixels));
 
     partial void OnColorChanged(Rgb24 value) => OnPropertyChanged(nameof(ForegroundBrush));
 

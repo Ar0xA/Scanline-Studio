@@ -32,19 +32,28 @@ public abstract record PersistedTemplateElement(double X, double Y, double Width
 /// sidesteps the "silent missing-registration" failure mode entirely rather than needing a dedicated
 /// discriminator test for it. No mask-related fields — bitmap-mask fill's persistence side was
 /// explicitly re-costed as a real outlier during Phase 8 plan-review and deferred out of this
-/// pass.</summary>
+/// pass.
+/// <para><paramref name="StackColor"/>/<paramref name="StackStepX"/>/<paramref name="StackStepY"/>
+/// (auditor usability review follow-up, 2026-08-18) are the same kind of trailing, defaulted,
+/// missing-property-deserializes-to-default addition as everything else in this record.</para></summary>
 public sealed record PersistedTextElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,
     string Text, double FontSizeRelative, Rgb24 Color,
     string FontFamily, Rgb24? StrokeColor, double StrokeThickness,
     Rgb24? ShadowColor = null, double ShadowOffsetX = 0.02, double ShadowOffsetY = 0.02, double RotationDegrees = 0,
     bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
-    Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
+    Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
+    bool Bold = false, bool Italic = false,
+    Rgb24? StackColor = null, double StackStepX = 0.02, double StackStepY = 0.02)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
+/// <summary><paramref name="CornerRadius"/> (auditor usability review follow-up, 2026-08-18) is a
+/// trailing, defaulted scalar -- same "missing JSON property on an older saved template
+/// deserializes to the default, no migration needed" convention as <see cref="PersistedTextElement"/>'s
+/// own Phase 8 additions above.</summary>
 public sealed record PersistedBoxElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,
-    Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity)
+    Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 /// <summary>Persistence-layer counterpart to <c>TxImageEditorPaneViewModel.ImageSourceKind</c> (a

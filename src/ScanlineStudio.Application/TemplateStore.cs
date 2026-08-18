@@ -173,11 +173,24 @@ public sealed partial class TemplateStore : ITemplateStore
         switch (element)
         {
             case PersistedTextElement text:
+                // Off-scope finding from an earlier session pass (2026-08-17), fixed here while
+                // already touching this exact line for Bold/Italic (2026-08-18): this thumbnail-
+                // render path used to silently drop ShadowColor/ShadowOffsetX/ShadowOffsetY/
+                // RotationDegrees/Gradient -- a template using any of those rendered its Ready
+                // Rack/Template Library thumbnail flat and unrotated while the real template (and
+                // the live editor) rendered the effect correctly. TxImageEditorPaneViewModel's own
+                // BuildPersistedElementAsync/BuildTemplateDocument already forwarded all of these
+                // correctly; only this one reconstruction path was missing them.
                 return new TemplateTextElement(
-                    bounds, text.Z, text.Text, new FontSpec(text.FontFamily, text.FontSizeRelative), text.Color,
-                    text.StrokeColor, text.StrokeThickness);
+                    bounds, text.Z, text.Text, new FontSpec(text.FontFamily, text.FontSizeRelative, text.Bold, text.Italic), text.Color,
+                    text.StrokeColor, text.StrokeThickness,
+                    text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
+                    text.GradientEnabled
+                        ? new TextGradient(text.GradientKind, [new GradientColorStop(0f, text.GradientStartColor ?? text.Color), new GradientColorStop(1f, text.GradientEndColor ?? text.Color)])
+                        : null,
+                    text.StackColor, text.StackStepX, text.StackStepY);
             case PersistedBoxElement box:
-                return new TemplateBoxElement(bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity);
+                return new TemplateBoxElement(bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius);
             case PersistedImageElement image:
                 var assetPath = GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath, ct).ConfigureAwait(false);

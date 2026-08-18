@@ -3069,6 +3069,57 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(2.0, vm.SelectedBoxElementBorderThicknessPx);
     }
 
+    // Auditor usability review follow-up (2026-08-18): "missing item" against spec/15's own
+    // box-elements friction risk ("need border, corner-radius, and opacity").
+
+    [AvaloniaFact]
+    public void SelectedBoxElementCornerRadiusPx_ConvertsAgainstTargetModeHeight()
+    {
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = (BoxElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = box;
+
+        vm.SelectedBoxElementCornerRadiusPx = 3.0;
+
+        AssertClose(3.0 / WideMode.ImageHeight, box.CornerRadius);
+        AssertClose(3.0, vm.SelectedBoxElementCornerRadiusPx);
+    }
+
+    [AvaloniaFact]
+    public void DuplicateBoxElement_PreservesCornerRadius()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = (BoxElementViewModel)vm.OverlayElements[0];
+        box.CornerRadius = 0.05;
+        vm.SelectedOverlayElement = box;
+
+        vm.DuplicateCommand.Execute(null);
+
+        var copy = Assert.IsType<BoxElementViewModel>(vm.OverlayElements[1]);
+        AssertClose(0.05, copy.CornerRadius);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveThenLoadTemplate_RoundTripsBoxCornerRadius()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddBoxElementCommand.Execute(null);
+        var box = (BoxElementViewModel)vm.OverlayElements[0];
+        box.CornerRadius = 0.08;
+        vm.NewTemplateName = "Rounded box";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var saved = Assert.Single(await templateStore.ListAsync());
+        var document = await templateStore.LoadAsync(saved.Id);
+        var persistedBox = Assert.IsType<PersistedBoxElement>(Assert.Single(document.Elements));
+
+        AssertClose(0.08, persistedBox.CornerRadius);
+    }
+
     [AvaloniaFact]
     public void BoxElementViewModel_HasBorder_TogglesBorderColorAndRoundTripsThroughBorderColorForPicker()
     {
@@ -3087,6 +3138,194 @@ public sealed class TxImageEditorPaneViewModelTests
         // OverlayElementViewModel.StrokeColorForPicker's own doc comment.
         box.BorderColorForPicker = new Rgb24(1, 1, 1);
         Assert.Null(box.BorderColor);
+    }
+
+    // Auditor usability review follow-up (2026-08-18): "missing yoniq text effects" -- Bold/Italic,
+    // the two items never started from the user's original 2026-08-16 checklist.
+
+    [AvaloniaFact]
+    public void OverlayElementViewModel_Bold_TogglesCanvasFontWeightAndRaisesChangeNotification()
+    {
+        var text = new OverlayElementViewModel();
+        var raised = false;
+        text.PropertyChanged += (_, e) => raised |= e.PropertyName == nameof(OverlayElementViewModel.CanvasFontWeight);
+        Assert.Equal(Avalonia.Media.FontWeight.Normal, text.CanvasFontWeight);
+
+        text.Bold = true;
+
+        Assert.True(raised);
+        Assert.Equal(Avalonia.Media.FontWeight.Bold, text.CanvasFontWeight);
+    }
+
+    [AvaloniaFact]
+    public void OverlayElementViewModel_Italic_TogglesCanvasFontStyleAndRaisesChangeNotification()
+    {
+        var text = new OverlayElementViewModel();
+        var raised = false;
+        text.PropertyChanged += (_, e) => raised |= e.PropertyName == nameof(OverlayElementViewModel.CanvasFontStyle);
+        Assert.Equal(Avalonia.Media.FontStyle.Normal, text.CanvasFontStyle);
+
+        text.Italic = true;
+
+        Assert.True(raised);
+        Assert.Equal(Avalonia.Media.FontStyle.Italic, text.CanvasFontStyle);
+    }
+
+    [AvaloniaFact]
+    public void DuplicateTextElement_PreservesBoldAndItalic()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        text.Bold = true;
+        text.Italic = true;
+        vm.SelectedOverlayElement = text;
+
+        vm.DuplicateCommand.Execute(null);
+
+        var copy = Assert.IsType<OverlayElementViewModel>(vm.OverlayElements[1]);
+        Assert.True(copy.Bold);
+        Assert.True(copy.Italic);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveThenLoadTemplate_RoundTripsBoldAndItalic()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        text.Bold = true;
+        text.Italic = false;
+        vm.NewTemplateName = "Bold text";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var saved = Assert.Single(await templateStore.ListAsync());
+        var document = await templateStore.LoadAsync(saved.Id);
+        var persistedText = Assert.IsType<PersistedTextElement>(Assert.Single(document.Elements));
+
+        Assert.True(persistedText.Bold);
+        Assert.False(persistedText.Italic);
+    }
+
+    // Auditor usability review follow-up (2026-08-18): the "3D"/Stack text effect (legacy YONIQ's
+    // CBStack/m_StackPara -- a stepped stack of offset solid-color copies, NOT a real 3D transform),
+    // the other item never started from the user's original 2026-08-16 checklist.
+
+    [Fact]
+    public void HasStack_TogglesStackColorNullness()
+    {
+        var text = new OverlayElementViewModel();
+        Assert.False(text.HasStack);
+        Assert.Null(text.StackColor);
+
+        text.HasStack = true;
+
+        Assert.True(text.HasStack);
+        Assert.NotNull(text.StackColor);
+    }
+
+    [Fact]
+    public void StackColorForPicker_WriteWhileHasStackIsFalse_DoesNotUnnullStackColor()
+    {
+        var text = new OverlayElementViewModel();
+
+        text.StackColorForPicker = new Rgb24(0, 0, 0);
+
+        Assert.Null(text.StackColor);
+    }
+
+    [Fact]
+    public void StackColorForPicker_WriteWhileHasStackIsTrue_UpdatesStackColor()
+    {
+        var text = new OverlayElementViewModel { HasStack = true };
+        var chosen = new Rgb24(10, 20, 30);
+
+        text.StackColorForPicker = chosen;
+
+        Assert.Equal(chosen, text.StackColor);
+    }
+
+    [AvaloniaFact]
+    public void DuplicateTextElement_PreservesStack()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        text.StackColor = new Rgb24(1, 2, 3);
+        text.StackStepX = 0.05;
+        text.StackStepY = 0.06;
+        vm.SelectedOverlayElement = text;
+
+        vm.DuplicateCommand.Execute(null);
+
+        var copy = Assert.IsType<OverlayElementViewModel>(vm.OverlayElements[1]);
+        Assert.Equal(new Rgb24(1, 2, 3), copy.StackColor);
+        Assert.Equal(0.05, copy.StackStepX);
+        Assert.Equal(0.06, copy.StackStepY);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveThenLoadTemplate_RoundTripsStack()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        text.StackColor = new Rgb24(4, 5, 6);
+        text.StackStepX = 0.07;
+        text.StackStepY = 0.08;
+        vm.NewTemplateName = "Stacked text";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var saved = Assert.Single(await templateStore.ListAsync());
+        var document = await templateStore.LoadAsync(saved.Id);
+        var persistedText = Assert.IsType<PersistedTextElement>(Assert.Single(document.Elements));
+
+        Assert.Equal(new Rgb24(4, 5, 6), persistedText.StackColor);
+        AssertClose(0.07, persistedText.StackStepX);
+        AssertClose(0.08, persistedText.StackStepY);
+    }
+
+    // Auditor usability review follow-up (2026-08-18): "bitmap mask" text fill -- legacy YONIQ's real
+    // RGGrade radio-group option, a tiled 2-color pattern brush, added as a 4th TextGradientKind
+    // value alongside the existing Horizontal/Vertical/Radial (see that enum's own doc comment).
+
+    [AvaloniaFact]
+    public void ForegroundBrush_BitmapPatternGradientKind_ReturnsATiledDrawingBrush()
+    {
+        var text = new OverlayElementViewModel
+        {
+            GradientEnabled = true,
+            GradientKind = TextGradientKind.BitmapPattern,
+        };
+
+        var brush = Assert.IsType<Avalonia.Media.DrawingBrush>(text.ForegroundBrush);
+
+        Assert.Equal(Avalonia.Media.TileMode.Tile, brush.TileMode);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveThenLoadTemplate_RoundTripsBitmapPatternGradientKind()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        text.GradientEnabled = true;
+        text.GradientKind = TextGradientKind.BitmapPattern;
+        vm.NewTemplateName = "Patterned text";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var saved = Assert.Single(await templateStore.ListAsync());
+        var document = await templateStore.LoadAsync(saved.Id);
+        var persistedText = Assert.IsType<PersistedTextElement>(Assert.Single(document.Elements));
+
+        Assert.True(persistedText.GradientEnabled);
+        Assert.Equal(TextGradientKind.BitmapPattern, persistedText.GradientKind);
     }
 
     // Backlog item (auditor usability review, 2026-08-17): "ELEMENTS rows don't select or highlight
@@ -3827,6 +4066,82 @@ public sealed class TxImageEditorPaneViewModelTests
 
         Assert.True(width > 0);
         Assert.True(height > 0);
+    }
+
+    // Auditor usability review follow-up (2026-08-18): 8-handle resize (corners + edge midpoints),
+    // replacing the earlier bottom-right-only handle -- see TxImageEditorPaneView.ResizeHandle's own
+    // doc comment for why this is scoped as new interaction-model functionality, not a legacy port.
+
+    [Fact]
+    public void ComputeElementResize_TopLeftHandle_GrowsAwayFromTheOppositeCornerAndPinsBottomRight()
+    {
+        // Dragging TopLeft up-and-left (negative dx/dy) should GROW the box while pinning the
+        // BOTTOM-RIGHT corner in place -- the opposite of the BottomRight handle's own pinning.
+        var (width, height, centerDeltaX, centerDeltaY) = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.3, currentHeight: 0.2, dxNormalized: -0.1, dyNormalized: -0.04,
+            handle: TxImageEditorPaneView.ResizeHandle.TopLeft);
+
+        AssertClose(0.4, width);
+        AssertClose(0.24, height);
+        AssertClose(-0.05, centerDeltaX);
+        AssertClose(-0.02, centerDeltaY);
+    }
+
+    [Theory]
+    [InlineData(TxImageEditorPaneView.ResizeHandle.Top)]
+    [InlineData(TxImageEditorPaneView.ResizeHandle.Bottom)]
+    public void ComputeElementResize_VerticalEdgeHandle_ChangesOnlyHeight(TxImageEditorPaneView.ResizeHandle handle)
+    {
+        var (width, height, centerDeltaX, _) = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.3, currentHeight: 0.2, dxNormalized: 0.5, dyNormalized: 0.04, handle: handle);
+
+        // Width and its center-X are untouched by a purely-vertical handle, even though a (deliberately
+        // large/off-axis) dx was passed -- a Top/Bottom handle has no free horizontal edge at all.
+        AssertClose(0.3, width);
+        AssertClose(0, centerDeltaX);
+        Assert.NotEqual(0.2, height);
+    }
+
+    [Theory]
+    [InlineData(TxImageEditorPaneView.ResizeHandle.Left)]
+    [InlineData(TxImageEditorPaneView.ResizeHandle.Right)]
+    public void ComputeElementResize_HorizontalEdgeHandle_ChangesOnlyWidth(TxImageEditorPaneView.ResizeHandle handle)
+    {
+        var (width, height, _, centerDeltaY) = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.3, currentHeight: 0.2, dxNormalized: 0.04, dyNormalized: 0.5, handle: handle);
+
+        AssertClose(0.2, height);
+        AssertClose(0, centerDeltaY);
+        Assert.NotEqual(0.3, width);
+    }
+
+    [Fact]
+    public void ComputeElementResize_PreserveAspectAtCornerHandle_DerivesTheOtherAxisFromTheOriginalRatio()
+    {
+        // 2:1 aspect box; a much larger dx than dy should still keep width:height at 2:1 in the result,
+        // since the horizontal drag is the dominant (proportionally larger) axis here.
+        var (width, height, _, _) = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.4, currentHeight: 0.2, dxNormalized: 0.2, dyNormalized: 0.01,
+            handle: TxImageEditorPaneView.ResizeHandle.BottomRight, preserveAspect: true);
+
+        AssertClose(0.6, width);
+        AssertClose(0.3, height);
+    }
+
+    [Fact]
+    public void ComputeElementResize_PreserveAspectAtEdgeHandle_IsIgnored_StaysSingleAxis()
+    {
+        // Shift held on an EDGE handle (no second free axis to derive a ratio from) must not do
+        // anything different from the non-aspect-locked case -- matches mainstream editor convention.
+        var withAspect = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.3, currentHeight: 0.2, dxNormalized: 0.1, dyNormalized: 0,
+            handle: TxImageEditorPaneView.ResizeHandle.Right, preserveAspect: true);
+        var withoutAspect = TxImageEditorPaneView.ComputeElementResize(
+            currentWidth: 0.3, currentHeight: 0.2, dxNormalized: 0.1, dyNormalized: 0,
+            handle: TxImageEditorPaneView.ResizeHandle.Right, preserveAspect: false);
+
+        Assert.Equal(withoutAspect, withAspect);
+        AssertClose(0.2, withAspect.Height);
     }
 
     // Task #23 (zoom slider addendum, plan-reviewed): pointer-anchored scroll-wheel zoom math, split

@@ -168,6 +168,98 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
+    public async Task ApplyTemplate_BoxCornerRadius_RoundsTheCornersWhileKeepingCenterAndEdgeMidpointsFilled()
+    {
+        var path = await WriteFixturePngAsync(40, 40, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 40, 40);
+            var preparer = new TransmitImagePreparer(FontPath);
+            // A 20x20px box (0.5*40) with a 0.1*40=4px corner radius -- big enough that a corner
+            // pixel is unambiguously outside the rounded path (the box's own literal corner is
+            // 4*sqrt(2)~=5.66px from the arc's center, more than a full radius past the arc's own
+            // edge, clear of the ~1px anti-aliasing band), small enough (well under half the box's
+            // own 20px side) that real straight-edge sections remain in the middle of each edge for
+            // the midpoint checks below. A radius of exactly half the box's shorter side was tried
+            // first and rejected: it degenerates the whole box into an inscribed CIRCLE (all 4 arcs
+            // meet exactly at the edge midpoints, zero straight-edge length left), which put the
+            // midpoint checks right on the anti-aliased boundary -- caught by this test actually
+            // failing against that geometry, not assumed. A smaller 20x20 image with the same
+            // relative radius was ALSO tried and rejected -- its 2px radius put the box's own
+            // corner pixel only ~0.83px past the arc's edge, inside the anti-aliasing band and
+            // partially covered (184/255, neither clean fill nor clean background) -- also caught by
+            // the test failing, not assumed.
+            var document = new TemplateDocument(null, [
+                new TemplateBoxElement(new NormalizedRect(0.25, 0.25, 0.5, 0.5), Z: 0,
+                    new Rgb24(0, 200, 0), null, 0, CornerRadius: 0.1),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertPixel(result, 20, 20, 0, 200, 0); // center -- fill
+            AssertPixel(result, 20, 10, 0, 200, 0); // top edge midpoint -- inside the straight edge
+            AssertPixel(result, 10, 20, 0, 200, 0); // left edge midpoint -- inside the straight edge
+            AssertPixel(result, 10, 10, 255, 255, 255); // top-left corner -- rounded away, background
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_BoxCornerRadiusZero_RendersIdenticallyToTheDefaultSquareCornerBox()
+    {
+        var path = await WriteFixturePngAsync(20, 20, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 20, 20);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var squareDocument = new TemplateDocument(null, [
+                new TemplateBoxElement(new NormalizedRect(0.25, 0.25, 0.5, 0.5), Z: 0, new Rgb24(0, 200, 0), null, 0),
+            ]);
+            var explicitZeroDocument = new TemplateDocument(null, [
+                new TemplateBoxElement(new NormalizedRect(0.25, 0.25, 0.5, 0.5), Z: 0, new Rgb24(0, 200, 0), null, 0, CornerRadius: 0),
+            ]);
+
+            var squareResult = preparer.ApplyTemplate(source, squareDocument);
+            var explicitZeroResult = preparer.ApplyTemplate(source, explicitZeroDocument);
+
+            AssertPixel(squareResult, 5, 5, 0, 200, 0); // sharp corner -- filled, unlike the rounded test above
+            AssertPixel(explicitZeroResult, 5, 5, 0, 200, 0);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_BoxCornerRadius_AppliesToTheBorderTooInsetBySameHalfThickness()
+    {
+        var path = await WriteFixturePngAsync(20, 20, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 20, 20);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var document = new TemplateDocument(null, [
+                new TemplateBoxElement(new NormalizedRect(0.25, 0.25, 0.5, 0.5), Z: 0,
+                    new Rgb24(0, 200, 0), new Rgb24(200, 0, 0), BorderThickness: 0.1, CornerRadius: 0.1),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertPixel(result, 10, 10, 0, 200, 0); // center -- fill, unaffected by the rounded border
+            AssertPixel(result, 10, 6, 200, 0, 0); // top edge midpoint -- inside the straight-edge border band
+            AssertNoNonBackgroundPixelOutsideBounds(result, new NormalizedRect(0.25, 0.25, 0.5, 0.5), background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task ApplyTemplate_BoxOpacity_BlendsFillWithTheBaseRatherThanFullyReplacingIt()
     {
         var path = await WriteFixturePngAsync(4, 4, (_, _) => new ImageSharpRgb24(0, 0, 0));
@@ -582,6 +674,81 @@ public sealed class ApplyTemplateTests
         Assert.True(withShadow < withoutShadow, $"Expected the shadow allowance to shrink the fitted size below {withoutShadow}, got {withShadow}.");
     }
 
+    // Auditor usability review follow-up (2026-08-18): the "3D"/stack text effect (legacy YONIQ's
+    // CBStack/m_StackPara, TextIn.cpp/Draw.cpp -- a stepped stack of offset solid-color copies, NOT a
+    // real 3D transform). Same test shapes as the shadow tests just above, since it's the same class
+    // of "offset copy must stay inside Bounds" fit-box-shrink requirement.
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithStack_StackColorVisibleInside_NoInkOutsideBounds()
+    {
+        var path = await WriteFixturePngAsync(120, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 120, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.3, 0.3, 0.4, 0.4);
+            var fill = new Rgb24(0, 0, 255);
+            var stack = new Rgb24(0, 255, 0);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "W1AW", new FontSpec("DejaVu Sans Mono", 0.2), fill,
+                    StackColor: stack, StackStepX: 0.08, StackStepY: 0.08),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertAtLeastOnePixelOfColorInsideBounds(result, bounds, stack);
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_WithStackStep_ShrinksFurtherThanWithoutOne()
+    {
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", 0.3);
+
+        var withoutStack = preparer.MeasureFittedFontSize("W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20);
+        var withStack = preparer.MeasureFittedFontSize(
+            "W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20,
+            stackStepXRelative: 0.15, stackStepYRelative: 0.15);
+
+        Assert.True(withStack < withoutStack, $"Expected the stack allowance to shrink the fitted size below {withoutStack}, got {withStack}.");
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithZeroStackStep_DrawsNoExtraCopies()
+    {
+        // StackColor set but StackStepX/Y both 0 -- legacy's own m_StackPara-truthiness guard has a
+        // real equivalent here: the copy-count computation floors at 0 (MaxStackCopies clamp's own
+        // Math.Round(0) branch), so the for-loop body never runs -- a no-op, not a divide-by-zero.
+        var path = await WriteFixturePngAsync(120, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 120, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.3, 0.3, 0.4, 0.4);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "W1AW", new FontSpec("DejaVu Sans Mono", 0.2), new Rgb24(0, 0, 255),
+                    StackColor: new Rgb24(0, 255, 0), StackStepX: 0, StackStepY: 0),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public async Task ApplyTemplate_RotatedText_VisibleInside_NoInkOutsideBounds()
     {
@@ -801,6 +968,42 @@ public sealed class ApplyTemplateTests
         }
     }
 
+    // Auditor usability review follow-up (2026-08-18): "bitmap mask" text fill -- legacy YONIQ's real
+    // RGGrade radio-group option (TextIn.cpp/BitMask.cpp), a tiled 2-color pattern brush for text
+    // fill, NOT a glyph-shaped stencil mask despite the name -- same TextGradient/GradientKind slot
+    // as Horizontal/Vertical above (see TextGradientKind.BitmapPattern's own doc comment).
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithBitmapPatternFill_BothPatternColorsPresentInsideBounds_NoInkOutsideBounds()
+    {
+        var path = await WriteFixturePngAsync(160, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 160, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.15, 0.3, 0.7, 0.4);
+            var foreColor = new Rgb24(255, 0, 0);
+            var backColor = new Rgb24(0, 0, 255);
+            var gradient = new TextGradient(TextGradientKind.BitmapPattern, [new GradientColorStop(0f, foreColor), new GradientColorStop(1f, backColor)]);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "WWWWWWWW", new FontSpec("DejaVu Sans Mono", 0.25), new Rgb24(0, 0, 0), Gradient: gradient),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            // A real tiled pattern shows BOTH colors on the glyph run -- a fallback that silently
+            // degenerated to a solid brush would only ever show one.
+            AssertAtLeastOnePixelOfColorInsideBounds(result, bounds, foreColor);
+            AssertAtLeastOnePixelOfColorInsideBounds(result, bounds, backColor);
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public void MeasureFittedFontSize_NegativeStrokeThickness_DoesNotGrowTheFitBoxPastUnstrokedSize()
     {
@@ -842,6 +1045,68 @@ public sealed class ApplyTemplateTests
             var result = preparer.ApplyTemplate(source, document);
 
             AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+            AssertAtLeastOneNonBackgroundPixelInsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    // Auditor usability review follow-up (2026-08-18): "missing yoniq-style text effects" (from the
+    // user's original 2026-08-16 checklist: color/shadow/gradient/rotation shipped in Phase 4/8,
+    // bold/italic never started). Bold/Italic glyph VARIANTS require real, separately-bundled font
+    // FILES (SixLabors.Fonts.FontFamily.CreateFont(size, style) throws if the requested style has no
+    // matching registered file for that family -- verified via reflection + a real render before this
+    // was built, not assumed) -- these tests pin that DejaVu Sans Mono AND Barlow both actually have
+    // all 4 variants registered and reachable end-to-end, not just that the enum value compiles.
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ApplyTemplate_TextBoldItalic_DefaultFamily_RendersWithoutThrowingForEveryCombination(bool bold, bool italic)
+    {
+        var path = await WriteFixturePngAsync(64, 64, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 64, 64);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.1, 0.1, 0.8, 0.4);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, "HI", new FontSpec(preparer.AvailableFontFamilies[0], 0.3, Bold: bold, Italic: italic), new Rgb24(0, 0, 255)),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertAtLeastOneNonBackgroundPixelInsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ApplyTemplate_TextBoldItalic_BarlowFamily_RendersWithoutThrowingForEveryCombination(bool bold, bool italic)
+    {
+        var path = await WriteFixturePngAsync(64, 64, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 64, 64);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.1, 0.1, 0.8, 0.4);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, "HI", new FontSpec("Barlow", 0.3, Bold: bold, Italic: italic), new Rgb24(0, 0, 255)),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
             AssertAtLeastOneNonBackgroundPixelInsideBounds(result, bounds, background: (255, 255, 255));
         }
         finally

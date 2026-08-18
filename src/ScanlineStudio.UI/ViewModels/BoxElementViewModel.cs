@@ -47,6 +47,13 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     [ObservableProperty]
     private double _opacity = 1.0;
 
+    /// <summary>Auditor usability review follow-up (2026-08-18) -- "missing item" against the
+    /// original box-elements friction risk in spec/15-template-designer.md ("need border,
+    /// corner-radius, and opacity"). Relative to image HEIGHT, same convention as
+    /// <see cref="BorderThickness"/>. 0 (default) renders identically to a plain square-cornered box.</summary>
+    [ObservableProperty]
+    private double _cornerRadius;
+
     [ObservableProperty]
     private double _imageWidth;
 
@@ -82,6 +89,18 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// this converts it to the canvas's own pixel space, mirroring <see cref="TemplateBoxElement"/>'s
     /// pipeline-side rendering so the editor canvas is actually WYSIWYG for a bordered box.</summary>
     public double CanvasBorderThicknessPixels => BorderThickness * ImageHeight;
+
+    /// <summary>Same image-height-relative-to-canvas-pixel conversion as
+    /// <see cref="CanvasBorderThicknessPixels"/>, for <see cref="CornerRadius"/> -- Avalonia's
+    /// <c>Border.CornerRadius</c> has the SAME "no double-accepting implicit/explicit operator, no
+    /// runtime <c>TypeConverter</c> reachable from a value binding" gap <see cref="CanvasBorderThicknessPixels"/>'s
+    /// own doc comment already documents for <c>BorderThickness</c>/<c>Thickness</c> (checked via
+    /// reflection before use, not assumed identical just because both are Avalonia struct types --
+    /// confirmed no <c>CornerRadiusTypeConverter</c> exists anywhere in the installed Avalonia
+    /// assemblies, same absence that motivated <see cref="Converters.DoubleToThicknessConverter"/>
+    /// originally) -- the canvas binding uses a new, analogous
+    /// <see cref="Converters.DoubleToCornerRadiusConverter"/>, not a bare binding.</summary>
+    public double CanvasCornerRadiusPixels => CornerRadius * ImageHeight;
 
     /// <summary>Backlog item (auditor usability review, 2026-08-17) -- same nullable-color/checkbox
     /// bridge as <see cref="OverlayElementViewModel.HasStroke"/>, so the new BOX STYLE inspector
@@ -142,9 +161,12 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
         OnPropertyChanged(nameof(TopPixels));
         OnPropertyChanged(nameof(CanvasHeightPixels));
         OnPropertyChanged(nameof(CanvasBorderThicknessPixels));
+        OnPropertyChanged(nameof(CanvasCornerRadiusPixels));
     }
 
     partial void OnBorderThicknessChanged(double value) => OnPropertyChanged(nameof(CanvasBorderThicknessPixels));
+
+    partial void OnCornerRadiusChanged(double value) => OnPropertyChanged(nameof(CanvasCornerRadiusPixels));
 
     partial void OnBorderColorChanged(Rgb24? value)
     {

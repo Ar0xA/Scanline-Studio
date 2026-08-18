@@ -36,9 +36,22 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var fontDirectory = Path.GetDirectoryName(path) ?? AppContext.BaseDirectory;
         _fontCollection = new FontCollection();
         _defaultFontFamily = _fontCollection.Add(path, System.Globalization.CultureInfo.InvariantCulture);
+        // Bold/Italic (auditor usability review follow-up, 2026-08-18): SixLabors.Fonts groups
+        // multiple Add() calls under the SAME family name into one FontFamily with several style
+        // variants -- FontFamily.CreateFont(size, FontStyle) then picks whichever of these matches.
+        // Without registering these, CreateFont(size, FontStyle.Bold) throws (verified via reflection
+        // + a real render before committing to this design, not assumed) since only Regular was ever
+        // loaded. Same license/sourcing precedent as the existing DejaVuSansMono.ttf entry
+        // (LICENSES.md) -- copied from the SAME already-vetted `fonts-dejavu-mono` Debian package.
+        _fontCollection.Add(Path.Combine(fontDirectory, "DejaVuSansMono-Bold.ttf"), System.Globalization.CultureInfo.InvariantCulture);
+        _fontCollection.Add(Path.Combine(fontDirectory, "DejaVuSansMono-Oblique.ttf"), System.Globalization.CultureInfo.InvariantCulture);
+        _fontCollection.Add(Path.Combine(fontDirectory, "DejaVuSansMono-BoldOblique.ttf"), System.Globalization.CultureInfo.InvariantCulture);
 
         var barlowPath = Path.Combine(fontDirectory, "Barlow", "Barlow-Regular.ttf");
         var barlowFamily = _fontCollection.Add(barlowPath, System.Globalization.CultureInfo.InvariantCulture);
+        _fontCollection.Add(Path.Combine(fontDirectory, "Barlow", "Barlow-Bold.ttf"), System.Globalization.CultureInfo.InvariantCulture);
+        _fontCollection.Add(Path.Combine(fontDirectory, "Barlow", "Barlow-Italic.ttf"), System.Globalization.CultureInfo.InvariantCulture);
+        _fontCollection.Add(Path.Combine(fontDirectory, "Barlow", "Barlow-BoldItalic.ttf"), System.Globalization.CultureInfo.InvariantCulture);
 
         AvailableFontFamilies = [_defaultFontFamily.Name, barlowFamily.Name];
     }
@@ -237,17 +250,32 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
     public double MeasureFittedFontSize(
         string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0,
-        double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0)
+        double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0,
+        double stackStepXRelative = 0, double stackStepYRelative = 0)
     {
         var fontFamily = ResolveFontFamily(font.Family);
         var startingSizePx = MathF.Max((float)(font.Size * imageHeightPx), MinFontSizePx);
         var strokeThicknessPx = (float)(strokeThicknessRelative * imageHeightPx);
         var shadowOffsetXPx = (float)(shadowOffsetXRelative * imageHeightPx);
         var shadowOffsetYPx = (float)(shadowOffsetYRelative * imageHeightPx);
+        var stackStepXPx = (float)(stackStepXRelative * imageHeightPx);
+        var stackStepYPx = (float)(stackStepYRelative * imageHeightPx);
         var (boundedWidth, boundedHeight) = ShrinkFitBoxForEffects(
-            boundsWidthPx, boundsHeightPx, strokeThicknessPx, shadowOffsetXPx, shadowOffsetYPx, rotationDegrees);
-        return ComputeFittedFontSizePx(text, fontFamily, startingSizePx, MinFontSizePx, boundedWidth, boundedHeight);
+            boundsWidthPx, boundsHeightPx, strokeThicknessPx, shadowOffsetXPx, shadowOffsetYPx, rotationDegrees, stackStepXPx, stackStepYPx);
+        return ComputeFittedFontSizePx(text, fontFamily, startingSizePx, MinFontSizePx, boundedWidth, boundedHeight, ToFontStyle(font));
     }
+
+    /// <summary>Auditor usability review follow-up (2026-08-18): <see cref="FontSpec.Bold"/>/
+    /// <see cref="FontSpec.Italic"/> -&gt; <see cref="SixLabors.Fonts.FontStyle"/>, shared by every
+    /// call site that needs to pick a font VARIANT (not just size) -- one conversion, not several
+    /// independently-maintained copies of the same 4-way mapping.</summary>
+    private static SixLabors.Fonts.FontStyle ToFontStyle(FontSpec font) => (font.Bold, font.Italic) switch
+    {
+        (true, true) => SixLabors.Fonts.FontStyle.BoldItalic,
+        (true, false) => SixLabors.Fonts.FontStyle.Bold,
+        (false, true) => SixLabors.Fonts.FontStyle.Italic,
+        (false, false) => SixLabors.Fonts.FontStyle.Regular,
+    };
 
     /// <summary>[Code-review nit, fixed here] This doc comment used to sit (misfiled) directly above
     /// <see cref="ShrinkFitBoxForEffects"/> instead of here, on the actual method it describes --
@@ -308,11 +336,16 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// rotation is the order effects are actually drawn in (see <see cref="DrawGlyphs"/>'s own doc
     /// comment), kept parallel for readability.</summary>
     private static (int Width, int Height) ShrinkFitBoxForEffects(
-        int boundsWidthPx, int boundsHeightPx, float strokeThicknessPx, float shadowOffsetXPx, float shadowOffsetYPx, double rotationDegrees)
+        int boundsWidthPx, int boundsHeightPx, float strokeThicknessPx, float shadowOffsetXPx, float shadowOffsetYPx, double rotationDegrees,
+        float stackStepXPx = 0, float stackStepYPx = 0)
     {
         var (strokeW, strokeH) = ShrinkFitBoxForStroke(boundsWidthPx, boundsHeightPx, strokeThicknessPx);
         var (shadowW, shadowH) = ShrinkFitBoxForShadow(strokeW, strokeH, shadowOffsetXPx, shadowOffsetYPx);
-        return ShrinkFitBoxForRotation(shadowW, shadowH, rotationDegrees);
+        // Stack's farthest copy sits at the full (stackStepXPx, stackStepYPx) offset from center --
+        // same translated-copy shape of growth as the shadow offset above, so it reuses the identical
+        // "double the offset" shrink math (ShrinkFitBoxForShadow's own doc comment).
+        var (stackW, stackH) = ShrinkFitBoxForShadow(shadowW, shadowH, stackStepXPx, stackStepYPx);
+        return ShrinkFitBoxForRotation(stackW, stackH, rotationDegrees);
     }
 
     /// <summary>[Code-review fix] A shadow offset by (dx,dy) pushes the SHADOW copy's own ink that
@@ -398,9 +431,12 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var strokeThicknessPx = element.StrokeColor is { } ? (float)(element.StrokeThickness * imageHeightPx) : 0f;
         var shadowOffsetXPx = element.ShadowColor is { } ? (float)(element.ShadowOffsetX * imageHeightPx) : 0f;
         var shadowOffsetYPx = element.ShadowColor is { } ? (float)(element.ShadowOffsetY * imageHeightPx) : 0f;
+        var stackStepXPx = element.StackColor is { } ? (float)(element.StackStepX * imageHeightPx) : 0f;
+        var stackStepYPx = element.StackColor is { } ? (float)(element.StackStepY * imageHeightPx) : 0f;
         var (fitWidthPx, fitHeightPx) = ShrinkFitBoxForEffects(
-            boundsWidthPx, boundsHeightPx, strokeThicknessPx, shadowOffsetXPx, shadowOffsetYPx, element.RotationDegrees);
-        var fittedSizePx = ComputeFittedFontSizePx(element.Content, fontFamily, startingSizePx, MinFontSizePx, fitWidthPx, fitHeightPx);
+            boundsWidthPx, boundsHeightPx, strokeThicknessPx, shadowOffsetXPx, shadowOffsetYPx, element.RotationDegrees, stackStepXPx, stackStepYPx);
+        var fontStyle = ToFontStyle(element.Font);
+        var fittedSizePx = ComputeFittedFontSizePx(element.Content, fontFamily, startingSizePx, MinFontSizePx, fitWidthPx, fitHeightPx, fontStyle);
 
         // [Code-review nits, fixed here] `% 360 == 0` rather than `== 0` -- 360/720/etc. are visually
         // identical to no rotation but previously took the resampling sub-bitmap path anyway (a real,
@@ -440,7 +476,8 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             // mechanism exists to prevent.
             DrawGlyphs(
                 image, element.Content, fontFamily, fittedSizePx, origin, element.Color, wrappingLength: -1f, clip, hintingMode: HintingMode.None,
-                element.StrokeColor, strokeThicknessPx, element.ShadowColor, shadowOffsetXPx, shadowOffsetYPx, fillBrush);
+                element.StrokeColor, strokeThicknessPx, element.ShadowColor, shadowOffsetXPx, shadowOffsetYPx, fillBrush, fontStyle,
+                element.StackColor, stackStepXPx, stackStepYPx);
             return;
         }
 
@@ -455,7 +492,8 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var subOrigin = new PointF(boundsWidthPx / 2f, boundsHeightPx / 2f);
         DrawGlyphs(
             subBitmap, element.Content, fontFamily, fittedSizePx, subOrigin, element.Color, wrappingLength: -1f, clip: null, hintingMode: HintingMode.None,
-            element.StrokeColor, strokeThicknessPx, element.ShadowColor, shadowOffsetXPx, shadowOffsetYPx, fillBrush);
+            element.StrokeColor, strokeThicknessPx, element.ShadowColor, shadowOffsetXPx, shadowOffsetYPx, fillBrush, fontStyle,
+            element.StackColor, stackStepXPx, stackStepYPx);
 
         subBitmap.Mutate(ctx => ctx.Rotate((float)element.RotationDegrees));
 
@@ -502,6 +540,12 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
                 new PointF(centerX, bounds.Y), new PointF(centerX, bounds.Y + bounds.Height), GradientRepetitionMode.None, stops),
             TextGradientKind.Radial => new RadialGradientBrush(
                 new PointF(centerX, centerY), MathF.Max(bounds.Width, bounds.Height) / 2f, GradientRepetitionMode.None, stops),
+            // Auditor usability review follow-up (2026-08-18): reuses the SAME 2 stops
+            // Horizontal/Vertical/Radial already resolved above as the pattern's fore/back colors --
+            // no separate color pair, see TextGradientKind.BitmapPattern's own doc comment for why.
+            // A single-stop (degenerate/fallback) gradient makes stops[0] and stops[^1] the SAME
+            // element, which correctly reads as a flat single-color "pattern," not a crash.
+            TextGradientKind.BitmapPattern => Brushes.Percent20(stops[0].Color, stops[^1].Color),
             _ => throw new NotSupportedException($"Unrecognized {nameof(TextGradientKind)}: {gradient.Kind}."),
         };
     }
@@ -541,7 +585,8 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// it's the one real opacity control here.</summary>
     private static void DrawTemplateBox(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateBoxElement element, PixelBounds bounds, int imageHeightPx)
     {
-        var rect = new SixLabors.ImageSharp.Drawing.RectangularPolygon(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        var cornerRadiusPx = MathF.Max(0f, (float)(element.CornerRadius * imageHeightPx));
+        var rect = BuildBoxPath(bounds.X, bounds.Y, bounds.Width, bounds.Height, cornerRadiusPx);
         var opacity = Math.Clamp((float)element.Opacity, 0f, 1f);
         var options = new DrawingOptions { GraphicsOptions = new GraphicsOptions { BlendPercentage = opacity } };
         var fillColor = new Rgba32(element.FillColor.R, element.FillColor.G, element.FillColor.B, 255);
@@ -564,13 +609,48 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
                 if (borderThicknessPx > 0)
                 {
                     var half = borderThicknessPx / 2f;
-                    var borderRect = new SixLabors.ImageSharp.Drawing.RectangularPolygon(
-                        bounds.X + half, bounds.Y + half, bounds.Width - borderThicknessPx, bounds.Height - borderThicknessPx);
+                    // Corner radius insets by the same half-thickness the straight-edge case already
+                    // uses, floored at 0 -- a thick border on a small radius would otherwise go
+                    // negative, which BuildBoxPath itself also clamps (MathF.Min against half the
+                    // shorter side), but doing it here too keeps this call site's own intent explicit.
+                    var borderRadiusPx = MathF.Max(0f, cornerRadiusPx - half);
+                    var borderRect = BuildBoxPath(
+                        bounds.X + half, bounds.Y + half, bounds.Width - borderThicknessPx, bounds.Height - borderThicknessPx, borderRadiusPx);
                     var borderColorRgba = new Rgba32(borderColor.R, borderColor.G, borderColor.B, 255);
                     ctx.Draw(options, borderColorRgba, borderThicknessPx, borderRect);
                 }
             }
         });
+    }
+
+    /// <summary>Plain axis-aligned rect when <paramref name="cornerRadiusPx"/> is 0 (the byte-for-byte
+    /// unchanged fast path every existing template hits) or a hand-built rounded-rectangle path
+    /// otherwise -- 4 <c>PathBuilder.AddArc</c> quarter-arcs (each 90°, centered on the corresponding
+    /// corner, radius clamped to half the shorter side so a large radius on a small/thin box degrades
+    /// to a stadium/pill shape rather than a self-intersecting path) connected by 4 straight edges.
+    /// Verified against a real rendered PNG before use (not assumed from the API shape alone) -- see
+    /// this method's own call sites' doc comments for why: ImageSharp.Drawing has no built-in
+    /// rounded-rectangle primitive at the version this project is pinned to.</summary>
+    private static SixLabors.ImageSharp.Drawing.IPath BuildBoxPath(float x, float y, float width, float height, float cornerRadiusPx)
+    {
+        if (cornerRadiusPx <= 0)
+        {
+            return new SixLabors.ImageSharp.Drawing.RectangularPolygon(x, y, width, height);
+        }
+
+        var r = MathF.Min(cornerRadiusPx, MathF.Min(width, height) / 2f);
+        var pb = new SixLabors.ImageSharp.Drawing.PathBuilder();
+        pb.StartFigure();
+        pb.AddArc(new PointF(x + r, y + r), r, r, 0f, 180f, 90f);
+        pb.AddLine(new PointF(x + r, y), new PointF(x + width - r, y));
+        pb.AddArc(new PointF(x + width - r, y + r), r, r, 0f, 270f, 90f);
+        pb.AddLine(new PointF(x + width, y + r), new PointF(x + width, y + height - r));
+        pb.AddArc(new PointF(x + width - r, y + height - r), r, r, 0f, 0f, 90f);
+        pb.AddLine(new PointF(x + width - r, y + height), new PointF(x + r, y + height));
+        pb.AddArc(new PointF(x + r, y + height - r), r, r, 0f, 90f, 90f);
+        pb.AddLine(new PointF(x, y + height - r), new PointF(x, y + r));
+        pb.CloseFigure();
+        return pb.Build();
     }
 
     /// <summary>Shared by <see cref="ApplyOverlay"/> and <see cref="ApplyTemplate"/> (Phase 0
@@ -622,16 +702,25 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// pre-Phase-8 <c>Brushes.Solid(color)</c> stroke-requires-a-brush case) -- null keeps the
     /// ORIGINAL plain-<c>Rgba32</c>-overload fill call byte-for-byte unchanged, which is what keeps
     /// <see cref="ApplyOverlay"/>'s own output identical to before any of Phase 4/8's additions.</para></summary>
+    /// <summary>Auditor usability review follow-up (2026-08-18): copy count is clamped to
+    /// <see cref="MaxStackCopies"/> -- nothing upstream validates the AXAML-bound StackStepX/Y
+    /// properties, and an unclamped huge step would draw thousands of copies per frame (a real perf
+    /// cliff on every preview repaint, not just the final render). 128 mirrors legacy's own
+    /// int8-packed step range (-128..127), a natural, already-battle-tested ceiling for this same
+    /// effect, not an arbitrarily chosen number.</summary>
+    private const int MaxStackCopies = 128;
+
     private static void DrawGlyphs<TPixel>(
         Image<TPixel> image, string text, FontFamily fontFamily, float fontSizePx, PointF origin,
         Abstractions.Imaging.Rgb24 color,
         float wrappingLength, SixLabors.ImageSharp.Drawing.RectangularPolygon? clip, HintingMode? hintingMode,
         Abstractions.Imaging.Rgb24? strokeColor = null, float strokeThicknessPx = 0,
         Abstractions.Imaging.Rgb24? shadowColor = null, float shadowOffsetXPx = 0, float shadowOffsetYPx = 0,
-        Brush? fillBrush = null)
+        Brush? fillBrush = null, SixLabors.Fonts.FontStyle fontStyle = SixLabors.Fonts.FontStyle.Regular,
+        Abstractions.Imaging.Rgb24? stackColor = null, float stackStepXPx = 0, float stackStepYPx = 0)
         where TPixel : unmanaged, IPixel<TPixel>
     {
-        var font = fontFamily.CreateFont(fontSizePx);
+        var font = fontFamily.CreateFont(fontSizePx, fontStyle);
         var rgba = ToRgba32(color);
         var options = new RichTextOptions(font)
         {
@@ -648,6 +737,32 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
         void Render(IImageProcessingContext ctx)
         {
+            // Stack draws FIRST (furthest back), behind the shadow/stroke/fill passes below -- an
+            // extruded "3D" look, one solid-color copy per pixel of the dominant step axis, stepping
+            // from the farthest copy in toward the origin (legacy YONIQ's own real mechanism, see
+            // TemplateTextElement.StackColor's own doc comment).
+            if (stackColor is { } stack)
+            {
+                var copies = Math.Min(MaxStackCopies, (int)MathF.Round(MathF.Max(MathF.Abs(stackStepXPx), MathF.Abs(stackStepYPx))));
+                var stackBrush = Brushes.Solid(ToRgba32(stack));
+                for (var f = copies; f >= 1; f--)
+                {
+                    var stackOptions = new RichTextOptions(font)
+                    {
+                        Origin = origin + new PointF(stackStepXPx * f / copies, stackStepYPx * f / copies),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        WrappingLength = wrappingLength,
+                    };
+                    if (hintingMode is { } stackHinting)
+                    {
+                        stackOptions.HintingMode = stackHinting;
+                    }
+
+                    ctx.DrawText(stackOptions, text, stackBrush);
+                }
+            }
+
             if (shadowColor is { } shadow)
             {
                 var shadowOptions = new RichTextOptions(font)
@@ -717,7 +832,8 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// own clip-to-bounds is what actually enforces the render-time overflow policy in that
     /// case, not this method.</summary>
     private static float ComputeFittedFontSizePx(
-        string text, FontFamily fontFamily, float startingSizePx, float minSizePx, int boundsWidthPx, int boundsHeightPx)
+        string text, FontFamily fontFamily, float startingSizePx, float minSizePx, int boundsWidthPx, int boundsHeightPx,
+        SixLabors.Fonts.FontStyle fontStyle = SixLabors.Fonts.FontStyle.Regular)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -726,7 +842,12 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
         bool FitsAt(float candidateSizePx)
         {
-            var font = fontFamily.CreateFont(candidateSizePx);
+            // Bold glyphs measure WIDER than Regular at the same point size -- fontStyle MUST match
+            // DrawGlyphs' own CreateFont call exactly (same "measurement and draw use the identical
+            // font instance shape" discipline this method's own doc comment already establishes for
+            // HintingMode), or the shrink-to-fit search picks a size that overflows once actually
+            // drawn bold.
+            var font = fontFamily.CreateFont(candidateSizePx, fontStyle);
             var options = new TextOptions(font) { HintingMode = HintingMode.None };
             var measured = TextMeasurer.MeasureSize(text, options);
             return measured.Width <= boundsWidthPx && measured.Height <= boundsHeightPx;
