@@ -6,11 +6,18 @@
 TX Template Editor redesign — currently the sole confirmed 1.1 target; full design content lives
 there, not duplicated here)
 
-## Status: 1.0 complete; 1.1 scoping in progress, one target confirmed
+## Status: 1.0 complete; the confirmed 1.1 target (TX Template Editor redesign) is implemented
 
 `spec/18-path-to-1.0.md` is done — 🔴 Critical, 🟠 High, and 🟡 Medium tiers all closed
 (2026-08-16). This document tracks 1.1 the same way `spec/18` tracked 1.0: a thin roadmap layer,
 pointing at the detailed spec for each target rather than duplicating it.
+
+**Update 2026-08-18**: the TX Template Editor redesign (below) is built — 8 implementation phases, a
+design-fidelity pass against `mockups/Editwindow`, and an 18-item usability-gap batch from an
+`auditor` review. See [[15-template-designer]]'s own Status section for the current gap list
+(box-element corner-radius, `.mtm` import still deferred, multi-handle element resize). The
+"scoped, needs plan-review" framing below describes the 2026-08-16 state, before implementation —
+left as written for the historical record, not the current state.
 
 ## Provenance
 
@@ -24,7 +31,8 @@ functional scope, candidate architecture, friction risks, non-goals — lives in
 
 ### TX Template Editor redesign — see [[15-template-designer]]
 
-**Status: scoped, needs plan-review before implementation.**
+**Status: implemented (2026-08-18)** — was "scoped, needs plan-review before implementation" as of
+2026-08-16; see the Update note above.
 
 A single, always-interactive templating layer on top of the existing TX image editor (crop/rotate/
 adjustments/undo-redo/basic overlay-text, all already shipped and unchanged) — drag/drop, resizable
@@ -39,7 +47,7 @@ full design detail in its own spec doc.)*
 
 ## Open questions / next steps
 
-- Plan-review [[15-template-designer]]'s candidate architecture (auditor pass, per this project's
-  established process for UI/UX design decisions) — not yet done, the next concrete step.
+- ~~Plan-review [[15-template-designer]]'s candidate architecture~~ — done; implementation shipped
+  (see Status above).
 - Whether 1.1 stays a single-item (template editor) milestone or picks up additional targets is not
   yet decided.

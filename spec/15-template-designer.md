@@ -9,7 +9,26 @@ cross-references are now stale against this redesign — see "Non-goals" below) 
 `Draw.cpp`/`Draw.h`, the `.mtm` file format, `PARALIST.BIN`, `CItems/` **as a capability reference
 only**, not an implementation to port — see the redesign note immediately below.
 
-## Status: scoped for 1.1, not yet planned or implemented
+## Status: implemented (2026-08-18) — this document is now a historical design record
+
+The redesign below was built across 8 implementation phases, a follow-up design-fidelity pass
+(Phases A-I against `mockups/Editwindow`), and an 18-item usability-gap batch found by an
+`auditor` review (2026-08-17/18) — plan-review happened before implementation, contrary to this
+document's own "not yet done" framing further down (left as written, historical). Phase-by-phase
+detail lives in git history and `PROJECT_BRIEF.md` (gitignored, session-local), not backfilled into
+this document or [[14-roadmap]] retroactively — this file's own value now is the DESIGN RATIONALE
+(why each decision was made), which stays accurate; treat every "not yet done" / "needs plan-review"
+/ "scoped for 1.1" statement below as describing the state as of 2026-08-16, before implementation,
+not the current state. Known gaps still open, confirmed against the current code (not assumed):
+- **Corner-radius on box elements** — never built. `BoxElementViewModel` has `FillColor`/
+  `BorderColor`/`BorderThickness`/`Opacity` only (border + opacity shipped 2026-08-18, closing part
+  of the box-elements friction risk below) — no `CornerRadius` property exists anywhere.
+- **Legacy `.mtm` import** — still deferred, per this document's own Decisions section below (unchanged).
+- **Element resize** — single bottom-right corner handle only, no aspect-lock toggle, no multi-select
+  move (auditor finding, 2026-08-17, item 18 — deliberately left as its own future design pass, not
+  folded into the 2026-08-18 usability batch; see that batch's own PROJECT_BRIEF.md entry for why).
+- Multi-select move (mentioned under Layout aids below) was never built — z-order/lock/duplicate/
+  align-to-crop exist, single-element only.
 
 ## Redesign note (2026-08-16) — supersedes this document's own original scope
 
@@ -35,7 +54,8 @@ the `CItems`-successor plugin surface are **dropped as 1.1 goals entirely**, not
 further — see Non-goals. `.mtm` *import* specifically is **not dropped**, only sequenced after 1.1's
 modern core ships — see Deferred, below, which preserves this document's original legacy research
 for when that's picked up. **Next step is plan-review** (UI/UX design decisions get an auditor
-plan-review pass before implementation, same as any other UI/UX design work) — not yet done.
+plan-review pass before implementation, same as any other UI/UX design work) — done, and
+implementation is complete as of 2026-08-18 (see Status above).
 
 ## Goal
 
@@ -179,7 +199,9 @@ original proposal, still correct under the redesign.
   resolve to *something* when transmitted (black is the conventional answer) — needs to be a
   deliberate, visibly-indicated choice, not an accident.
 - **Box elements** need border, corner-radius, and opacity to actually work as text plates/frames,
-  beyond the already-confirmed fill color.
+  beyond the already-confirmed fill color. **Update 2026-08-18**: border and opacity shipped (a
+  full BOX STYLE inspector block — fill/border-toggle/border-color/border-width/opacity). Corner-
+  radius was never built — still a real gap, not tracked elsewhere.
 
 ## Non-goals for 1.1
 
@@ -290,14 +312,24 @@ with, not duplicate it — this is an import adapter onto that model, not a para
       further encoding/format traps, mirroring how [[03-cat-layer]] and [[10-localization]] were
       corrected after review.
 
-## Open questions / next steps
+## Open questions / next steps — resolved 2026-08-18, kept for historical record
 
-- Plan-review pass (auditor, UI/UX design decisions per this project's established process) before
-  any implementation starts — the architecture above is directional, not final.
-- Concrete UI design for: the element list (select/rename/lock/reorder), the slot-fill bar, the
-  ready-rack thumbnail strip, and the fill-field bar for template variables.
-- Font portability: decide the actual bundled fallback font set.
-- Whether box border/corner-radius/opacity ship in the same pass as the base box element or as a
-  quick follow-up.
-- Fix the stale [[11-plugin-system]]/[docs/removed-features.md](../docs/removed-features.md)/
-  [[07-image-pipeline]]/[[14-roadmap]] cross-references flagged under Non-goals above.
+- ~~Plan-review pass... before any implementation starts~~ — done; implementation followed and
+  shipped (see Status above).
+- ~~Concrete UI design for: the element list..., the slot-fill bar..., the ready-rack thumbnail
+  strip..., and the fill-field bar~~ — all built: ELEMENTS panel (select/lock/reorder/z-index/
+  duplicate/delete), QSO FILL bar (`TemplateVariableRows`), READY RACK (9-slot pinned strip, numbered
+  1-9), TEMPLATE LIBRARY (searchable saved-template list).
+- ~~Font portability: decide the actual bundled fallback font set~~ — done: a default family + Barlow
+  ship with the app (`TransmitImagePreparer.AvailableFontFamilies`), with a visible unavailable-font
+  warning in the inspector when a loaded template references something else.
+- ~~Whether box border/corner-radius/opacity ship in the same pass or a follow-up~~ — border/opacity
+  shipped as a follow-up (2026-08-18); corner-radius still not built (see Status above).
+- ~~Fix the stale [[11-plugin-system]]/removed-features.md/[[07-image-pipeline]]/[[14-roadmap]]
+  cross-references~~ — done 2026-08-16 per the note under Non-goals; re-verified 2026-08-18, still
+  accurate (those files no longer claim a future `ITemplateItem` extension point tied to this
+  document).
+
+**Real open items, as of 2026-08-18** (see Status above for full list): box-element corner-radius,
+legacy `.mtm` import (still intentionally deferred), multi-handle/aspect-locked element resize +
+multi-select move.

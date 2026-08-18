@@ -73,22 +73,25 @@ superseded.
 
 ## 🟠 High — real, reachable bugs in core workflows
 
-2. **Stale-mode transmit crash** (confirmed independently by two separate audit passes). Changing
-   the TX mode while the image editor is open leaves the editor holding a stale target-mode
-   snapshot (`TxImageEditorPaneViewModel.cs:42,78`; `TxControlsPaneViewModel.cs:690,789-795`) —
-   Apply then produces an image sized for the OLD mode, and Transmit throws a
-   dimension-mismatch exception (`AnalogFmSstvEncoder.cs:44-49`) with only the generic error
-   banner. Minimum fix: disable the mode selector while the editor is open, or push mode changes
-   into the open editor.
-3. **TX image editor: no rotate, no EXIF auto-orient.** Neither `ImageFileLoader.LoadOriginalAsync`
-   (`src/ScanlineStudio.Core.Imaging/ImageFileLoader.cs:23-27`) nor the non-editor `LoadAsync`
-   (`:16-21`, the stock-picker path) call `AutoOrient()`; the Rotate tool is a permanently-disabled
-   stub (`TxImageEditorPaneView.axaml:61`). A phone photo with EXIF orientation loads sideways with
-   no in-app remedy, via either load path.
-4. **TX image editor: no aspect-locked crop.** Only a free-drag bottom-right corner handle exists
-   (`TxImageEditorPaneView.axaml:200-205`) plus a binary preserve-aspect toggle — filling a mode's
-   frame without distortion or arbitrary letterboxing (the single most-wanted crop behavior) isn't
-   achievable by hand.
+2. ✅ **DONE** (commit `86d07d5`, missing this annotation until 2026-08-18): **stale-mode transmit
+   crash** (confirmed independently by two separate audit passes). Changing the TX mode while the
+   image editor is open used to leave the editor holding a stale target-mode snapshot — Apply then
+   produced an image sized for the OLD mode, and Transmit threw a dimension-mismatch exception with
+   only the generic error banner. Fixed by freezing `SelectedMode` (disabling the mode
+   selector/quick-mode grid/STOCK/Browse) while the editor is open — later refined further
+   (2026-08-17, `CanChangeSourceOrMode`) to allow mode-select while a BLANK, untouched editor is
+   open, once the editor started opening by default; see `PROJECT_BRIEF.md` for that follow-up's
+   own regression/fix history.
+3. ✅ **DONE** (both halves). Rotate (commit `fc68b10`): a real 90°-clockwise Rotate command, not a
+   stub — transforms crop rect and every overlay element's position/size in place. EXIF auto-orient
+   (2026-08-18): `ImageFileLoader.LoadOriginalAsync`/`LoadAsync` now call ImageSharp's
+   `Mutate(x => x.AutoOrient())` — `LoadAsync` runs it BEFORE `Resize` so the target dimensions apply
+   to the already-corrected image, not the raw sideways one. 2 new tests (orientation-tagged JPEG
+   fixture, confirms width/height swap on a 90°-rotation tag).
+4. ✅ **DONE** (commit `3647ad5`): **TX image editor aspect-locked crop** —
+   `LockAspectToMode`/`TxImageEditorPaneViewModel.ApplyCropResizeAspectLocked`, a toggle that
+   constrains the crop-rect drag-resize handle to the target mode's own aspect ratio, orthogonal to
+   the pre-existing `PreserveAspect` (letterbox-vs-stretch) toggle.
 5. **Packaging doesn't exist, and `dotnet publish` would ship a broken binary — plus no version
    stamping, no About dialog, dead Help menu (merged from former item 11 per plan-review: these
    ship together, not sequentially).** No publish profile, installer, or release workflow anywhere
@@ -163,24 +166,25 @@ superseded.
     interprets them as normalized against the CROPPED+RESIZED final image; wrong whenever the crop
     wasn't the full identity rect. Also added the missing canvas `FontSize`/`FontFamily` binding.
     **Two new findings surfaced by this fix, not yet resolved:**
-    - **Overlay text never renders visibly on the interactive editing canvas at all** (confirmed via
-      `git stash` to pre-date this fix; confirmed unrelated to the new binding via a hardcoded
-      `FontSize="40"` test and a `ClipToBounds="False"` experiment, neither fixed it). The separate
-      pipeline-accurate side preview panel (`PreviewImage`) DOES render it correctly. Root cause not
-      found — worth a dedicated investigation pass, `TxImageEditorPaneView.axaml`'s overlay
-      `ItemsControl`/`ItemsPanel` (nested `Canvas` inside the outer `EditorCanvas`) is the prime
-      suspect area.
-    - `TxControlsPaneViewModel.EditState.Overlay` captures already-crop-projected coordinates
-      (`TxControlsPaneViewModel.cs:850`), so switching TX mode mid-edit re-applies those same
-      coordinates against the NEW mode's aspect (`:965-967`) — stale whenever the two modes' aspect
-      ratios differ. Not a regression (pre-fix those coordinates were wrong at both modes), but the
-      composition-across-modes comments at `:74-75`/`:948-950` now overclaim. **Update (commit
-      `faeef61`)**: `EditState` now ALSO carries the raw (un-projected) positions
-      (`RawOverlay`, added for the re-open/re-edit sub-piece below) — the data this fix needs
-      already exists, but `OnSelectedModeChanged`'s own reflow was deliberately left unchanged
-      (still reads the crop-projected `Overlay`, per that sub-piece's own explicit scope
-      boundary). Wiring `RawOverlay` + a fresh `ProjectToCropRelative`-equivalent into the reflow
-      closes this for good — now a small, well-scoped fix, not a research question.
+    - ✅ **RESOLVED** (Phase 7, `TxImageEditorPaneViewModel.ZoomFactor`'s own doc comment has the
+      full story) — **Overlay text never renders visibly on the interactive editing canvas at all**
+      (confirmed via `git stash` to pre-date this fix; confirmed unrelated to the new binding via a
+      hardcoded `FontSize="40"` test and a `ClipToBounds="False"` experiment, neither fixed it). The
+      separate pipeline-accurate side preview panel (`PreviewImage`) DID render it correctly even
+      while this was broken. Root cause found later, during the zoom-slider addendum: a
+      `LayoutTransformControl` render-transform ancestor (the original zoom design) doesn't reliably
+      re-composite on a descendant-only bounds change — confirmed via pixel-diffed screenshots, not
+      a plain layout-correctness bug (the underlying `Bounds` were already right every time). Fixed
+      by baking `ZoomFactor` directly into every pixel-conversion property instead of a render
+      transform — sidesteps the whole bug class rather than working around it. Overlay text (and
+      every other canvas element) renders live and correctly today; confirmed live in this session
+      (2026-08-18), not just by reading the fix.
+    - ✅ **RESOLVED**, confirmed 2026-08-18 (no longer tracking a specific commit — folded into the
+      broader `EditState`/`RawOverlayElements` rework). `TxControlsPaneViewModel.OnSelectedModeChanged`
+      now reflows against `EditState.RawOverlay` (the raw, un-projected positions), not the
+      crop-projected coordinates this finding originally flagged as stale across a mode switch —
+      confirmed live this session (switching mode while a blank/edited editor is open correctly
+      re-sizes at the new mode's dimensions).
   - ✅ **DONE** (commit `bcf8504`): 6 brightness/contrast/saturation/gamma/sharpen/denoise sliders implemented (not
     removed) against a new `ITransmitImagePreparer.ApplyAdjustments` — real ImageSharp-backed
     Brightness/Contrast/Saturate + a hand-rolled gamma curve (ImageSharp has no `GammaCorrection`

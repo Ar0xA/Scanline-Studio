@@ -169,11 +169,12 @@ third time, just not caught by the test meant to catch it.
 
 **Explicitly deferred past this pass** (unchanged/reconfirmed): `ApplyFilter`/`IImageFilter`, the
 macro-key auto-substitution system, legacy `PerSpect.cpp` perspective correction. **Stale as of
-2026-08-16**: the QSL/template designer ([[15-template-designer]]) is no longer deferred — it's the
-active 1.1 target, fully redesigned (a modern templating layer, not a legacy `.mtm` port); clipboard
-paste and drag-drop as image-element sources are explicitly in its functional scope now too (webcam/
-screen capture as a source remains open/uncertain, see that document's own "genuinely uncertain"
-notes).
+2026-08-16, updated 2026-08-18**: the QSL/template designer ([[15-template-designer]]) is no longer
+deferred — it was the active 1.1 target, fully redesigned (a modern templating layer, not a legacy
+`.mtm` port), and is now **implemented**; clipboard paste and drag-drop as image-element sources
+were NOT built (see [[15-template-designer]]'s own Status section for the current, confirmed gap
+list — clipboard/drag-drop as image sources isn't on it either, meaning that part of the functional
+scope quietly didn't ship and isn't tracked elsewhere; flagged here, not fixed).
 
 ## Navigation: dockable panes, not legacy's paged main window
 
@@ -286,10 +287,10 @@ existing namespace check.
 ## Explicitly deferred (not v1)
 
 - Perspective correction (`PerSpect.cpp`) and webcam capture (`PicSel.cpp` camera path) are useful but not core to preserving SSTV send/receive behavior; tracked as a post-v1 item in [[14-roadmap]] rather than blocking the core rewrite.
-- **Stale as of 2026-08-16**: this line used to defer the full QSL/template designer past v1 — 1.0
-  is done and [[15-template-designer]] is now the active 1.1 target (redesigned, not a legacy `.mtm`
-  port). `ImageOverlay` above remains the basic text-overlay subset that shipped in 1.0; spec/15's
-  richer element model supersedes it for 1.1.
+- **Stale as of 2026-08-16, updated 2026-08-18**: this line used to defer the full QSL/template
+  designer past v1 — 1.0 is done and [[15-template-designer]] is now **implemented** (was the active
+  1.1 target, redesigned, not a legacy `.mtm` port). `ImageOverlay` above remains the basic
+  text-overlay subset that shipped in 1.0; spec/15's richer element model supersedes it, now live.
 
 ## Testing
 

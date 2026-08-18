@@ -1,7 +1,9 @@
 # 16 — GUI Wiring Survey
 
 **Date:** 2026-08-09 (originally), refreshed 2026-08-10, 2026-08-14 — see "Refresh (2026-08-10)" and
-"Refresh (2026-08-14)" notes below.
+"Refresh (2026-08-14)" notes below. **2026-08-18**: the TX Image Editor section (Center column,
+below) is marked superseded rather than refreshed — see that section's own banner for why a full
+re-survey wasn't done in place.
 **Scope:** Every screen/card/control in `ScanlineStudio.UI` — Receive/Transmit/Gallery/Logbook
 tabs, the menu bar and status bar (`MainWindow.axaml`), the Radio header
 (`RadioHeaderView.axaml`), the Options window (`OptionsWindowView.axaml`), and the small
@@ -250,26 +252,24 @@ Queue/Mode-timing/TX-log/Recently-sent.
 
 ### Center column — TX Image Editor (`TxImageEditorPaneView.axaml`, `TxImageEditorPaneViewModel.cs`)
 
-Mixed, more real than most other scaffolding cards in this app.
-
-| Control | Class | File:line | Note |
-|---|---|---|---|
-| Tool strip (Move/Crop/Scale/Rotate/Text/Box/Line/Mask/Pick, Undo/Redo/Fit/100%/Snap-grid/Safe-area) | STUB | `TxImageEditorPaneView.axaml:46-72` | Decorative only — no per-tool mode exists behind any of these; only "Move" is ever checked. |
-| Preserve-aspect toggle | REAL | `TxImageEditorPaneView.axaml:78-80` | `PreserveAspect`, drives real crop/resize math. |
-| Add text button | REAL | `TxImageEditorPaneView.axaml:81-83` | `AddOverlayElementCommand`, adds a genuine draggable `OverlayElementViewModel`. |
-| Apply / Cancel buttons | REAL | `TxImageEditorPaneView.axaml:84-89` | Run the real `ITransmitImagePreparer` Crop→Resize→ApplyOverlay pipeline. |
-| Crop rectangle (drag body/handle) | REAL | `TxImageEditorPaneView.axaml:197` | Bound to `CropLeftPixels`/`CropTopPixels`/etc., genuine pointer-driven crop with legacy-verified nudge/resize semantics (`TxImageEditorPaneViewModel.cs:111-131`). |
-| Overlay text elements (drag) | REAL | `TxImageEditorPaneView.axaml:220-221` | `ResolvedText` genuinely macro-resolved via `IMacroTextResolver`. |
-| Safe-area guide + callsign/report plate text overlays on the canvas | FAKE-LIVE | `TxImageEditorPaneView.axaml:258,266` | `Panes.TxImageEditor.PlateCallsign`/`PlateCaption` literal loc keys (`"DL2QSK"`, `"EA7KDT · RSV 595 · 14.230 USB"`, `en.json:405-406`) rendered directly over the editor canvas — arguably the most deceptive FAKE-LIVE in the app, since it reads as callsign/report text burned into the actual outgoing image. Auditor-caught gap in the original survey pass. |
-| Bottom action bar (Transmit/Tune/Preview audio/Halt + progress) | STUB | `TxImageEditorPaneView.axaml:119-122,126` | Explicitly called out as "decorative duplicate…no Command this pass" in the file's own comment. |
-| Adjustments row (Brightness/Contrast/Saturation/Gamma/Sharpen/Denoise sliders) | STUB | `TxImageEditorPaneView.axaml:139-166` | All literal loc-key values, no binding. |
-| Real-time pipeline preview | REAL | `TxImageEditorPaneView.axaml:287` | `PreviewImage`, genuinely re-derived on every crop/overlay change (`TxImageEditorPaneViewModel.cs:236-247`). |
-| Overlay element list (Text/X/Y fields + Remove) | REAL | `TxImageEditorPaneView.axaml:299-307` | Two-way bound to real `OverlayElementViewModel` fields. |
-| Insert-field chips (12 total) | MIXED — REAL + STUB in one control | `TxImageEditorPaneView.axaml:332-348` | Only 5 of 12 chips have a `Command`: `%m` (chip3), `{grid}` (chip4), `%T` (chip7), `%D` (chip8), `{name}` (chip10) — all genuinely macro-resolved via `IMacroTextResolver`/`OperatorSettings`. The other 7 (HIS CALL/HIS GRID/FREQ/MODE/HIS RSV/DIST/BEAM — chips 1,2,5,6,9,11,12) have no `Command` at all — STUB, blocked on a "current QSO" concept, per the file's own comment. This is the single clearest example in the app of a control ROW that's half-real, half-stub with identical visual styling. |
-| Source label/value row | FAKE-LIVE | `TxImageEditorPaneView.axaml:351-352` | Literal loc-key values. |
-| Fill all / Clear fields buttons | STUB | `TxImageEditorPaneView.axaml:355-356` | No `Command`. |
-| Text style card (Font size, Fill/stroke) | FAKE-LIVE | `TxImageEditorPaneView.axaml:369-374` | Literal loc-key values; no selection-tracking exists to apply them to. |
-| Saved templates card | STUB | `TxImageEditorPaneView.axaml:445` | 3 hardcoded example thumbnail cards, no store exists; Fill&Send / Save template buttons have no `Command`. |
+**Superseded 2026-08-18 — the table below is a pre-redesign snapshot, do not trust it.** It predates
+the [[15-template-designer]] redesign (8 implementation phases, a design-fidelity pass, and an
+18-item usability-gap batch, all landed between this survey's 2026-08-14 refresh and 2026-08-18).
+Every row below is now wrong in some way: the tool strip's Undo/Redo/Fit/100%/Snap-grid/Safe-area
+are genuinely real (not decorative); the bottom action bar was removed outright, not left STUB; the
+adjustments sliders are real, moved into an IMAGE inspector tab; the fake callsign/report plate
+overlay is gone; "Saved templates card... 3 hardcoded example thumbnails, no store exists" is
+flatly false — `ITemplateStore` is a real, tested persistence layer with a working save/load/delete/
+pin rack; the insert-field chips are all real (10 of 12 — DIST/BEAM remain genuinely stubbed, no
+distance/bearing concept exists); text style has full real selection-tracking, not FAKE-LIVE. Doing
+a full accurate row-by-row re-survey (this table's own methodology — real `.axaml`/`.cs` line
+citations per row) was judged disproportionate to redo here by hand, since re-deriving ~20 accurate
+line numbers against the current 1700+-line `.axaml` file risks introducing NEW inaccuracies rather
+than fixing old ones. If an accurate REAL/STUB/FAKE-LIVE inventory of this pane is needed, re-run
+this survey's own methodology fresh against the current code rather than trusting anything below.
+Known genuine gaps as of 2026-08-18 (confirmed, not guessed): box-element corner-radius, legacy
+`.mtm` template import, multi-handle/aspect-locked element resize, clipboard/drag-drop as image
+sources, DIST/BEAM insert-field chips — see [[15-template-designer]]'s own Status section.
 
 ### Right column
 
