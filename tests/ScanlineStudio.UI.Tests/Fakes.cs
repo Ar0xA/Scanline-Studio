@@ -150,6 +150,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public event Action<TransmitProgressInfo>? TransmitProgressChanged;
 
+    public event Action<bool>? CapturePausedForTransmitChanged;
+
     public string? OperatorCallsign { get; set; }
 
     public Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default) => Task.FromResult(OperatorCallsign);
@@ -290,6 +292,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public void RaiseTransmitProgress(TransmitProgressInfo info) => TransmitProgressChanged?.Invoke(info);
 
+    public void RaiseCapturePausedForTransmitChanged(bool paused) => CapturePausedForTransmitChanged?.Invoke(paused);
+
     public void RaiseMaintenanceWarningRaised() => MaintenanceWarningRaised?.Invoke();
 
     public void RaiseMaintenanceWarningCleared() => MaintenanceWarningCleared?.Invoke();
@@ -316,6 +320,16 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     public IObservable<RadioConnectionEvent> ConnectionEvents => _connectionEvents;
 
     public Task ConnectUsingSettingsAsync(CancellationToken ct = default) => Task.CompletedTask;
+
+    public RadioConnectionTestResult TestConnectionResultToReturn { get; set; } = new(true, "fake-rig", RadioCapabilities.None, null);
+
+    public List<RadioConnectionSpec> TestConnectionCalls { get; } = [];
+
+    public Task<RadioConnectionTestResult> TestConnectionAsync(RadioConnectionSpec spec, CancellationToken ct = default)
+    {
+        TestConnectionCalls.Add(spec);
+        return Task.FromResult(TestConnectionResultToReturn);
+    }
 
     public Task DisconnectAsync() => Task.CompletedTask;
 

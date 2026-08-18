@@ -155,6 +155,38 @@ public interface ISstvSessionService : IAsyncDisposable
     /// report can jump several percent at once on a short mode once that buffer fills.</summary>
     event Action<TransmitProgressInfo>? TransmitProgressChanged;
 
+    /// <summary>User-reported gap (2026-08-18): the header's "Receiving" indicator stayed visually
+    /// lit the same color throughout a local transmission, even though <see cref="TransmitAsync"/>/
+    /// <see cref="TuneAsync"/> genuinely pause capture for that window (<see cref="IsReceiving"/>
+    /// itself already correctly reports <see langword="false"/> during the pause -- the gap was that
+    /// nothing ever PUSHED that change to a subscriber; <see cref="IsReceiving"/> is a plain,
+    /// non-eventing property). Fires <see langword="true"/> only when THIS pause/resume pair is
+    /// caused by an in-flight local transmission that actually paused a RUNNING capture --
+    /// deliberately NOT the same signal as "RX capture stopped for any reason" (a manual Halt-button
+    /// click does not fire this; that case is already correctly reflected by the Receiving toggle's
+    /// own bound state). <see langword="false"/> fires once this pause's own resume attempt has
+    /// finished (successfully or not) -- including the deferred <see cref="SetPttLockAsync"/>-
+    /// triggered resume path when a PTT lock delayed it -- NOT merely once playback itself ends. This
+    /// is <b>not</b> a guarantee that capture is actually listening again by the time it fires: a
+    /// best-effort resume attempt that itself fails still raises <see langword="false"/> (see
+    /// <see cref="IsReceiving"/> for the real state), and the residual case where a transmission
+    /// deliberately leaves capture stopped (an unwired <see cref="TuneAsync"/> "stay keyed" option,
+    /// no production caller today) also raises <see langword="false"/> once its own pause window is
+    /// over even though capture was never resumed. Treat this purely as "no longer paused FOR THIS
+    /// transmission," not as a restatement of <see cref="IsReceiving"/>.
+    ///
+    /// <b>Threading contract:</b> raised SYNCHRONOUSLY from whichever async call is doing the
+    /// pause/resume (<see cref="TransmitAsync"/>/<see cref="TuneAsync"/>'s shared internal helper,
+    /// or <see cref="SetPttLockAsync"/>'s own deferred-resume path) -- NOT guaranteed to be a single
+    /// consistent thread across calls, unlike <see cref="TransmitProgressChanged"/>'s dedicated
+    /// playback-pump thread. Wrapped in an internal try/catch, so a throwing subscriber cannot break
+    /// the underlying pause/resume/unlock call it was raised from. A synchronous subscriber that
+    /// re-enters <see cref="SetPttLockAsync"/> from this event will deadlock (that method's internal
+    /// gate is not reentrant) -- subscribers must marshal to their own scheduler before touching UI
+    /// state and must not block or re-enter this service. Fires at most twice per transmission (not a
+    /// hot path, no rate-limiting).</summary>
+    event Action<bool>? CapturePausedForTransmitChanged;
+
     /// <summary>Keys PTT, plays a steady sine tone at <paramref name="frequencyHz"/> for
     /// <paramref name="duration"/> (WSJT-X/legacy-Tune-style AFC-lock aid), then un-keys PTT --
     /// same pause-RX/key-PTT/resume-RX guarantee shape as <see cref="TransmitAsync"/>.</summary>

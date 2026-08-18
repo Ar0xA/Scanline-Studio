@@ -1,12 +1,14 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
+using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
@@ -32,6 +34,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private readonly IAudioDeviceEnumerator _audioDeviceEnumerator;
     private readonly ILogbookSessionService _logbookSession;
     private readonly ISettingsStore _settingsStore;
+    private readonly IRadioSessionService _radioSession;
     private readonly ILogger<OptionsWindowViewModel> _logger;
 
     [ObservableProperty]
@@ -259,6 +262,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         IAudioDeviceEnumerator audioDeviceEnumerator,
         ILogbookSessionService logbookSession,
         ISettingsStore settingsStore,
+        IRadioSessionService radioSession,
         ILogger<OptionsWindowViewModel> logger)
     {
         _optionsSettingsService = optionsSettingsService;
@@ -266,6 +270,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         _audioDeviceEnumerator = audioDeviceEnumerator;
         _logbookSession = logbookSession;
         _settingsStore = settingsStore;
+        _radioSession = radioSession;
         _logger = logger;
 
         _ = LoadSafeAsync();
@@ -327,6 +332,68 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     }
 
     public bool IsHamlibSelected => RadioBackendId == "hamlib";
+
+    /// <summary>Auditor usability review follow-up (2026-08-18) -- Radio/CAT tab's "Test Connection"
+    /// button. Deliberately tests whatever is CURRENTLY TYPED into <see cref="RigctldHost"/>/
+    /// <see cref="RigctldPort"/> (possibly not yet saved), via <see cref="IRadioSessionService.TestConnectionAsync"/>
+    /// -- a fresh, disposable connection attempt that never disturbs the app's own real, persistent
+    /// radio session (see that method's own doc comment). <see langword="null"/> means "no test run
+    /// yet this dialog session," not a result -- so a freshly opened Options window doesn't show a
+    /// stale pass/fail from nothing.</summary>
+    [ObservableProperty]
+    private string? _testConnectionStatusMessage;
+
+    [ObservableProperty]
+    private bool _isTestingConnection;
+
+    private bool CanTestRigctldConnection() => !IsTestingConnection && !string.IsNullOrWhiteSpace(RigctldHost) && RigctldPort is > 0;
+
+    [RelayCommand(CanExecute = nameof(CanTestRigctldConnection))]
+    private async Task TestRigctldConnectionAsync()
+    {
+        // Empty/zero guarded by CanTestRigctldConnection above -- RigctldHost/Port are still
+        // nullable properties (a TextBox/NumericUpDown can transiently clear to null while the
+        // operator is editing), so the compiler-narrowed local copies below are what actually get
+        // passed to the spec, not the possibly-changed-since-CanExecute-ran live properties.
+        if (RigctldHost is not { } host || RigctldPort is not { } port)
+        {
+            return;
+        }
+
+        Log.TestRigctldConnectionInvoked(_logger, host, port);
+        IsTestingConnection = true;
+        TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
+        try
+        {
+            var result = await _radioSession.TestConnectionAsync(new RigctldConnectionSpec(host, port)).ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                TestConnectionStatusMessage = result.Success
+                    ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
+                    : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
+                IsTestingConnection = false;
+            });
+        }
+        catch (Exception ex)
+        {
+            // TestConnectionAsync's own contract already catches connection/poll failures into
+            // RadioConnectionTestResult.Success=false -- this only guards against something
+            // unexpected escaping that contract (e.g. a DI/factory-resolution bug), so the dialog
+            // never gets stuck showing "Testing..." forever.
+            Log.TestRigctldConnectionFailed(_logger, host, port, ex);
+            Dispatcher.UIThread.Post(() =>
+            {
+                TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
+                IsTestingConnection = false;
+            });
+        }
+    }
+
+    partial void OnIsTestingConnectionChanged(bool value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+
+    partial void OnRigctldHostChanged(string? value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+
+    partial void OnRigctldPortChanged(int? value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
 
     /// <summary>Backs the Decode tab's 4-way Sense level radio group -- same computed-bool-property
     /// idiom as <see cref="IsNoneBackendSelected"/>/etc. above. Index order (0=Very low..3=Very high)
@@ -1049,6 +1116,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetCultureAsync({Culture}) failed after a successful settings save")]
         public static partial void SetCultureFailed(ILogger logger, string culture, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TestRigctldConnection invoked: host={Host}, port={Port}")]
+        public static partial void TestRigctldConnectionInvoked(ILogger logger, string host, int port);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "TestRigctldConnection({Host}:{Port}) threw unexpectedly")]
+        public static partial void TestRigctldConnectionFailed(ILogger logger, string host, int port, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Cancel invoked")]
         public static partial void CancelInvoked(ILogger logger);
