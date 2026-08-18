@@ -276,7 +276,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // tracking a second, parallel counter that could desync from this one.
     internal int TotalSamplesReceived => _bufferBase + _rawSamples.Count;
 
-    private int Rel(int absoluteIndex)
+    // Functional-audit fix (chunk D1, round 1): was `private`, with the throw guard's correctness
+    // protected only by the doc comment above (which itself calls this "a `checked`-style guard, not
+    // just a convenience") -- nothing exercised the below-base-index throw path directly. Bumped to
+    // `internal` (stays otherwise unchanged) so RelThrows_WhenAbsoluteIndexIsBehindTheTrimWatermark
+    // can call it directly, same "internal for direct testability" convention already established by
+    // this class's other diagnostic-only members (see e.g. FirstLockedBandpassIndex's own doc
+    // comment).
+    internal int Rel(int absoluteIndex)
     {
         if (absoluteIndex < _bufferBase)
         {
@@ -993,6 +1000,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// equal to <see cref="LockAnchorCommitted"/>'s own value, closing that gap.</summary>
     internal int? FirstLockedBandpassIndex { get; private set; }
 
+    /// <summary>Diagnostic-only: the first absolute sample index <see cref="DemodulatedFrequencyAt"/>
+    /// ever selected the narrow-mode demod width for. Functional-audit fix (chunk D1, round 1): this
+    /// gate (Band-2 item S6, `isNarrow` in <see cref="DemodulatedFrequencyAt"/>) is structurally
+    /// identical to <see cref="FirstLockedBandpassIndex"/>'s own H1/H2 gate -- same captured
+    /// <c>_bandpassLockedFromSample</c> anchor, same "cursor trails the anchor at <c>Commit()</c>"
+    /// property -- but only the bandpass gate got a diagnostic + test after item 4b's own auditor
+    /// finding; this sibling gate one method down got neither, and the existing
+    /// <c>BandpassCacheChunkInvarianceTests</c> test structurally cannot cover it (it uses a wide
+    /// mode, and this gate only ever fires for narrow modes by design).
+    /// <c>FirstNarrowDemodIndex_EqualsTheLockAnchor_ForANarrowMode</c> closes that gap.</summary>
+    internal int? FirstNarrowDemodIndex { get; private set; }
+
     // Band-1 item 4a (pre-Phase-2 audit, S1 follow-up): _demodulatedFrequencies used to be filled
     // EAGERLY, one sample at a time, directly inside PushSamples' per-sample loop -- for every raw
     // sample as it arrived, regardless of lock state. That's what let this cache (transitively, via
@@ -1027,6 +1046,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // for the bandpass cache recurs here (this cursor also trails the anchor at Commit() time,
             // so pre-anchor samples correctly stay wide -- see HilbertFmDemodulator's own doc comment).
             var isNarrow = _mode is not null && _mode.NarrowModeCode is not null && thisIndex >= _bandpassLockedFromSample;
+            if (isNarrow)
+            {
+                FirstNarrowDemodIndex ??= thisIndex; // diagnostic-only, see its own doc comment
+            }
 
             // Demod-type subsystem Phase 2, landmine #3 -- retune the main-path PLL/ZeroCrossing
             // instance on the narrow-mode edge (not every sample). Only the CURRENTLY SELECTED

@@ -67,6 +67,45 @@ public class BufferTrimTests
     }
 
     [Fact]
+    public void Rel_Throws_WhenAbsoluteIndexIsBehindTheTrimWatermark()
+    {
+        // Functional-audit fix (chunk D1, round 1): Rel()'s own doc comment calls its below-base
+        // throw "a `checked`-style guard, not just a convenience" -- the dangerous failure class
+        // named there is a silently-wrong (not throwing) translation, not a loud one. Nothing
+        // exercised that throw path directly before this test; only Rel's normal (non-throwing)
+        // translation was ever indirectly reached via decode round-trips.
+        const int sampleRate = 11025;
+        var decoder = new AnalogFmSstvDecoder(sampleRate);
+        var random = new Random(Seed: 12345);
+
+        const int totalSeconds = 30;
+        const int totalSamples = sampleRate * totalSeconds;
+        const int chunkSize = 512;
+
+        var buffer = new float[chunkSize];
+        for (var pushed = 0; pushed < totalSamples; pushed += chunkSize)
+        {
+            var length = Math.Min(chunkSize, totalSamples - pushed);
+            for (var i = 0; i < length; i++)
+            {
+                buffer[i] = (float)(random.NextDouble() * 0.02 - 0.01);
+            }
+
+            decoder.PushSamples(buffer.AsMemory(0, length));
+        }
+
+        // Same 30s-noise setup as BufferedSampleCount_StaysBounded_ForLongNeverLockingStream above,
+        // which already proves BufferedSampleCount ends up well below totalSamples -- meaning
+        // _bufferBase (== TotalSamplesReceived - BufferedSampleCount) is genuinely > 0, so absolute
+        // index 0 is guaranteed to be behind the trim watermark, not a coincidence of this test's own
+        // arithmetic.
+        Assert.True(decoder.BufferedSampleCount < totalSamples, "Expected trimming to have advanced _bufferBase past 0 -- test setup itself is wrong if this is false.");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => decoder.Rel(0));
+        Assert.Contains("already been trimmed", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void BufferedSampleCount_StaysBounded_ForLongNeverLockingStream_WithRxBpfOff()
     {
         // RX BPF subsystem Phase 2 -- round-1 auditor plan-review blocker, verified directly: the
