@@ -698,25 +698,31 @@
                                      has no text-transform/letter-spacing/accent-color, unlike
                                      every other IndustryKicker use in this app. -->
                                 <TextBlock Classes="IndustryRowLabel" Margin="0,2,0,0" Text="{loc:Translate Panes.RxFrameMeta.NoteLabel}" />
-                                <!-- Combined-batch auditor review, 2026-08-14: was a fully editable
-                                     TextBox pre-filled with a FABRICATED note ("Sked · 2nd frame"),
-                                     bound one-way to a static loc key — edits were possible but
-                                     silently discarded, and the pre-filled text read as a real saved
-                                     note. Disabled + neutral placeholder rather than left interactive
-                                     with fake content; this pane has no way to learn a just-saved
-                                     frame's ReceiveHistoryEntry id yet (spec/16-gui-wiring-survey.md's
-                                     own PARTIAL finding on this exact control, unresolved — the
-                                     Gallery tab's OWN Note field, a separate control with the entry id
-                                     already in hand, is real). -->
-                                <TextBox Classes="Industry IndustryInput" IsEnabled="False" Text="{loc:Translate Panes.RxFrameMeta.NoteValue}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                <!-- Wired 2026-08-18: was disabled — "this pane has no way to learn
+                                     a just-saved frame's ReceiveHistoryEntry id yet"
+                                     (spec/16-gui-wiring-survey.md's own PARTIAL finding). Closed via
+                                     IReceiveHistoryStore.Recorded correlation (RxImagePaneViewModel.
+                                     OnHistoryRecorded's own doc comment) — same real
+                                     IReceiveHistoryStore.SetNoteAsync write the Gallery tab's own
+                                     Note field already used, just reachable from here too now.
+                                     CanEditFrameMetadata is false until that correlation lands. -->
+                                <TextBox Classes="Industry IndustryInput" Text="{Binding Note}" Watermark="{loc:Translate Panes.RxFrameMeta.NoteWatermark}" IsEnabled="{Binding CanEditFrameMetadata}" />
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignLabel}" />
                                 <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxFrameMeta.CallsignValue}" Text="{Binding OverrideCallsign}" />
                                 <Grid ColumnDefinitions="*,*" ColumnSpacing="4" Margin="0,2,0,0">
                                     <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.LookupQrz}" Command="{Binding LookupQrzCommand}" />
-                                    <!-- Combined-batch auditor review, 2026-08-14: no Flag command on
-                                         RxImagePaneViewModel — was fully clickable, disabled to match. -->
-                                    <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.Flag}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <!-- Wired 2026-08-18: same real IReceiveHistoryStore.SetFlaggedAsync
+                                         write as the Note field above — see that control's own
+                                         comment. ToggleButton (not Button), matching the Gallery tab's
+                                         own real flag toggle and this app's established
+                                         IsChecked-bound-toggle-with-Industry-button-classes convention
+                                         (e.g. the Transceiver card's Receiving toggle). -->
+                                    <ToggleButton Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.Flag}" IsChecked="{Binding IsFlagged}" IsEnabled="{Binding CanEditFrameMetadata}" />
                                 </Grid>
+                                <TextBlock Text="{Binding FrameMetadataErrorMessage}"
+                                           Foreground="{StaticResource IndustryDanger}"
+                                           TextWrapping="Wrap"
+                                           IsVisible="{Binding FrameMetadataErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <TextBlock Text="{Binding QrzLookupErrorMessage}"
                                            Foreground="{StaticResource IndustryDanger}"
                                            TextWrapping="Wrap"
