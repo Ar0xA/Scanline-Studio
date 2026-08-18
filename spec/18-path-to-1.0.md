@@ -44,10 +44,18 @@ superseded.
 
 ---
 
-## 🔴 Critical — blocks the core loop today
+## 🔴 Critical — fully closed
 
-1. **Transmit is impossible with the default ("none") radio backend, AND with no playback device
-   configured.** `RadioConnectionSettings.BackendId` defaults to `"none"`
+1. ✅ **DONE** (commit `f055623`, missing this annotation until now): **Transmit is impossible with
+   the default ("none") radio backend, AND with no playback device configured.** Fixed in two parts:
+   PTT keying is now guarded on a new `IRadioController`/`IRadioSessionService.RigId` property
+   (`"none"` for the null-object backend, not a live `Capabilities` check — real backends connect
+   lazily, so `Capabilities` reads `None` during a real startup/reconnect window even with a genuine
+   PTT-capable rig configured, which round-1 plan-review flagged as unsafe); audio device resolution
+   now falls back to the backend-reported default device when nothing is explicitly configured.
+   Verified end-to-end in a real window against `BackendId="none"` per this item's own acceptance
+   criterion below. Original finding, kept for context: `RadioConnectionSettings.BackendId` defaults
+   to `"none"`
    (`src/ScanlineStudio.Core.Radio/RadioConnectionSettings.cs:14,49`) →
    `NoneRadioProtocol.SetPttAsync` throws (`NoneRadioProtocol.cs:36-37`). `PlayWithPttAsync` keys
    PTT *before* generating any audio, with no capability guard
@@ -71,7 +79,7 @@ superseded.
 
 ---
 
-## 🟠 High — real, reachable bugs in core workflows
+## 🟠 High — fully closed (items 2-10, verified against current source)
 
 2. ✅ **DONE** (commit `86d07d5`, missing this annotation until 2026-08-18): **stale-mode transmit
    crash** (confirmed independently by two separate audit passes). Changing the TX mode while the
@@ -92,9 +100,17 @@ superseded.
    `LockAspectToMode`/`TxImageEditorPaneViewModel.ApplyCropResizeAspectLocked`, a toggle that
    constrains the crop-rect drag-resize handle to the target mode's own aspect ratio, orthogonal to
    the pre-existing `PreserveAspect` (letterbox-vs-stretch) toggle.
-5. **Packaging doesn't exist, and `dotnet publish` would ship a broken binary — plus no version
-   stamping, no About dialog, dead Help menu (merged from former item 11 per plan-review: these
-   ship together, not sequentially).** No publish profile, installer, or release workflow anywhere
+5. ✅ **DONE** (commit `4b05322`, missing this annotation until now): **Packaging doesn't exist, and
+   `dotnet publish` would ship a broken binary — plus no version stamping, no About dialog, dead Help
+   menu.** Fixed: `ScanlineStudio.Host.csproj` now adds the native audio shim
+   (`libyoniqaudio.so`/`yoniqaudio.dll`/`.dylib`) to `@(ResolvedFileToPublish)` for each OS so a
+   published build no longer `DllNotFoundException`s on first `IAudioEngine` resolve;
+   `Directory.Build.props` now sets `<Version>0.9.0</Version>`/`<Product>Scanline Studio</Product>`;
+   a real `AboutWindowView`/`AboutWindowViewModel` exists, wired to `Help > About`
+   (`MainWindow.axaml:111`, `OpenAboutCommand`). No installer/release workflow was added — that
+   remains genuinely out of scope, this item's fix was the publish-breakage/version/About cluster
+   only. Original finding, kept for context (merged from former item 11 per plan-review: these
+   shipped together, not sequentially). No publish profile, installer, or release workflow anywhere
    (`.github/` has only `workflows/ci.yml`; `spec/01-architecture.md:21`'s packaging line is
    unimplemented). Worse: the native audio shim
    (`libyoniqaudio.so`/`yoniqaudio.dll`/`.dylib`, built via a raw `<Exec>` in
@@ -108,8 +124,12 @@ superseded.
    installer, the LGPL notice (`COPYING`/`COPYING.LESSER`/`LICENSES.md`) has no delivery path in a
    binary distribution without an About box. Do version stamping + an About dialog as part of the
    same packaging work, not as an afterthought.
-6. **RX buffer Extended (disk) mode: write failures are recorded but never checked before a
-   read/replay.** `IRxLineStagingBuffer.HasWriteFailed` has zero consumers
+6. ✅ **DONE** (commit `8897ead`, missing this annotation until now): **RX buffer Extended (disk)
+   mode: write failures are recorded but never checked before a read/replay.** Fixed: both
+   `PerformReplay` and `TryCorrectSlant` (`AnalogFmSstvDecoder.cs`) now gate on
+   `IRxLineStagingBuffer.HasWriteFailed` before reading — see that class's own inline comments citing
+   this item directly. Original finding, kept for context: `IRxLineStagingBuffer.HasWriteFailed` had
+   zero consumers
    (`RxDiskLineStagingBuffer.cs`; grepped across `src/`). A disk write failure mid-reception, or a
    `Clear()` drain-timeout (`:339-348`), leaves stale/short data on disk; the next
    `PerformReplay`/read either zero-fills over an already-decoded valid prefix
@@ -117,7 +137,14 @@ superseded.
    post-truncation row count against pre-truncation samples. Silent image corruption, no user
    signal. Fix is a one-line guard at each of the two call sites (`PerformReplay`,
    `TryCorrectSlant`). RAM mode (the default) is unaffected.
-7. **Both quick-mode-button grids (Receive and Transmit tabs) are dead, unlabeled pills** sitting
+7. ✅ **DONE** (commit `24d81ae`, missing this annotation until now): both RX and TX quick-mode-button
+   grids now call `QuickSelectModeCommand` (`ISstvSessionService.ForceMode` on the RX side, sets
+   `SelectedMode` on the TX side) with a `CommandParameter` per mode id — verified directly against
+   current `MainWindow.axaml`/`TxControlsPaneView.axaml`. The Mode card's Auto/Locked tooltip was also
+   fixed to the honest "No persistent mode lock exists -- use a quick-mode button below to force the
+   next decode into a specific mode" (`en.json:96`), replacing the stale claim this item originally
+   flagged. Original finding, kept for context: **Both quick-mode-button grids (Receive and Transmit
+   tabs) are dead, unlabeled pills** sitting
    directly beside real controls — no `Command`, no `IsEnabled="False"`, no tooltip, visually
    indistinguishable at rest from genuinely-interactive chips nearby
    (`MainWindow.axaml:198-215` RX, `TxControlsPaneView.axaml:49-66` TX, 16 pills each). **The RX
@@ -133,7 +160,13 @@ superseded.
    RX wiring; don't just disable them, wire both grids. Same batch: the Mode card's Auto/**Locked**
    segmented control (`MainWindow.axaml:192-193`) is disabled on the identical false "no mode-lock
    feature" premise as `en.json:93` — fix the tooltip/doc-comment claims for both controls together.
-8. **First-run silent dead end.** A fresh install with no `settings.json` has no configured audio
+8. ✅ **DONE** (commit `de3acc6`, missing this annotation until now): **First-run silent dead end.**
+   `RadioStatusViewModel`'s constructor now retries `IsReceiving = true` once if `Program.cs`'s own
+   earlier startup attempt failed — a transient timing issue self-heals silently, and a genuinely
+   unavailable device fails again visibly (toggle reverts to Halt, `ErrorMessage` becomes visible in
+   the header), satisfying this item's own "status-bar message" minimum-fix option. Item 1's playback
+   side (device fallback) shipped together with Critical item 1 above. Original finding, kept for
+   context: a fresh install with no `settings.json` has no configured audio
    capture (or playback, see item 1) device; `SstvSessionService.ResolveDeviceAsync` throws
    (`SstvSessionService.cs:745-749`), `Program.cs:353-360` catches and logs a Warning, and **no
    error text or remediation affordance appears anywhere in the UI** (plan-review-corrected wording
@@ -143,15 +176,22 @@ superseded.
    Minimum fix: default to the system's default capture AND playback device, or show a status-bar
    message with an "Options → Audio" affordance. Covers both the RX (this item) and TX (item 1)
    sides of the same underlying gap.
-9. **RX incoming-frame progress bar is hardcoded, never moves.** `MainWindow.axaml:485` —
+9. ✅ **DONE** (commit `a768da8`, missing this annotation until now): the RX incoming-frame progress
+   bar is now bound to the real `RxImage.Progress` (`MainWindow.axaml:498`,
+   `Value="{Binding RxImage.Progress, TargetNullValue=0}"`), verified directly against current source.
+   Original finding, kept for context: **RX incoming-frame progress bar is hardcoded, never moves.**
+   `MainWindow.axaml:485` —
    `Value="0"` literal, while the real `RxImagePaneViewModel.Progress` (0.0-1.0) already exists and
    feeds two other consumers. This is the primary "is it working?" indicator during every decode.
    One-line binding fix. Frame/line count on the same card (`:484`) is similarly `"—"` while the
    real `LineProgressText` is already bound elsewhere (status bar).
-10. **No live PTT/TX-keyed indicator anywhere in the UI.** `RadioStatusViewModel` has no
-    PTT/TX-state property at all; the only TX-labeled status chip actually means "last TX errored,"
-    not "currently keyed" (`MainWindow.axaml:1455-1461`). Safety-relevant gap for a transmit
-    application — a user has no way to visually confirm the rig is/isn't keyed from readback.
+10. ✅ **DONE** (commit `2b37b57`, missing this annotation until now): new `RadioStatusViewModel.IsKeyed`
+    property, driven by `RadioState.IsTransmitting` on every successful poll and explicitly cleared
+    when `CatLinked` goes false (a `CommandFailed`-only event deliberately does not clear it — a
+    documented residual gap, self-heals on the next good poll). Bound to a real status-bar LED/label
+    (`MainWindow.axaml:1478-1486`, `MainWindow.StatusBar.TxKeyed`). Original finding, kept for
+    context: `RadioStatusViewModel` had no PTT/TX-state property at all; the only TX-labeled status
+    chip actually meant "last TX errored," not "currently keyed."
 
 ---
 
@@ -289,8 +329,10 @@ right now).
 ## 🔵 Human-action-required (not agent-completable)
 
 - **Full manual hardware checklist across Windows/Linux/macOS.** Only ever run on Linux — Windows/
-  macOS audio (WASAPI/CoreAudio) has zero real-device test coverage; all 33 real-hardware audio
-  tests unconditionally skip on non-Linux CI legs by design
+  macOS audio (WASAPI/CoreAudio) has zero real-device test coverage; all 29 real-hardware audio
+  tests (re-verified 2026-08-18: `grep -c '\[RequiresPipeWireFact\]'` across
+  `tests/ScanlineStudio.Core.Audio.MiniAudio.Tests/`, not 33) unconditionally skip on non-Linux CI
+  legs by design
   (`RequiresPipeWireFactAttribute.cs:39-42`), so green CI on those legs proves compilation only.
   **The checklist document itself doesn't exist** — `spec/14-roadmap.md:307`/`:5118` cite it as
   the literal release gate, but `spec/13-testing.md`'s own line 59 is an unchecked box, not a

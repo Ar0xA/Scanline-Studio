@@ -4655,10 +4655,14 @@ wired everything real, these had no real data behind them today):
   only implements Crop/Resize/ApplyOverlay; none of these operations exist in the pipeline.
   Large, several independent features.
 - Insert-field token picker in the overlay editor — **done (2026-08-08)**: 5 of 12 mock2 chips
-  (MY CALL/MY GRID/MY NAME/DATE/UTC) are real via `IMacroTextResolver`; the other 7 (HIS
-  CALL/HIS GRID/FREQ/MODE/HIS RSV/DIST/BEAM) need the same "current QSO" form / FSK-ID dependency
-  as the Outgoing-metadata card above. Saved templates remain a separately-deferred template
-  designer, untouched by this pass.
+  (MY CALL/MY GRID/MY NAME/DATE/UTC) are real via `IMacroTextResolver`; the other 5 (HIS
+  CALL/HIS GRID/FREQ/MODE/HIS RSV) need the same "current QSO" form / FSK-ID dependency
+  as the Outgoing-metadata card above. **DIST/BEAM shipped separately (2026-08-18)**, an
+  auditor usability review follow-up: `{dist}`/`{bearing}` are a computed macro over MY grid
+  (`OperatorSettings.Grid`) and a `{his_grid}` FILL-BAR variable the operator types per-QSO, not
+  blocked on a "current QSO" form — see `MaidenheadLocator`/`MacroTextResolver`'s `{dist}`/
+  `{bearing}` cases. Saved templates remain a separately-deferred template designer, untouched by
+  this pass.
 - TX queue (batch multiple images), persisted TX log, and "recently sent" reuse strip — no
   queueing, no TX-history store distinct from RxHistory exists. Medium-large, three separate
   features.

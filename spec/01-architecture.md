@@ -46,7 +46,7 @@ Strict one-directional dependency flow. Each layer only depends on layers below 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Rule: `ScanlineStudio.UI` never references `System.IO.Ports`, rig-specific protocol types, or audio backend types directly — only `ScanlineStudio.Application` service interfaces and view-model-friendly DTOs. This directly encodes the CLAUDE.md rule "UI must never directly communicate with radio drivers."
+Rule: `ScanlineStudio.UI` never references `System.IO.Ports`, rig-specific protocol types, or audio backend types directly — never a `ScanlineStudio.Core.*` concrete assembly, only `ScanlineStudio.Application` service interfaces, `ScanlineStudio.Settings` (for UI-owned preference sections), and view-model-friendly DTOs. Enforced by `UiLayeringArchitectureTests` (`tests/ScanlineStudio.UI.Tests/UiLayeringArchitectureTests.cs`), which also bans direct `Microsoft.Data.Sqlite`/`SixLabors.*` package references from `ScanlineStudio.UI`. This directly encodes the CLAUDE.md rule "UI must never directly communicate with radio drivers."
 
 ## Solution structure
 
@@ -57,7 +57,9 @@ Rule: `ScanlineStudio.UI` never references `System.IO.Ports`, rig-specific proto
   ScanlineStudio.Core.Radio/
   ScanlineStudio.Core.Radio.Cat/            # per-rig protocol plugins (03)
   ScanlineStudio.Core.Radio.Rigctld/        # 04
+  ScanlineStudio.Core.Radio.Hamlib/         # 03, in-process Hamlib CAT backend
   ScanlineStudio.Core.Audio/                # 05
+  ScanlineStudio.Core.Audio.MiniAudio/      # 05, miniaudio native backend
   ScanlineStudio.Core.Sstv/                 # 06
   ScanlineStudio.Core.Imaging/              # 07
   ScanlineStudio.Core.Logbook/              # 08
@@ -70,12 +72,17 @@ Rule: `ScanlineStudio.UI` never references `System.IO.Ports`, rig-specific proto
   ScanlineStudio.Core.Radio.Tests/
   ScanlineStudio.Core.Sstv.Tests/
   ScanlineStudio.Core.Audio.Tests/
+  ScanlineStudio.Core.Audio.MiniAudio.Tests/
+  ScanlineStudio.Core.Imaging.Tests/
+  ScanlineStudio.Core.Localization.Tests/
   ScanlineStudio.Core.Logbook.Tests/
   ScanlineStudio.Application.Tests/
+  ScanlineStudio.Host.Tests/
   ScanlineStudio.UI.Tests/                  # view-model tests, headless Avalonia
+  ScanlineStudio.UI.FontTests/
 /spec
 /tools
-  legacy-config-importer/          # one-shot INI → JSON migration CLI, see 12-settings.md
+  legacy-config-importer/          # one-shot INI → JSON migration CLI, see 12-settings.md — planned, not yet built
 ```
 
 Each `ScanlineStudio.Core.*` project is a bounded module: it may be extracted to its own NuGet package later without touching other modules. This is what "composition over inheritance" and SOLID look like structurally — modules compose via interfaces registered in the DI container, not via shared base classes.

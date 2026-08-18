@@ -12,8 +12,8 @@ The architecture in [[01-architecture]] exists largely *in service of* testabili
 
 | Layer | Tool | What it covers | Runs where |
 |---|---|---|---|
-| Unit | xUnit + FluentAssertions + NSubstitute | Pure logic: CAT backend client response parsing ([[03-cat-layer]]), DSP encode/decode ([[06-sstv-dsp]]), settings migration ([[12-settings]]), ADIF import/export ([[08-logging]]) | Every PR, every OS in CI matrix |
-| Integration (in-process fakes) | xUnit | `IRadioController` orchestration against `FakeRadioTransport`/fake protocol; `RigctldServer` against raw sockets ([[04-rigctld]]); plugin load/unload ([[11-plugin-system]]) | Every PR |
+| Unit | xUnit | Pure logic: CAT backend client response parsing ([[03-cat-layer]]), DSP encode/decode ([[06-sstv-dsp]]), settings migration ([[12-settings]]), ADIF import/export ([[08-logging]]) | Every PR, every OS in CI matrix |
+| Integration (in-process fakes) | xUnit | `IRadioController` orchestration against `FakeRadioTransport`/fake protocol; `RigctldClientProtocol` against scripted rigctld responses via `FakeRadioTransport` ([[04-rigctld]] — a standalone `RigctldServer` was scoped in an earlier draft and later dropped, see that spec's own note); plugin load/unload ([[11-plugin-system]]) | Every PR |
 | View-model / headless UI | xUnit + Avalonia.Headless | View-model behavior against faked `ScanlineStudio.Application` services ([[09-ui]]) | Every PR |
 | Architecture tests | NetArchTest (or equivalent) | Layering rules: UI never references radio/audio/DSP concretes ([[01-architecture]], [[09-ui]]); plugins only see `ScanlineStudio.Abstractions` ([[11-plugin-system]]) | Every PR |
 | Manual hardware verification | n/a | Real rig CAT behavior, real audio device round-trip, real `rigctld` interop | Before each release, checklist-driven, tracked in [[14-roadmap]] |
@@ -22,7 +22,7 @@ Real hardware (actual radios, actual sound cards) is deliberately **not** part o
 
 ## Coverage target
 
-≥80% line coverage on every `ScanlineStudio.Core.*` and `ScanlineStudio.Application` project, measured via `coverlet` and enforced in CI (build fails below threshold, configurable per-project since some — e.g. `ScanlineStudio.Core.Audio`'s native interop shims — are legitimately harder to cover meaningfully than others). `ScanlineStudio.UI` and `ScanlineStudio.Host` are exempt from the numeric threshold (view XAML and composition-root wiring are better verified by the headless view-model tests and manual smoke testing respectively) but still carry view-model tests per the table above.
+≥80% line coverage on every `ScanlineStudio.Core.*` and `ScanlineStudio.Application` project is the long-term target, measured via `coverlet` (`coverlet.collector`) and enforced in CI (`.github/workflows/ci.yml`'s `coverage` job, gated against `coverage-thresholds.json` via `scripts/check-coverage.py`). **As currently enforced, the gate is not yet a blanket 80% floor**: per that file's own comment, each project's threshold is set a few points below its own currently-measured coverage (ranging from 36% for `ScanlineStudio.Core.Audio.MiniAudio` up to 97% for `ScanlineStudio.Core.Radio.Cat`) to catch a regression from today's baseline, not to retroactively demand 80% everywhere in one PR — `ScanlineStudio.Core.Audio.MiniAudio`'s native interop shims are the concrete example of a project that's legitimately harder to cover meaningfully than others. `ScanlineStudio.UI` and `ScanlineStudio.Host` are exempt from the numeric threshold (view XAML and composition-root wiring are better verified by the headless view-model tests and manual smoke testing respectively) but still carry view-model tests per the table above. `ScanlineStudio.Core.Sstv` is also excluded from the numeric gate (its 900+-test suite runs uninstrumented in the regular 3-OS matrix, but coverage instrumentation for it is currently cost-prohibitive in CI).
 
 ## Golden-vector testing (legacy parity)
 
@@ -39,10 +39,10 @@ Capturing legacy output requires being able to run the legacy binary (Windows, C
 
 ## Test data / fixtures
 
-- CAT backend client fixtures: scripted `rigctld`/flrig wire responses and a fake native-call/COM shim for linked Hamlib/OmniRig, checked into `tests/ScanlineStudio.Core.Radio.Tests/Fixtures/` ([[03-cat-layer]]).
+- CAT backend client fixtures: as implemented, `rigctld` wire responses are scripted inline inside the test files themselves (e.g. `RigctldClientProtocolTests.cs`, verified against a local Hamlib source clone) rather than checked into a `Fixtures/` directory — `tests/ScanlineStudio.Core.Radio.Tests/Fixtures/` does not exist yet ([[03-cat-layer]]).
 - SSTV audio/image fixtures: a small fixed set of test images (color bars, a photo, a synthetic edge-case image) and their known-good encoded waveforms, checked into `tests/ScanlineStudio.Core.Sstv.Tests/Fixtures/` ([[06-sstv-dsp]]).
-- ADIF fixtures: real-world exports from at least one third-party logger, checked into `tests/ScanlineStudio.Core.Logbook.Tests/Fixtures/` ([[08-logging]]).
-- Legacy settings fixtures: a sample `Mmsstv.ini` for import-path testing ([[12-settings]]).
+- ADIF fixtures: not built yet — current ADIF tests (`AdifImporterTests`/`AdifExporterTests`) round-trip synthetic in-code `QsoRecord`s, not real-world third-party exports; `tests/ScanlineStudio.Core.Logbook.Tests/Fixtures/` does not exist yet ([[08-logging]]).
+- Legacy settings fixtures: not built yet — no legacy `Mmsstv.ini` importer exists ([[12-settings]]'s own Definition-of-done confirms this is still open), so there is nothing to fixture against yet.
 
 Fixtures are treated as test code: reviewed in PRs, not regenerated casually, since several (CAT byte sequences, ADIF samples) encode real-world protocol quirks that would be lost if "cleaned up."
 
@@ -52,7 +52,7 @@ GitHub Actions matrix across `windows-latest`, `ubuntu-latest`, `macos-latest`, 
 
 ## Definition of done
 
-- [ ] CI matrix (3 OSes) running unit + integration + view-model + architecture tests on every PR.
+- [x] CI matrix (3 OSes) running unit + integration + view-model + architecture tests on every PR (`.github/workflows/ci.yml`'s `build-and-test` job, `dotnet test` across the whole solution).
 - [ ] Coverage gate enforced per-project at ≥80% for all `ScanlineStudio.Core.*`/`ScanlineStudio.Application` projects.
 - [ ] Fixture directories established for CAT, SSTV, ADIF, legacy-settings as described above.
 - [ ] At least one golden-vector fixture (captured from a real legacy-binary run, not re-derived from source) exists for each row in the golden-vector table above, with its tolerance documented alongside it.

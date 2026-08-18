@@ -28,7 +28,10 @@ public readonly record struct RadioState(
     RadioMode Mode,
     bool IsTransmitting,
     int? SignalStrengthDb,
-    DateTimeOffset ObservedAt);
+    DateTimeOffset ObservedAt,
+    float? SwrRatio = null,
+    float? AlcLevel = null,
+    float? PowerPercent = null);
 
 public interface IRadioTransport : IAsyncDisposable
 {
@@ -65,12 +68,16 @@ public enum RadioCapabilities
     SetMode       = 1 << 3,
     PttControl    = 1 << 4,
     SignalMeter   = 1 << 5,
+    SwrMeter      = 1 << 6,
+    AlcMeter      = 1 << 7,
+    PowerMeter    = 1 << 8,
 }
 
 public interface IRadioController
 {
     RadioState? LastKnownState { get; }
     RadioCapabilities Capabilities { get; }
+    string RigId { get; }
     IObservable<RadioState> StateChanges { get; }
     IObservable<RadioConnectionEvent> ConnectionEvents { get; }
 
@@ -105,7 +112,7 @@ OmniRig (`OmniRig_OCX.cpp`, Windows-only ActiveX) is **not** ported as-is — bu
 ## Definition of done
 
 - [x] `ScanlineStudio.Abstractions.Radio` interfaces above compiled and documented via XML doc comments.
-- [x] `IRadioController` reference implementation with connect/disconnect/backoff, unit-tested against a fake `IRadioProtocol` (protocols own their own transport, so the controller itself never touches `IRadioTransport` directly — see the "Core abstractions" code above). `RadioController` (`ScanlineStudio.Core.Radio`), 12 orchestration tests in `RadioControllerTests`.
+- [x] `IRadioController` reference implementation with connect/disconnect/backoff, unit-tested against a fake `IRadioProtocol` (protocols own their own transport, so the controller itself never touches `IRadioTransport` directly — see the "Core abstractions" code above). `RadioController` (`ScanlineStudio.Core.Radio`), 11 orchestration tests in `RadioControllerTests`.
 - [x] `IRadioProtocolFactory`-based backend resolution (exactly-one-match, typed error on zero/ambiguous
       match — see "Rig identification" above) unit-tested; no static rig registry exists to load.
       `NoneRadioProtocolFactory`/`RigctldProtocolFactory`/`HamlibProtocolFactory` are the three concrete

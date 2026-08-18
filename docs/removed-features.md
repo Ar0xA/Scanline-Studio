@@ -54,21 +54,23 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 - **Not carried forward this pass — the real gap**: there is still no history→TX/template compositing
   path at all in the new design — selecting a `RxHistoryPane` entry only loads a read-only preview
   ([[spec/07-image-pipeline]]), it cannot be dragged into a template or the TX slot the way legacy's
-  drag-in could. Also still dropped: both clipboard buttons (copying a history image out, pasting into
-  TX) — investigated 2026-08-09 and deliberately deferred, not just skipped: Avalonia's cross-platform
-  `IClipboard` has no first-class bitmap/image API (only `SetDataObjectAsync`/`GetDataAsync` against
-  arbitrary format strings), so a genuinely cross-platform, actual-image-data clipboard copy (matching
-  legacy's real `CopyBitmap`/`PasteBitmap` behavior, not a lower-fidelity file-reference copy) needs
-  its own research pass into what format string(s) Windows/Linux/macOS clipboard consumers actually
-  honor — not a same-batch wiring job. Clipboard paste as *file-picker-adjacent* TX input is separately
-  named as in-scope in [[spec/07-image-pipeline]]'s TX flow step 1 ("file, clipboard paste, or
-  webcam/screen-capture frame") but has no clipboard-specific UI affordance built yet — same
-  underlying gap either way.
+  drag-in could. Also still dropped: copying a history image OUT to the clipboard (legacy's `SBCopy`)
+  — no such button/command exists anywhere in this port. **Corrected 2026-08-18** (commit `51beb68`):
+  the OTHER half — pasting clipboard content INTO the TX slot (legacy's `SBPaste`) — is no longer
+  dropped; the earlier "no first-class bitmap API" blocker was resolved by using Avalonia's own
+  `ClipboardExtensions.TryGetBitmapAsync` helper (confirmed real, built-in, cross-platform against the
+  pinned Avalonia 11.3.12 package — not a hand-rolled per-platform MIME sniff), wired to the TX image
+  editor as a new `ImageSourceKind.Clipboard` source (Ctrl+V, `TxImageEditorPaneViewModel
+  .AddImageFromClipboardAsync` → `IFilePickerService.PickClipboardImageAsync`). This is a genuine,
+  actual-image-data clipboard read, not a lower-fidelity file-reference copy, so it now matches
+  legacy's real `PasteBitmap` behavior for the paste-into-TX direction specifically.
 - **Impact**: users who relied on dragging a history thumbnail directly into a TX template to compose
-  it, or on OS clipboard copy-from-history/paste-to-TX, need to use file-based load/save instead for
-  now (save the history image to a file, then load it via the TX picker). Step-through nav and
-  jump-to-latest are both now covered (see Replacement above). Revisit clipboard/drag-in if this turns
-  out to matter in practice — logged here rather than silently dropped per CLAUDE.md's removal rule.
+  it need to use file-based load/save instead for now (save the history image to a file, then load it
+  via the TX picker) — drag-in and copy-history-to-clipboard remain unbuilt. Paste-to-TX (`SBPaste`'s
+  own direction) now works directly via Ctrl+V in the TX image editor. Step-through nav and
+  jump-to-latest are both now covered (see Replacement above). Revisit copy-from-history/drag-in if
+  this turns out to matter in practice — logged here rather than silently dropped per CLAUDE.md's
+  removal rule.
 
 ## CItems custom-item plugin ABI
 
@@ -102,11 +104,16 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
 - **Investigation result**: no call sites for Chilkat types found anywhere in the source tree; FastReport is included but no `Tfrx*` components appear in `Option.cpp`/`Option.dfm`. Both appear to be unused, orphaned, or build-time-only dependencies with no observed runtime feature — see [LICENSES.md](../LICENSES.md) for the license reasoning.
 - **Impact**: assumed none, pending confirmation against a built legacy binary (tracked as an open item in [[spec/14-roadmap]]). If either turns out to back a real feature, this entry must be corrected and the feature re-scoped.
 
-## FSK callsign-ID packet (RX)
+## FSK callsign-ID packet (RX) — CORRECTED 2026-08-18, no longer a removed feature
+
+**This entry is stale as a "removed feature" — the CW-ID/FSK station-ID subsystem (6 phases,
+shipped 2026-08-12) ported both directions.** Kept here (not deleted) as a record of the earlier
+gap and its resolution, per this doc's own removal-rule provenance — verified directly against
+current source, not inferred from commit messages.
 
 - **Legacy**: `CSSTVDEM::DecodeFSK`'s modes 5–10 (`sstv.cpp:2465-2551`) — a distinct FSK-coded packet (STX `0x2a`, distinguishable from the mode-announce packet's `0x2d`) carrying a station callsign and optional numeric ID, decoded and surfaced via `m_fskcall`/`m_fskNRS` (referenced at `Main.cpp:3618`). TX side: `CSSTVMOD::OutputFSKID` (`Main.cpp:6904-6965`).
-- **Replacement**: none. `ScanlineStudio.Core.Sstv.NarrowFskHeaderDecoder` (Piece 13, [[spec/14-roadmap]]) ports only modes 0–4/16/17/18 — the MN/MC narrow-mode-announce packet sharing the same guard-tone/start-bit/bit-sampling mechanism and mode-4 STX dispatch. A `0x2a` STX byte is treated identically to any other unrecognized value (reset, resume scanning) rather than routed to a callsign decode.
-- **Impact**: no RX support for legacy's FSK callsign-ID feature. Structurally independent from the mode-announce packet (own leader/guard tone, own TX call sites) — not a partial replacement of a feature this port needs elsewhere, a standalone capability gap.
+- **Replacement — now real (RX and TX)**: `ScanlineStudio.Core.Sstv.NarrowFskHeaderDecoder` (originally Piece 13 for modes 0–4/16/17/18 only) was extended (commit `c7ac694`, "CW-ID/FSK subsystem Phase 3: RX FSK-ID continuation decoder") to also decode the station-ID packet — `StationIdStxByte = 0x2a` is now routed to its own mode 5-10 state machine (`_stationIdSubPacketCount`/`_stationIdCallsignBuffer`/`_stationIdNrStringBuffer`/`_stationIdNr`, reusing the shared checksum/length-counter fields the same way legacy's `m_fsks`/`m_fskcnt` do across both packet types), verified line-by-line against `sstv.cpp:2378-2606`/`sstv.h:710-717` across two rounds of auditor review. The decoded result reaches the UI via `ISstvDecoder.StationIdDecoded`/`FskStationIdDecodedInfo` → `RxImagePaneViewModel.OnStationIdDecoded`/`ApplyStationIdDecodedAsync`, auto-filling the Transmit tab's Identification-card-adjacent Receive-tab `OverrideCallsign` field (see `spec/16-gui-wiring-survey.md`'s Frame-metadata section). TX side: `ScanlineStudio.Core.Sstv.FskStationIdEncoder`, a direct port of `TMmsstv::OutputFSKID` (`Main.cpp:6903-6965`), wired to the Options window's Identification tab (`FskIdTxEnabled`).
+- **Impact**: none remaining — legacy's FSK callsign-ID feature is ported on both RX and TX, structurally independent from the mode-announce packet as legacy's own source is (own leader/guard tone, own TX call sites, shared low-level state-machine fields only). This is no longer a capability gap.
 
 ## CQ100 mode (`-i` command-line switch)
 
@@ -137,11 +144,15 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
   exactly. Only relevant if CQ100 hardware support is ever explicitly scoped in as a new feature, which
   is not currently planned.
 
-## Picture-demodulator selector (`m_Type`: PLL / zero-crossing / Hilbert)
+## Picture-demodulator selector (`m_Type`: PLL / zero-crossing / Hilbert) — CORRECTED 2026-08-18, no longer a removed feature
+
+**This entry is stale as a "removed feature" — the demod-type runtime-dispatch subsystem (4 phases,
+2026-08-12) ported the full 3-way selector.** Kept here (not deleted) as a record of the earlier gap
+and its resolution, verified directly against current source, not inferred from commit messages.
 
 - **Legacy**: `CSSTVDEM::m_Type`, a user-facing 3-way dispatch selecting the RX picture demodulator (`sstv.cpp:2256-2268`/`2310-2318`: `case 0` = PLL/`CPLL`, `case 1` = zero-crossing/`CFQC`, `default` = Hilbert/`CHILL`), exposed via `Option.cpp`'s `RGDemType` control and persisted to the `.ini` as `DemType` (`Main.cpp:1937`).
-- **Replacement**: none — only the Hilbert (`default`) branch exists in this port (`HilbertFmDemodulator`, spec/14-roadmap.md's Piece 14). No settings/UI layer exists yet ([[spec/09-ui]], Phase 3) to expose an equivalent toggle, so `CPLL`/`CFQC` are structurally unreachable as the PICTURE demodulator today (`PllFmDemodulator`/`ZeroCrossingFrequencyCounter` do exist in this port, but only for other roles — AVT's dedicated training-lock PLL, and various sync/AFC tone detectors — never wired as the main picture demodulator).
-- **Impact**: default-path parity holds — Hilbert is legacy's real compiled-in/shipped default, so every existing golden-vector/round-trip test exercises the same demodulator legacy users get out of the box. Users who manually switched legacy's `DemType` away from Hilbert (e.g. to try PLL on a hard/marginal signal) have no equivalent option in this port yet. Tracked as Band-3 item S13 in [[spec/14-roadmap]] — blocked on the Phase-3 settings UI landing before a real toggle can be wired.
+- **Replacement — now real**: `AnalogFmSstvDecoder` genuinely dispatches the main picture-demodulation path between all three ported classes (`PllFmDemodulator`/`ZeroCrossingFrequencyCounter`/`HilbertFmDemodulator`) based on a real `DemodType` setting (`AnalogFmSstvDecoder.cs:9-15,108,787`), a faithful port of legacy's `m_Type` switch. `PllFmDemodulator`'s dual role (AVT's separate training-lock PLL instance vs. this new main-picture-path instance, `AnalogFmSstvDecoder.cs:690-694,798`) is a documented, deliberate distinction, not a conflation. Wired through `SstvDecoderSettings.DemodType` → the Options window's Decode tab (`OptionsWindowView.axaml:~354-361`, 3-way radio group, absent/out-of-range persisted values both clamp to Hilbert matching legacy's compiled-in default) — see `spec/16-gui-wiring-survey.md`'s Decode tab section.
+- **Impact**: none remaining. Default-path parity still holds (Hilbert is legacy's real compiled-in/shipped default and the port's own runtime default), and users can now genuinely switch to PLL/zero-crossing the same way legacy's `DemType` allowed. `spec/14-roadmap.md`'s Band-3 item S13 tracking this gap is resolved.
 
 ## Legacy UI font switching (WinFont / Japanese-English buttons)
 

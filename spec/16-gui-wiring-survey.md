@@ -89,13 +89,13 @@ Three columns — Mode/Sync/Input/Signal cards (left), Waterfall + Incoming-fram
 
 ### Left column
 
-**Mode card** (`MainWindow.axaml:162-208`, backed by `RxImage` = `RxImagePaneViewModel.cs`) — unchanged since 2026-08-09, line numbers only shifted.
+**Mode card** (`MainWindow.axaml:162-208`, backed by `RxImage` = `RxImagePaneViewModel.cs`) — **UPDATED 2026-08-15 (commit `24d81ae`), re-verified 2026-08-18**: the quick-mode pill grid is now real, wired to `QuickSelectModeCommand` (`ISstvSessionService.ForceMode`); the Locked segment's tooltip was also fixed to honestly state no persistent mode lock exists rather than being silently misleading. Not folded into this doc's 2026-08-14/2026-08-15 refresh passes until now.
 
 | Control | Class | File:line | Note |
 |---|---|---|---|
-| Auto/Locked segment | FAKE-LIVE | `MainWindow.axaml:178-179` | `IsChecked="True"` on "Auto" is a static literal, not bound; "Locked" has no backing mode-lock feature at all (`RxImagePaneViewModel` only ever auto-detects). |
+| Auto/Locked segment | FAKE-LIVE | `MainWindow.axaml:178-179` | `IsChecked="True"` on "Auto" is a static literal, not bound; "Locked" is `IsEnabled="False"` with an honest tooltip (`Panes.RxImage.LockedMode.Help`, fixed 2026-08-15: "No persistent mode lock exists -- use a quick-mode button below to force the next decode into a specific mode") — no backing mode-lock feature exists (`RxImagePaneViewModel` only ever auto-detects), but forcing the next decode into a mode is now possible via the pill grid below, not via this segment. |
 | Active-mode dropdown | REAL | `MainWindow.axaml:181` | Single `ComboBoxItem` bound to `DetectedModeDisplay`, real: driven by `ISstvSessionService.ModeDetected`. Not a real selectable combo (only ever one item), but the displayed value is genuine. |
-| Quick-mode pill grid (SC1…SC2180) | STUB | `MainWindow.axaml:182-199` | 15 `Border`/`TextBlock` pills, no `Command`, pure visual. |
+| Quick-mode pill grid (SC1…SC2180) | REAL | `MainWindow.axaml:182-199` | **RECLASSIFIED 2026-08-15 (commit `24d81ae`)**: 15 `Button`s, each `Command="{Binding QuickSelectModeCommand}"` with a per-mode `CommandParameter` (e.g. `"scottie-s1"`), a real port of legacy's RX quick-mode-button click (`ISstvSessionService.ForceMode`) — verified directly against current `.axaml`. |
 | Line time / Lines | REAL | `MainWindow.axaml:203-204` | `LineTimeText`/`LinesText`, both derived from the real `DetectedMode`. |
 | Remaining | FAKE-LIVE | `MainWindow.axaml:205` | `Panes.RxImage.RemainingValue` literal loc key, no backing property. |
 
@@ -226,7 +226,7 @@ Queue/Mode-timing/TX-log/Recently-sent.
 | Auto/Manual segment | REAL | `TxControlsPaneView.axaml:35-36` | `AutoFollowRxMode`, persisted to `TxPaneUiSettings` (`TxControlsPaneViewModel.cs:356`). |
 | "Auto picks" caption | FAKE-LIVE | `TxControlsPaneView.axaml:42-43` | Literal loc key. |
 | Mode `ComboBox` | REAL | `TxControlsPaneView.axaml:66-74` | `AvailableModes`/`SelectedMode`, genuinely drives the encode pipeline. |
-| Quick-mode pill grid | STUB | `TxControlsPaneView.axaml:48-65` | Same 15 static pills as the Receive tab's Mode card, no binding. |
+| Quick-mode pill grid | REAL | `TxControlsPaneView.axaml:48-65` | **RECLASSIFIED 2026-08-15 (commit `24d81ae`)**: same `QuickSelectModeCommand` pattern as the Receive tab's Mode card, but sets `SelectedMode` directly on this pane's own ViewModel instead of calling `ForceMode` — verified directly against current `.axaml`. |
 | Duration / Geometry / VOX tone | FAKE-LIVE | `TxControlsPaneView.axaml:80-93` | Literal loc-key values. |
 | Favorites row + "Edit favorites…" flyout | REAL | `TxControlsPaneView.axaml:95-130` | Genuinely persisted (`TxPaneUiSettings.FavoriteModeIds`, `TxControlsPaneViewModel.cs:276-330`). Flyout `CheckBox` list now uses the new `IndustryCheckBoxTheme` (Phase 7) — same `IsSelected` binding, chrome only changed. |
 
@@ -260,16 +260,23 @@ are genuinely real (not decorative); the bottom action bar was removed outright,
 adjustments sliders are real, moved into an IMAGE inspector tab; the fake callsign/report plate
 overlay is gone; "Saved templates card... 3 hardcoded example thumbnails, no store exists" is
 flatly false — `ITemplateStore` is a real, tested persistence layer with a working save/load/delete/
-pin rack; the insert-field chips are all real (10 of 12 — DIST/BEAM remain genuinely stubbed, no
-distance/bearing concept exists); text style has full real selection-tracking, not FAKE-LIVE. Doing
-a full accurate row-by-row re-survey (this table's own methodology — real `.axaml`/`.cs` line
-citations per row) was judged disproportionate to redo here by hand, since re-deriving ~20 accurate
-line numbers against the current 1700+-line `.axaml` file risks introducing NEW inaccuracies rather
-than fixing old ones. If an accurate REAL/STUB/FAKE-LIVE inventory of this pane is needed, re-run
-this survey's own methodology fresh against the current code rather than trusting anything below.
-Known genuine gaps as of 2026-08-18 (confirmed, not guessed): box-element corner-radius, legacy
-`.mtm` template import, multi-handle/aspect-locked element resize, clipboard/drag-drop as image
-sources, DIST/BEAM insert-field chips — see [[15-template-designer]]'s own Status section.
+pin rack; the insert-field chips are all real, including DIST/BEAM (see below); text style has full
+real selection-tracking, not FAKE-LIVE. Doing a full accurate row-by-row re-survey (this table's own
+methodology — real `.axaml`/`.cs` line citations per row) was judged disproportionate to redo here by
+hand, since re-deriving ~20 accurate line numbers against the current 1700+-line `.axaml` file risks
+introducing NEW inaccuracies rather than fixing old ones. If an accurate REAL/STUB/FAKE-LIVE inventory
+of this pane is needed, re-run this survey's own methodology fresh against the current code rather
+than trusting anything below.
+**Corrected 2026-08-18 (later same day, commits `58d3fc6`/`51beb68`, post-dating this section's own
+last edit)**: box-element corner-radius, Bold/Italic font variants, DIST/BEAM insert-field chips (new
+`MaidenheadLocator` distance/bearing calculator), 8-handle/Shift-aspect-locked element resize (up from
+a single bottom-right handle, `TxImageEditorPaneView.axaml.cs`'s `ResizeHandle` enum), the "3D"
+stacked-copy text effect, bitmap-pattern text fill (`OverlayElementViewModel.BuildPatternBrush`, a
+4th `TextGradientKind`), and clipboard-paste-as-image-source
+(`IFilePickerService.PickClipboardImageAsync`, `ImageSourceKind.Clipboard`, Ctrl+V) are now all real,
+verified directly against current source — this list of "known genuine gaps" is stale. Still
+deliberately deferred/non-goals per that commit's own message: perspective transform, legacy `.mtm`
+template import.
 
 ### Right column
 
@@ -546,8 +553,10 @@ same chip/checkbox re-skin) is `IsEnabled="False"`. Filter-response preview butt
 to preview. This tab's own loc caption (`Options.Advanced.Caption`) already honestly states "None
 of these are wired to real behavior yet" — a deliberate, pre-existing decision from an earlier
 session, not an oversight this pass needed to correct. Most rows tie directly to the already-deferred
-Decode-tab items: PLL/Zero-crossing tuning only matters once Demod-type gets real runtime dispatch
-(deferred, see Decode tab section); TX BPF/LPF's "enable" toggles tie to `TxOutputBandpassFilter`,
+Decode-tab items: PLL/Zero-crossing tuning only matters once Demod-type gets real runtime dispatch —
+**that precondition is now met** (the same 2026-08-12 demod-type subsystem, see Decode tab section
+above), so these Advanced-tab rows are the sole remaining piece, not gated behind further Decode-tab
+work; TX BPF/LPF's "enable" toggles tie to `TxOutputBandpassFilter`,
 which this port already applies unconditionally (a deliberate simplification per that class's own
 doc comment) — making it a real, user-toggleable bypass is a small, bounded change, but it's still
 core TX-encode-path code with real over-the-air spectral consequences, so it gets the same
@@ -572,7 +581,7 @@ header has read "2026-08-10 (current)" for 4 days while silently drifting furthe
 current through 2026-08-11/12 and reached **~286** — which is how this drift got caught: the
 per-category numbers in the table don't sum to that total. Recomputed below by rolling the table's
 own narrated per-wave deltas forward (not re-deriving from scratch), then adding today's 2 CW-ID/FSK
-reclassifications on top. **Current (2026-08-14): ~165 REAL / ~76 STUB / ~46 FAKE-LIVE / ~1 PARTIAL** (rolled forward from
+reclassifications on top. **Not yet rolled into this ballpark (2026-08-15, commit `24d81ae`)**: +2 REAL/-2 STUB for the RX and TX quick-mode pill grids, both reclassified STUB→REAL (see the Mode card and TX mode card sections above) — omitted from the arithmetic below rather than silently misrepresented. **Current (2026-08-14): ~165 REAL / ~76 STUB / ~46 FAKE-LIVE / ~1 PARTIAL** (rolled forward from
 each category's own narrated deltas) — see the new rightmost column. **Caveat, stated plainly
 rather than papered over**: this rolled-forward sum (~288) doesn't exactly match the separately
 hand-tracked "Total individually-classified controls" line below (~286) — the PARTIAL row's own

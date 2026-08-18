@@ -14,10 +14,12 @@ pointing at the detailed spec for each target rather than duplicating it.
 
 **Update 2026-08-18**: the TX Template Editor redesign (below) is built — 8 implementation phases, a
 design-fidelity pass against `mockups/Editwindow`, and an 18-item usability-gap batch from an
-`auditor` review. See [[15-template-designer]]'s own Status section for the current gap list
-(box-element corner-radius, `.mtm` import still deferred, multi-handle element resize). The
-"scoped, needs plan-review" framing below describes the 2026-08-16 state, before implementation —
-left as written for the historical record, not the current state.
+`auditor` review, which also shipped box-element corner-radius, real bold/italic font variants,
+DIST/BEAM insert-field chips, multi-handle element resize with Shift-aspect-lock, the "3D"
+stacked-copy text effect, bitmap-pattern text fill, and clipboard-paste as an image source. See
+[[15-template-designer]]'s own Status section for the current gap list (`.mtm` import still
+deferred). The "scoped, needs plan-review" framing below describes the 2026-08-16 state, before
+implementation — left as written for the historical record, not the current state.
 
 ## Provenance
 

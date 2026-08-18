@@ -64,4 +64,4 @@ Scanline Studio is **LGPL-3.0-or-later**, matching upstream YONIQ/MMSSTV's own s
 
 ## Related documents
 
-The remaining detail lives in `spec/01` through `spec/15`, starting with [[01-architecture]]. [[14-roadmap]] sequences delivery across all of them. [docs/removed-features.md](../docs/removed-features.md) tracks every legacy capability that is dropped or only partially replaced, per the removal rule in `CLAUDE.md`.
+The remaining detail lives in `spec/01` through `spec/19`, starting with [[01-architecture]]. [[14-roadmap]] sequences delivery across all of them. [docs/removed-features.md](../docs/removed-features.md) tracks every legacy capability that is dropped or only partially replaced, per the removal rule in `CLAUDE.md`.

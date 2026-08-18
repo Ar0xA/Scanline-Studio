@@ -196,7 +196,7 @@ command set is the external backend's own responsibility, not this port's.
       `HamlibNative`/`HamlibLibraryLocator`/`HamlibVersionGate`/`HamlibRuntime`/`HamlibProtocolFactory`,
       2 rounds of `auditor` plan-review before any code (4 blockers found and resolved on paper each
       round — see the implementation plan, `/home/artien/.claude/plans/temporal-launching-valiant.md`),
-      36 fixture/fake-driven unit tests plus 4 real-interop tests against a real system-installed
+      40 fixture/fake-driven unit tests plus 4 real-interop tests against a real system-installed
       `libhamlib` (this dev machine has 4.5.5) driving Hamlib's own hardware-free Dummy rig backend —
       the whole discovery→version-gate→P/Invoke pipeline verified against genuine native code, not just
       fakes. `TemplateCatProtocol` fallback and Application-layer cross-backend demotion still open

@@ -10,15 +10,14 @@ A single, coherent, JSON-backed configuration system replacing the legacy scatte
 
 ## Storage location
 
-Per-OS conventional app-data directory, resolved via `Environment.GetFolderPath(SpecialFolder.ApplicationData)` (Windows: `%AppData%\Scanline Studio`; Linux: `~/.config/yoniq` via XDG conventions; macOS: `~/Library/Application Support/Scanline Studio`):
+Per-OS conventional app-data directory, resolved via `Environment.GetFolderPath(SpecialFolder.ApplicationData)`, with a literal `ScanlineStudio` (no space) subfolder appended by every store that resolves its own default path (`JsonSettingsStore`, `SqliteLogbookRepository`, `SqliteReceiveHistoryStore`) — Windows: `%AppData%\ScanlineStudio`; Linux: `~/.config/ScanlineStudio` via XDG conventions; macOS: `~/Library/Application Support/ScanlineStudio`:
 
 ```
-<app-data>/Scanline Studio/
+<app-data>/ScanlineStudio/
   settings.json
   rigs.json              # user-added/edited rig definitions and template CAT protocols (03-cat-layer.md)
   macros.json
-  logbook.sqlite          # 08-logging.md
-  images.sqlite-index      # or merged into logbook.sqlite, see 07-image-pipeline.md
+  history.db              # 08-logging.md's QSO logbook, merged with 07-image-pipeline.md's RX history (single SQLite file, not separate logbook.sqlite/images.sqlite-index files)
   plugins/
   locale/                 # user-added translation overrides, see 10-localization.md
 ```
@@ -96,7 +95,7 @@ Any credential-shaped setting (e.g. optional QRZ.com credentials for [[08-loggin
 
 ## Definition of done
 
-- [ ] `ISettingsStore` implemented with source-generated JSON (de)serialization, atomic file writes (write-to-temp + rename, to avoid a crash mid-write corrupting `settings.json`).
+- [x] `ISettingsStore` implemented with source-generated JSON (de)serialization, atomic file writes (write-to-temp + rename, to avoid a crash mid-write corrupting `settings.json`) — `JsonSettingsStore`.
 - [ ] Migration chain mechanism implemented and exercised by at least one real version bump before v1 ships.
 - [ ] Legacy INI importer covers the fields exercised by the default legacy install; documented list of intentionally-unsupported legacy keys.
 - [ ] `ICredentialStore` implemented per OS, verified no credential ever appears in `settings.json`.

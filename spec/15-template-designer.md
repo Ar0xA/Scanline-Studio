@@ -20,13 +20,14 @@ this document or [[14-roadmap]] retroactively — this file's own value now is t
 (why each decision was made), which stays accurate; treat every "not yet done" / "needs plan-review"
 / "scoped for 1.1" statement below as describing the state as of 2026-08-16, before implementation,
 not the current state. Known gaps still open, confirmed against the current code (not assumed):
-- **Corner-radius on box elements** — never built. `BoxElementViewModel` has `FillColor`/
-  `BorderColor`/`BorderThickness`/`Opacity` only (border + opacity shipped 2026-08-18, closing part
-  of the box-elements friction risk below) — no `CornerRadius` property exists anywhere.
+- **Corner-radius on box elements** — built 2026-08-18 (a same-day follow-up past the border/opacity
+  work below). `BoxElementViewModel.CornerRadius` renders via a hand-built rounded-rectangle `IPath`
+  (`TransmitImagePreparer.BuildBoxPath`: 4 `PathBuilder.AddArc` quarter-arcs, since ImageSharp.Drawing
+  2.1.7 has no rounded-rect primitive) — closes the box-elements friction risk below.
 - **Legacy `.mtm` import** — still deferred, per this document's own Decisions section below (unchanged).
-- **Element resize** — single bottom-right corner handle only, no aspect-lock toggle, no multi-select
-  move (auditor finding, 2026-08-17, item 18 — deliberately left as its own future design pass, not
-  folded into the 2026-08-18 usability batch; see that batch's own PROJECT_BRIEF.md entry for why).
+- **Element resize** — built 2026-08-18: 8-handle resize (`TxImageEditorPaneView.ResizeHandle` — 4
+  corners + 4 edges — via `ComputeElementResize`) plus Shift-drag aspect-lock, closing auditor finding
+  2026-08-17 item 18. Multi-select move is unrelated and still not built — see next bullet.
 - Multi-select move (mentioned under Layout aids below) was never built — z-order/lock/duplicate/
   align-to-crop exist, single-element only.
 
@@ -199,9 +200,9 @@ original proposal, still correct under the redesign.
   resolve to *something* when transmitted (black is the conventional answer) — needs to be a
   deliberate, visibly-indicated choice, not an accident.
 - **Box elements** need border, corner-radius, and opacity to actually work as text plates/frames,
-  beyond the already-confirmed fill color. **Update 2026-08-18**: border and opacity shipped (a
-  full BOX STYLE inspector block — fill/border-toggle/border-color/border-width/opacity). Corner-
-  radius was never built — still a real gap, not tracked elsewhere.
+  beyond the already-confirmed fill color. **Update 2026-08-18**: all three shipped — a full BOX
+  STYLE inspector block (fill/border-toggle/border-color/border-width/opacity) plus corner-radius as
+  a same-day follow-up. No longer a gap.
 
 ## Non-goals for 1.1
 
@@ -323,13 +324,17 @@ with, not duplicate it — this is an import adapter onto that model, not a para
 - ~~Font portability: decide the actual bundled fallback font set~~ — done: a default family + Barlow
   ship with the app (`TransmitImagePreparer.AvailableFontFamilies`), with a visible unavailable-font
   warning in the inspector when a loaded template references something else.
-- ~~Whether box border/corner-radius/opacity ship in the same pass or a follow-up~~ — border/opacity
-  shipped as a follow-up (2026-08-18); corner-radius still not built (see Status above).
+- ~~Whether box border/corner-radius/opacity ship in the same pass or a follow-up~~ — all three
+  shipped 2026-08-18 (border/opacity first, corner-radius as a same-day follow-up).
 - ~~Fix the stale [[11-plugin-system]]/removed-features.md/[[07-image-pipeline]]/[[14-roadmap]]
   cross-references~~ — done 2026-08-16 per the note under Non-goals; re-verified 2026-08-18, still
   accurate (those files no longer claim a future `ITemplateItem` extension point tied to this
   document).
 
-**Real open items, as of 2026-08-18** (see Status above for full list): box-element corner-radius,
-legacy `.mtm` import (still intentionally deferred), multi-handle/aspect-locked element resize +
-multi-select move.
+**Real open items, as of 2026-08-18** (see Status above for full list): legacy `.mtm` import (still
+intentionally deferred) and multi-select move. Box-element corner-radius and multi-handle/
+aspect-locked element resize both shipped the same day (see Known gaps above), alongside a same-day
+batch of Bold/Italic text styling (real vendored font-file variants, not synthesized), DIST/BEAM
+insert-field chips, the legacy "3D" stacked-copy text effect, bitmap-pattern text fill, clipboard-paste
+as a 4th "+ IMAGE" source (with a Ctrl+V fallback), and removal of the dead SOURCE row stub. OS
+drag-drop as an image source and perspective transform remain non-goals, unchanged.

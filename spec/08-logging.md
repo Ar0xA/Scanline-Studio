@@ -18,7 +18,7 @@ QSO records are stored in SQLite (`Microsoft.Data.Sqlite`), the same embedded-da
 namespace ScanlineStudio.Abstractions.Logbook;
 
 public sealed record QsoRecord(
-    Guid Id,
+    string Id,
     string Callsign,
     DateTimeOffset StartUtc,
     DateTimeOffset? EndUtc,
@@ -29,9 +29,10 @@ public sealed record QsoRecord(
     string? RstReceived,
     string? Name,
     string? Qth,
+    string? GridSquare,
     string? Country,           // resolved via ICallsignLookup at entry time
     string? Notes,
-    Guid? ReceivedImageId);    // FK into IReceiveHistoryStore, see 07-image-pipeline.md
+    string? ReceivedImageId);  // FK into IReceiveHistoryStore, see 07-image-pipeline.md
 
 public interface ILogbookRepository
 {
@@ -121,6 +122,8 @@ Pre-checked Clublog's actual terms (see [LICENSES.md](../LICENSES.md)'s "Candida
 
 Legacy `qrzcom.cpp` integrated with QRZ.com's XML lookup API for enriching QSO records (name, address, etc.) from a callsign. This is kept as an **optional**, explicitly opt-in `IOnlineCallsignLookup` decorator over `ICallsignLookup`, disabled by default (respecting the project's "no cloud dependencies" non-goal from [[00-project-overview]] as a default posture) — when the user supplies their own QRZ credentials and opts in, it augments rather than replaces the offline prefix-table lookup.
 
+**Shipped, under different names than this section's draft**: the offline `ICallsignLookup` base doesn't exist yet (see "Callsign / country lookup" above), so what actually shipped is a standalone `IQrzCallsignLookup` (`src/ScanlineStudio.Abstractions/Logbook/IQrzCallsignLookup.cs`, username/password auth against QRZ's XML Callbook API), not a decorator over `ICallsignLookup`. It is opt-in/off-by-default via `QrzLookupSettings.Enabled`, matching this section's intent. A separate, also-shipped `IQrzLogbookUploader` pushes a logged QSO to the user's own QRZ Logbook via API-key auth — a different QRZ product from this section's read-only enrichment lookup.
+
 ## Auto-fill from radio and DSP state
 
 When a QSO is started from the UI, `FrequencyHz`/`Mode` default-populate from the current `IRadioController.LastKnownState` ([[02-radio-layer]]) if a radio is connected, and `SstvModeId` defaults from the mode last used by [[06-sstv-dsp]] — both remain user-editable, and both are optional (logging must work with no radio connected, consistent with [[01-architecture]]'s "radio control is never a hard dependency" rule).
@@ -133,8 +136,8 @@ When a QSO is started from the UI, `FrequencyHz`/`Mode` default-populate from th
 
 ## Definition of done
 
-- [ ] SQLite-backed `ILogbookRepository` implemented and unit-tested.
-- [ ] ADIF import and export implemented, round-trip tested against ≥2 real-world ADIF samples.
+- [x] SQLite-backed `ILogbookRepository` implemented and unit-tested (`SqliteLogbookRepository`, add/update/search round-trips in `SqliteLogbookRepositoryTests`).
+- [ ] ADIF import and export implemented, round-trip tested against ≥2 real-world ADIF samples. `AdifImporter`/`AdifExporter` are implemented and round-trip tested, but current tests round-trip synthetic in-code `QsoRecord`s, not real-world third-party exports.
 - [ ] Offline `ICallsignLookup` implemented with a licensed, versioned prefix table.
-- [ ] QRZ.com online lookup implemented as opt-in only, off by default.
+- [x] QRZ.com online lookup implemented as opt-in only, off by default (`IQrzCallsignLookup`/`QrzLookupSettings` — see the corrected note above on the actual interface name).
 - [ ] Legacy `.MDT` log import path evaluated; documented as either supported (best-effort one-shot converter in `tools/`) or explicitly unsupported with ADIF as the recommended migration path.

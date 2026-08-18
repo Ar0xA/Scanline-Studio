@@ -71,7 +71,7 @@ Image decode/encode to/from standard file formats (PNG/JPEG/BMP) uses `SixLabors
 
 ## TX flow
 
-1. User selects a source image (file or stock picker — `TxControlsPaneViewModel`'s existing flow, unchanged) — clipboard paste and webcam/screen-capture frame capture, and legacy `PerSpect.cpp` perspective correction, stay deferred (see below).
+1. User selects a source image (file, stock picker, or clipboard paste — `TxControlsPaneViewModel`'s existing flow, plus a clipboard image source added in a later pass, see below) — webcam/screen-capture frame capture, OS drag-drop as an image source, and legacy `PerSpect.cpp` perspective correction, stay deferred (see below).
 2. The picked image loads at its ORIGINAL/native resolution (a real behavior change from Phase 4's first slice, which auto-resized straight to the mode's exact dimensions with no edit step at all) and opens the TX image editor (see below) for crop/resize/stretch/overlay.
 3. `ITransmitImagePreparer`'s `Crop` → `Resize` → `ApplyOverlay` pipeline (that exact order — see the interface's own doc comment for why) produces the final mode-exact image.
 4. Prepared image is handed to `ISstvEncoder.EncodeAsync` ([[06-sstv-dsp]]).
@@ -171,10 +171,11 @@ third time, just not caught by the test meant to catch it.
 macro-key auto-substitution system, legacy `PerSpect.cpp` perspective correction. **Stale as of
 2026-08-16, updated 2026-08-18**: the QSL/template designer ([[15-template-designer]]) is no longer
 deferred — it was the active 1.1 target, fully redesigned (a modern templating layer, not a legacy
-`.mtm` port), and is now **implemented**; clipboard paste and drag-drop as image-element sources
-were NOT built (see [[15-template-designer]]'s own Status section for the current, confirmed gap
-list — clipboard/drag-drop as image sources isn't on it either, meaning that part of the functional
-scope quietly didn't ship and isn't tracked elsewhere; flagged here, not fixed).
+`.mtm` port), and is now **implemented**. **Updated again, 2026-08-18 (later same day)**: clipboard
+paste as an image-element source has since shipped (the "+ IMAGE" flyout's 4th source, alongside
+File/Last-RX/RX-History, plus a Ctrl+V shortcut — `ImageSourceKind.Clipboard` /
+`IFilePickerService.PickClipboardImageAsync`); OS drag-drop as an image source was NOT part of that
+work and remains not built.
 
 ## Navigation: dockable panes, not legacy's paged main window
 

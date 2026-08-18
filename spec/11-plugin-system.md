@@ -10,14 +10,14 @@ Provide a stable, versioned extension surface so functionality (rig protocols, i
 
 ## Extension points (v1 scope)
 
-| Extension point | Interface | Backing module |
-|---|---|---|
-| CAT backend client | `IRadioProtocol` | [[03-cat-layer]] |
-| Image filter | `IImageFilter` | [[07-image-pipeline]] |
-| Log export format | `ILogExporter` | [[08-logging]] |
-| Macro action | `IMacroAction` | [[09-ui]] |
+| Extension point | Interface | Backing module | Status (current codebase) |
+|---|---|---|---|
+| CAT backend client | `IRadioProtocol` | [[03-cat-layer]] | exists (`src/ScanlineStudio.Abstractions/Radio/IRadioProtocol.cs`) |
+| Image filter | `IImageFilter` | [[07-image-pipeline]] | not yet defined — [[07-image-pipeline]] explicitly defers it ("deliberately NOT part of this interface yet") |
+| Log export format | `ILogExporter` | [[08-logging]] | not yet defined — [[08-logging]] currently only defines `IAdifExporter`/`IAdifImporter` |
+| Macro action | `IMacroAction` | [[09-ui]] | not yet defined — [[09-ui]] describes a `MacroKeyEditor` dialog but no such interface |
 
-Each extension point is simply a `ScanlineStudio.Abstractions` interface already defined by its owning spec — plugins do not get a separate, parallel API; they implement the same interfaces the built-in implementations do, discovered and registered the same way. This keeps "plugin" and "built-in" symmetric rather than second-class.
+Each extension point is meant to be simply a `ScanlineStudio.Abstractions` interface defined by its owning spec — plugins do not get a separate, parallel API; they implement the same interfaces the built-in implementations do, discovered and registered the same way. As of this writing only `IRadioProtocol` actually exists (see Status column); the rest are still planned. This keeps "plugin" and "built-in" symmetric rather than second-class, once built.
 
 ## Why the legacy CItems ABI isn't ported directly
 
@@ -38,13 +38,13 @@ A plugin is a directory containing a manifest and one or more assemblies:
   "id": "example.my-rig-pack",
   "displayName": "Example Rig Pack",
   "version": "1.0.0",
-  "yoniqApiVersion": "1.x",
+  "scanlineStudioApiVersion": "1.x",
   "entryPoint": "MyRigPack.dll",
   "extensionPoints": ["radio-protocol"]
 }
 ```
 
-`yoniqApiVersion` is checked against the host's `ScanlineStudio.Abstractions` semantic version at load time; a plugin declaring an incompatible major version is refused with a clear error rather than loaded and risking a runtime crash — `ScanlineStudio.Abstractions` itself follows semver strictly for this reason.
+`scanlineStudioApiVersion` is checked against the host's `ScanlineStudio.Abstractions` semantic version at load time; a plugin declaring an incompatible major version is refused with a clear error rather than loaded and risking a runtime crash — `ScanlineStudio.Abstractions` itself follows semver strictly for this reason.
 
 ## Isolation and loading
 
@@ -79,7 +79,7 @@ Plugins run with the same process privileges as the host (no sandboxing/capabili
 ## Testing
 
 - `IPluginHost` load/unload lifecycle tested against a fixture plugin assembly built as part of the test project, verifying services registered by `RegisterServices` are resolvable and that `UnloadAsync` actually releases the `AssemblyLoadContext` (verified via `WeakReference`+GC in a dedicated test, a known-tricky pattern to get right and worth its own explicit test).
-- API version compatibility checks tested with fixture manifests declaring compatible/incompatible `yoniqApiVersion` values.
+- API version compatibility checks tested with fixture manifests declaring compatible/incompatible `scanlineStudioApiVersion` values.
 
 ## Definition of done
 
