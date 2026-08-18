@@ -16,13 +16,19 @@ public sealed class ImageFileLoader : IImageFileLoader
     public async Task<IImageSource> LoadAsync(string path, int targetWidth, int targetHeight, CancellationToken ct = default)
     {
         using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgb24>(path, ct).ConfigureAwait(false);
-        image.Mutate(x => x.Resize(targetWidth, targetHeight));
+        // spec/18-path-to-1.0.md High item 3: a phone photo with EXIF orientation used to load
+        // sideways with no in-app remedy. AutoOrient reads the EXIF Orientation tag, physically
+        // rotates/flips the pixel data to match, and resets the tag to Normal -- must run BEFORE
+        // Resize, or the target width/height below gets applied to the still-sideways raw pixel
+        // dimensions.
+        image.Mutate(x => x.AutoOrient().Resize(targetWidth, targetHeight));
         return CopyToImageSource(image);
     }
 
     public async Task<IImageSource> LoadOriginalAsync(string path, CancellationToken ct = default)
     {
         using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgb24>(path, ct).ConfigureAwait(false);
+        image.Mutate(x => x.AutoOrient());
         return CopyToImageSource(image);
     }
 
