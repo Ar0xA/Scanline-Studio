@@ -141,7 +141,35 @@ public sealed partial class MacroTextResolver : IMacroTextResolver
                 // not the ham-conventional "USB" -- RadioStatusViewModel already applies the same
                 // uppercasing for this exact display elsewhere in this codebase.
                 "mode" => radioState is { } state ? state.Mode.ToString().ToUpperInvariant() : string.Empty,
+                // Auditor usability review follow-up (2026-08-18): {dist}/{bearing}, combining MY
+                // grid (a real settings-tier value, same as {grid} above) with the {his_grid}
+                // FILL-BAR variable the operator types in per-QSO -- see MaidenheadLocator's own doc
+                // comment for why this isn't a "current QSO" model, just a computed macro over two
+                // already-sourceable inputs. Empty (matching {freq}/{mode}'s own "input not
+                // available yet" convention) when either grid is missing/unparseable, not a
+                // hard error -- a template is a valid thing to preview/edit before HIS grid has been
+                // typed in for a given QSO.
+                "dist" => TryResolveDistanceBearing(operatorSettings, variables, out var distanceKm, out _) ? MaidenheadLocator.FormatDistance(distanceKm) : string.Empty,
+                "bearing" => TryResolveDistanceBearing(operatorSettings, variables, out _, out var bearingDegrees) ? MaidenheadLocator.FormatBearing(bearingDegrees) : string.Empty,
                 _ => variables is not null && variables.TryGetValue(token, out var value) ? value : match.Value,
             };
         });
+
+    /// <summary>Shared by the <c>{dist}</c>/<c>{bearing}</c> cases above -- one lookup of both
+    /// inputs, not two independently-maintained copies (the <c>{his_grid}</c> variable KEY is a
+    /// worked example from spec/15-template-designer.md's own text, not a hardcoded assumption this
+    /// project invented -- see that document's "named template variables + a fill bar" functional
+    /// scope entry).</summary>
+    private static bool TryResolveDistanceBearing(
+        OperatorSettings operatorSettings, IReadOnlyDictionary<string, string>? variables, out double distanceKm, out double bearingDegrees)
+    {
+        distanceKm = 0;
+        bearingDegrees = 0;
+        if (variables is null || !variables.TryGetValue("his_grid", out var hisGrid))
+        {
+            return false;
+        }
+
+        return MaidenheadLocator.TryComputeDistanceBearing(operatorSettings.Grid, hisGrid, out distanceKm, out bearingDegrees);
+    }
 }

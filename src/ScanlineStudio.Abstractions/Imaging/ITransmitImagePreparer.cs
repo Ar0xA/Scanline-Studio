@@ -57,11 +57,16 @@ public enum ImageFitMode { Stretch, Contain, Cover }
 /// <see cref="ITransmitImagePreparer.ApplyTemplate"/>'s shrink-to-fit search, not a fixed rendered
 /// size — relative to the target image's HEIGHT, same convention as
 /// <see cref="ImageOverlayElement.FontSizeRelative"/>, for the same reason (stable regardless of
-/// aspect/stretch). <paramref name="Family"/> is accepted but not yet meaningfully consumed —
-/// <c>TransmitImagePreparer</c> currently loads exactly one bundled font and falls back to it
-/// regardless of the requested family; a real bundled cross-platform font set is a tracked open
-/// question (spec/15-template-designer.md's font-portability functional-scope item).</summary>
-public sealed record FontSpec(string Family, double Size);
+/// aspect/stretch). <paramref name="Family"/> selects among <c>TransmitImagePreparer</c>'s own
+/// bundled font set (<see cref="ITransmitImagePreparer.AvailableFontFamilies"/>) -- this doc comment
+/// used to say it wasn't meaningfully consumed; that was stale even before today (Phase 4 already
+/// added real family selection), corrected here while adding <paramref name="Bold"/>/<paramref
+/// name="Italic"/> (auditor usability review follow-up, 2026-08-18) -- both false is the pre-existing
+/// Regular-only behavior, unchanged. A requested Bold/Italic combination the selected family has no
+/// matching bundled variant for throws at draw time (verified against the actually-bundled variant
+/// set, not silently substituted) -- see <c>TransmitImagePreparer</c>'s own constructor for exactly
+/// which weight/style files are registered per family.</summary>
+public sealed record FontSpec(string Family, double Size, bool Bold = false, bool Italic = false);
 
 /// <summary>Base for every element a <see cref="TemplateDocument"/> can composite —
 /// spec/15-template-designer.md. <paramref name="Bounds"/> is normalized against the FULL target
@@ -80,8 +85,19 @@ public sealed record FontSpec(string Family, double Size);
 public abstract record TemplateElement(NormalizedRect Bounds, int Z);
 
 /// <summary>Which axis (or radial center) a <see cref="TextGradient"/> fills across a text
-/// element's own <see cref="TemplateElement.Bounds"/>.</summary>
-public enum TextGradientKind { Horizontal, Vertical, Radial }
+/// element's own <see cref="TemplateElement.Bounds"/>. <see cref="BitmapPattern"/> (auditor
+/// usability review follow-up, 2026-08-18) is legacy YONIQ's real "bitmap mask" text-fill option --
+/// confirmed via <c>TextIn.cpp</c>'s <c>RGGrade</c> radio group and <c>BitMask.cpp</c>'s
+/// <c>MakeBitmapPtn</c>: despite the name, it is NOT a glyph-shaped stencil mask, it's a tiled
+/// 2-color pattern/texture BRUSH used as the text fill, the exact same conceptual slot as
+/// <see cref="Horizontal"/>/<see cref="Vertical"/> in the SAME legacy radio group (NO/Horizontal/
+/// Vertical/Bitmap) -- which is why it's added HERE, as a 4th <see cref="TextGradient"/> kind, rather
+/// than a separate feature with its own enable-flag/color-pair. Legacy procedurally generates its own
+/// 8-style dither/checkerboard bitmap by hand (`MakeBitmapPtn`'s <c>sw</c> parameter); this reuses
+/// ImageSharp.Drawing's own already-available <c>Brushes.Percent20</c> tiled 2-color pattern instead
+/// of hand-rolling an equivalent generator -- a real, "improved on, not replicated" primitive swap
+/// (CLAUDE.md §2), not a port, since this is UI/editing functionality, not DSP/codec math.</summary>
+public enum TextGradientKind { Horizontal, Vertical, Radial, BitmapPattern }
 
 /// <summary><paramref name="Offset"/> is 0..1 along the gradient's own axis (matches ImageSharp's
 /// own <c>ColorStop</c> convention, which this maps directly onto at render time).</summary>
@@ -124,12 +140,23 @@ public sealed record TextGradient(TextGradientKind Kind, IReadOnlyList<GradientC
 /// (2D) rotation only, clockwise-positive — true 3D/perspective is an explicit, separate future
 /// phase (Tier 3, not this one); rendered via an offscreen sub-bitmap render→rotate→composite path,
 /// not a GDI-style native rotated draw (no equivalent primitive here). <paramref name="Gradient"/>
-/// null means a plain solid <paramref name="Color"/> fill (today's existing behavior, unchanged).</para></summary>
+/// null means a plain solid <paramref name="Color"/> fill (today's existing behavior, unchanged).</para>
+/// <para>Auditor usability review follow-up (2026-08-18): <paramref name="StackColor"/> null means no
+/// stack effect (same null-means-none convention as the other optional effects above) -- legacy
+/// YONIQ's "3D" text option (confirmed via <c>TextIn.cpp</c>'s <c>CBStack</c>/<c>Draw.cpp</c>'s
+/// <c>m_Stack</c>/<c>m_StackPara</c>: NOT a 3D transform, a stepped stack of solid-color offset
+/// copies drawn behind the main glyphs, creating an extruded look). <paramref name="StackStepX"/>/
+/// <paramref name="StackStepY"/> are height-relative like <paramref name="ShadowOffsetX"/>/Y; the
+/// copy COUNT is derived at render time from the larger of the two resolved pixel steps (one copy
+/// per pixel of the dominant axis), not persisted separately -- a simplified, "improved on, not
+/// replicated" re-derivation (CLAUDE.md §2) of legacy's own signed-byte-packed step count, not a
+/// byte-for-byte port of its GDI-specific color-interpolation/shadow-mode-coupling.</para></summary>
 public sealed record TemplateTextElement(
     NormalizedRect Bounds, int Z, string Content, FontSpec Font, Rgb24 Color,
     Rgb24? StrokeColor = null, double StrokeThickness = 0,
     Rgb24? ShadowColor = null, double ShadowOffsetX = 0, double ShadowOffsetY = 0,
-    double RotationDegrees = 0, TextGradient? Gradient = null)
+    double RotationDegrees = 0, TextGradient? Gradient = null,
+    Rgb24? StackColor = null, double StackStepX = 0, double StackStepY = 0)
     : TemplateElement(Bounds, Z);
 
 /// <summary><paramref name="Source"/> is an already-resolved <see cref="IImageSource"/>, not a
@@ -145,11 +172,19 @@ public sealed record TemplateImageElement(NormalizedRect Bounds, int Z, IImageSo
 /// elements don't have their own opacity yet (not a confirmed 1.1 requirement; add if actually
 /// wanted). <paramref name="BorderThickness"/> is relative to the target image's HEIGHT, same
 /// convention as <see cref="FontSpec.Size"/>, so borders scale consistently across different
-/// target-mode render sizes rather than looking wrong at a fixed pixel width on a small mode. No
-/// corner-radius — ImageSharp.Drawing 2.1.7 has no rounded-rectangle primitive; deferred, tracked
-/// as an open question in the Phase 0 implementation plan.</summary>
+/// target-mode render sizes rather than looking wrong at a fixed pixel width on a small mode.
+/// <paramref name="CornerRadius"/> (added later, same height-relative convention) -- the original
+/// "no corner-radius, ImageSharp.Drawing 2.1.7 has no rounded-rectangle primitive" blocker was real,
+/// but a major ImageSharp.Drawing upgrade (3.x, which HAS one) needs ImageSharp core 4.x too, a much
+/// bigger change than this one field justifies. Built instead via a hand-built rounded-rectangle
+/// <c>IPath</c> (4 <c>PathBuilder.AddArc</c> quarter-arcs + 4 straight edges, verified against a real
+/// rendered PNG before use, same as every other unfamiliar-API check this project does) -- no new
+/// package dependency, works against the ALREADY-installed 2.1.7. 0 (the default) renders identically
+/// to the old plain-<see cref="SixLabors.ImageSharp.Drawing.RectangularPolygon"/> path, byte-for-byte
+/// unchanged for every existing template.</summary>
 public sealed record TemplateBoxElement(
-    NormalizedRect Bounds, int Z, Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity = 1.0)
+    NormalizedRect Bounds, int Z, Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity = 1.0,
+    double CornerRadius = 0)
     : TemplateElement(Bounds, Z);
 
 /// <summary><paramref name="Elements"/> in any order — <see cref="ITransmitImagePreparer.ApplyTemplate"/>
@@ -231,10 +266,15 @@ public interface ITransmitImagePreparer
     /// search measures (shadow offsets the whole glyph; rotation's own bounding box grows for any
     /// non-zero angle), so both must be passed here whenever the element has them, for the same
     /// canvas/pipeline-desync reason as <paramref name="strokeThicknessRelative"/>. All three
-    /// defaults (0) mean "this effect is not active."</para></summary>
+    /// defaults (0) mean "this effect is not active."</para>
+    /// <para>Auditor usability review follow-up (2026-08-18): <paramref name="stackStepXRelative"/>/
+    /// <paramref name="stackStepYRelative"/> are the fourth occurrence, for
+    /// <see cref="TemplateTextElement.StackColor"/>'s stepped-copy effect -- same reasoning, same
+    /// "pass 0 when inactive" default.</para></summary>
     double MeasureFittedFontSize(
         string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0,
-        double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0);
+        double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0,
+        double stackStepXRelative = 0, double stackStepYRelative = 0);
 
     /// <summary>Font family names available for <see cref="FontSpec.Family"/>/
     /// <see cref="TemplateTextElement.Font"/> — the TX template editor's font-family picker's

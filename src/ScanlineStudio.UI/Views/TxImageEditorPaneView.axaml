@@ -659,12 +659,16 @@
                                      element's own CanvasWidthPixels/CanvasHeightPixels; its CHILDREN
                                      position within that inner Canvas's own coordinate space, same
                                      nested-Canvas technique the crop body/handle pair above already
-                                     uses one level up. Single bottom-right resize handle per element
-                                     (Phase 1 plan-review finding: mirrors the crop rect's OWN existing
-                                     single-corner-handle convention — PicRect.cpp real legacy
-                                     precedent, see the crop handle above — deliberately not a
-                                     4-corner/8-handle system), hidden while Locked (code-behind is the
-                                     real gate; this is the visual cue). -->
+                                     uses one level up. 8 resize handles per element — corners + edge
+                                     midpoints (auditor usability review follow-up, 2026-08-18:
+                                     upgraded from the earlier single-bottom-right-only handle, a
+                                     legacy-precedent choice at the time — PicRect.cpp — that the "UI/
+                                     editing improved on, not replicated" project rule (CLAUDE.md §2)
+                                     doesn't bind here, since this is new interaction-model
+                                     functionality, not a port). Hidden while Locked (code-behind is
+                                     the real gate; this is the visual cue). Shift-drag a CORNER handle
+                                     to preserve aspect ratio — see
+                                     TxImageEditorPaneView.ComputeElementResize's own doc comment. -->
                                 <ItemsControl.DataTemplates>
                                     <DataTemplate DataType="vm:OverlayElementViewModel">
                                         <!-- No ZIndex binding here (real-window code-review finding, via
@@ -811,6 +815,8 @@
                                                     <TextBlock Text="{Binding ResolvedText}"
                                                                FontSize="{Binding CanvasFontSize}"
                                                                FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
+                                                               FontWeight="{Binding CanvasFontWeight}"
+                                                               FontStyle="{Binding CanvasFontStyle}"
                                                                Foreground="{Binding ShadowColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
                                                                RenderTransform="{Binding ShadowRenderTransform}"
                                                                IsVisible="{Binding HasShadow}"
@@ -838,9 +844,14 @@
                                                     <controls:StrokedTextBlock Text="{Binding ResolvedText}"
                                                                FontSize="{Binding CanvasFontSize}"
                                                                FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
+                                                               FontWeight="{Binding CanvasFontWeight}"
+                                                               FontStyle="{Binding CanvasFontStyle}"
                                                                Fill="{Binding ForegroundBrush}"
                                                                Stroke="{Binding StrokeColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
                                                                StrokeThickness="{Binding CanvasStrokeThicknessPixels}"
+                                                               StackFill="{Binding StackColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
+                                                               StackStepXPixels="{Binding CanvasStackStepXPixels}"
+                                                               StackStepYPixels="{Binding CanvasStackStepYPixels}"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                                                IsHitTestVisible="False" />
                                                 </Panel>
@@ -861,17 +872,61 @@
                                                          Classes="Industry IndustryInput"
                                                          FontSize="{Binding CanvasFontSize}"
                                                          FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
+                                                         FontWeight="{Binding CanvasFontWeight}"
+                                                         FontStyle="{Binding CanvasFontStyle}"
                                                          TextWrapping="NoWrap" AcceptsReturn="False"
                                                          VerticalContentAlignment="Center"
                                                          LostFocus="OnElementTextEditLostFocus"
                                                          KeyDown="OnElementTextEditKeyDown" />
                                                 </Panel>
                                             </Border>
+                                            <Border Canvas.Left="0" Canvas.Top="0"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="TopLeftCorner" Tag="TopLeft"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="0"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="TopSide" Tag="Top"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="0"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="TopRightCorner" Tag="TopRight"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="RightSide" Tag="Right"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}"
+                                                    IsVisible="{Binding !Locked}" Cursor="BottomRightCorner" Tag="BottomRight"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="{Binding CanvasHeightPixels}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="BottomSide" Tag="Bottom"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="BottomLeftCorner" Tag="BottomLeft"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="LeftSide" Tag="Left"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                         </Canvas>
                                     </DataTemplate>
@@ -892,6 +947,7 @@
                                                     Background="{Binding FillColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
                                                     BorderBrush="{Binding BorderColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
                                                     BorderThickness="{Binding CanvasBorderThicknessPixels, Converter={x:Static conv:DoubleToThicknessConverter.Instance}}"
+                                                    CornerRadius="{Binding CanvasCornerRadiusPixels, Converter={x:Static conv:DoubleToCornerRadiusConverter.Instance}}"
                                                     Opacity="{Binding Opacity}"
                                                     PointerPressed="OnOverlayElementPointerPressed">
                                                 <!-- Task #24: same inline-ContextMenu reasoning as the text
@@ -922,11 +978,53 @@
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
                                             </Border>
+                                            <Border Canvas.Left="0" Canvas.Top="0"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="TopLeftCorner" Tag="TopLeft"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="0"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="TopSide" Tag="Top"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="0"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="TopRightCorner" Tag="TopRight"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="RightSide" Tag="Right"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}"
+                                                    IsVisible="{Binding !Locked}" Cursor="BottomRightCorner" Tag="BottomRight"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="{Binding CanvasHeightPixels}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="BottomSide" Tag="Bottom"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="BottomLeftCorner" Tag="BottomLeft"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="LeftSide" Tag="Left"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                         </Canvas>
                                     </DataTemplate>
@@ -996,11 +1094,53 @@
                                                        Stretch="{Binding Fit, Converter={x:Static conv:ImageFitModeToStretchConverter.Instance}}"
                                                        IsHitTestVisible="False" />
                                             </Border>
+                                            <Border Canvas.Left="0" Canvas.Top="0"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="TopLeftCorner" Tag="TopLeft"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="0"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="TopSide" Tag="Top"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="0"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="TopRightCorner" Tag="TopRight"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="RightSide" Tag="Right"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}"
+                                                    IsVisible="{Binding !Locked}" Cursor="BottomRightCorner" Tag="BottomRight"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="{Binding CanvasHeightPixels}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="BottomSide" Tag="Bottom"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="BottomLeftCorner" Tag="BottomLeft"
+                                                    PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding !Locked}" Cursor="LeftSide" Tag="Left"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                         </Canvas>
                                     </DataTemplate>
@@ -1407,6 +1547,20 @@
                                                IsVisible="{Binding IsFontUnavailable}"
                                                ToolTip.Tip="{loc:Translate Panes.TxImageEditor.FontUnavailableWarning}" />
                                 </Grid></Border>
+                                <!-- Auditor usability review follow-up (2026-08-18): "missing yoniq
+                                     text effects" (from the user's original 2026-08-16 checklist —
+                                     color/shadow/gradient/rotation shipped in Phase 4/8, bold/italic
+                                     never started). Requires a real bundled Bold/Italic font FILE for
+                                     the selected family (see FontSpec's own doc comment) — both
+                                     bundled families (DejaVu Sans Mono, Barlow) now have all 4
+                                     weight/style variants vendored, so this is always reachable for
+                                     either. -->
+                                <Border Classes="IndustryRow"><StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingGroup}">
+                                    <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.BoldLabel}"
+                                              IsChecked="{Binding SelectedTextElement.Bold}" />
+                                    <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.ItalicLabel}"
+                                              IsChecked="{Binding SelectedTextElement.Italic}" />
+                                </StackPanel></Border>
                                 <!-- Backlog item (user request, 2026-08-17): "text size should be in px not 0.1 or
                                      0.16 etc" — bound to the parent VM's own SelectedTextElementFontSizePx
                                      (a real pixel count against the TARGET mode's height) instead of the raw
@@ -1463,6 +1617,35 @@
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
                                              Text="{Binding SelectedTextElementShadowOffsetYPx}" />
                                 </Grid></Border>
+
+                                <!-- Auditor usability review follow-up (2026-08-18): "3D"/Stack rows
+                                     — legacy YONIQ's real CBStack/m_StackPara mechanism (TextIn.cpp/
+                                     Draw.cpp), NOT a 3D transform — same HasShadow/ShadowColor/
+                                     ShadowOffset row pattern immediately above, just a second,
+                                     independent offset-copy effect (can be combined with Shadow). The
+                                     canvas shows the real N-copy extrusion here (StrokedTextBlock's
+                                     own StackFill/StackStepXPixels/StackStepYPixels), not just a
+                                     mini-preview-only approximation — an earlier single-offset "hint"
+                                     version was upgraded after a real, user-caught side-by-side
+                                     mismatch against the "PREVIEW (mode-exact)" panel. -->
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
+                                    <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.StackLabel}"
+                                              IsChecked="{Binding SelectedTextElement.HasStack}" />
+                                    <ColorPicker Grid.Column="2" HorizontalAlignment="Right"
+                                                 IsEnabled="{Binding SelectedTextElement.HasStack}"
+                                                 Color="{Binding SelectedTextElement.StackColorForPicker, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.HasStack}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.StackStepXLabel}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                             Text="{Binding SelectedTextElementStackStepXPx}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.HasStack}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.StackStepYLabel}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                             Text="{Binding SelectedTextElementStackStepYPx}" />
+                                </Grid></Border>
+
                                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.RotationLabel}" />
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
@@ -1493,10 +1676,11 @@
                                      chips relocated INTO the TEXT STYLE tab (mock's own placement —
                                      "INSERT FIELD → CARET" sits inside the text-style inspector, not
                                      the bottom QSO-fill bar; the bottom bar is FILL-IN VALUES only,
-                                     this is macro/variable-TOKEN insertion). Only the 10 backed by
-                                     real data get a Command; DIST/BEAM stay disabled — see this
-                                     block's own original comment (moved from its old standalone
-                                     panel, unchanged otherwise) for the full reasoning. -->
+                                     this is macro/variable-TOKEN insertion). All 12 chips (including
+                                     DIST/BEAM, wired 2026-08-18 via MaidenheadLocator) are backed by
+                                     real data and have a Command — see this block's own original
+                                     comment (moved from its old standalone panel, unchanged
+                                     otherwise) for the full reasoning. -->
                                 <Border Classes="IndustryRow"><TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" /></Border>
                                 <WrapPanel>
                                     <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
@@ -1519,8 +1703,10 @@
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" IsEnabled="False" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{dist}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{bearing}" />
                                 </WrapPanel>
                                 <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.SourceLabel}" />
@@ -1605,6 +1791,19 @@
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.OpacityLabel}" />
                                     <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0"
                                             Minimum="0" Maximum="1" Value="{Binding SelectedBoxElement.Opacity}" VerticalAlignment="Center" />
+                                </Grid></Border>
+                                <!-- Auditor usability review follow-up (2026-08-18): "missing item"
+                                     against spec/15-template-designer.md's own box-elements friction
+                                     risk ("need border, corner-radius, and opacity"). Built via a
+                                     hand-rolled rounded-rectangle path (no ImageSharp.Drawing
+                                     primitive at this project's pinned version, see
+                                     TransmitImagePreparer.BuildBoxPath's own doc comment) on the
+                                     pipeline side; Avalonia's native Border.CornerRadius on the
+                                     canvas side. -->
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.CornerRadiusLabel}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                             Text="{Binding SelectedBoxElementCornerRadiusPx}" />
                                 </Grid></Border>
                             </StackPanel>
 

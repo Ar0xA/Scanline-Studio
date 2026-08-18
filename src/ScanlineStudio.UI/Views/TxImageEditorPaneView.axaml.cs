@@ -24,6 +24,26 @@ public partial class TxImageEditorPaneView : UserControl
         ElementResize,
     }
 
+    /// <summary>Which side(s) of the element the pressed handle drags -- public (not the private
+    /// <see cref="DragMode"/> above) because it's a parameter of the public, unit-tested
+    /// <see cref="ComputeElementResize"/>. Corner handles free both axes; edge handles free only one
+    /// (the perpendicular axis is unaffected, matching every mainstream image editor's own resize-
+    /// handle convention). Backlog item (auditor usability review, 2026-08-17): the earlier single
+    /// bottom-right-only handle was a deliberate legacy-precedent choice at the time, but the "UI/
+    /// editing work should be improved on, not replicated" project rule (CLAUDE.md §2) applies here --
+    /// this is new interaction-model functionality, not a port.</summary>
+    public enum ResizeHandle
+    {
+        TopLeft,
+        Top,
+        TopRight,
+        Right,
+        BottomRight,
+        Bottom,
+        BottomLeft,
+        Left,
+    }
+
     /// <summary>Floor for element Width/Height during resize (code-review finding: an unclamped
     /// resize drag could drive Width/Height negative, which <c>ApplyTemplate</c> silently treats as
     /// "skip this element" -- a fast drag past the opposite corner made the element vanish from both
@@ -36,6 +56,7 @@ public partial class TxImageEditorPaneView : UserControl
     private DragMode _dragMode = DragMode.None;
     private Point _lastPointerPosition;
     private ITemplateElementViewModel? _draggedElement;
+    private ResizeHandle _resizeHandle = ResizeHandle.BottomRight;
 
     // Undo/redo sub-piece: a gesture pushes ONE undo step, on the first real move, not on press
     // (a bare click that never moves shouldn't push a no-op step) -- reset in StartDrag, consumed
@@ -219,21 +240,26 @@ public partial class TxImageEditorPaneView : UserControl
             DispatcherPriority.Loaded);
     }
 
-    /// <summary>Single bottom-right resize handle per element (Phase 1 plan-review finding: mirrors
-    /// the crop rect's own existing single-corner-handle convention rather than a 4-corner/8-handle
-    /// system). Same <see cref="ITemplateElementViewModel.Locked"/> real-gate reasoning as
-    /// <see cref="OnOverlayElementPointerPressed"/> above -- same left-button gate too (task #24
+    /// <summary>8 resize handles per element -- corners + edge midpoints (auditor usability review
+    /// follow-up, 2026-08-18: the earlier single bottom-right-only handle was a legacy-precedent
+    /// choice, not a DSP/protocol constraint -- see <see cref="ResizeHandle"/>'s own doc comment).
+    /// Which handle was pressed is read from the pressed <see cref="Control"/>'s own AXAML-set
+    /// <c>Tag</c> (one of <see cref="ResizeHandle"/>'s names) -- same
+    /// <see cref="ITemplateElementViewModel.Locked"/> real-gate reasoning as
+    /// <see cref="OnOverlayElementPointerPressed"/> above, same left-button gate too (task #24
     /// plan-review finding: a right-press here would otherwise start a resize drag instead of letting
     /// the parent element's own context menu handle the release).</summary>
     private void OnElementResizeHandlePointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is not Control { DataContext: ITemplateElementViewModel element } || element.Locked
-            || !e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed)
+        if (sender is not Control { DataContext: ITemplateElementViewModel element } control || element.Locked
+            || !e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed
+            || control.Tag is not string tagValue || !Enum.TryParse<ResizeHandle>(tagValue, out var handle))
         {
             return;
         }
 
         _draggedElement = element;
+        _resizeHandle = handle;
         StartDrag(DragMode.ElementResize, e);
     }
 
@@ -318,8 +344,13 @@ public partial class TxImageEditorPaneView : UserControl
                 element.Y += dyNormalized;
                 break;
             case DragMode.ElementResize when _draggedElement is { } element:
+                // Shift = preserve aspect ratio (auditor usability review follow-up, 2026-08-18) --
+                // same modifier convention as Photoshop/Illustrator/PowerPoint's own corner-handle
+                // proportional-scale gesture, not a persisted per-element setting (keeps this an
+                // interaction-only change with no new template-schema/persistence surface).
+                var preserveAspect = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
                 var (newWidth, newHeight, centerDeltaX, centerDeltaY) =
-                    ComputeElementResize(element.Width, element.Height, dxNormalized, dyNormalized);
+                    ComputeElementResize(element.Width, element.Height, dxNormalized, dyNormalized, _resizeHandle, preserveAspect);
                 element.Width = newWidth;
                 element.Height = newHeight;
                 element.X += centerDeltaX;
@@ -333,26 +364,66 @@ public partial class TxImageEditorPaneView : UserControl
     /// shipped this logic with zero test coverage). Public, not internal -- this project has no
     /// <c>InternalsVisibleTo</c> wired up anywhere (same reasoning/precedent as
     /// <see cref="ScanlineStudio.UI.Controls.WaterfallPalette"/>'s own doc comment).
-    /// <para>X/Y is CENTER-anchored, so a bottom-right handle that only grew Width/Height would grow
-    /// the box symmetrically in all four directions -- the top-left corner would visibly run away
-    /// from the pointer, reading as broken. Growing by the full delta while shifting the center by
-    /// HALF the delta keeps the OPPOSITE (top-left) corner pinned, which is what "drag the
-    /// bottom-right corner" actually means.</para>
+    /// <para><paramref name="handle"/> defaults to <see cref="ResizeHandle.BottomRight"/> so every
+    /// pre-existing call site/test keeps compiling and behaving byte-for-byte identically. Each
+    /// handle frees only the edge(s) it visually sits on -- a corner handle frees both its adjacent
+    /// edges (both Width and Height change, center shifts diagonally, pinning the OPPOSITE corner); an
+    /// edge-midpoint handle frees only its own axis (e.g. dragging the Right handle changes Width
+    /// only, Height and the Y center are untouched) -- matches every mainstream image editor's own
+    /// resize-handle convention.</para>
+    /// <para>X/Y is CENTER-anchored: growing a free edge by the full delta while shifting the center
+    /// by HALF that delta keeps the OPPOSITE (anchored) edge/corner pinned in place, which is what
+    /// "drag this handle" actually means -- a naive Width/Height-only grow would expand symmetrically
+    /// in all directions and visibly run away from the pointer.</para>
     /// <para>Floored at <see cref="MinNormalizedElementSize"/> (code-review finding, revising an
     /// earlier "no floor needed" call) -- Width/Height going negative isn't just visually odd,
     /// <c>ApplyTemplate</c> treats it as "skip this element," so an unclamped fast drag silently
     /// deleted content from the transmitted image. The returned center delta is HALF the
-    /// ACTUALLY-APPLIED size delta (not the raw requested delta), which keeps the pinned-corner
+    /// ACTUALLY-APPLIED size delta (not the raw requested delta), which keeps the pinned-edge
     /// behavior correct once the floor engages, instead of the center continuing to drift past where
-    /// the clamped edge actually stopped.</para></summary>
+    /// the clamped edge actually stopped.</para>
+    /// <para><paramref name="preserveAspect"/> (Shift-drag, auditor usability review follow-up,
+    /// 2026-08-18) only applies at CORNER handles -- an edge-midpoint handle has no natural second
+    /// pointer axis to derive a ratio from, so it stays a plain single-axis stretch even with Shift
+    /// held, same convention mainstream editors use. At a corner, whichever of the two free axes the
+    /// pointer moved further along (proportionally, i.e. |delta|/currentSize) drives a single scale
+    /// factor; the other free axis is DERIVED from the original aspect ratio instead of following its
+    /// own raw delta.</para></summary>
     public static (double Width, double Height, double CenterDeltaX, double CenterDeltaY) ComputeElementResize(
-        double currentWidth, double currentHeight, double dxNormalized, double dyNormalized)
+        double currentWidth, double currentHeight, double dxNormalized, double dyNormalized,
+        ResizeHandle handle = ResizeHandle.BottomRight, bool preserveAspect = false)
     {
-        var newWidth = Math.Max(currentWidth + dxNormalized, MinNormalizedElementSize);
-        var newHeight = Math.Max(currentHeight + dyNormalized, MinNormalizedElementSize);
+        var freeLeft = handle is ResizeHandle.TopLeft or ResizeHandle.Left or ResizeHandle.BottomLeft;
+        var freeRight = handle is ResizeHandle.TopRight or ResizeHandle.Right or ResizeHandle.BottomRight;
+        var freeTop = handle is ResizeHandle.TopLeft or ResizeHandle.Top or ResizeHandle.TopRight;
+        var freeBottom = handle is ResizeHandle.BottomLeft or ResizeHandle.Bottom or ResizeHandle.BottomRight;
+        var isCorner = (freeLeft || freeRight) && (freeTop || freeBottom);
+
+        var widthDelta = freeRight ? dxNormalized : freeLeft ? -dxNormalized : 0;
+        var heightDelta = freeBottom ? dyNormalized : freeTop ? -dyNormalized : 0;
+
+        if (preserveAspect && isCorner && currentWidth > 0 && currentHeight > 0)
+        {
+            var aspect = currentWidth / currentHeight;
+            if (Math.Abs(widthDelta) / currentWidth >= Math.Abs(heightDelta) / currentHeight)
+            {
+                heightDelta = widthDelta / aspect;
+            }
+            else
+            {
+                widthDelta = heightDelta * aspect;
+            }
+        }
+
+        var newWidth = Math.Max(currentWidth + widthDelta, MinNormalizedElementSize);
+        var newHeight = Math.Max(currentHeight + heightDelta, MinNormalizedElementSize);
         var appliedDx = newWidth - currentWidth;
         var appliedDy = newHeight - currentHeight;
-        return (newWidth, newHeight, appliedDx / 2, appliedDy / 2);
+
+        var centerDeltaX = freeRight ? appliedDx / 2 : freeLeft ? -appliedDx / 2 : 0;
+        var centerDeltaY = freeBottom ? appliedDy / 2 : freeTop ? -appliedDy / 2 : 0;
+
+        return (newWidth, newHeight, centerDeltaX, centerDeltaY);
     }
 
     /// <summary>Phase 6 (spec/15-template-designer.md): snap-ON-DROP, not during the drag itself --

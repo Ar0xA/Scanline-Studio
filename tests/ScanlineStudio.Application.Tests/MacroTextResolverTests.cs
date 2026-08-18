@@ -127,6 +127,55 @@ public sealed class MacroTextResolverTests
         Assert.Equal("USB", _resolver.Resolve("{mode}", settings, state));
     }
 
+    // Auditor usability review follow-up (2026-08-18): {dist}/{bearing} -- the TX Image Editor's own
+    // DIST/BEAM insert-field chips used to be a stub with no Command at all. Combines MY grid
+    // (OperatorSettings.Grid, a real settings-tier value like {grid} above) with the {his_grid}
+    // fill-bar variable.
+
+    [Fact]
+    public void DistAndBearingTokens_BothGridsPresent_ResolveToComputedValues()
+    {
+        var settings = new OperatorSettings { Grid = "JN58tc" };
+        var variables = new Dictionary<string, string> { ["his_grid"] = "FN31pr" };
+
+        var resolved = _resolver.Resolve("{dist} / {bearing}", settings, variables: variables);
+
+        // Real-world Frankfurt(JN58tc)->NY-area(FN31pr) great-circle distance/bearing, same values
+        // MaidenheadLocatorTests pins directly against the underlying math -- this test only checks
+        // the token wiring reaches that math, not the math itself.
+        Assert.Equal("6338 km / 298°", resolved);
+    }
+
+    [Fact]
+    public void DistAndBearingTokens_NoHisGridVariable_ResolveToEmptyString()
+    {
+        var settings = new OperatorSettings { Grid = "JN58tc" };
+
+        // No variables dictionary at all (mirrors a template that references {dist}/{bearing} before
+        // the operator has typed anything into the QSO fill bar yet) -- same "input not available
+        // yet, empty string, not an error" convention {freq}/{mode} already establish for a null
+        // RadioState.
+        Assert.Equal(" / ", _resolver.Resolve("{dist} / {bearing}", settings, variables: null));
+    }
+
+    [Fact]
+    public void DistAndBearingTokens_HisGridPresentButUnparseable_ResolveToEmptyString()
+    {
+        var settings = new OperatorSettings { Grid = "JN58tc" };
+        var variables = new Dictionary<string, string> { ["his_grid"] = "not a grid" };
+
+        Assert.Equal(" / ", _resolver.Resolve("{dist} / {bearing}", settings, variables: variables));
+    }
+
+    [Fact]
+    public void DistAndBearingTokens_MyGridMissing_ResolveToEmptyString()
+    {
+        var settings = new OperatorSettings(); // no Grid set
+        var variables = new Dictionary<string, string> { ["his_grid"] = "FN31pr" };
+
+        Assert.Equal(" / ", _resolver.Resolve("{dist} / {bearing}", settings, variables: variables));
+    }
+
     [Fact]
     public void FreqAndModeTokens_NullRadioState_ResolveToEmptyString()
     {

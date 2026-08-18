@@ -64,12 +64,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         string FontFamily = "", Rgb24? StrokeColor = null, double StrokeThickness = 0.02,
         Rgb24? ShadowColor = null, double ShadowOffsetX = 0.02, double ShadowOffsetY = 0.02, double RotationDegrees = 0,
         bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
-        Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
+        Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
+        bool Bold = false, bool Italic = false,
+        Rgb24? StackColor = null, double StackStepX = 0.02, double StackStepY = 0.02)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     public sealed record RawBoxElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
-        Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity)
+        Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Which of Phase 2's 3 sources an image element was resolved from, plus enough to
@@ -842,9 +844,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             text.X, text.Y, text.Width, text.Height, text.Z, text.Locked, text.Text, text.FontSizeRelative, text.Color,
             text.FontFamily, text.StrokeColor, text.StrokeThickness,
             text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
-            text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor),
+            text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
+            text.Bold, text.Italic,
+            text.StackColor, text.StackStepX, text.StackStepY),
         BoxElementViewModel box => new RawBoxElementSnapshot(
-            box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
+            box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity,
+            box.CornerRadius),
         ImageElementViewModel image => new RawImageElementSnapshot(
             image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground),
         _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
@@ -1355,7 +1360,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         string? fontFamily = null, Rgb24? strokeColor = null, double strokeThickness = 0.02,
         Rgb24? shadowColor = null, double shadowOffsetX = 0.02, double shadowOffsetY = 0.02, double rotationDegrees = 0,
         bool gradientEnabled = false, TextGradientKind gradientKind = TextGradientKind.Horizontal,
-        Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null)
+        Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null,
+        bool bold = false, bool italic = false,
+        Rgb24? stackColor = null, double stackStepX = 0.02, double stackStepY = 0.02)
     {
         var element = new OverlayElementViewModel
         {
@@ -1384,6 +1391,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             // nullable even though the VM's own are not; this is where that gets reconciled back.
             GradientStartColor = gradientStartColor ?? new Rgb24(255, 0, 0),
             GradientEndColor = gradientEndColor ?? new Rgb24(0, 0, 255),
+            Bold = bold,
+            Italic = italic,
+            StackColor = stackColor,
+            StackStepX = stackStepX,
+            StackStepY = stackStepY,
             Z = z,
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
@@ -1421,7 +1433,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// <summary>Box counterpart to <see cref="CreateOverlayElement"/> -- same wiring shape, no
     /// CanvasFontSize (boxes don't shrink-to-fit).</summary>
     private BoxElementViewModel CreateBoxElement(
-        double x, double y, double width, double height, Rgb24 fillColor, Rgb24? borderColor, double borderThickness, double opacity, int z, bool locked)
+        double x, double y, double width, double height, Rgb24 fillColor, Rgb24? borderColor, double borderThickness, double opacity, int z, bool locked,
+        double cornerRadius = 0)
     {
         var element = new BoxElementViewModel
         {
@@ -1433,6 +1446,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             BorderColor = borderColor,
             BorderThickness = borderThickness,
             Opacity = opacity,
+            CornerRadius = cornerRadius,
             Z = z,
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
@@ -1492,9 +1506,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             text.Text, text.X, text.Y, text.Width, text.Height, text.FontSizeRelative, text.Color, text.Z, text.Locked,
             text.FontFamily, text.StrokeColor, text.StrokeThickness,
             text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
-            text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor),
+            text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
+            text.Bold, text.Italic,
+            text.StackColor, text.StackStepX, text.StackStepY),
         RawBoxElementSnapshot box => CreateBoxElement(
-            box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked),
+            box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked,
+            box.CornerRadius),
         RawImageElementSnapshot image => CreateImageElement(
             image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground),
         _ => throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {snapshot.GetType()}."),
@@ -1586,11 +1603,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                     text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
                     text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness,
                     text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
-                    text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor);
+                    text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
+                    text.Bold, text.Italic,
+                    text.StackColor, text.StackStepX, text.StackStepY);
             case RawBoxElementSnapshot box:
                 return new PersistedBoxElement(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
-                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity);
+                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius);
             case RawImageElementSnapshot image:
                 // GUID-based, never index-derived (plan-review finding -- see PersistedImageElement's
                 // own doc comment): safe against any reordering/filtering between here and the manifest
@@ -1649,11 +1668,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                     text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
                     text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness,
                     text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
-                    text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor);
+                    text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
+                    text.Bold, text.Italic,
+                    text.StackColor, text.StackStepX, text.StackStepY);
             case PersistedBoxElement box:
                 return new RawBoxElementSnapshot(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
-                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity);
+                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius);
             case PersistedImageElement image:
                 var assetPath = _templateStore.GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath);
@@ -1827,7 +1848,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedTextElementStrokeThicknessPx));
         OnPropertyChanged(nameof(SelectedTextElementShadowOffsetXPx));
         OnPropertyChanged(nameof(SelectedTextElementShadowOffsetYPx));
+        OnPropertyChanged(nameof(SelectedTextElementStackStepXPx));
+        OnPropertyChanged(nameof(SelectedTextElementStackStepYPx));
         OnPropertyChanged(nameof(SelectedBoxElementBorderThicknessPx));
+        OnPropertyChanged(nameof(SelectedBoxElementCornerRadiusPx));
         OnPropertyChanged(nameof(SelectedElementLeftPx));
         OnPropertyChanged(nameof(SelectedElementTopPx));
         OnPropertyChanged(nameof(SelectedElementWidthPx));
@@ -1915,6 +1939,36 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             }
 
             text.ShadowOffsetY = value / _targetMode.ImageHeight;
+        }
+    }
+
+    /// <inheritdoc cref="SelectedTextElementStrokeThicknessPx"/>
+    public double SelectedTextElementStackStepXPx
+    {
+        get => SelectedTextElement is { } text ? text.StackStepX * _targetMode.ImageHeight : 0;
+        set
+        {
+            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            {
+                return;
+            }
+
+            text.StackStepX = value / _targetMode.ImageHeight;
+        }
+    }
+
+    /// <inheritdoc cref="SelectedTextElementStrokeThicknessPx"/>
+    public double SelectedTextElementStackStepYPx
+    {
+        get => SelectedTextElement is { } text ? text.StackStepY * _targetMode.ImageHeight : 0;
+        set
+        {
+            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            {
+                return;
+            }
+
+            text.StackStepY = value / _targetMode.ImageHeight;
         }
     }
 
@@ -2014,6 +2068,23 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             }
 
             box.BorderThickness = value / _targetMode.ImageHeight;
+        }
+    }
+
+    /// <summary>Auditor usability review follow-up (2026-08-18): same target-mode-height px
+    /// conversion as <see cref="SelectedBoxElementBorderThicknessPx"/>, for
+    /// <see cref="BoxElementViewModel.CornerRadius"/>.</summary>
+    public double SelectedBoxElementCornerRadiusPx
+    {
+        get => SelectedBoxElement is { } box ? box.CornerRadius * _targetMode.ImageHeight : 0;
+        set
+        {
+            if (SelectedBoxElement is not { } box || _targetMode.ImageHeight <= 0)
+            {
+                return;
+            }
+
+            box.CornerRadius = value / _targetMode.ImageHeight;
         }
     }
 
@@ -2948,6 +3019,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             or nameof(ITemplateElementViewModel.CanvasWidthPixels)
             or nameof(ITemplateElementViewModel.CanvasHeightPixels)
             or nameof(BoxElementViewModel.CanvasBorderThicknessPixels)
+            or nameof(BoxElementViewModel.CanvasCornerRadiusPixels)
             or nameof(ImageElementViewModel.CanvasBitmap)
             or nameof(ITemplateElementViewModel.Locked)
             // Phase 6: pure interaction state (which/whether an element blocks canvas hit-testing),
@@ -2976,7 +3048,20 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             // (unfiltered) PropertyChanged, same "cascade, not a driver" reasoning as CanvasFontSize.
             or nameof(OverlayElementViewModel.RotationTransform)
             or nameof(OverlayElementViewModel.ShadowRenderTransform)
-            or nameof(OverlayElementViewModel.ForegroundBrush))
+            or nameof(OverlayElementViewModel.ForegroundBrush)
+            // Auditor usability review follow-up (2026-08-18): CanvasFontWeight/CanvasFontStyle are
+            // the SAME pure-canvas-chrome-derived-from-a-real-property shape as RotationTransform
+            // above (derived from Bold/Italic, which already independently drive a recompute).
+            or nameof(OverlayElementViewModel.CanvasFontWeight)
+            or nameof(OverlayElementViewModel.CanvasFontStyle)
+            // Auditor usability review follow-up (2026-08-18): HasStack/StackColorForPicker/
+            // CanvasStackStepXPixels/YPixels are the SAME derived-bool/picker-view/canvas-chrome
+            // shapes as HasShadow/ShadowColorForPicker/ShadowRenderTransform above, same reasoning,
+            // same fix.
+            or nameof(OverlayElementViewModel.HasStack)
+            or nameof(OverlayElementViewModel.StackColorForPicker)
+            or nameof(OverlayElementViewModel.CanvasStackStepXPixels)
+            or nameof(OverlayElementViewModel.CanvasStackStepYPixels))
         {
             return;
         }
@@ -3001,7 +3086,23 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 or nameof(OverlayElementViewModel.ShadowColor)
                 or nameof(OverlayElementViewModel.ShadowOffsetX)
                 or nameof(OverlayElementViewModel.ShadowOffsetY)
-                or nameof(OverlayElementViewModel.RotationDegrees))
+                or nameof(OverlayElementViewModel.RotationDegrees)
+                // Auditor usability review follow-up (2026-08-18): Bold/Italic are the FOURTH
+                // occurrence of this same bug class -- a bold (and, in a real italic font FILE
+                // rather than a synthesized skew, potentially an italic) glyph can measure wider
+                // than Regular at the same point size -- see MeasureFittedFontSize's own call site
+                // comment. Both included rather than verifying Italic's own advance-width delta is
+                // exactly zero for the two bundled families and risking that becoming a false claim
+                // if a font file ever changes -- the recompute cost here is cheap (one shrink-to-fit
+                // search), not worth a fragile "these two behave differently" special case.
+                or nameof(OverlayElementViewModel.Bold)
+                or nameof(OverlayElementViewModel.Italic)
+                // Auditor usability review follow-up (2026-08-18): StackColor/StackStepX/StackStepY
+                // are the FIFTH occurrence of this same bug class -- see ComputeCanvasFontSize's own
+                // updated doc comment.
+                or nameof(OverlayElementViewModel.StackColor)
+                or nameof(OverlayElementViewModel.StackStepX)
+                or nameof(OverlayElementViewModel.StackStepY))
         {
             textElement.CanvasFontSize = ComputeCanvasFontSize(textElement);
             textElement.CanvasStrokeThicknessPixels = ComputeCanvasStrokeThicknessPixels(textElement);
@@ -3029,11 +3130,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             OnPropertyChanged(nameof(SelectedTextElementStrokeThicknessPx));
             OnPropertyChanged(nameof(SelectedTextElementShadowOffsetXPx));
             OnPropertyChanged(nameof(SelectedTextElementShadowOffsetYPx));
+            OnPropertyChanged(nameof(SelectedTextElementStackStepXPx));
+            OnPropertyChanged(nameof(SelectedTextElementStackStepYPx));
             OnPropertyChanged(nameof(SelectedElementLeftPx));
             OnPropertyChanged(nameof(SelectedElementTopPx));
             OnPropertyChanged(nameof(SelectedElementWidthPx));
             OnPropertyChanged(nameof(SelectedElementHeightPx));
             OnPropertyChanged(nameof(SelectedBoxElementBorderThicknessPx));
+            OnPropertyChanged(nameof(SelectedBoxElementCornerRadiusPx));
         }
 
         RecomputePreview();
@@ -3437,7 +3541,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             // preview one; an empty string here would have meant every text element always rendered
             // in the default font regardless of what the style panel's picker actually selected.
             OverlayElementViewModel text => new TemplateTextElement(
-                bounds, text.Z, text.ResolvedText, new FontSpec(text.FontFamily, text.FontSizeRelative), text.Color,
+                bounds, text.Z, text.ResolvedText, new FontSpec(text.FontFamily, text.FontSizeRelative, text.Bold, text.Italic), text.Color,
                 text.StrokeColor, text.StrokeThickness,
                 text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
                 // Phase 8: the VM's own simplified 2-stop shape (GradientEnabled/Kind/Start/End)
@@ -3446,9 +3550,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 // store a raw TextGradient directly.
                 text.GradientEnabled
                     ? new TextGradient(text.GradientKind, [new GradientColorStop(0f, text.GradientStartColor), new GradientColorStop(1f, text.GradientEndColor)])
-                    : null),
+                    : null,
+                text.StackColor, text.StackStepX, text.StackStepY),
             BoxElementViewModel box => new TemplateBoxElement(
-                bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity),
+                bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius),
             ImageElementViewModel image => new TemplateImageElement(bounds, image.Z, image.Source, image.Fit),
             _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
         };
@@ -3601,10 +3706,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         // the exact bug class this whole method exists to prevent.
         var shadowOffsetXRelative = element.ShadowColor is { } ? element.ShadowOffsetX : 0;
         var shadowOffsetYRelative = element.ShadowColor is { } ? element.ShadowOffsetY : 0;
+        // Auditor usability review follow-up (2026-08-18): Bold/Italic are the FOURTH occurrence of
+        // this same fit-box-measurement desync class -- Bold glyphs measure wider than Regular at
+        // the same point size, so omitting them here would fit a size against the WRONG (narrower)
+        // measurement while DrawTemplateText actually draws bold, the identical bug this method's
+        // own doc comment already describes for family/stroke/shadow/rotation. StackStepX/Y are the
+        // FIFTH occurrence, same reasoning, gated on StackColor the same way shadow is gated above.
+        var stackStepXRelative = element.StackColor is { } ? element.StackStepX : 0;
+        var stackStepYRelative = element.StackColor is { } ? element.StackStepY : 0;
         var fittedFinalSizePx = _preparer.MeasureFittedFontSize(
-            element.ResolvedText, new FontSpec(element.FontFamily, element.FontSizeRelative), (int)Math.Round(targetHeight),
+            element.ResolvedText, new FontSpec(element.FontFamily, element.FontSizeRelative, element.Bold, element.Italic), (int)Math.Round(targetHeight),
             boundsWidthPx, boundsHeightPx, strokeThicknessRelative,
-            shadowOffsetXRelative, shadowOffsetYRelative, element.RotationDegrees);
+            shadowOffsetXRelative, shadowOffsetYRelative, element.RotationDegrees,
+            stackStepXRelative, stackStepYRelative);
 
         // [Code-review blocker, fixed here] NO extra * ZoomFactor -- zoom already arrives here
         // implicitly, through scaleY: cropHeightPixels (both PreserveAspect and stretch branches
