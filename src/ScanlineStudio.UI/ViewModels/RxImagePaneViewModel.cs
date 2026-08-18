@@ -10,6 +10,7 @@ using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.UI.Imaging;
+using ScanlineStudio.UI.Services;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -44,6 +45,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
     private readonly ILogbookSessionService _logbookSession;
+    private readonly IFilePickerService _filePickerService;
     private readonly ILogger<RxImagePaneViewModel> _logger;
     private readonly DispatcherTimer _telemetryTimer;
     private readonly object _gate = new();
@@ -164,13 +166,16 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// PERSISTENT lock feature exists to back it -- see that control's own tooltip.</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LogQsoCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SaveFrameCommand))]
     private SstvModeDefinition? _detectedMode;
 
     /// <summary>Frame-metadata card's "Size on disk" row -- real, but only for a COMPLETED save: set
     /// from <see cref="IReceivedImageBuffer.Saved"/> (fired once <see cref="IReceivedImageBuffer.SaveAsync"/>'s
-    /// write finishes), the only hook a live pane has to "what file did this frame end up as" -- the
-    /// production writer, <c>ReceiveHistoryRecorder</c>, is a wholly separate class in a different
-    /// layer with no reference back to this pane. Reset to <see langword="null"/> on every fresh
+    /// write finishes), the only hook a live pane has to "what file did this frame end up as" --
+    /// this fires for BOTH real production callers of <see cref="IReceivedImageBuffer.SaveAsync"/>:
+    /// <c>ReceiveHistoryRecorder</c>'s silent auto-archival (a wholly separate class in a different
+    /// layer, no reference back to this pane) and this pane's own manual <see cref="SaveFrameAsync"/>
+    /// -- whichever one most recently finished is what this row reflects. Reset to <see langword="null"/> on every fresh
     /// <see cref="OnModeDetected"/> (a new/restarted decode has no saved file yet), same lifetime
     /// rule as <see cref="StartedAt"/>. An abandoned/partial image's own save (which
     /// <c>ReceiveHistoryRecorder</c> deliberately routes around <see cref="IReceivedImageBuffer.SaveAsync"/>
@@ -247,12 +252,13 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
     private bool _isLookingUpQrz;
 
-    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogbookSessionService logbookSession, ILogger<RxImagePaneViewModel> logger)
+    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogbookSessionService logbookSession, IFilePickerService filePickerService, ILogger<RxImagePaneViewModel> logger)
     {
         _receivedImage = sstvSession.ReceivedImage;
         _sstvSession = sstvSession;
         _localization = localization;
         _logbookSession = logbookSession;
+        _filePickerService = filePickerService;
         _logger = logger;
         AutoSlantEnabled = sstvSession.AutoSlantEnabled;
 
@@ -852,6 +858,50 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanLogQso))]
     private void LogQso() => LogQsoRequested?.Invoke();
 
+    /// <summary>Distinct from <see cref="IReceivedImageBuffer.SaveAsync"/>'s existing production
+    /// caller (<c>ReceiveHistoryRecorder</c>, silent auto-archival on every completed frame) -- this
+    /// is a manual "save a copy wherever I choose," so it needs its own file-picker round-trip rather
+    /// than reusing the recorder's fixed directory/naming scheme. Same "has a mode ever been
+    /// detected this session" gate as <see cref="CanLogQso"/> (nothing nulls <see cref="DetectedMode"/>
+    /// after a reception ends -- saving the last-completed frame after it finishes is exactly the
+    /// point, not just mid-reception).</summary>
+    [ObservableProperty]
+    private string? _saveFrameErrorMessage;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveFrameCommand))]
+    private bool _isSavingFrame;
+
+    private bool CanSaveFrame() => DetectedMode is not null && !IsSavingFrame;
+
+    [RelayCommand(CanExecute = nameof(CanSaveFrame))]
+    private async Task SaveFrameAsync(CancellationToken ct)
+    {
+        Log.SaveFrameInvoked(_logger);
+        SaveFrameErrorMessage = null;
+        IsSavingFrame = true;
+        try
+        {
+            var suggestedFileName = $"{DateTime.Now:yyyyMMdd-HHmmss}_{DetectedMode?.Id ?? "rx"}.png";
+            var picked = await _filePickerService.PickSaveImageFileAsync(suggestedFileName);
+            if (picked is not { } destination)
+            {
+                return;
+            }
+
+            await _receivedImage.SaveAsync(destination.Path, ct);
+        }
+        catch (Exception ex)
+        {
+            Log.SaveFrameFailed(_logger, ex);
+            SaveFrameErrorMessage = _localization.GetString("Panes.RxImage.Error.SaveFrameFailed");
+        }
+        finally
+        {
+            IsSavingFrame = false;
+        }
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured RX capture device name failed")]
@@ -877,6 +927,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ lookup threw")]
         public static partial void QrzLookupThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SaveFrame invoked")]
+        public static partial void SaveFrameInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Manual SaveFrame failed")]
+        public static partial void SaveFrameFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the operator's own callsign (for the decoded station-ID self-filter) failed")]
         public static partial void GetOperatorCallsignFailed(ILogger logger, Exception ex);
