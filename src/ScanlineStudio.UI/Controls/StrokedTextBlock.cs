@@ -36,10 +36,41 @@ public sealed class StrokedTextBlock : Control
     public static readonly StyledProperty<double> StrokeThicknessProperty =
         AvaloniaProperty.Register<StrokedTextBlock, double>(nameof(StrokeThickness));
 
+    /// <summary>Auditor usability review follow-up (2026-08-18) -- Bold/Italic canvas WYSIWYG, same
+    /// "canvas must actually show the effect, not just the mode-exact mini-preview" discipline this
+    /// control's own class doc comment already established for stroke.</summary>
+    public static readonly StyledProperty<FontWeight> FontWeightProperty =
+        AvaloniaProperty.Register<StrokedTextBlock, FontWeight>(nameof(FontWeight), FontWeight.Normal);
+
+    public static readonly StyledProperty<FontStyle> FontStyleProperty =
+        AvaloniaProperty.Register<StrokedTextBlock, FontStyle>(nameof(FontStyle), FontStyle.Normal);
+
+    /// <summary>Auditor usability review follow-up (2026-08-18): the "3D"/Stack text effect's canvas
+    /// WYSIWYG (legacy YONIQ's real <c>CBStack</c>/<c>m_StackPara</c> mechanism -- a stepped stack of
+    /// offset solid-color copies, not a real 3D transform; see
+    /// <see cref="ScanlineStudio.UI.ViewModels.OverlayElementViewModel.CanvasStackStepXPixels"/>'s own
+    /// doc comment for why this lives here, as plain StyledProperties on ONE control, rather than an
+    /// <c>ItemsControl</c> of generated copies). Null <see cref="StackFill"/> means no stack, same
+    /// null-means-none convention as <see cref="Stroke"/>.</summary>
+    public static readonly StyledProperty<IBrush?> StackFillProperty =
+        AvaloniaProperty.Register<StrokedTextBlock, IBrush?>(nameof(StackFill));
+
+    /// <summary>Canvas-display PIXEL space (same space <see cref="FontSize"/> is already in), NOT the
+    /// raw relative <c>StackStepX</c>/Y the VM stores -- the caller (see
+    /// <c>OverlayElementViewModel.CanvasStackStepXPixels</c>) has already multiplied by ImageHeight,
+    /// since Avalonia bindings can't do that arithmetic themselves.</summary>
+    public static readonly StyledProperty<double> StackStepXPixelsProperty =
+        AvaloniaProperty.Register<StrokedTextBlock, double>(nameof(StackStepXPixels));
+
+    public static readonly StyledProperty<double> StackStepYPixelsProperty =
+        AvaloniaProperty.Register<StrokedTextBlock, double>(nameof(StackStepYPixels));
+
     static StrokedTextBlock()
     {
-        AffectsRender<StrokedTextBlock>(TextProperty, FontFamilyProperty, FontSizeProperty, FillProperty, StrokeProperty, StrokeThicknessProperty);
-        AffectsMeasure<StrokedTextBlock>(TextProperty, FontFamilyProperty, FontSizeProperty);
+        AffectsRender<StrokedTextBlock>(
+            TextProperty, FontFamilyProperty, FontSizeProperty, FillProperty, StrokeProperty, StrokeThicknessProperty, FontWeightProperty, FontStyleProperty,
+            StackFillProperty, StackStepXPixelsProperty, StackStepYPixelsProperty);
+        AffectsMeasure<StrokedTextBlock>(TextProperty, FontFamilyProperty, FontSizeProperty, FontWeightProperty, FontStyleProperty);
     }
 
     public string? Text
@@ -78,6 +109,42 @@ public sealed class StrokedTextBlock : Control
         set => SetValue(StrokeThicknessProperty, value);
     }
 
+    public FontWeight FontWeight
+    {
+        get => GetValue(FontWeightProperty);
+        set => SetValue(FontWeightProperty, value);
+    }
+
+    public FontStyle FontStyle
+    {
+        get => GetValue(FontStyleProperty);
+        set => SetValue(FontStyleProperty, value);
+    }
+
+    public IBrush? StackFill
+    {
+        get => GetValue(StackFillProperty);
+        set => SetValue(StackFillProperty, value);
+    }
+
+    public double StackStepXPixels
+    {
+        get => GetValue(StackStepXPixelsProperty);
+        set => SetValue(StackStepXPixelsProperty, value);
+    }
+
+    public double StackStepYPixels
+    {
+        get => GetValue(StackStepYPixelsProperty);
+        set => SetValue(StackStepYPixelsProperty, value);
+    }
+
+    /// <summary>Same clamp/count formula as <c>TransmitImagePreparer.DrawGlyphs</c>'s real stack
+    /// pass (one copy per pixel of the dominant step axis) -- a separate constant, not a
+    /// cross-project shared reference, since <c>ScanlineStudio.UI</c> has no dependency on
+    /// <c>ScanlineStudio.Core.Imaging</c>'s internals.</summary>
+    private const int MaxStackCopies = 128;
+
     private FormattedText? BuildFormattedText()
     {
         if (string.IsNullOrEmpty(Text) || FontSize <= 0)
@@ -89,7 +156,7 @@ public sealed class StrokedTextBlock : Control
             Text,
             CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight,
-            new Typeface(FontFamily),
+            new Typeface(FontFamily, FontStyle, FontWeight),
             FontSize,
             Fill);
     }
@@ -108,6 +175,22 @@ public sealed class StrokedTextBlock : Control
         if (geometry is null)
         {
             return;
+        }
+
+        // Stack draws FIRST (furthest back), behind stroke/fill -- same draw-order convention as the
+        // real pipeline's own stack-then-shadow-then-stroke-then-fill pass (see
+        // TransmitImagePreparer.DrawGlyphs's own doc comment; the shadow copy itself is a separate
+        // sibling TextBlock in the DataTemplate, not part of this control).
+        if (StackFill is not null && (StackStepXPixels != 0 || StackStepYPixels != 0))
+        {
+            var copies = Math.Min(MaxStackCopies, (int)Math.Round(Math.Max(Math.Abs(StackStepXPixels), Math.Abs(StackStepYPixels))));
+            for (var f = copies; f >= 1; f--)
+            {
+                using (context.PushTransform(Matrix.CreateTranslation(StackStepXPixels * f / copies, StackStepYPixels * f / copies)))
+                {
+                    context.DrawGeometry(StackFill, null, geometry);
+                }
+            }
         }
 
         if (Stroke is not null && StrokeThickness > 0)
