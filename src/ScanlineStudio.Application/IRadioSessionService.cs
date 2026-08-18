@@ -32,6 +32,17 @@ public interface IRadioSessionService
     /// with no radio connected (spec/02-radio-layer.md) — not an error.</summary>
     Task ConnectUsingSettingsAsync(CancellationToken ct = default);
 
+    /// <summary>Auditor usability review follow-up (2026-08-18) -- a settings-dialog "Test
+    /// Connection" button. Deliberately takes an explicit <paramref name="spec"/> rather than
+    /// reading persisted settings like <see cref="ConnectUsingSettingsAsync"/> does, so the caller
+    /// can test whatever is CURRENTLY TYPED into the dialog (possibly not yet saved). Resolves and
+    /// polls a fresh, disposable <see cref="IRadioProtocol"/> directly (same "exactly one factory
+    /// match" resolution <see cref="IRadioController.ConnectAsync"/> itself uses internally) --
+    /// deliberately does NOT touch the app's real, persistent <see cref="IRadioController"/> session,
+    /// so a test attempt (success or failure) never disconnects or otherwise disturbs an
+    /// already-working live connection.</summary>
+    Task<RadioConnectionTestResult> TestConnectionAsync(RadioConnectionSpec spec, CancellationToken ct = default);
+
     Task DisconnectAsync();
 
     Task SetFrequencyAsync(long hz, CancellationToken ct = default);

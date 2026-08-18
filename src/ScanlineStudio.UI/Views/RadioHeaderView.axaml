@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:ScanlineStudio.UI.ViewModels"
              xmlns:loc="using:ScanlineStudio.UI.Localization"
+             xmlns:conv="using:ScanlineStudio.UI.Converters"
              x:Class="ScanlineStudio.UI.Views.RadioHeaderView"
              x:DataType="vm:RadioStatusViewModel">
 
@@ -32,11 +33,11 @@
         <Grid ColumnDefinitions="Auto,*,272" ColumnSpacing="10" Margin="9,7,9,8" Classes="Industry">
 
             <!-- VFO card: one of this design's 3 real blueprint-corner sites (design doc §2).
-                 Frequency readout and CAT-link status are real; sideband segment/BW·SPLIT·STEP·RIT
-                 pills/rig-meters pill are literal — no sideband, bandwidth, split, step, RIT, or
-                 rig-meter concept exists on IRadioSessionService today (spec/14-roadmap.md
-                 backlog), same STUB state as before this phase, just re-skinned. Preserved product
-                 decision (design doc §2): no vertical divider between columns B/C, per prior
+                 Frequency readout, CAT-link status, and the rig-meters pill (2026-08-18) are real;
+                 sideband segment/BW·SPLIT·STEP·RIT pills are still literal — no sideband, bandwidth,
+                 split, step, or RIT concept exists on IRadioSessionService today (spec/14-roadmap.md
+                 backlog), same STUB state as before this phase for those, just re-skinned. Preserved
+                 product decision (design doc §2): no vertical divider between columns B/C, per prior
                  direct user feedback — LAYOUT-SPEC's own Column C has a 1px left border; deliberately
                  not resurrected here. -->
             <ContentControl Grid.Column="0" Classes="Industry blueprint"
@@ -133,13 +134,18 @@
                                 <TextBlock Text="{loc:Translate RadioStatus.RitValue}" />
                             </Border>
                         </StackPanel>
-                        <!-- STUB (spec/16-gui-wiring-survey.md:347): no rig-meters concept exists on
-                             IRadioSessionService today. Same disabled+tooltip treatment as above. -->
+                        <!-- Auditor usability review follow-up (2026-08-18): real now — the "no
+                             rig-meters concept exists" premise this stub was built on was checked
+                             directly against RigctldClientProtocol/HamlibRadioProtocol and found
+                             false; RadioState.SwrRatio/AlcLevel/PowerPercent are real, live,
+                             already-polled TX-only meter readings, just never read out of this VM
+                             before now. See RadioStatusViewModel.RigMetersDisplay's own doc comment
+                             for the full reasoning, including why the ADJACENT RX-level meter (a
+                             separate stub, Transceiver card) stays a stub — that one really is
+                             unimplemented. -->
                         <Border Grid.Row="2" Grid.Column="1" Classes="Industry IndustryMini" BorderThickness="1"
-                                HorizontalAlignment="Right" VerticalAlignment="Center"
-                                IsEnabled="False" Opacity="0.45"
-                                ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                            <TextBlock Text="{loc:Translate RadioStatus.RigMetersValue}" />
+                                HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding RigMetersDisplay}" />
                         </Border>
                     </Grid>
                 </StackPanel>
@@ -274,8 +280,17 @@
                      "5 (Favourites), 3 (Transceiver)"). -->
                 <StackPanel Spacing="3">
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="4">
+                        <!-- User-reported gap (2026-08-18): "while TX lights up, receiving should
+                             not stay green" — Opacity dims this purely visually while capture is
+                             paused for an in-flight local transmission (IsCapturePausedForTx), a
+                             SEPARATE flag from IsChecked/Command below — unchecking this toggle
+                             still really stops capture either way, that click-handling contract is
+                             deliberately unchanged (see RadioStatusViewModel.IsCapturePausedForTx's
+                             own doc comment for why this is scoped as a visual-only fix). -->
                         <ToggleButton Classes="Industry IndustryBtn26 IndustryBtnPrimary"
                                       IsChecked="{Binding IsReceiving}" Content="{loc:Translate RadioStatus.Receiving}"
+                                      Opacity="{Binding IsCapturePausedForTx, Converter={x:Static conv:BoolToOpacityConverter.Instance}}"
+                                      ToolTip.Tip="{loc:Translate RadioStatus.ReceivingPausedForTx.Help}"
                                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                         <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary"
                                 Content="{loc:Translate RadioStatus.Halt}" Command="{Binding HaltReceivingCommand}"

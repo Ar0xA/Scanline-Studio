@@ -23,6 +23,16 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
 
     public Task ConnectUsingSettingsAsync(CancellationToken ct = default) => Task.CompletedTask;
 
+    public RadioConnectionTestResult TestConnectionResultToReturn { get; set; } = new(true, "fake-rig", RadioCapabilities.None, null);
+
+    public List<RadioConnectionSpec> TestConnectionCalls { get; } = [];
+
+    public Task<RadioConnectionTestResult> TestConnectionAsync(RadioConnectionSpec spec, CancellationToken ct = default)
+    {
+        TestConnectionCalls.Add(spec);
+        return Task.FromResult(TestConnectionResultToReturn);
+    }
+
     public Task DisconnectAsync() => Task.CompletedTask;
 
     public Task SetFrequencyAsync(long hz, CancellationToken ct = default) => Task.CompletedTask;
