@@ -116,6 +116,7 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
     // are CLong-marshaled C `long`s elsewhere in this file/IHamlibNative).
     private const ulong LevelSwr = 1UL << 28;
     private const ulong LevelAlc = 1UL << 29;
+    private const ulong LevelStrength = 1UL << 30; // RIG_LEVEL_STRENGTH -- int-typed, see RigGetLevelInt
     private const ulong LevelRfPowerMeter = 1UL << 32;
 
     private readonly IHamlibNative _native;
@@ -218,7 +219,18 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
                 }
             }
 
-            return new RadioState(hz, mode, isTransmitting, SignalStrengthDb: null, DateTimeOffset.UtcNow, swr, alc, powerPercent);
+            // Opposite gating from the TX-only meters above -- see RadioState.SignalStrengthDb's own
+            // doc comment. RIG_LEVEL_STRENGTH is int-typed (rig.h), unlike SWR/ALC/RFPOWER_METER --
+            // TryReadIntMeterAsync reads the union's int arm via RigGetLevelInt, not the float arm
+            // RigGetLevel/TryReadMeterAsync use (see IHamlibNative.RigGetLevelInt's own doc comment
+            // for why conflating the two would silently reinterpret raw bytes as the wrong type).
+            int? signalStrengthDb = null;
+            if (!isTransmitting && Capabilities.HasFlag(RadioCapabilities.SignalMeter))
+            {
+                signalStrengthDb = await TryReadIntMeterAsync(LevelStrength).ConfigureAwait(false);
+            }
+
+            return new RadioState(hz, mode, isTransmitting, signalStrengthDb, DateTimeOffset.UtcNow, swr, alc, powerPercent);
         }
         finally
         {
@@ -382,6 +394,11 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
             caps |= RadioCapabilities.PowerMeter;
         }
 
+        if (TryProbe(() => _native.RigGetLevelInt(_rig, VfoCurrent, LevelStrength, out _)))
+        {
+            caps |= RadioCapabilities.SignalMeter;
+        }
+
         return caps;
     }
 
@@ -400,6 +417,30 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
             if (code == 0)
             {
                 return (float?)value;
+            }
+
+            if (IsSoftError(code))
+            {
+                return null;
+            }
+
+            ThrowIfError(code); // hard error -- surface it, don't silently return null
+            return null;        // unreachable -- ThrowIfError always throws for a nonzero hard code
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>Int-arm sibling of <see cref="TryReadMeterAsync"/> -- same soft-error-yields-null,
+    /// hard-error-throws contract, just reading <see cref="IHamlibNative.RigGetLevelInt"/> instead
+    /// of <see cref="IHamlibNative.RigGetLevel"/> (see that method's own doc comment for why the two
+    /// are not interchangeable).</summary>
+    private async Task<int?> TryReadIntMeterAsync(ulong level)
+    {
+        return await CallAsync(() =>
+        {
+            var code = _native.RigGetLevelInt(_rig, VfoCurrent, level, out var value);
+            if (code == 0)
+            {
+                return (int?)value;
             }
 
             if (IsSoftError(code))

@@ -50,7 +50,6 @@
   "RadioStatus.SetFrequency": "Set",
   "RadioStatus.PresetsLabel": "PRESETS",
   "RadioStatus.RxLevelLabel": "RX level",
-  "RadioStatus.RxLevelValue": "—",
   "RadioStatus.TxVolumeLabel": "TX level",
   "RadioStatus.Tune": "Tune",
   "RadioStatus.Tune.Help": "Keys PTT and transmits a steady test tone at the given frequency/duration so the other station's AFC/tuning indicator can lock on -- does not send an image.",

@@ -10,9 +10,11 @@ namespace ScanlineStudio.Core.Radio.Tests;
 /// (soft), -6 = <c>-RIG_EIO</c> (hard), -11 = <c>-RIG_ENAVAIL</c> (soft).</summary>
 public class HamlibRadioProtocolTests
 {
-    // RIG_LEVEL_SWR/ALC/RFPOWER_METER -- verified directly against rig.h (CONSTANT_64BIT_FLAG(28/29/32)).
+    // RIG_LEVEL_SWR/ALC/RFPOWER_METER/STRENGTH -- verified directly against rig.h
+    // (CONSTANT_64BIT_FLAG(28/29/32/30)).
     private const ulong LevelSwr = 1UL << 28;
     private const ulong LevelAlc = 1UL << 29;
+    private const ulong LevelStrength = 1UL << 30;
     private const ulong LevelRfPowerMeter = 1UL << 32;
 
     [Fact]
@@ -27,6 +29,7 @@ public class HamlibRadioProtocolTests
         native.LevelValues[LevelSwr] = 1.2f;
         native.LevelValues[LevelAlc] = 50f;
         native.LevelValues[LevelRfPowerMeter] = 0.75f;
+        native.LevelIntValues[LevelStrength] = -9;
         var sut = new HamlibRadioProtocol(native, model: 1);
 
         var state = await sut.PollAsync(CancellationToken.None);
@@ -37,18 +40,24 @@ public class HamlibRadioProtocolTests
         Assert.Equal(1.2f, state.SwrRatio);
         Assert.Equal(50f, state.AlcLevel);
         Assert.Equal(75f, state.PowerPercent); // 0.75 fraction -> 75%
+        // STRENGTH capability is negotiated (probe succeeded, default LevelCodes entry is 0/success),
+        // but the value itself stays null this poll -- IsTransmitting is true, and SignalStrengthDb
+        // is RX-only (opposite gating from the three TX-only meters just asserted above).
+        Assert.Null(state.SignalStrengthDb);
         Assert.Equal(
             RadioCapabilities.ReadFrequency | RadioCapabilities.SetFrequency |
             RadioCapabilities.ReadMode | RadioCapabilities.SetMode | RadioCapabilities.PttControl |
-            RadioCapabilities.SwrMeter | RadioCapabilities.AlcMeter | RadioCapabilities.PowerMeter,
+            RadioCapabilities.SwrMeter | RadioCapabilities.AlcMeter | RadioCapabilities.PowerMeter |
+            RadioCapabilities.SignalMeter,
             sut.Capabilities);
     }
 
     [Fact]
-    public async Task PollAsync_WhileNotTransmitting_NeverReadsMetersEvenIfCapable()
+    public async Task PollAsync_WhileNotTransmitting_NeverReadsTxMetersEvenIfCapable_ButReadsSignalStrength()
     {
         var native = new FakeHamlibNative { Ptt = 0 };
         native.LevelValues[LevelSwr] = 1.2f;
+        native.LevelIntValues[LevelStrength] = -9;
         var sut = new HamlibRadioProtocol(native, model: 1);
 
         var state = await sut.PollAsync(CancellationToken.None);
@@ -57,9 +66,79 @@ public class HamlibRadioProtocolTests
         Assert.Null(state.SwrRatio);
         Assert.Null(state.AlcLevel);
         Assert.Null(state.PowerPercent);
-        // Exactly 3 -- the one-time connect probe (which runs regardless of TX state, to negotiate
-        // capabilities up front); the per-poll read itself must never fire while not transmitting.
-        Assert.Equal(3, native.CallLog.Count(c => c.StartsWith("rig_get_level:", StringComparison.Ordinal)));
+        Assert.Equal(-9, state.SignalStrengthDb);
+        // Exactly 5 -- the one-time connect probe (4: SWR/ALC/RFPOWER_METER/STRENGTH, which runs
+        // regardless of TX state, to negotiate capabilities up front) plus the per-poll STRENGTH read
+        // (RX-only, so it DOES fire here) -- the per-poll SWR/ALC/RFPOWER_METER reads must never fire
+        // while not transmitting.
+        Assert.Equal(5, native.CallLog.Count(c => c.StartsWith("rig_get_level:", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task PollAsync_WhileTransmitting_NeverReadsSignalStrengthEvenIfCapable()
+    {
+        // Mirrors PollAsync_WhileNotTransmitting_NeverReadsTxMetersEvenIfCapable_ButReadsSignalStrength
+        // above, but for the opposite (RX-only) gating direction.
+        var native = new FakeHamlibNative { Ptt = 1 };
+        native.LevelIntValues[LevelStrength] = -9;
+        var sut = new HamlibRadioProtocol(native, model: 1);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.True(state.IsTransmitting);
+        Assert.Null(state.SignalStrengthDb);
+    }
+
+    [Fact]
+    public async Task PollAsync_SignalStrengthUnavailable_MarksCapabilityAbsent_LeavesFieldNull()
+    {
+        var native = new FakeHamlibNative { Ptt = 0 };
+        native.LevelCodes[LevelStrength] = -11; // -RIG_ENAVAIL, soft -- probed as "not supported"
+        var sut = new HamlibRadioProtocol(native, model: 1);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.False(sut.Capabilities.HasFlag(RadioCapabilities.SignalMeter));
+        Assert.Null(state.SignalStrengthDb);
+    }
+
+    [Fact]
+    public async Task PollAsync_SignalStrengthReadSoftErrorsMidSession_YieldsNull_DoesNotThrow()
+    {
+        var native = new FakeHamlibNative { Ptt = 0 };
+        native.LevelIntValues[LevelStrength] = -9;
+        var sut = new HamlibRadioProtocol(native, model: 1);
+        await sut.PollAsync(CancellationToken.None); // connect + probe, STRENGTH supported
+
+        native.LevelCodes[LevelStrength] = -11; // -RIG_ENAVAIL, soft -- this read now fails
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.Null(state.SignalStrengthDb);
+    }
+
+    /// <summary>Real, easy-to-miss native-marshaling bug class this exists to guard against:
+    /// <c>value_t</c> is a genuine C union (rig.h) -- <c>RIG_LEVEL_STRENGTH</c> is documented "arg
+    /// int (dB)", NOT float like SWR/ALC/RFPOWER_METER, and reading an int-typed level's raw bytes
+    /// back out through the FLOAT arm (<see cref="IHamlibNative.RigGetLevel"/>) would silently
+    /// reinterpret its bit pattern as an unrelated IEEE-754 value instead of throwing or producing an
+    /// obviously-wrong number. <see cref="FakeHamlibNative"/> models the two arms as genuinely
+    /// separate dictionaries (<c>LevelValues</c> float, <c>LevelIntValues</c> int) specifically so a
+    /// test can prove <see cref="HamlibRadioProtocol"/> reads STRENGTH through
+    /// <see cref="IHamlibNative.RigGetLevelInt"/>, not <see cref="IHamlibNative.RigGetLevel"/> -- if
+    /// the implementation ever regressed to the float arm, this value would come back as
+    /// <c>LevelValues.GetValueOrDefault(LevelStrength, 0f)</c> = <c>0</c>, not <c>-9</c>, since only
+    /// <c>LevelIntValues</c> is populated here.</summary>
+    [Fact]
+    public async Task PollAsync_SignalStrength_ReadsThroughTheIntArm_NotTheFloatArm()
+    {
+        var native = new FakeHamlibNative { Ptt = 0 };
+        native.LevelIntValues[LevelStrength] = -9;
+        var sut = new HamlibRadioProtocol(native, model: 1);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.Equal(-9, state.SignalStrengthDb);
     }
 
     [Fact]
