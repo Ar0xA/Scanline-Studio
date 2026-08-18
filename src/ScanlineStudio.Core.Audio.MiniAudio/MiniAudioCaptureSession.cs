@@ -356,6 +356,22 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
         // _disposed idempotency check below, which is exactly the bug a new concurrent stress test
         // caught in the sibling classes). A ReaderWriterLockSlim left for the GC to finalize is a
         // harmless, tiny cost.
+        //
+        // Round-1 functional-audit note: this write lock is held across the (self-join-guarded)
+        // _drainThread.Join() below, which has no timeout -- if any OTHER member that takes the
+        // read lock (HasStopped, OverrunCount) were called on a session that's mid-dispose from a
+        // thread other than the drain thread itself, that call would block on this write lock for
+        // as long as the join takes, and if IT were somehow called from the same logical caller
+        // waiting on this Dispose, that's a two-way deadlock. NOT reachable today: the only
+        // production caller, MiniAudioEngine.ClaimCaptureSessionLocked, nulls its own
+        // `_captureSession` field BEFORE calling Dispose, so CaptureOverrunCount's
+        // `_captureSession?.OverrunCount ?? 0` short-circuits to 0 without ever touching this
+        // session's lock. That safety is held together by ordering in a DIFFERENT file, not
+        // anything in this one -- if a future engine property read a claimed-but-not-yet-disposed
+        // session, or a future caller held a direct reference to this session past the point the
+        // engine disposes it, this becomes live. Worth a timeout-bounded join here if that ever
+        // changes; not fixed now since it isn't reachable yet and CloseTimeout's own bounded-thread
+        // pattern below would need to extend to the join too, not just the native close.
         _lifetimeLock.EnterWriteLock();
         try
         {
