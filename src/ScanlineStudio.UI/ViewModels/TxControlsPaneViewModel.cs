@@ -868,6 +868,67 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         await OpenEditorForSourceAsync(entry, entry.FileName);
     }
 
+    /// <summary>RX pane's "Copy to TX" stub (legacy precedent: <c>fileview.cpp</c>'s
+    /// <c>CopyRectBitmap(pBitmapTXM)</c> -- copies the received bitmap into the TX slot as a fresh
+    /// base image, not an overlay). Distinct from the already-shipped <c>AddLastRxImage</c> (the "+
+    /// IMAGE" flyout's "Last RX" source, INSIDE an in-progress edit, inserted as an overlay element)
+    /// -- this one replaces/opens the editor itself, same as Browse/Stock/Ready Rack. Same
+    /// "nothing received yet" guard as <c>AddLastRxImage</c> (that command's own doc comment covers
+    /// why the buffer's 1x1 black placeholder default needs an explicit check, and why this is a
+    /// body-level no-op rather than a CanExecute gate -- no lifecycle hook to unsubscribe from
+    /// <see cref="IReceivedImageBuffer.Updated"/> from this VM).</summary>
+    [RelayCommand]
+    private async Task CopyReceivedImageToTxAsync()
+    {
+        Log.CopyReceivedImageInvoked(_logger);
+        ErrorMessage = null;
+        // Round-1 code-review finding: reads _receivedImageBuffer.Current exactly once -- a second,
+        // separate read here (e.g. re-reading it for OpenEditorWithLoadedSourceAsync below) could
+        // race a concurrent decode-restart swapping in a fresh 1x1 placeholder BETWEEN the two
+        // reads, silently bypassing the guard just below with a blank editor.
+        var current = _receivedImageBuffer.Current;
+        if (current is { Width: <= 1, Height: <= 1 })
+        {
+            return;
+        }
+
+        if (!TryClaimEditorSlotForNewSource())
+        {
+            return;
+        }
+
+        var fileName = _localization.GetString("Panes.TxControls.CopyToTx.FileName");
+        await OpenEditorWithLoadedSourceAsync(current, fileName);
+    }
+
+    /// <summary>Shared gate for every "load a fresh source into the editor" entry point (Browse,
+    /// Stock, Copy-to-TX) -- see <see cref="OpenEditorForSourceAsync"/>'s own doc comment for the
+    /// blank-editor-replace-or-refuse reasoning this centralizes. Returns <see langword="false"/>
+    /// (a silent no-op for the caller) when there's no target mode selected yet, or a genuinely
+    /// in-progress edit refuses replacement; otherwise claims the slot (<see cref="IsEditorOpen"/>
+    /// true, <see cref="_currentEditorIsBlank"/> false) and returns <see langword="true"/>.</summary>
+    private bool TryClaimEditorSlotForNewSource()
+    {
+        if (SelectedMode is not { })
+        {
+            return false;
+        }
+
+        if (IsEditorOpen)
+        {
+            if (!IsCurrentEditorBlankAndUntouched())
+            {
+                return false;
+            }
+
+            CloseBlankEditorForReplacement();
+        }
+
+        IsEditorOpen = true;
+        _currentEditorIsBlank = false;
+        return true;
+    }
+
     /// <summary><paramref name="source"/> is either a <see cref="StockImageEntry"/> or a
     /// <see cref="string"/> file path. Loads it at native resolution and hands the resulting
     /// <see cref="TxImageEditorPaneViewModel"/> to whoever is listening on <see cref="EditorOpened"/> --
@@ -880,23 +941,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// pick; a genuinely in-progress edit still refuses, exactly as before.</para></summary>
     private async Task OpenEditorForSourceAsync(object source, string fileName)
     {
-        if (SelectedMode is not { })
+        if (!TryClaimEditorSlotForNewSource())
         {
             return;
         }
 
-        if (IsEditorOpen)
-        {
-            if (!IsCurrentEditorBlankAndUntouched())
-            {
-                return;
-            }
-
-            CloseBlankEditorForReplacement();
-        }
-
-        IsEditorOpen = true;
-        _currentEditorIsBlank = false;
         IImageSource original;
         try
         {
@@ -1358,6 +1407,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SelectStockImage invoked: {FileName}")]
         public static partial void SelectStockImageInvoked(ILogger logger, string fileName);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "CopyReceivedImageToTx invoked")]
+        public static partial void CopyReceivedImageInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX source image failed: {FileName}")]
         public static partial void LoadTxSourceImageFailed(ILogger logger, string fileName, Exception ex);

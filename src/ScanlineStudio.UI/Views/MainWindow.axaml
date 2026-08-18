@@ -480,23 +480,35 @@
                                      header caption (same value, different spot) was dropped. -->
                                 <DockPanel DockPanel.Dock="Bottom" Margin="0,4,0,0">
                                     <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingSnug}">
-                                        <!-- No Save/Abort/Re-decode/Copy-to-TX commands exist on
-                                             RxImagePaneViewModel today — disabled rather than left
-                                             clickable-but-dead (auto-save already happens silently
-                                             elsewhere, so a live "Save Frame" button that does nothing
-                                             would read as data loss). Log QSO is real (wired 2026-08-15,
-                                             CW-ID/FSK residual) — this DockPanel's own DataContext is
-                                             MainViewModel, not RxImage, so the binding is explicitly
-                                             qualified, not a bare {Binding LogQsoCommand}. -->
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Content="{loc:Translate Panes.RxImage.SaveFrame}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <!-- Save Frame/Copy-to-TX wired 2026-08-18 (RxImagePaneViewModel.
+                                             SaveFrameCommand / TxControlsPaneViewModel.CopyReceivedImageToTxCommand
+                                             — see their own doc comments; Copy-to-TX has a real legacy
+                                             precedent, fileview.cpp's CopyRectBitmap(pBitmapTXM)). Abort/
+                                             Re-decode still have no backing command on RxImagePaneViewModel —
+                                             left disabled rather than clickable-but-dead. This DockPanel's
+                                             own DataContext is MainViewModel, not RxImage/TxControls, so
+                                             every binding here is explicitly qualified. -->
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Content="{loc:Translate Panes.RxImage.SaveFrame}" Command="{Binding RxImage.SaveFrameCommand}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.Abort}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.RedecodeAction}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.CopyToTx}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <!-- Round-1 code-review finding: without this, a genuine
+                                             in-progress edit (CanChangeSourceOrMode false) left the
+                                             button looking live while TryClaimEditorSlotForNewSource
+                                             silently refused it — the same bindable check Browse/
+                                             Stock already use (TxControlsPaneView.axaml). -->
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.CopyToTx}" Command="{Binding TxControls.CopyReceivedImageToTxCommand}" IsEnabled="{Binding TxControls.CanChangeSourceOrMode}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.LogQso}" Command="{Binding RxImage.LogQsoCommand}" />
                                     </StackPanel>
                                     <TextBlock DockPanel.Dock="Right" Classes="IndustryRowValue" VerticalAlignment="Center" Margin="12,0,0,0" Text="{Binding RxImage.LineProgressText}" />
                                     <ProgressBar Classes="Industry" VerticalAlignment="Center" Margin="12,0,0,0" Minimum="0" Maximum="1" Value="{Binding RxImage.Progress, TargetNullValue=0}" />
                                 </DockPanel>
+                                <!-- Same IsNotNull-gated error-text pattern as QrzLookupErrorMessage
+                                     above (Panes.RxFrameMeta card) — SaveFrameErrorMessage's own doc
+                                     comment on RxImagePaneViewModel. -->
+                                <TextBlock DockPanel.Dock="Bottom" Margin="0,4,0,0" Text="{Binding RxImage.SaveFrameErrorMessage}"
+                                           Foreground="{StaticResource IndustryDanger}"
+                                           TextWrapping="Wrap"
+                                           IsVisible="{Binding RxImage.SaveFrameErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <!-- Previous-frames strip relocated here from its own right-column
                                      card, matching mock2's own placement (inside the Incoming-frame
                                      card, beside the image); still the same real
