@@ -8,6 +8,21 @@ public interface ISstvDecoder
 {
     void PushSamples(ReadOnlyMemory<float> samples);
 
+    /// <summary>Fires once per decoded transmission line (functional-audit fix, D3+D8+D9 coupled
+    /// round 1: this concurrency contract was previously undocumented, unlike its sibling
+    /// <see cref="StationIdDecoded"/> below). Concurrency contract (CLAUDE.md §4): invoked
+    /// SYNCHRONOUSLY on whatever thread runs decode, with no buffering and no marshaling -- a slow
+    /// or blocking subscriber blocks decode, same as <see cref="StationIdDecoded"/>.
+    /// <see cref="DecodedImageUpdate.Image"/> is a LIVE ALIAS of the decoder's own mutable pixel
+    /// buffer, not a copy -- a subscriber that queues it for later/async rendering instead of
+    /// consuming it synchronously will read torn or stale data (see
+    /// <c>AnalogFmSstvDecoder.LineDecoded</c>'s own doc comment for the full concurrency contract
+    /// this interface member is a summary of). A REPLAY pass additionally fires this once per
+    /// replayed row in a single synchronous burst (up to a whole image's worth back to back), all
+    /// wrapping that SAME live array -- a subscriber that defers work sees only the array's final
+    /// state, and a slow one stalls the entire burst, not just one line. Any UI-facing consumer must
+    /// dispatch to its own thread immediately rather than doing real work inline here, same
+    /// established pattern as <see cref="StationIdDecoded"/>.</summary>
     event Action<DecodedImageUpdate>? LineDecoded;
 
     event Action<SstvModeDefinition>? ModeDetected;

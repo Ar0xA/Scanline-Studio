@@ -47,8 +47,19 @@ internal interface IRxLineStagingBuffer : IDisposable
     /// immediately -- capture simply stops, same silent "buffer full" contract
     /// <see cref="RxLineStagingBuffer"/> already establishes for RAM capacity exhaustion, just a
     /// different trigger. No logging happens inside this project's DSP core (a deliberate existing
-    /// layering boundary, `Core.Sstv` has zero <c>ILogger</c> usage anywhere) -- a caller with a path
-    /// to the Application layer can observe this flag and log it there if desired.</summary>
+    /// layering boundary, `Core.Sstv` has zero <c>ILogger</c> usage anywhere).
+    ///
+    /// <b>Not currently observable outside this class</b> (functional-audit correction, D3+D8+D9
+    /// coupled round 2: an earlier version of this comment claimed "a caller with a path to the
+    /// Application layer can observe this flag and log it there if desired" -- that path does not
+    /// exist today. <see cref="IRxLineStagingBuffer"/> itself is `internal`, and nothing on
+    /// <c>ISstvDecoder</c>/<c>RestartableSstvDecoder</c>'s own public surface exposes it). Once set,
+    /// replay and Correct Slant silently become permanent no-ops for the rest of this decoder
+    /// instance's lifetime (see both methods' own capacity-guard call sites) with no way for any
+    /// caller to find out why. A real fix needs new public surface (e.g. an
+    /// <c>ISstvDecoder</c>-level diagnostic property, mirroring how <c>CaptureOverrunCount</c> was
+    /// promoted onto <c>IAudioEngine</c>) -- not done here, flagged so this comment stops claiming
+    /// coverage that doesn't exist.</summary>
     bool HasWriteFailed { get; }
 
     /// <summary>Attempts to append one line's worth of samples to both streams atomically. See
