@@ -77,6 +77,32 @@ public sealed partial class MiniAudioEngine : IAudioEngine
 
     private int _disposed;
 
+    // Round-1 functional-audit fix: OnCaptureSamplesAvailable used to be a single
+    // `SamplesCaptured?.Invoke(samples)` -- MiniAudioCaptureSession.SamplesAvailable's own doc
+    // comment documents per-handler isolation (GetInvocationList(), one throwing subscriber can't
+    // starve another), but that isolation only ever covered the session's own single registered
+    // handler (this forwarder). Real production code has TWO downstream subscribers on THIS event
+    // (SstvSessionService's decoder + waterfall handlers) -- a single multicast Invoke here meant
+    // the first one throwing skipped the second for that chunk, silently. Only not a live bug
+    // because SstvSessionService happens to self-isolate both its own handlers already; any future
+    // subscriber that doesn't would reintroduce it. Same rate-limited hot-path logging shape as
+    // MiniAudioCaptureSession's own _subscriberExceptionCount (docs/logging-guidelines.md).
+    //
+    // Round-2 functional-audit fix: catching every SamplesCaptured subscriber's exception here
+    // means one never propagates back out of OnCaptureSamplesAvailable into the claimed session's
+    // own DrainLoop try/catch -- before this round, that propagation was the ONLY reason
+    // MiniAudioCaptureSession's LastSubscriberException/SubscriberExceptionCount (which
+    // CaptureLastSubscriberException/CaptureSubscriberExceptionCount below pass through to) ever
+    // observed a SamplesCaptured subscriber throwing, since this forwarder is the session's one and
+    // only registered handler. Round 1's isolation fix silently made those two documented
+    // diagnostics permanently report "nothing ever threw" for every real subscriber exception.
+    // _lastCapturedSubscriberException/_capturedSubscriberExceptionCount below are now the engine's
+    // own record of exactly that, and CaptureLastSubscriberException/CaptureSubscriberExceptionCount
+    // read from these instead of the session's (which now only ever reflects a hypothetical future
+    // subscriber registered directly on the session, bypassing this engine).
+    private volatile Exception? _lastCapturedSubscriberException;
+    private int _capturedSubscriberExceptionCount;
+
     // Round-1-engine-review fix: signals a second concurrent DisposeAsync caller that teardown has
     // actually finished, rather than letting it return immediately once _disposed is latched (the
     // original behavior let a second caller's `await DisposeAsync()` complete while the first
@@ -127,16 +153,34 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     /// deliberately does not take <see cref="_captureLock"/> either.</summary>
     public int CaptureOverrunCount => _captureSession?.OverrunCount ?? 0;
 
-    /// <summary>Piece Band-1 (pre-Phase-2 audit): diagnostic pass-through to the active capture
-    /// session's own <see cref="MiniAudioCaptureSession.LastSubscriberException"/> -- same shape
-    /// and same race caveat as <see cref="CaptureOverrunCount"/>'s own doc comment. Null when
-    /// capture isn't started or no subscriber has ever thrown.</summary>
-    public Exception? CaptureLastSubscriberException => _captureSession?.LastSubscriberException;
+    /// <summary>Piece Band-1 (pre-Phase-2 audit): the most recent exception thrown by a
+    /// <see cref="SamplesCaptured"/> subscriber, or null if none has thrown. Round-2 functional-
+    /// audit fix: this used to pass through to the active capture session's own
+    /// <see cref="MiniAudioCaptureSession.LastSubscriberException"/>, which only ever observed a
+    /// <see cref="SamplesCaptured"/> subscriber's exception by accident, via it propagating out of
+    /// <see cref="OnCaptureSamplesAvailable"/> uncaught -- now that per-handler isolation catches it
+    /// there instead (round-1 fix), the session's own field would otherwise always read null. This
+    /// property now reads the engine's own <see cref="_lastCapturedSubscriberException"/>, set at
+    /// the point <see cref="OnCaptureSamplesAvailable"/> actually catches it -- not gated on
+    /// <see cref="_captureSession"/> being non-null, since the exception may have been recorded by a
+    /// chunk still in flight from a session this call races with being stopped (a deliberately
+    /// looser diagnostic-only contract, same reasoning as <see cref="CaptureOverrunCount"/>'s own
+    /// doc comment). <b>Lifetime differs from <see cref="CaptureOverrunCount"/>:</b> that property
+    /// resets to 0 on every fresh <see cref="StartCaptureAsync"/> (per-session); this one and
+    /// <see cref="CaptureSubscriberExceptionCount"/> are cumulative for the whole engine's lifetime
+    /// and never reset by a new capture session, since they now live on the engine itself rather
+    /// than being read from whichever session happens to be active (round-3 functional-audit
+    /// clarification -- the reset-on-restart behavior implicitly changed when this stopped being a
+    /// pass-through, and was previously undocumented).</summary>
+    public Exception? CaptureLastSubscriberException => _lastCapturedSubscriberException;
 
-    /// <summary>Piece Band-1 (pre-Phase-2 audit): diagnostic pass-through to the active capture
-    /// session's own <see cref="MiniAudioCaptureSession.SubscriberExceptionCount"/>. See
-    /// <see cref="CaptureOverrunCount"/>'s own doc comment for the same reasoning.</summary>
-    public int CaptureSubscriberExceptionCount => _captureSession?.SubscriberExceptionCount ?? 0;
+    /// <summary>Piece Band-1 (pre-Phase-2 audit): cumulative count of times any
+    /// <see cref="SamplesCaptured"/> subscriber has thrown. See
+    /// <see cref="CaptureLastSubscriberException"/>'s own doc comment for why this now reads the
+    /// engine's own <see cref="_capturedSubscriberExceptionCount"/> instead of passing through to
+    /// the active capture session, and for its engine-lifetime (not per-session) reset
+    /// semantics.</summary>
+    public int CaptureSubscriberExceptionCount => Volatile.Read(ref _capturedSubscriberExceptionCount);
 
     /// <summary>Piece Engine 5a: diagnostic pass-through to the active playback session's own
     /// <see cref="MiniAudioPlaybackSession.UnderrunCount"/>. See <see cref="CaptureOverrunCount"/>'s
@@ -168,8 +212,20 @@ public sealed partial class MiniAudioEngine : IAudioEngine
             // keeps that off the caller's thread, matching CLAUDE.md's "all hardware communication
             // must be asynchronous" rule.
             var session = await Task.Run(() => OpenCaptureSession(device, sampleRate, drainThreadPriority, periodSizeInFrames, periods, channelSource), ct).ConfigureAwait(false);
-            session.SamplesAvailable += OnCaptureSamplesAvailable;
+            // Round-2 functional-audit fix: publish _captureSession before subscribing, not after.
+            // The drain thread starts running inside the session's own constructor, so the previous
+            // subscribe-then-publish order left a window where a chunk delivered between the two
+            // statements would find _captureSession still null -- ClaimCaptureSessionAsync's
+            // IsRunningOnDrainThread check would then take the WaitAsync() path instead of the
+            // thread-blocking Wait() path a same-thread reentrant StopCaptureAsync call needs (see
+            // ClaimCaptureSessionAsync's own doc comment), risking the exact deadlock that check
+            // exists to avoid. Publishing first means the worst case of the same race is instead
+            // "one early chunk is never forwarded" -- consistent with the drop-newest overrun policy
+            // already documented on IAudioEngine.SamplesCaptured, not a new failure mode. Both
+            // statements remain under _captureLock, which any claimer must also acquire, so this
+            // reordering introduces no new race with ClaimCaptureSessionLocked's own unsubscribe.
             _captureSession = session;
+            session.SamplesAvailable += OnCaptureSamplesAvailable;
             Log.CaptureOpened(_logger, device.Id, sampleRate);
         }
         finally
@@ -271,11 +327,46 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     /// <see cref="IAudioEngine.SamplesCaptured"/>'s documented threading contract, which this
     /// forwarder preserves by construction (it never marshals to another thread). The
     /// <see cref="ReadOnlyMemory{T}"/> is passed through unmodified, preserving that same
-    /// contract's "fresh, independently-owned array" guarantee. Exceptions thrown by subscribers
-    /// are swallowed by the session's own drain loop (documented there); this forwarder inherits
-    /// that, a deliberate, pre-existing deviation from "never silent failure" this class does not
-    /// attempt to fix.</summary>
-    private void OnCaptureSamplesAvailable(ReadOnlyMemory<float> samples) => SamplesCaptured?.Invoke(samples);
+    /// contract's "fresh, independently-owned array" guarantee.
+    ///
+    /// Round-1 functional-audit fix: invokes each <see cref="SamplesCaptured"/> subscriber
+    /// independently (<c>GetInvocationList()</c>, not a single multicast call) so one throwing
+    /// subscriber can't starve another for that chunk -- same per-handler isolation
+    /// <see cref="MiniAudioCaptureSession.SamplesAvailable"/> already provides for ITS single
+    /// registered handler (this forwarder); without this, that isolation never reached
+    /// <see cref="SamplesCaptured"/>'s own real multi-subscriber case.</summary>
+    private void OnCaptureSamplesAvailable(ReadOnlyMemory<float> samples)
+    {
+        var subscribers = SamplesCaptured;
+        if (subscribers is null)
+        {
+            return;
+        }
+
+        foreach (var handler in subscribers.GetInvocationList())
+        {
+            try
+            {
+                ((Action<ReadOnlyMemory<float>>)handler)(samples);
+            }
+            catch (Exception ex)
+            {
+                // Hot path (capture drain thread, once per chunk) -- logged at the first
+                // occurrence, then only a periodic summary, same convention as
+                // MiniAudioCaptureSession's own identical subscriber-exception logging.
+                _lastCapturedSubscriberException = ex;
+                var count = Interlocked.Increment(ref _capturedSubscriberExceptionCount);
+                if (count == 1)
+                {
+                    Log.CapturedSubscriberThrew(_logger, ex);
+                }
+                else if (count % 100 == 0)
+                {
+                    Log.CapturedSubscriberThrewRepeated(_logger, count);
+                }
+            }
+        }
+    }
 
     /// <summary>Disposes a claimed capture session -- inline, on the calling thread, if and only if
     /// that thread is THIS session's own drain thread (<see cref="MiniAudioCaptureSession.IsRunningOnDrainThread"/>,
@@ -302,6 +393,11 @@ public sealed partial class MiniAudioEngine : IAudioEngine
         else
         {
             await Task.Run(session.Dispose).ConfigureAwait(false);
+        }
+
+        if (session.TimedOutDuringClose)
+        {
+            Log.CaptureCloseTimedOut(_logger);
         }
 
         Log.CaptureStopped(_logger);
@@ -454,6 +550,11 @@ public sealed partial class MiniAudioEngine : IAudioEngine
             // Opus plan-review pass): a genuinely stuck device must not result in a silently
             // truncated transmission, per spec/01-architecture.md's Error Handling rule.
             await Task.Run(session.Dispose).ConfigureAwait(false);
+            if (session.TimedOutDuringClose)
+            {
+                Log.PlaybackCloseTimedOut(_logger);
+            }
+
             throw new AudioDeviceUnavailableException(
                 $"Playback did not drain within {DrainTimeout.TotalSeconds}s -- the device may have stopped responding.");
         }
@@ -470,6 +571,11 @@ public sealed partial class MiniAudioEngine : IAudioEngine
         }
 
         await Task.Run(session.Dispose).ConfigureAwait(false);
+        if (session.TimedOutDuringClose)
+        {
+            Log.PlaybackCloseTimedOut(_logger);
+        }
+
         Log.PlaybackStopped(_logger);
     }
 
@@ -582,6 +688,12 @@ public sealed partial class MiniAudioEngine : IAudioEngine
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to initialize the MiniAudio native context -- the native shim may be missing or mismatched")]
         public static partial void ContextInitFailed(ILogger logger, Exception ex);
 
+        [LoggerMessage(Level = LogLevel.Error, Message = "A SamplesCaptured subscriber threw on the capture drain thread")]
+        public static partial void CapturedSubscriberThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "A SamplesCaptured subscriber has now thrown {Count} times on the capture drain thread")]
+        public static partial void CapturedSubscriberThrewRepeated(ILogger logger, int count);
+
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to open capture device '{DeviceId}' at {SampleRate}Hz")]
         public static partial void CaptureOpenFailed(ILogger logger, string deviceId, int sampleRate, Exception ex);
 
@@ -593,6 +705,18 @@ public sealed partial class MiniAudioEngine : IAudioEngine
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Capture stopped")]
         public static partial void CaptureStopped(ILogger logger);
+
+        // Round-3 functional-audit addition: TimedOutDuringClose was already set by
+        // MiniAudioCaptureSession/MiniAudioPlaybackSession's own Dispose() on a genuine hot-unplug
+        // (the native close ran on its own thread and never rejoined within CloseTimeout), but
+        // nothing here ever read it -- a real, documented failure mode that also deliberately leaks
+        // a MiniAudioContext reference (see TimedOutDuringClose's own doc comment for why) produced
+        // zero log output distinguishing it from an ordinary clean stop.
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Capture session's native close timed out -- the device may have been unplugged; its MiniAudioContext reference was deliberately not released")]
+        public static partial void CaptureCloseTimedOut(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Playback session's native close timed out -- the device may have been unplugged; its MiniAudioContext reference was deliberately not released")]
+        public static partial void PlaybackCloseTimedOut(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to open playback device '{DeviceId}' at {SampleRate}Hz")]
         public static partial void PlaybackOpenFailed(ILogger logger, string deviceId, int sampleRate, Exception ex);

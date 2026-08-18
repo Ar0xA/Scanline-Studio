@@ -1,0 +1,243 @@
+# Functional Bug Sweep Playbook
+
+Run this when you want an exhaustive, disciplined `auditor` pass across production
+code hunting **functional/C# correctness bugs** — not legacy parity. Complementary
+to [`docs/audit-playbook.md`](audit-playbook.md), not a replacement: that one verifies
+the ported chain matches YONIQ end-to-end against golden vectors; this one hunts
+bugs in the C# itself, including files with no legacy counterpart at all (pure
+Application/UI code is fully in scope here).
+
+**Why a separate playbook:** per-feature audits during normal work stop as soon as
+one big finding lands and the immediate task moves on. This sweep exists specifically
+to NOT do that — every file gets rounds until it's genuinely clean, not until the
+first blocker is found and fixed.
+
+Trigger: *"run the functional audit from the playbook."*
+
+---
+
+## Scope
+
+- **In scope**: all of `src/` (production code, including **native C**, not just
+  C# — `src/ScanlineStudio.Core.Audio.MiniAudio/native/yoniq_audio.c` is our own
+  code and the audio-thread callback; a C#-only triage heuristic will silently
+  miss it, confirmed the hard way on the first Tier A triage pass) and its paired
+  `tests/` files.
+- **Out of scope**: `yoniq-old/`, `QSSTV-main/`, `hamlib/` (external reference clones,
+  not our code), `native/miniaudio.h` (vendored third-party, not ours), generated/
+  `obj`/`bin` output, `mockups/`.
+- **Test files get a different rubric than production files** — see "The gate" below.
+  The goal for a test file is never "find a bug in the test," it's "would this test
+  actually fail if the behavior it claims to cover broke" (the vacuous-test pattern:
+  `FakeReceiveHistoryStore.SaveFrameCommand` test asserted only side-effect-free state
+  and would have passed even if `SaveAsync` were never called).
+
+## Tiers (risk-based rigor)
+
+Real counts as of 2026-08-18, **before** Step 0 triage below (this is the raw
+candidate pool, not the real target list):
+
+| Tier | Scope | Raw `.cs` count |
+|---|---|---|
+| **A** | `Core.Sstv`, `Core.Radio*`, `Core.Audio*` (DSP/codec math, CAT/native-interop, concurrency-sensitive state machines), plus the orchestration-heavy files in `Application` (`SstvSessionService.cs`, `RadioSessionService.cs`, and similar) | ~100 |
+| **B** | Remaining `Application`, `UI/ViewModels`, `Core.Logbook`, `Core.Imaging` (real state, no DSP/native code) | ~65 |
+| **C** | AXAML code-behind, `Converters`, `Settings`, `Core.Localization`, `Host`, `Plugins` (mechanical/plumbing) | ~33 |
+
+**Start with Tier A.** Do not commit to B/C upfront — checkpoint after A and decide.
+
+---
+
+## How to run
+
+### Step 0 — Triage (cheap, not Opus-effort, always first)
+
+For the tier's candidate file list: a fast pass (`Explore` agent or direct
+`wc -l`/grep for branching) sorts every file into:
+- **Real logic** — actual algorithms, state machines, non-trivial conditionals →
+  goes into the tiered rounds below.
+- **Trivial** — pure DTO/record/interface/enum, near-zero branching → skipped
+  entirely, not even a single round.
+
+For each real-logic production file, also identify its paired test file(s) (if
+any) — these ride along into the same round, not a separate pass.
+
+Output a table (file, tier, real-logic vs trivial, paired test file) and STOP for
+review before any Opus-effort round runs. This is the main cost lever — approve
+the trimmed list, not the raw candidate count above.
+
+### Phase 1 — Rounds
+
+For each real-logic file (+ paired tests), fan out to the `auditor` agent in its
+own isolated context. Restate the ADHD scope rule in every payload — auditor.md's
+own system prompt already carries it, but the fan-out prompt itself needs the
+scope boundary for THIS specific file, same as every other auditor delegation in
+this project.
+
+**Auditor's task per round:**
+1. The existing 8-item functional/C# checklist (`auditor.md`) against the
+   production file.
+2. **Test-integrity check** against the paired test file(s): does each test
+   actually verify the claimed behavior? Would it fail if the behavior broke?
+   Are assertions vacuous or tautological? Do fakes/mocks get configured in a way
+   that could mask a real bug (e.g. a fake that silently no-ops instead of
+   recording a call)?
+
+**Rigor by tier:**
+- **Tier A**: fresh round → fix → fresh round again. A file is NOT done after one
+  clean round — needs **two consecutive clean rounds**. Soft cap 4 rounds, then
+  stop and escalate to the user rather than loop forever.
+- **Tier B**: one round + one confirmation round (fresh agent). Stop once the
+  confirmation round is also clean. Cap 3 rounds.
+- **Tier C**: single pass. Escalates to Tier B rigor only if that pass finds a
+  blocker.
+
+**"Fresh round" = a new Agent call, not a resumed conversation.** Independent
+re-derivation is what catches what the previous round missed — a same-context
+agent re-checking its own prior "looks fine" tends to anchor on it.
+
+**Coupled files get ONE combined round, not N independent ones.** When files
+share a real cross-file invariant (a ring buffer's SPSC contract spanning
+producer/consumer files, a P/Invoke layer underlying several managed wrappers,
+sibling decoders that must agree on a shared index convention), auditing each
+file in isolation is how the cross-file break gets missed. Give the auditor the
+whole coupled set in one round; only split once the auditor itself confirms the
+files are genuinely independent.
+
+**Files too large for one round get chunked, not skipped or force-fit.**
+`AnalogFmSstvDecoder.cs` (5968 lines) is the reference case — see "Chunking a
+mega-file" below. Don't lower a huge file's rigor just because chunking it is
+more work; that's exactly backwards from risk-based tiering.
+
+### Chunking a mega-file
+
+1. Ask the `auditor` itself to propose chunk boundaries (method-group/subsystem,
+   not arbitrary line ranges) as a planning task — it can read the file's real
+   structure faster and more accurately than a heuristic can guess it.
+2. Chunks that mutate the same field cluster stay on **one sequential agent
+   lineage** (same reasoning as "coupled files" above) — splitting a shared-state
+   subsystem across independent chunk reviews is how a cross-chunk invariant
+   break gets missed. Genuinely separable chunks (different state, different
+   subsystem) can run in parallel.
+3. Add **one final whole-file pass** after every chunk lands, scoped ONLY to field
+   lifecycle: for every mutable field, who writes it, and is it correctly reset/
+   preserved at every teardown/reset path (`Dispose`, abandon, force-mode, error
+   recovery, etc.). Chunked reviews structurally cannot see "field X is reset in 4
+   of the 5 teardown paths" — only a whole-file pass can. This pass counts as one
+   of the file's two required clean rounds.
+4. State the total round-count cost explicitly before starting (a chunked mega-file
+   can be 20-40 agent calls on its own) — this is a real budget item, not a rounding
+   error, and deserves its own approval separate from the rest of the batch.
+
+### The gate — every single round ends with this
+
+> "Would you sign off on this file (and its tests) as production-ready right now?
+> Yes/no, and if no, exactly what blocks it."
+
+A round only counts as **clean** if it has zero blocker/risk findings AND an
+explicit yes covering both the production code and its test coverage. A round
+that finds even one real issue is not a stopping point — after the fix, the next
+round re-scans the WHOLE file, not just the fixed spot (this is what catches
+sibling bugs a narrower re-check would miss).
+
+### Phase 2 — Checkpoint
+
+Consolidated table: file | rounds taken | final verdict | findings fixed |
+test-integrity notes. STOP for review before starting the next tier.
+
+---
+
+## Execution mechanics
+
+- Different files run in **parallel** (independent). Rounds *within* one file are
+  sequential (round 2 needs round 1's report + the fix already applied).
+- Fixes are applied by the orchestrating session, not the auditor — auditor stays
+  read-only, matching its existing contract.
+- Checkpoint **per tier**, not per file.
+
+## Cost throttles
+
+- **Gate on Step 0.** Approve the triaged real-logic list before any round runs —
+  the biggest token lever, same principle as `docs/audit-playbook.md`'s own
+  "gate on Phase 1."
+- **Batch rounds.** Fan out 4-5 files at a time, not the whole tier at once.
+- **Escalate on cap, don't loop forever.** A file that's still not clean after the
+  soft cap (4 for A, 3 for B) stops and comes back to the user, rather than
+  burning more rounds hoping it converges.
+
+## Scope options
+
+- Narrow to one workstream: *"Run the functional audit for `Core.Sstv` only."*
+- Skip straight to a specific tier if another's already been swept: *"Tier A is
+  done, start Tier B."*
+
+---
+
+## Tier A — approved batch plan (2026-08-18)
+
+A cheap line-count/branch-keyword triage first cut Tier A's ~112 raw candidates
+down to 35 "real logic" files. Checked that list with the `auditor` itself before
+spending any Opus-effort rounds (per Step 0's own gate) — it found real gaps a
+C#-only, prose-blind heuristic couldn't see, corrected the list to **~50 files**,
+and reordered by actual risk instead of raw line count. **Always re-verify this
+table is still current before reusing it** — it reflects one point-in-time triage
+pass, not a permanent inventory.
+
+**Biggest correction**: the 8 scanline encoder/decoder file pairs (`YCbCr*`,
+`Rgb*`, `MonoAveraged*`, `Robot*`) plus `PixelSampleReader.cs`,
+`ScanlineCodecFactory.cs`, `YCbCr.cs` were missing entirely — precisely the file
+family where the documented Scottie channel-order bug (CLAUDE.md §4) lived. Small
+files, easy to under-rank by line count alone, historically the highest-value
+target in this codebase.
+
+| Batch | Focus | Files |
+|---|---|---|
+| — | `AnalogFmSstvDecoder.cs` (5968 lines) | Chunked separately — see "Chunking a mega-file" above. 10 chunks (D1-D9 + D0 field-lifecycle pass), D3+D8+D9 sequential/coupled, D1 first alone, D2 last. ~20-40 agent calls, own approval. |
+| **1** | Native/managed boundary (highest blast radius — memory corruption, not just wrong pixels) | `MiniAudioEngine.cs`, `MiniAudioCaptureSession.cs`, `MiniAudioPlaybackSession.cs`, `MiniAudioRing.cs` (`unsafe`/`fixed`/SPSC), `NativeAudio.cs` (P/Invoke vs `native/yoniq_audio.c`) |
+| **2** | RX buffer/replay arithmetic (this project's own recurring bug class) | `RxDiskLineStagingBuffer.cs`, `RxLineStagingBuffer.cs` (review together — one shared interface), `ReplayOriginCalculator.cs`, `SlantTracker.cs`, `RestartableSstvDecoder.cs`. Run AFTER decoder chunks D8/D9. |
+| **3** | PTT/transmit sequencing (real-world harm — a leaked keyed transmitter, not just bad output) | `SstvSessionService.cs`, `RadioController.cs`, `TcpTransport.cs`, `RigctldClientProtocol.cs`, `HamlibRadioProtocol.cs`. Point the auditor at `TryUnkeyPttAsync`/`TryCleanupAsync` exception paths specifically. |
+| **4** | Pixel math: TX/RX scanline codecs (the big triage gap above) | `PixelSampleReader.cs`, `YCbCrSequentialScanlineDecoder/Encoder.cs`, `YCbCrLinePairedScanlineDecoder/Encoder.cs`, `RgbSequentialScanlineDecoder/Encoder.cs`, `MonoAveragedPairedScanlineDecoder/Encoder.cs`, `RobotScanlineDecoder/Encoder.cs`, `ScanlineCodecFactory.cs`, `YCbCr.cs`. Review encoder+decoder pairs together, 3-4 files/round. |
+| **5** | Mode tables & constants (different rubric — data verification, not control-flow) | `SstvModeRegistry.cs` split: lines 1-655 = data/table audit, 656-1045 = real per-mode math (higher risk half). `VisHeader.cs` downgraded (392 lines, 1 method, rest constants — table-verification pass). `VisBitDecision.cs`, `SyncAnchorCorrector.cs`. |
+| **6** | Header/lock state machines | `NarrowFskHeaderDecoder.cs`, `VisLockStateMachine.cs`, `AvtTrainingLockStateMachine.cs`, `SyncIntervalTracker.cs`, `SyncEnvelopeDetector.cs` (feeds all four). |
+| **7** | DSP primitives (numeric fidelity, float-vs-double) | `HilbertFmDemodulator.cs`, `PllFmDemodulator.cs`, `ZeroCrossingFrequencyCounter.cs` (all 3 demod types — don't audit one and skip its siblings, they're user-selectable via `DemodType`), `SearchBandpassFilter.cs`, `TxOutputBandpassFilter.cs`, `AfcTracker.cs`, `LevelAgc.cs`, `IirFilter.cs`, `MovingAverage.cs`, `TankFilter.cs`, `Vco.cs`, `RadixTwoFft.cs`. |
+| **8** | Binary/encoding boundaries | `WavFile.cs` (RIFF chunk walking), `FskStationIdEncoder.cs` + `FskStationIdWireFormat.cs`, `StationIdCallsignNormalizer.cs`, `AnalogFmSstvEncoder.cs`, `CwMorseGenerator.cs`. |
+| **9** | Cross-thread publishing & native loading | `WaterfallSource.cs` (needs an explicit scheduler/slow-subscriber verdict per the concurrency rule), `MiniAudioDeviceEnumerator.cs` (Batch 1 round-4 flagged `ReleaseIfCompletedInTime` off-scope: same "timed-out close deliberately leaks the context reference, no log emitted" gap Batch 1 just fixed for the two session types — check whether it needs the same fix), `MiniAudioContext.cs`, `MiniAudioResampler.cs`, all 5 `Core.Radio.Hamlib` native-loading files (`HamlibNative.cs`, `HamlibRuntime.cs`, `HamlibLibraryLocator.cs`, `HamlibVersionGate.cs`, `NativeLibraryLoader.cs`). |
+| **10** | Orchestration/utility — **consider demoting to Tier B rigor** | `TemplateStore.cs`, `MacroTextResolver.cs`, `MaidenheadLocator.cs` (pure function, one round is plenty), `OptionsSettingsService.cs`, `LogbookSessionService.cs`, `RadioSessionService.cs`. |
+
+Also flagged: `FakeRadioTransport.cs`/`FakeAudioEngine.cs` live oddly in
+`src/` (production tree, not `tests/`) despite being test doubles — the
+playbook's own vacuous-fake rubric applies to them directly, batch with
+whichever production file's rounds touch them.
+
+**Status**: **Batch 1 done** (2026-08-18), 4 rounds. Round 1 found 4 real
+findings (2 blocking: `MiniAudioRing`/`MiniAudioPlaybackSession.Write`/`Read`
+silently returning -1 for a zero-length span instead of 0, breaking their own
+documented contract; `MiniAudioEngine.OnCaptureSamplesAvailable`'s single bare
+`?.Invoke` letting one throwing `SamplesCaptured` subscriber starve every
+subscriber registered after it — 2 should-fix: undocumented SPSC
+single-producer/consumer contract, `MiniAudioCaptureSession.Dispose`'s
+write-lock-held-across-unbounded-`Join`). Round 2 caught a real regression
+*introduced by round 1's own fix* (isolating subscriber exceptions in
+`OnCaptureSamplesAvailable` meant they never reached the session's own
+`LastSubscriberException`/`SubscriberExceptionCount`, silently killing those
+two documented diagnostics) plus a sub-microsecond publish-before-subscribe
+ordering bug — this is the exact "own bug class recurring" pattern CLAUDE.md
+§4 warns about, caught specifically because the process re-scans the whole
+file set every round instead of stopping at the first fix. Round 3 verified
+both closed, explicit "yes" gate answer, one new [risk] found (dispose funnel
+never logged `TimedOutDuringClose`, a real hot-unplug case). Fixed rather than
+queued since it was one-line; round 4 re-confirmed it, explicit "yes" gate
+answer, zero blockers/zero risks, auditor recommended closing rather than
+spending a 5th round. 10 new tests added across the batch (3 zero-length-span
+regressions, 1 multi-subscriber-isolation regression, 10 `NativeAudio`
+`EncodeFixedString`/`DecodeFixedString` boundary tests — `MiniAudioRingTests`,
+`MiniAudioPlaybackSessionTests`, `MiniAudioEngineTests`, new
+`NativeAudioTests.cs`). Full suite: 71/71 passing on real PipeWire hardware,
+none skipped. Queued nits (not blocking, left for a future pass if this file
+set is revisited): test-name overreach on the multi-subscriber test, missing
+`EncodeFixedString`/`DecodeFixedString` null/invalid-UTF-8 edge cases,
+`yoniq_audio_context_init`'s missing `[Out]` (cosmetic, confirmed harmless on
+CoreCLR twice), a diagnostic double-read race in the two new
+`TimedOutDuringClose` log guards, zero test coverage for the two new log
+messages themselves, an `internal` type name leaking into one
+`ObjectDisposedException` message. Update this table's status inline as
+batches complete rather than maintaining a separate tracking doc.

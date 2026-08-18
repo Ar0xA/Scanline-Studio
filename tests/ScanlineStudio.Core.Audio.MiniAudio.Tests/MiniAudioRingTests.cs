@@ -40,6 +40,32 @@ public class MiniAudioRingTests
     }
 
     [Fact]
+    public void Write_ZeroLengthSpan_ReturnsZero_DoesNotThrow()
+    {
+        // Round-1 functional-audit regression test: Span<T>.GetPinnableReference returns a null
+        // ref for a zero-length span, so `fixed` pins NULL -- the native shim's own NULL guard
+        // then returned -1, silently violating this method's own documented "0..the input's own
+        // frame count" contract. This exact gap survived three prior review passes specifically
+        // because no test exercised a zero-length input.
+        using var ring = new MiniAudioRing(capacityFrames: 64, channels: 1);
+
+        var writeCount = ring.Write(ReadOnlySpan<float>.Empty);
+
+        Assert.Equal(0, writeCount);
+    }
+
+    [Fact]
+    public void Read_ZeroLengthDestination_ReturnsZero_DoesNotThrow()
+    {
+        using var ring = new MiniAudioRing(capacityFrames: 64, channels: 1);
+        ring.Write(new float[] { 1f, 2f, 3f });
+
+        var readCount = ring.Read(Span<float>.Empty);
+
+        Assert.Equal(0, readCount);
+    }
+
+    [Fact]
     public void Read_ReturnsOnlyWhatWasWritten_WhenLessThanRequested()
     {
         using var ring = new MiniAudioRing(capacityFrames: 64, channels: 1);

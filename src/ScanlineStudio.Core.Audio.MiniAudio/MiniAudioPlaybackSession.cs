@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace ScanlineStudio.Core.Audio.MiniAudio;
 
 /// <summary>
@@ -83,13 +85,27 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     /// <summary>Enqueues samples for playback, returning how many were actually accepted
     /// (0..<c>data.Length</c>) -- the direct backing for
     /// <c>IAudioEngine.EnqueuePlaybackSamples</c>'s own "returns accepted count" contract
-    /// (piece Audio 2). Never blocks.</summary>
+    /// (piece Audio 2). Never blocks. Single-producer only -- see that interface method's own
+    /// doc comment (round-1 functional-audit addition) for why. The read lock this method takes
+    /// guards lifetime (racing <see cref="Dispose"/>), not single-writer -- it deliberately still
+    /// permits multiple genuinely concurrent callers through, which would corrupt the underlying
+    /// single-producer/single-consumer ring; nothing below this method enforces the single-writer
+    /// contract, the caller is responsible for it.</summary>
     public unsafe int Write(ReadOnlySpan<float> data)
     {
         _lifetimeLock.EnterReadLock();
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            // Round-1 functional-audit finding: Span<T>.GetPinnableReference returns a null ref
+            // for a zero-length span, so `fixed` pins a NULL pointer -- the native shim's own
+            // NULL guard then returns -1, silently violating this method's own documented
+            // "0..data.Length" contract. Short-circuit before ever reaching `fixed`.
+            if (data.Length == 0)
+            {
+                return 0;
+            }
+
             fixed (float* ptr = data)
             {
                 return NativeAudio.yoniq_audio_playback_session_write(_handle, ptr, data.Length);
@@ -185,8 +201,13 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
     {
         // PendingFrames' own getter re-enters _lifetimeLock and re-checks disposal on every poll,
         // so no separate guard is needed here.
-        var deadline = DateTime.UtcNow + timeout;
-        while (PendingFrames > 0 && DateTime.UtcNow < deadline)
+        //
+        // Round-2 functional-audit fix: was DateTime.UtcNow, which a wall-clock step (e.g. an NTP
+        // correction) can jump forward or backward -- a forward step would shorten this deadline and
+        // truncate the tail of a real transmission, exactly what this method exists to prevent.
+        // Stopwatch is backed by a monotonic clock, immune to wall-clock adjustments.
+        var stopwatch = Stopwatch.StartNew();
+        while (PendingFrames > 0 && stopwatch.Elapsed < timeout)
         {
             await Task.Delay(10, ct).ConfigureAwait(false);
         }

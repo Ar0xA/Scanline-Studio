@@ -75,6 +75,89 @@ public class MiniAudioEngineTests
         }
     }
 
+    // Round-1 functional-audit finding (Batch 1, native/managed audio boundary): before this fix,
+    // MiniAudioEngine.OnCaptureSamplesAvailable forwarded to SamplesCaptured via a single bare
+    // `?.Invoke(samples)` -- MiniAudioCaptureSession's own drain loop DOES isolate handler
+    // exceptions (DrainLoop, per-handler try/catch), but that guarantee only ever protected the
+    // engine's own single registered forwarder handler. It never reached the engine's real
+    // multi-subscriber case (production has both a decoder handler and a waterfall handler on
+    // IAudioEngine.SamplesCaptured, via SstvSessionService) -- one throwing handler would have
+    // stopped every handler registered after it in invocation-list order from ever running, for
+    // every subsequent chunk too (Invoke's fail-fast semantics on a multicast delegate). This test
+    // proves the fix: a first handler that throws on every single chunk must not prevent a second,
+    // independently-registered handler from continuing to receive every chunk.
+    [RequiresPipeWireFact]
+    public async Task SamplesCaptured_WhenOneSubscriberThrows_OtherSubscribersStillReceiveEveryChunk()
+    {
+        var sinkName = $"sstv_engine_subscriber_isolation_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Engine_Subscriber_Isolation_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        Process? toneProcess = null;
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            toneProcess = StartToneIntoSink(sinkName, durationSeconds: 5);
+
+            var throwingHandlerCallCount = 0;
+            var survivingHandlerSampleCount = 0;
+            var survivorReceivedEnough = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
+
+            // Registered first deliberately -- a bare `?.Invoke` walks the invocation list in
+            // registration order and stops entirely on the first unhandled exception, so this
+            // ordering is what would have starved the second handler under the pre-fix behavior.
+            engine.SamplesCaptured += _ =>
+            {
+                Interlocked.Increment(ref throwingHandlerCallCount);
+                throw new InvalidOperationException("Deliberate test failure -- every chunk, by design.");
+            };
+            engine.SamplesCaptured += chunk =>
+            {
+                if (Interlocked.Add(ref survivingHandlerSampleCount, chunk.Length) > 44100) // >1 second
+                {
+                    survivorReceivedEnough.TrySetResult();
+                }
+            };
+
+            await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
+
+            var completed = await Task.WhenAny(survivorReceivedEnough.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+            Assert.Same(survivorReceivedEnough.Task, completed);
+
+            Assert.True(Volatile.Read(ref throwingHandlerCallCount) > 0, "The throwing handler itself never ran -- test setup is wrong.");
+
+            // Round-2 functional-audit addition: proves CaptureLastSubscriberException/
+            // CaptureSubscriberExceptionCount still observe a SamplesCaptured subscriber throwing
+            // now that OnCaptureSamplesAvailable catches it internally (round-1 fix) instead of
+            // letting it propagate into the session's own DrainLoop, which is what those two
+            // properties used to (accidentally) rely on to ever see anything -- without this
+            // assertion, round 1's isolation fix could silently regress both diagnostics to always
+            // report "nothing ever threw" and nothing here would catch it.
+            Assert.NotNull(engine.CaptureLastSubscriberException);
+            Assert.IsType<InvalidOperationException>(engine.CaptureLastSubscriberException);
+            Assert.True(engine.CaptureSubscriberExceptionCount > 0, "CaptureSubscriberExceptionCount should reflect the throwing handler's failures.");
+
+            await engine.StopCaptureAsync();
+        }
+        finally
+        {
+            if (toneProcess is not null && !toneProcess.HasExited)
+            {
+                toneProcess.Kill(entireProcessTree: true);
+            }
+
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
     [RequiresPipeWireFact]
     public async Task StartCaptureAsync_WhenAlreadyStarted_ThrowsInvalidOperationException()
     {

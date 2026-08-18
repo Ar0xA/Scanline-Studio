@@ -281,6 +281,41 @@ public class MiniAudioPlaybackSessionTests
         }
     }
 
+    [RequiresPipeWireFact]
+    public async Task Write_ZeroLengthSpan_ReturnsZero_DoesNotThrow()
+    {
+        // Round-1 functional-audit regression test, mirroring MiniAudioRingTests' equivalent case:
+        // Span<T>.GetPinnableReference returns a null ref for a zero-length span, so `fixed` pins
+        // NULL -- the native shim's own NULL guard then returned -1, silently violating this
+        // method's own documented "0..data.Length" contract. Gated on real PipeWire hardware, same
+        // as every other test in this file, since MiniAudioPlaybackSession's constructor always
+        // opens a real device -- there is no hardware-free construction path for this type.
+        var sinkName = $"sstv_playback_zero_write_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Playback_Zero_Write_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+
+            var sink = enumerator.OutputDevices.FirstOrDefault(d => d.Id.Contains(sinkName, StringComparison.OrdinalIgnoreCase));
+            Assert.True(sink is not null, $"Virtual sink '{sinkName}' was not found among {enumerator.OutputDevices.Count} enumerated output devices.");
+
+            using var playbackSession = new MiniAudioPlaybackSession(sink!.Id, SampleRate);
+
+            var writeCount = playbackSession.Write(ReadOnlySpan<float>.Empty);
+
+            Assert.Equal(0, writeCount);
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
     private static async Task<float> CapturePeakAsync(string deviceId, AudioChannelSource channelSource, int requiredSeconds = 1)
     {
         var receivedChunks = new List<float[]>();
