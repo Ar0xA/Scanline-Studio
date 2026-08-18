@@ -41,15 +41,79 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// pane's whole lifetime.</summary>
     private static readonly TimeSpan TelemetryPollInterval = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>Same value as <c>RxHistoryPaneViewModel.NotePersistDebounce</c> -- this card's Note
+    /// field is the same underlying <see cref="IReceiveHistoryStore.SetNoteAsync"/> write, just a
+    /// second UI surface for it (the Gallery tab's own Note field, on a user-SELECTED history entry,
+    /// already used this debounce/persist shape first).</summary>
+    private static readonly TimeSpan NotePersistDebounce = TimeSpan.FromMilliseconds(600);
+
     private readonly IReceivedImageBuffer _receivedImage;
     private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
     private readonly ILogbookSessionService _logbookSession;
     private readonly IFilePickerService _filePickerService;
+    private readonly IReceiveHistoryStore _historyStore;
     private readonly ILogger<RxImagePaneViewModel> _logger;
     private readonly DispatcherTimer _telemetryTimer;
     private readonly object _gate = new();
     private bool _postScheduled;
+
+    /// <summary>Path most recently handed to <see cref="OnSaved"/> -- correlation key for
+    /// <see cref="OnHistoryRecorded"/> below (see that method's own doc comment for the full
+    /// reasoning). UI-thread-only: written and read exclusively from inside a
+    /// <see cref="Dispatcher.UIThread"/> post, same "no separate lock needed, the dispatcher queue
+    /// itself serializes access" reasoning as every other cross-thread field on this class.</summary>
+    private string? _lastSavedPath;
+
+    /// <summary>The <see cref="ReceiveHistoryEntry.Id"/> this card's currently-displayed frame
+    /// corresponds to, once known -- see <see cref="OnHistoryRecorded"/>. <see langword="null"/>
+    /// until a save+record round-trip actually completes for the CURRENT frame (a still-decoding or
+    /// just-blanked-by-restart frame has no history row yet) -- <see cref="CanEditFrameMetadata"/>
+    /// gates Note/Flag on this being non-null, closing the real gap an earlier version of this pane
+    /// left as a documented, disabled stub ("this pane has no way to learn a just-saved frame's
+    /// ReceiveHistoryEntry id yet").</summary>
+    private string? _currentEntryId;
+
+    /// <summary>Guards <see cref="OnNoteChanged"/>/<see cref="OnIsFlaggedChanged"/> while
+    /// <see cref="OnHistoryRecorded"/>/<see cref="OnModeDetected"/> are themselves assigning
+    /// <see cref="Note"/>/<see cref="IsFlagged"/> from a freshly-recorded/reset entry -- same
+    /// "suppress the persist-on-load echo" convention as
+    /// <c>RxHistoryPaneViewModel._suppressSelectedEntryEdits</c>.</summary>
+    private bool _suppressFrameMetadataEdits;
+
+    private CancellationTokenSource? _notePersistCts;
+
+    /// <summary>Same ordering-safety shape as <c>RxHistoryPaneViewModel._pendingFlagPersist</c> --
+    /// chained onto whatever's currently pending rather than fired independently, so a rapid
+    /// double-toggle can't complete out of order (no per-write ordering guarantee otherwise).</summary>
+    private Task _pendingFlagPersist = Task.CompletedTask;
+
+    /// <summary>True once <see cref="_currentEntryId"/> is known -- gates the Note/Flag controls'
+    /// <c>IsEnabled</c>. See <see cref="_currentEntryId"/>'s own doc comment for why this can be
+    /// false even for a fully-decoded, on-screen image (the save+record round-trip hasn't completed
+    /// yet, or this is mid-decode with nothing saved at all).</summary>
+    public bool CanEditFrameMetadata => _currentEntryId is not null;
+
+    /// <summary>RxFrameMeta card's editable Note field -- the SAME underlying
+    /// <see cref="IReceiveHistoryStore.SetNoteAsync"/> write <c>RxHistoryPaneViewModel.SelectedEntryNote</c>
+    /// already uses, just reachable from the Receive tab's live frame directly instead of requiring a
+    /// trip to the Gallery tab and re-selecting the entry there.</summary>
+    [ObservableProperty]
+    private string? _note;
+
+    /// <summary>RxFrameMeta card's Flag toggle -- same reasoning as <see cref="Note"/>, backing
+    /// <see cref="IReceiveHistoryStore.SetFlaggedAsync"/>.</summary>
+    [ObservableProperty]
+    private bool _isFlagged;
+
+    /// <summary>Surfaces a Note/Flag persist failure -- same <c>RxHistoryPaneViewModel.ErrorMessage</c>
+    /// convention (both underlying store methods' own doc comments: a missing-entry return "is a
+    /// reachable case... the caller is expected to surface that to the user, not silently ignore
+    /// it"). Deliberately SEPARATE from <see cref="QrzLookupErrorMessage"/> -- a Note/Flag persist
+    /// failure and a QRZ lookup failure are unrelated actions in the same card; conflating them into
+    /// one property would clear/overwrite one error while reporting the other.</summary>
+    [ObservableProperty]
+    private string? _frameMetadataErrorMessage;
 
     [ObservableProperty]
     private Bitmap? _image;
@@ -252,18 +316,20 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
     private bool _isLookingUpQrz;
 
-    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogbookSessionService logbookSession, IFilePickerService filePickerService, ILogger<RxImagePaneViewModel> logger)
+    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogbookSessionService logbookSession, IFilePickerService filePickerService, IReceiveHistoryStore historyStore, ILogger<RxImagePaneViewModel> logger)
     {
         _receivedImage = sstvSession.ReceivedImage;
         _sstvSession = sstvSession;
         _localization = localization;
         _logbookSession = logbookSession;
         _filePickerService = filePickerService;
+        _historyStore = historyStore;
         _logger = logger;
         AutoSlantEnabled = sstvSession.AutoSlantEnabled;
 
         _receivedImage.Updated += OnUpdated;
         _receivedImage.Saved += OnSaved;
+        _historyStore.Recorded += OnHistoryRecorded;
         sstvSession.ModeDetected += OnModeDetected;
         sstvSession.DecodeRestarted += OnDecodeRestarted;
         sstvSession.StationIdDecoded += OnStationIdDecoded;
@@ -556,6 +622,17 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             DetectedMode = mode;
             StartedAt = DateTimeOffset.UtcNow;
             FileSizeBytes = null;
+            // Same "per-RECEPTION state, not per-session" category as OverrideCallsign/Lookup*
+            // below -- a fresh decode has no history row yet (OnHistoryRecorded hasn't fired for
+            // it), so any stale entry id / note / flag from the PREVIOUS frame must not leak into
+            // this one (accidentally flagging/annotating the wrong saved image).
+            _lastSavedPath = null;
+            _currentEntryId = null;
+            _suppressFrameMetadataEdits = true;
+            Note = null;
+            IsFlagged = false;
+            _suppressFrameMetadataEdits = false;
+            OnPropertyChanged(nameof(CanEditFrameMetadata));
             // Round-1 plan-review finding (Log QSO / rx-log-qso.md): these 4 are per-RECEPTION
             // "who is this station" state, same category as DetectedMode/StartedAt above, but were
             // never reset here -- station A sends an FSK-decoded callsign, station B then
@@ -710,6 +787,22 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// <c>SaveAsync</c>'s caller, more API churn than a cosmetic readout justifies.</summary>
     private void OnSaved(string path, int generation)
     {
+        // Correlation tracking for OnHistoryRecorded below -- deliberately NOT inside the file-size
+        // try/catch beneath: a FileInfo read failing (a bug in ITS OWN best-effort reasoning, not
+        // this one) must not also suppress path correlation, since the save itself genuinely
+        // happened -- ReceiveHistoryRecorder only calls RecordAsync (which is what
+        // OnHistoryRecorded reacts to) AFTER this same SaveAsync call already completed
+        // successfully. Same generation-staleness guard as the size read below, for the same reason.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_receivedImage.Generation != generation)
+            {
+                return;
+            }
+
+            _lastSavedPath = path;
+        });
+
         long length;
         try
         {
@@ -736,6 +829,151 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
             FileSizeBytes = length;
         });
+    }
+
+    /// <summary>Closes the real, previously-documented gap this pane's Note/Flag controls used to
+    /// be disabled for: "no way to learn a just-saved frame's ReceiveHistoryEntry id yet."
+    /// <see cref="IReceiveHistoryStore.Recorded"/> is the ONLY hook a live pane has for "a new frame
+    /// just landed in history" (that event's own doc comment) -- correlated back to THIS pane's
+    /// currently-displayed frame by matching <see cref="ReceiveHistoryEntry.FilePath"/> against
+    /// <see cref="_lastSavedPath"/>, set by <see cref="OnSaved"/> just above.
+    ///
+    /// <b>Ordering reasoning</b>: <c>ReceiveHistoryRecorder.RecordCompletedImageAsync</c> always
+    /// calls <c>IReceivedImageBuffer.SaveAsync</c> (which raises <see cref="IReceivedImageBuffer.Saved"/>,
+    /// synchronously invoking <see cref="OnSaved"/>) and only THEN, after that call has fully
+    /// returned, calls <see cref="IReceiveHistoryStore.RecordAsync"/> (which raises this event) --
+    /// so <see cref="OnSaved"/>'s <see cref="Dispatcher.UIThread"/> post is always ENQUEUED before
+    /// this method's own post, and the dispatcher runs same-priority posts in FIFO order, so
+    /// <see cref="_lastSavedPath"/> is reliably set by the time this runs for the matching save. A
+    /// mismatch (stale/absent <see cref="_lastSavedPath"/>, or an unrelated entry -- e.g. an
+    /// abandoned-image record, which deliberately does NOT go through <see cref="IReceivedImageBuffer.SaveAsync"/>
+    /// at all) is a silent, low-severity miss: Note/Flag simply stay disabled for that one frame,
+    /// self-heals on the next real save, same "residual sliver deliberately accepted" tolerance
+    /// <see cref="OnSaved"/>'s own doc comment already established for this exact class.
+    ///
+    /// <b>Round-1 audit-noted edge cases (both accepted, same tolerance class as above, not
+    /// fixed)</b>: (1) <see cref="SaveFrameAsync"/> ALSO calls <see cref="IReceivedImageBuffer.SaveAsync"/>
+    /// (a manual save-as, not the auto-recorder) and so ALSO overwrites <see cref="_lastSavedPath"/>
+    /// -- a manual save landing in the narrow window between the recorder's own SaveAsync and
+    /// RecordAsync calls would block correlation for that one frame the same way a mismatch does.
+    /// (2) A <see cref="ISstvSessionService.ModeDetected"/> fan-out reaching THIS pane before it
+    /// reaches <see cref="IReceivedImageBuffer"/>'s own internal <c>Generation</c> bump could in
+    /// principle let a late <see cref="OnSaved"/> post pass its staleness guard and set
+    /// <see cref="_lastSavedPath"/> AFTER <see cref="OnModeDetected"/>'s own reset already ran --
+    /// correlating the just-finished PREVIOUS frame's entry onto the NEW frame now on screen. Both
+    /// are microsecond-scale races with no observed real-world trigger, same severity class as the
+    /// pre-existing residual sliver above.</summary>
+    private void OnHistoryRecorded(ReceiveHistoryEntry entry) => Dispatcher.UIThread.Post(() =>
+    {
+        if (entry.FilePath != _lastSavedPath)
+        {
+            return;
+        }
+
+        _currentEntryId = entry.Id;
+        _suppressFrameMetadataEdits = true;
+        Note = entry.Note;
+        IsFlagged = entry.IsFlagged;
+        _suppressFrameMetadataEdits = false;
+        OnPropertyChanged(nameof(CanEditFrameMetadata));
+    });
+
+    /// <summary>Mirrors <c>RxHistoryPaneViewModel.OnSelectedEntryNoteChanged</c>/
+    /// <c>PersistNoteDebouncedAsync</c> exactly -- same debounce/cancel-supersedes/error-surfacing
+    /// shape, just against <see cref="_currentEntryId"/> instead of a list-selected entry's id (this
+    /// pane only ever tracks the one currently-displayed frame, so there's no in-place list
+    /// write-back needed -- <see cref="Note"/> already IS the display).</summary>
+    partial void OnNoteChanged(string? value)
+    {
+        if (_suppressFrameMetadataEdits || _currentEntryId is not { } entryId)
+        {
+            return;
+        }
+
+        _notePersistCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _notePersistCts = cts;
+        _ = PersistNoteDebouncedAsync(entryId, value, cts.Token);
+    }
+
+    private async Task PersistNoteDebouncedAsync(string entryId, string? note, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(NotePersistDebounce, ct).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException)
+        {
+            // Normal control flow -- a newer edit superseded this one, same convention as
+            // RxHistoryPaneViewModel's own identical catch.
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => FrameMetadataErrorMessage = null);
+
+        bool succeeded;
+        try
+        {
+            succeeded = await _historyStore.SetNoteAsync(entryId, note, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Same reasoning as RxHistoryPaneViewModel's own identical guard: a keystroke arriving
+            // while SetNoteAsync itself is in flight cancels it -- normal control flow, not a real
+            // failure to surface.
+            return;
+        }
+        catch (Exception ex)
+        {
+            Log.SetNoteFailed(_logger, entryId, ex);
+            Dispatcher.UIThread.Post(() => FrameMetadataErrorMessage = _localization.GetString("Panes.RxFrameMeta.Error.SaveNoteFailed"));
+            return;
+        }
+
+        if (!succeeded)
+        {
+            // Reachable, not defensive -- IReceiveHistoryStore.SetNoteAsync's own doc comment: the
+            // retention-trim ring buffer can delete this row between load and edit.
+            Log.SetNoteEntryMissing(_logger, entryId);
+            Dispatcher.UIThread.Post(() => FrameMetadataErrorMessage = _localization.GetString("Panes.RxFrameMeta.Error.EntryNoLongerExists"));
+        }
+    }
+
+    partial void OnIsFlaggedChanged(bool value)
+    {
+        if (_suppressFrameMetadataEdits || _currentEntryId is not { } entryId)
+        {
+            return;
+        }
+
+        // Same chained-not-independent ordering-safety shape as RxHistoryPaneViewModel's own
+        // PersistFlaggedAsync -- see _pendingFlagPersist's own doc comment.
+        _pendingFlagPersist = PersistFlaggedAsync(entryId, value, _pendingFlagPersist);
+    }
+
+    private async Task PersistFlaggedAsync(string entryId, bool isFlagged, Task previous)
+    {
+        // Entire body inside one try/catch, including `await previous` -- same reasoning as
+        // RxHistoryPaneViewModel's own identical method: if a Dispatcher.Post itself ever throws,
+        // the resulting fault must not propagate into _pendingFlagPersist and permanently break
+        // every LATER toggle's own `await previous`.
+        try
+        {
+            await previous.ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() => FrameMetadataErrorMessage = null);
+
+            var succeeded = await _historyStore.SetFlaggedAsync(entryId, isFlagged).ConfigureAwait(false);
+            if (!succeeded)
+            {
+                Log.SetFlaggedEntryMissing(_logger, entryId);
+                Dispatcher.UIThread.Post(() => FrameMetadataErrorMessage = _localization.GetString("Panes.RxFrameMeta.Error.EntryNoLongerExists"));
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.SetFlaggedFailed(_logger, entryId, ex);
+            Dispatcher.UIThread.Post(() => FrameMetadataErrorMessage = _localization.GetString("Panes.RxFrameMeta.Error.SaveFlagFailed"));
+        }
     }
 
     private void OnUpdated()
@@ -936,5 +1174,17 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the operator's own callsign (for the decoded station-ID self-filter) failed")]
         public static partial void GetOperatorCallsignFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetNoteAsync failed for entry {EntryId}")]
+        public static partial void SetNoteFailed(ILogger logger, string entryId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetNoteAsync: entry {EntryId} no longer exists")]
+        public static partial void SetNoteEntryMissing(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetFlaggedAsync failed for entry {EntryId}")]
+        public static partial void SetFlaggedFailed(ILogger logger, string entryId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetFlaggedAsync: entry {EntryId} no longer exists")]
+        public static partial void SetFlaggedEntryMissing(ILogger logger, string entryId);
     }
 }
