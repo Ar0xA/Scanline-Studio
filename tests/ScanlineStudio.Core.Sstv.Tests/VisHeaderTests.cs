@@ -151,8 +151,14 @@ public class VisHeaderTests
         Assert.Equal(1065.0, VisHeader.NormalSearchCeilingMs, precision: 6);
         // Extended (16-bit): 600 + 10 + 200 + 15 + 16*30(480) = 1305
         Assert.Equal(1305.0, VisHeader.ExtendedSearchCeilingMs, precision: 6);
-        // Narrow: guard*2(200) + bit*(1+24)(550) + retryMargin(200) = 950
-        Assert.Equal(950.0, VisHeader.NarrowSearchCeilingMs, precision: 6);
+        // Narrow: leader(300) + guard*2(200) + bit*(1+24)(550) + retryMargin(200) = 1250.
+        // Functional-audit fix (D6, round 3): the leader term was previously missing from this
+        // constant's own definition entirely -- headerStart marks where the 300ms leader begins
+        // (matching NarrowHeaderTotalDurationMs's own leader-inclusive definition), so omitting it
+        // here meant the "+200 retry margin" was providing zero real margin beyond the packet's own
+        // bare minimum duration (950ms coincided with NarrowHeaderTotalDurationMs's own 950ms by
+        // arithmetic accident, not by design). 1250 is the corrected value.
+        Assert.Equal(1250.0, VisHeader.NarrowSearchCeilingMs, precision: 6);
         // Max across all three -- the extended ceiling is the largest.
         Assert.Equal(1305.0, VisHeader.MaxSearchCeilingMs, precision: 6);
     }

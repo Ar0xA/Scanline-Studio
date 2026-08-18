@@ -342,8 +342,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // `_syncBypassNarrowPhaseActive`), which are speculative scan state only -- every OTHER confirmed
     // match commits synchronously within the same PushSamples call that found it, so `_mode is null`
     // alone already excludes them. Verified via a full field sweep (round-2 plan review) that this is
-    // the only other such flag. `_pendingAnchorCorrectionMode` does NOT need its own term here: Commit()
-    // sets `_mode` before that flag, so it can never be non-null while `_mode` is null.
+    // the only other such flag. `_pendingAnchorCorrectionMode` does NOT need its own term here --
+    // functional-audit correction (D6, round 1): the previous justification ("Commit() sets `_mode`
+    // before that flag") was backwards -- Commit()'s own AVT branch sets `_mode` WITHOUT ever touching
+    // this flag at all (see FinalizeAnchorAndStartDecoding's call site in Commit()). The real reason
+    // this invariant holds is REACHABILITY, not construction: TryProcessBuffer's own per-line loop
+    // resolves any pending anchor correction (or returns early if it can't yet) strictly BEFORE it
+    // will ever try a fresh header search that could reach Commit() again, so a second Commit() call
+    // is provably unreachable while this flag is already set -- except via PerformForceMode, which is
+    // explicitly aware of this and defensively clears the flag itself before proceeding (see that
+    // method's own doc comment for the one case where the invariant would otherwise break). Also now
+    // defensively cleared in AbandonInProgressImage (see its own doc comment) as belt-and-suspenders
+    // for the AVT branch specifically, matching PerformForceMode's own defensive posture rather than
+    // relying on reachability alone.
     //
     // Final code-level review (post-implementation) found one accepted, bounded gap: this is also
     // true during EndOfImage's own 0.5s dead-time skip, so a swap landing in that exact window hands
@@ -1099,6 +1110,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             _demodulatedFrequencies.Add(demodulated);
         }
 
+        // Functional-audit correction (D1 cross-chunk note, confirmed accurate by D7 round 1): this
+        // is the ONE cache of the nine in this substrate that is NOT a pure function of `index` --
+        // ApplyAfcCorrections' own deferred bulk pass (see its own doc comment) post-mutates an
+        // already-cached entry in place (`_demodulatedFrequencies[Rel(i)] += correction`), so a read
+        // here can return either the pre- or post-AFC-correction value depending on whether that
+        // deferred pass has reached index `i` yet relative to THIS call. Safe today (AFC advances
+        // monotonically and only ever corrects an index once, confirmed by both D1 and D7's own
+        // independent audits) but genuinely order-dependent, unlike every other cache this class
+        // documents as a simple index function elsewhere.
         return _demodulatedFrequencies[Rel(index)];
     }
 
@@ -1793,9 +1813,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _avtTrainingLock = null;
         _avtPllDemodulator = null;
 
-        // Also clears any OTHER mode's still-unresolved anchor correction. _pendingAnchorCorrectionMode
-        // is otherwise cleared in exactly one place (TryResolveSyncAnchorCorrection's own success path)
-        // -- every existing caller provably can't reach Commit() while it's already set, an invariant
+        // Also clears any OTHER mode's still-unresolved anchor correction. Functional-audit
+        // correction (D6, round 2): _pendingAnchorCorrectionMode is now cleared in TWO other places
+        // -- TryProcessBuffer's own resolution success path, and (defense-in-depth, added since this
+        // comment was first written) AbandonInProgressImage -- not "exactly one," and this method
+        // isn't the only place aware of the invariant anymore either. The core point stands: every
+        // OTHER caller provably can't reach Commit() while this field is already set (see the
+        // field's own doc comment for the current, corrected reachability argument), an invariant
         // ForceMode is the first to break. Left stale, forcing (say) AVT while a different mode's
         // anchor correction is still pending would leave that stale mode's entry behind: the next
         // TryProcessBuffer call would block AVT decoding until the stale mode's own 3-4-line window
@@ -2326,8 +2350,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                     return;
                 }
 
-                FinalizeAnchorAndStartDecoding(_pendingAnchorCorrectionMode);
+                // Functional-audit fix (D6, round 1): clear BEFORE calling FinalizeAnchorAndStartDecoding
+                // (which fires ModeDetected), not after. A throwing ModeDetected subscriber previously
+                // left this flag still set when the exception propagated out of PushSamples, so the
+                // NEXT PushSamples call would re-run TryResolveSyncAnchorCorrection +
+                // FinalizeAnchorAndStartDecoding for the SAME already-finalized lock -- a duplicate
+                // InitializeAfc/InitializeSlant and a duplicate ModeDetected for one real detection.
+                // Capturing the mode into a local first, since the field is cleared before the call
+                // that needs it.
+                var resolvedMode = _pendingAnchorCorrectionMode;
                 _pendingAnchorCorrectionMode = null;
+                FinalizeAnchorAndStartDecoding(resolvedMode);
             }
 
             var mode = _mode!;
@@ -3218,6 +3251,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // itself Reset()s this same state machine, or starts AVT training, which short-circuits
         // TryDecodeHeader entirely via _avtTrainingPending) -- so this method is never re-entered
         // with the stale post-lock Search value in between.
+        // Functional-audit re-confirmation (D5, round 1): `VisLockStateMachineTests` pins
+        // `IsAtOrBeforeConfirmLock`/`IsSearching` as isolated properties on that state machine, but
+        // nothing pins THIS decoder's own assignment of them to the m_sint2/m_sint3 gates below --
+        // swapping which gate reads which property, or deleting the m_sint3 gate at :3269 entirely,
+        // has no test that would catch it. Deliberately not adding one this round for the same
+        // budget reason as the load-bearing-order note above (TryInterleavedHeaderScan); flagged as
+        // a known, explicitly open gap. Separately reconfirmed: legacy's m_sint1 (the case-0/1
+        // trigger-and-peak tracker feeding TrySyncIntervalDetectionStep's OWN sibling block, not
+        // shown in this excerpt) freezes during real VIS-bit decode (legacy only calls its
+        // SyncTrig/SyncMax from cases 0/1); this port has no equivalent freeze and gates only on
+        // `_syncBypass1PrimaryHeld`, which drops on the routine d12 dips 1100/1300Hz data-bit tones
+        // cause -- an existing, documented, accepted divergence (see this method's own m_sint1
+        // block), not newly found, still open, still not fixed this round.
         if (_visLockStateMachine.IsAtOrBeforeConfirmLock)
         {
             if (d12 > d19 && d12 > _slvl2 && d12 - d19 >= _slvl2)
@@ -3242,7 +3288,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         //
         // S12 fix: legacy's entire m_sint3 block (sstv.cpp:1925-1944) lives inside case 0's own
         // `if(!m_Sync && m_MSync)` gate -- case 1 has ZERO m_sint3 references (not even a
-        // SyncMax continuation, unlike m_sint2 above), and cases 2/9/3 have none either. Gating
+        // SyncMax continuation, unlike m_sint2 above), and cases 2/9/3 have none either. This port
+        // implements only the `!m_Sync` half of that gate (`m_MSync` -- a real, persisted legacy
+        // user option -- has no equivalent here; see docs/removed-features.md's own entry, added
+        // during the functional-audit sweep, chunk D5). Gating
         // the whole block on _visLockStateMachine.IsSearching freezes _syncBypassNarrowPhaseActive
         // and the tracker's own internal state exactly as legacy's untouched m_sint3 object stays
         // frozen outside case 0, resuming from the same phase once back in Search.
@@ -3309,7 +3358,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // sample instead of each scanning the *entire* available buffer before the other gets a turn --
     // see TryDecodeHeader's own doc comment for why the old sequential shape was a real bug, not
     // just a stylistic difference. Reproduces sstv.cpp:1897-1951's real per-sample order exactly:
-    // m_sint1/m_sint2/m_sint3 (case 0's `if (!m_Sync && m_MSync)` block) are checked first, every
+    // m_sint1/m_sint2/m_sint3 (case 0's `if (!m_Sync && m_MSync)` block -- this port implements only
+    // the `!m_Sync` half, see docs/removed-features.md's `m_MSync` entry) are checked first, every
     // sample, and only then (a sibling statement, same sample) the primary VIS-leader threshold that
     // drives m_SyncMode's case 0->1 transition -- TrySyncIntervalDetectionStep's own last statement
     // is a deliberate second copy of that same threshold (see its doc comment), so calling it before
@@ -3450,7 +3500,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // this sample's own transition -- swapping this order would silently invert that gate
             // (m_sint2/m_sint3 would see the state AFTER this sample's own transition instead),
             // and no existing test would catch it (S12's own tests exercise the properties directly,
-            // not this ordering).
+            // not this ordering). Functional-audit re-confirmation (D5, round 1): still true, still
+            // no test catches a swap here -- deliberately not adding one this round (constructing a
+            // real signal that provably distinguishes the two orderings' S12 gate outcomes, rather
+            // than an artificial/reflection-based check of the ordering itself, needs more care than
+            // this pass has budget for); flagged so it stays a known, explicitly open gap rather than
+            // being mistaken for closed.
             if (TrySyncIntervalDetectionStep())
             {
                 return true;
@@ -3553,6 +3608,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _pixels = null;
         _nextLine = 0;
         _bandpassLockedFromSample = int.MaxValue; // matches EndOfImage's own "no lock" convention
+        // Functional-audit fix (D6, round 1): defense-in-depth for IsIdle's own `_mode is null ⇒
+        // _pendingAnchorCorrectionMode is null` invariant (see that field's own doc comment for the
+        // full reasoning) -- reachability alone already protects this today (this method's own AVT
+        // hand-off call site only ever runs after the flag has already been cleared earlier in the
+        // same PushSamples iteration), but clearing it here too costs nothing for the ordinary
+        // Commit()-calls-this-first path (Commit's own non-AVT branch unconditionally reassigns it
+        // moments later anyway) and closes the one branch that never otherwise touches it (Commit's
+        // AVT branch), matching PerformForceMode's own explicit defensive clear for the same field.
+        _pendingAnchorCorrectionMode = null;
         ResetReSyncState(); // legacy's Start()-side m_Skip = 0, sstv.cpp:1725
     }
 
@@ -3786,17 +3850,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // pre-sync-segment offset directly from LineSegments (rather than a new hardcoded table)
         // keeps this correct automatically and is 0 -- a no-op -- for every mode whose tracked sync
         // segment is already first.
-        var preSyncSegmentOffsetMs = 0.0;
-        foreach (var segment in mode.LineSegments)
-        {
-            if (segment is SyncSegment syncSegment && syncSegment.FrequencyHz == targetToneHz)
-            {
-                break;
-            }
-
-            preSyncSegmentOffsetMs += segment.DurationMs;
-        }
-
+        // Functional-audit fix (D6, round 1): was an inlined duplicate of this exact computation
+        // (exact `==` on `double` frequencies, and -- the real defect -- silently falling through to
+        // `preSyncSegmentOffsetMs == 0` on no match instead of throwing) rather than a call to the
+        // shared, already-tested SstvModeRegistry.GetSyncSegmentOffsetMs (used elsewhere in this
+        // class for the identical value, e.g. InitializeSlant). Unreachable today (every non-AVT mode
+        // has a matching sync segment; AVT never reaches this method), but a silent duplicate of a
+        // helper whose whole other purpose is to throw loudly on that exact condition is a
+        // maintenance hazard -- a future mode registration bug here would have shifted the anchor a
+        // full transmission line backward with no diagnostic, instead of throwing like every other
+        // caller of the shared helper does.
+        var preSyncSegmentOffsetMs = SstvModeRegistry.GetSyncSegmentOffsetMs(mode);
         var syncPeakOffsetSamples = (preSyncSegmentOffsetMs + SstvModeRegistry.GetSyncPeakOffsetMs(mode)) / 1000.0 * _sampleRate;
 
         // Round-1-review-equivalent fix, caught by this piece's own test run (not assumed): legacy's
@@ -3908,6 +3972,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // the checksum bits, not at Start()'s slightly-earlier legacy firing point) and matching this
     // method's own prior (buggy) behavior, which the currently-passing
     // SstvRoundTripTests.NarrowModeHeader_IsDetected_ForMnFamily test already relies on.
+    // Functional-audit finding, OPEN (D6, round 4 -- not fixed, needs an explicit decision):
+    // AnalogFmSstvEncoder.cs's GenerateOutHeadSegments emits a 400ms burst BEFORE every narrow
+    // packet, unconditionally, for every encode this port produces. `headerStart` below (==
+    // `_consumedSamples`) is assumed to be where the real narrow packet itself begins (delta = 0) --
+    // but `_consumedSamples` never advances pre-lock, so delta == 400ms for this port's own encoder
+    // output, and for any real MMSSTV transmission carrying the same burst. Even after round 3's own
+    // ceiling widening (below, ~306ms of real tolerance past the packet's own minimum decode point)
+    // and round 4's delta-robust anchor fix (also below), the search window still can't reach a
+    // 400ms delta -- meaning this fixed-window narrow path remains DEAD CODE for realistic audio
+    // today, exactly like its VIS sibling (see TryDecodeVisHeader's own identical note for the full
+    // shared derivation and the two remedy options). The round-3/round-4 fixes in this method were
+    // still worth landing regardless (they widen the window without weakening it, and the
+    // delta-robust anchor removes a real correctness trap for whenever this gets revisited) -- but
+    // they do not, by themselves, revive this path. Left as an open architectural decision (make
+    // delta-robust and widen far enough to clear OutHEAD, or retire this path and
+    // TryDecodeVisHeader together along with MaxSearchCeilingMs's own first-refusal gate), not
+    // picked unilaterally this round.
     private bool TryDecodeNarrowModeHeader()
     {
         var totalHeaderSampleCount = (int)Math.Round(VisHeader.NarrowHeaderTotalDurationMs / 1000.0 * _sampleRate);
@@ -3917,10 +3998,25 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         }
 
         var headerStart = _consumedSamples;
-        var searchCeiling = headerStart + MsToSamples(
-            VisHeader.NarrowGuardDurationMs * 2 // guard hold + mode-2's own timeout window
-            + VisHeader.NarrowBitDurationMs * (1 + 24) // start-bit training pulse + 24 data bits
-            + 200); // retry margin, matching TryDecodeVisDataBits' own shape
+        // Functional-audit fix (D6, round 3): was missing VisHeader.NarrowLeaderDurationMs (300ms)
+        // from this sum entirely. headerStart is where the 300ms leader itself begins (matching
+        // totalHeaderSampleCount's own gate above, which DOES include the leader), so the fskDecoder's
+        // own internal trigger search doesn't even reach the guard tone until ~300ms into a real
+        // packet -- omitting that term made this ceiling numerically coincide with
+        // NarrowHeaderTotalDurationMs (leader+guard+startbit+528 = 950ms) by coincidence, since
+        // guard*2+bit*25+200 also sums to 950ms, leaving the "+200 retry margin" the old comment
+        // claimed actually providing ZERO real margin beyond the packet's own bare minimum duration --
+        // any real-world jitter (clock drift, a guard trigger landing a few samples later than the
+        // idealized 300ms) would fail this attempt and fall back to the persistent scanners instead of
+        // succeeding via this fixed-window path as designed. Functional-audit fix (D6, round 4): now
+        // reads VisHeader.NarrowSearchCeilingMs directly (its own definition updated with the same
+        // leader-term fix) instead of hand-transcribing the arithmetic a second time, matching
+        // NormalSearchCeilingMs/ExtendedSearchCeilingMs's own established "one source of truth, so it
+        // and MaxSearchCeilingMs can never silently desync" convention -- the desync this exact
+        // hand-transcription caused (VisHeader.cs's own NarrowSearchCeilingMs staying at the stale
+        // pre-fix 950ms while this method's own local formula moved to 1250ms) is what round-3's
+        // finding 3 flagged.
+        var searchCeiling = headerStart + MsToSamples(VisHeader.NarrowSearchCeilingMs);
         var availableUpTo = Math.Min(TotalSamplesReceived, searchCeiling);
 
         // Band-2 item S14: mark/space no longer cold-started fresh per call (see D19At/FskSpaceAt's
@@ -3970,7 +4066,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 return false;
             }
 
-            _consumedSamples = headerStart + totalHeaderSampleCount;
+            // Functional-audit fix (D6, round 4): was `headerStart + totalHeaderSampleCount` -- a
+            // FIXED offset from headerStart regardless of where in the search window `sample` (the
+            // index the lock actually completed at) landed. That's only correct if the packet starts
+            // exactly at headerStart (delta = 0); TryNarrowFskScan's own sibling anchor computation
+            // (this method's persistent-scan counterpart, see its own doc comment) is delta-ROBUST --
+            // it derives the true origin from the ACTUAL completion index minus
+            // SamplesSinceBitClockOrigin, working correctly regardless of delta. Using the same
+            // technique here removes a latent trap: round 3's own ceiling widening moved this
+            // method's search window closer to (without reaching) the ~400ms delta this port's own
+            // encoder's OutHEAD burst actually introduces (AnalogFmSstvEncoder.cs's
+            // GenerateOutHeadSegments, emitted before every narrow packet) -- had the window ever
+            // widened further (or OutHEAD's own duration changed), the old fixed-offset formula would
+            // have silently committed an anchor up to ~400ms wrong. This fix makes a wrong anchor
+            // structurally impossible here regardless of window width or delta.
+            var originSample = sample - result.Value.SamplesSinceBitClockOrigin;
+            var anchor = originSample + MsToSamples(VisHeader.NarrowPostBitClockOriginDurationMs);
+            _consumedSamples = anchor;
 
             // Direct port of a real regression caught by independent review: this used to duplicate
             // Commit()'s body inline instead of calling it, which meant _afcBoundSample (added when
@@ -4172,8 +4284,44 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         return null;
     }
 
+    // Functional-audit note (D6, round 1): rounds, where legacy's own `int m_SyncTime = 30 *
+    // sys.m_SampFreq/1000` (sstv.cpp:1965/:1986, assigning a double into an int field, sstv.h:631)
+    // TRUNCATES -- 331 samples vs legacy's 330 for the VIS bit period at this project's default
+    // 11025Hz rate. Deliberately NOT changed to match: legacy's own C narrowing is itself an
+    // imprecise approximation of the true 330.75-sample period (11025*0.03), and rounding is
+    // actually the closer approximation (+0.25 samples/bit vs legacy's -0.75) -- matching legacy
+    // exactly here would trade a smaller numeric error for byte-for-byte parity with a truncation
+    // quirk, for no decode-correctness benefit (verified: bit-decision points sit ~±15ms from either
+    // boundary, so a 1-sample/bit drift never flips a bit on a clean signal, even accumulated across
+    // a full 30-bit extended header). AvtTrainingLockStateMachine.cs's own identically-named helper
+    // makes the OPPOSITE choice (truncates) specifically for golden-vector parity with a different
+    // legacy call site -- see that class's own doc comment; the two are intentionally inconsistent
+    // with each other, not a bug to unify.
     private int MsToSamples(double ms) => (int)Math.Round(ms / 1000.0 * _sampleRate);
 
+    // Functional-audit finding, OPEN (D6, round 4 -- not fixed, needs an explicit decision, see
+    // TryDecodeNarrowModeHeader's own identical note for the full derivation): this fixed-window
+    // path assumes `headerStart` (== `_consumedSamples`) is where the real VIS/narrow packet itself
+    // begins (delta = 0). AnalogFmSstvEncoder.cs's GenerateOutHeadSegments emits an 800ms burst
+    // BEFORE every normal/extended VIS packet (400ms before every narrow one), unconditionally, for
+    // every encode this port produces -- and `_consumedSamples` never advances pre-lock, so
+    // delta == that OutHEAD duration for this port's own encoder output, and for any real MMSSTV
+    // transmission carrying the same burst. This method's own search ceiling (`VisHeader.
+    // NormalSearchCeilingMs`/`ExtendedSearchCeilingMs`, ~1065/1305ms) tolerates delta up to only
+    // ~185ms -- meaning this fixed-window VIS path is DEAD CODE for realistic audio today, same as
+    // the narrow sibling. No wrong output results (TryInterleavedHeaderScan's fallback scanners --
+    // VisLockStateMachine/TryNarrowFskScan -- cover every case that reaches production; the
+    // round-trip/golden-vector suite passes entirely through them), but a documented "primary"
+    // detection path delivers nothing on any input that isn't hand-constructed to start exactly at
+    // delta=0. Two ways to close this, neither done here: (a) make this method delta-robust the same
+    // way TryNarrowFskScan already is (search for the packet's own start within a widened window,
+    // derive the anchor from where it's actually found rather than a fixed offset from headerStart --
+    // TryDecodeNarrowModeHeader's own round-4 fix demonstrates the technique for the narrow case);
+    // or (b) retire both fixed-window paths as dead code and drop `MaxSearchCeilingMs`'s own
+    // first-refusal gate in `TryInterleavedHeaderScan` (which exists solely to give these paths a
+    // fair chance to win a race they can now never enter). Left as an open decision rather than
+    // picked unilaterally -- this is an architectural call (delta-robustness work vs. deleting a
+    // documented detection path), not a same-shape audit-fix-pass edit.
     private bool TryDecodeVisHeader()
     {
         // S10 fix: prefix now covers the first FULL byte (leader/break/leader/start-bit + 7 data bits
@@ -4215,12 +4363,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         if (isExtended)
         {
             // 8 more bits (the real extended-mode byte) before the stop bit -- windows 8-15 of the
-            // same continuous tone race, not a fresh decode (TryDecodeVisDataBits recomputes bits 0-7
-            // too, deterministically identical to firstByteBits above; harmless redundancy).
+            // same continuous tone race, NOT guaranteed to be a fresh decode of the SAME occurrence
+            // as firstByteBits above (functional-audit correction, D6 round 2): the earlier comment
+            // here claimed this call is "deterministically identical to firstByteBits above,
+            // harmless redundancy" -- that's only true if bits 0-15 all decode cleanly on the first
+            // trigger. TryDecodeVisDataBits' own outer loop (see its doc comment) retries from a NEW
+            // trigger point whenever any bit in this call's own 0-15 range gets rejected -- including
+            // bits 8-15, which the FIRST call above never even attempted. A reject there resumes
+            // scanning and can return a completely different header occurrence's bits 0-7 in
+            // `allBits[0..8]`, not necessarily still 0x23 (legacy's real behavior for the same case,
+            // sstv.cpp:1981-1983/:2066-2069: a reject anywhere in case 9 drops to case 0, forcing the
+            // escape byte to be re-matched before the second byte counts -- this port previously
+            // trusted `allBits[8..16]` as the extended code without that re-check).
             var allBits = TryDecodeVisDataBits(headerStart, VisHeader.ExtendedDataBitCount);
             if (allBits is null)
             {
                 return false;
+            }
+
+            if (VisHeader.DecodeRawByte(allBits.AsSpan(0, VisHeader.FirstByteBitCount)) != VisHeader.ExtendedVisEscapeCode)
+            {
+                return false; // matches legacy: a reject anywhere in case 9 forces re-matching the escape byte, sstv.cpp:1981-1983
             }
 
             var extendedCode = VisHeader.DecodeRawByte(allBits.AsSpan(VisHeader.FirstByteBitCount, 8));
@@ -4528,6 +4691,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <see cref="InitializeAfc"/> -- production code has no need to read this back.</summary>
     internal bool HasAfcTrackerForTests => _afcTracker is not null;
 
+    /// <summary>Test-only visibility into the AFC correction cursor -- functional-audit addition
+    /// (D7, round 1). Lets a test confirm AFC correction actually keeps pace with live decode
+    /// through to (near) the end of a real image, not just the first few lines -- <see
+    /// cref="_afcBoundSample"/> (below) has already shipped one silent total-AFC-disable regression
+    /// once (see its own call-site comment), with zero test coverage for either field before now.</summary>
+    internal int AfcProcessedUpToForTests => _afcProcessedUpTo;
+
+    /// <summary>Test-only visibility into <see cref="_afcBoundSample"/> -- see
+    /// <see cref="AfcProcessedUpToForTests"/>'s own doc comment for why this exists.</summary>
+    internal int AfcBoundSampleForTests => _afcBoundSample;
+
     /// <summary>Test-only visibility into the demod type this instance was actually constructed
     /// with -- production code has no need to read this back. Same reasoning as
     /// <see cref="RestartableSstvDecoder.InnerStationIdDecodeEnabledForTests"/>: exists so a test can
@@ -4814,6 +4988,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 }
             }
 
+            // Functional-audit re-confirmation (D7, round 1): unconditional by design -- matches
+            // legacy's own unconditional `d += m_AFCDiff` (sstv.cpp:2270) outside the `m_CurMax > 16`
+            // gate that only wraps the MEASUREMENT update above (ApplyGatedAfcUpdate/the ZC-counter
+            // branch). A prior ultracode review finding moved this line outside that gate for exactly
+            // this reason; reverting it back inside would silently stop applying the STANDING
+            // correction during any quiet/weak stretch, even though `_afcTracker.CorrectionHz` itself
+            // is still valid from the last real lock. No test currently asserts this specifically
+            // (would need a real signal with a deliberate quiet stretch after AFC has already locked
+            // in a correction, distinguishing "correction still applied, just not re-measured" from
+            // "correction paused too") -- deliberately not constructed this round for the same budget
+            // reason as this chunk's other deferred test gaps; flagged so a future revert of this
+            // line's position isn't silently accepted by the existing suite.
             _demodulatedFrequencies[Rel(_afcProcessedUpTo)] += _afcTracker.CorrectionHz;
         }
     }

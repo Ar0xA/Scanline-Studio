@@ -186,3 +186,29 @@ and its resolution, verified directly against current source, not inferred from 
 - **Legacy**: `Option.cpp`'s `GroupBox1`/`CheckBox1`/`Edit1`/`Edit2` (`FormShow`/`CheckBox1Click`/`FormCloseQuery`) — a YONIQ-fork-specific (not stock MMSSTV) toggle connecting `Mmsstv->ClientSocket1` to a user-entered IP:port, persisting `logconect`/`logip`/`logport` to a memo-backed config. No protocol documentation, message format, or companion-application identity exists anywhere in the available legacy source — the socket is opened and left connected, with no visible read/write logic beyond the connect toggle itself.
 - **Replacement**: none, and none planned. `spec/08-logging`'s ADIF batch import/export is the closest analog for any "another app wants my QSO/frequency data" use case (see the separate MMlink/Loglink entries above for the same reasoning) — a live raw-socket link to an unspecified companion app is not a designed feature of this port.
 - **Impact**: unknown/unquantifiable — no record of what real-world tool(s), if any, ever connected to this socket. Not added even as a disabled Options-page placeholder (2026-08-06 pass): unlike every other placeholder added that pass (which represent a real, nameable future feature), this one has no spec to point a "not yet implemented" tooltip at without inventing one.
+
+## `m_MSync` sync-based mode-start toggle
+
+- **Legacy**: `sstv.cpp`'s `CSSTVDEM::Do` gates its entire sync-interval-bypass detection block (all
+  three `m_sint1`/`m_sint2`/`m_sint3` trackers — the mechanism that can start decoding from a
+  detected sync-pulse cadence alone, without a full VIS header) on `if(!m_Sync && m_MSync)`
+  (`sstv.cpp:1899`, and again at `:1949`/`:1953`/`:1959`), not on `!m_Sync` alone. `m_MSync` is a
+  real, persisted user option (`Option.cpp:344`/`:610`'s `RGMSync` radio group, ini key
+  `Define/SyncStart`, `Main.cpp:1856`/`:2428`), default on (`sstv.cpp:1485`) — the same shape as
+  `m_SyncRestart`, which this port DID expose as a real setting
+  (`SstvDecoderSettings.SyncRestartEnabled`).
+- **Replacement**: none. Found during the functional-audit sweep (chunk D5, round 2,
+  2026-08-19): `AnalogFmSstvDecoder.cs`'s port of this block (`TrySyncIntervalDetectionStep` and its
+  callers) implements only the `!m_Sync` half of legacy's gate — the block always runs whenever
+  `_mode is null`, with no equivalent of `m_MSync` at all, even though two comments at that call
+  site quote legacy's full `!m_Sync && m_MSync` condition while the code next to them only checks
+  half of it.
+- **Impact**: unaffected at shipped defaults (`m_MSync` defaults on in legacy too, so the common case
+  behaves the same). A legacy user who had explicitly turned this option OFF — disabling
+  sync-pulse-only mode detection and requiring a full VIS header lock every time — has no way to
+  reproduce that in this port: sync-bypass detection is always active here. No golden-vector or
+  decode-correctness impact (this is a detection-trigger toggle, not a DSP/decode-math difference),
+  but it is a real, silently-dropped user-facing capability, not a documented scope cut. Revisit if a
+  user reports needing header-only lock (e.g. to avoid false-triggering on a busy band's sync-like
+  interference) — the fix is a new `SstvDecoderSettings` flag mirroring `SyncRestartEnabled`'s own
+  existing wiring, not a DSP change.
