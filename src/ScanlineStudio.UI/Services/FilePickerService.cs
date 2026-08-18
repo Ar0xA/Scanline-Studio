@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input.Platform;
 using Avalonia.Platform.Storage;
 using Microsoft.Extensions.Logging;
 
@@ -36,6 +37,62 @@ public sealed partial class FilePickerService : IFilePickerService
         });
 
         return files.Count > 0 ? files[0].TryGetLocalPath() : null;
+    }
+
+    public async Task<string?> PickClipboardImageAsync()
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        // TopLevel.Clipboard is nullable on some backends (documented "may be unavailable" case,
+        // not an error) -- same "no clipboard here" outcome as "nothing copied yet" below.
+        if (mainWindow.Clipboard is not { } clipboard)
+        {
+            return null;
+        }
+
+        Avalonia.Media.Imaging.Bitmap? bitmap;
+        try
+        {
+            // ClipboardExtensions.TryGetBitmapAsync -- confirmed via reflection against the pinned
+            // Avalonia 11.3.12 package before use: a real, built-in, cross-platform helper, not a
+            // hand-rolled per-platform MIME-type sniff over the lower-level GetDataAsync(string).
+            bitmap = await clipboard.TryGetBitmapAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.ClipboardImageReadFailed(_logger, ex);
+            return null;
+        }
+
+        if (bitmap is null)
+        {
+            // Nothing image-shaped on the clipboard right now -- a normal, silent no-op state (the
+            // system clipboard usually holds text, not a picture), not an error.
+            return null;
+        }
+
+        using (bitmap)
+        {
+            var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.png");
+            try
+            {
+                // Bitmap.Save always encodes PNG regardless of the given path's extension (confirmed
+                // via reflection: the overload takes no format parameter) -- matches the ".png"
+                // extension chosen here, not a mismatch.
+                bitmap.Save(tempPath);
+            }
+            catch (Exception ex)
+            {
+                Log.ClipboardImageReadFailed(_logger, ex);
+                return null;
+            }
+
+            return tempPath;
+        }
     }
 
     private static readonly FilePickerFileType AdifFileType = new("ADIF log files")
@@ -166,5 +223,8 @@ public sealed partial class FilePickerService : IFilePickerService
         // hardcodes "PickImageFileAsync" for an ADIF-picker failure.
         [LoggerMessage(Level = LogLevel.Warning, Message = "{CallerMemberName}: no MainWindow available; returning null (looks like a cancel to the caller)")]
         public static partial void NoMainWindow(ILogger logger, [CallerMemberName] string callerMemberName = "");
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "PickClipboardImageAsync: failed to read/save the clipboard image")]
+        public static partial void ClipboardImageReadFailed(ILogger logger, Exception exception);
     }
 }

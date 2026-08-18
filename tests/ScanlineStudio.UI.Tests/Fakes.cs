@@ -475,6 +475,11 @@ internal sealed class FakeFilePickerService : IFilePickerService
 {
     public string? PathToReturn { get; set; } = "/tmp/fake.png";
 
+    // Defaults to null (not a fake path like PathToReturn) -- the real-world default state is
+    // "usually nothing image-shaped on the clipboard," and this default keeps every OTHER test that
+    // doesn't care about clipboard paste from accidentally exercising it as a side effect.
+    public string? ClipboardPathToReturn { get; set; }
+
     public string? AdifPathToReturn { get; set; } = "/tmp/fake.adi";
 
     public string? SaveAdifPathToReturn { get; set; } = "/tmp/fake.adi";
@@ -486,6 +491,8 @@ internal sealed class FakeFilePickerService : IFilePickerService
     public string? LastSuggestedImageFileName { get; private set; }
 
     public Task<string?> PickImageFileAsync() => Task.FromResult(PathToReturn);
+
+    public Task<string?> PickClipboardImageAsync() => Task.FromResult(ClipboardPathToReturn);
 
     public Task<string?> PickAdifFileAsync() => Task.FromResult(AdifPathToReturn);
 

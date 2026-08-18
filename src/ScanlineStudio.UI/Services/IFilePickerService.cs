@@ -20,6 +20,18 @@ public interface IFilePickerService
     /// <summary>Returns the picked file's local path, or <c>null</c> if the user cancelled.</summary>
     Task<string?> PickImageFileAsync();
 
+    /// <summary>Auditor usability review follow-up (2026-08-18) -- TX Image Editor "+ IMAGE" flyout's
+    /// 4th source (clipboard paste, Phase 2's own logged scope cut, now picked back up). Saves
+    /// whatever bitmap is on the system clipboard to a fresh temp PNG file and returns ITS path, so
+    /// callers can feed it through the SAME <c>IImageFileLoader.LoadOriginalAsync(path)</c> call
+    /// <see cref="PickImageFileAsync"/>'s own callers already use -- one image-loading code path
+    /// (EXIF orientation included), not a second hand-rolled Bitmap-to-<c>IImageSource</c> pixel
+    /// converter. Returns <c>null</c> if there's no image on the clipboard right now (a normal,
+    /// silent no-op state, not an error -- same "nothing to add yet" shape as
+    /// <c>TxImageEditorPaneViewModel.AddLastRxImage</c>'s own empty-buffer case). Callers own deleting
+    /// the returned temp file once they're done reading it.</summary>
+    Task<string?> PickClipboardImageAsync();
+
     /// <summary>Returns the picked ADIF file's local path, or <c>null</c> if the user cancelled.</summary>
     Task<string?> PickAdifFileAsync();
 

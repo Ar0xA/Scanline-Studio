@@ -61,7 +61,7 @@ public sealed record PersistedBoxElement(
 /// WHERE an image element's pixels originally came from. Never used to re-resolve pixels on load
 /// (see <see cref="PersistedImageElement.AssetFileName"/>'s own doc comment for why); kept only so a
 /// possible future "re-resolve from RX history" feature has something to read.</summary>
-public enum PersistedImageSourceKind { File, RxHistory, LastRx }
+public enum PersistedImageSourceKind { File, RxHistory, LastRx, Clipboard }
 
 /// <summary><paramref name="AssetFileName"/> is a generated GUID-based name (e.g.
 /// <c>"3f9c2b1a....png"</c>), relative to the template's own <c>assets/</c> folder — deliberately
@@ -72,7 +72,9 @@ public enum PersistedImageSourceKind { File, RxHistory, LastRx }
 /// comment); the actual pixels backing this element are always the real, self-contained file copy at
 /// <paramref name="AssetFileName"/>, embedded at save time regardless of origin (a <c>File</c> path
 /// can move, an RX-history entry can be pruned, <c>LastRx</c> is inherently ephemeral — none of the
-/// three origins are safe to re-resolve from days/weeks later).</summary>
+/// three origins are safe to re-resolve from days/weeks later). <see cref="PersistedImageSourceKind.Clipboard"/>
+/// (auditor usability review follow-up, 2026-08-18) is the fourth, same "ephemeral, never
+/// re-resolved" tier as <c>LastRx</c>.</summary>
 public sealed record PersistedImageElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,
     string AssetFileName, ImageFitMode Fit, PersistedImageSourceKind OriginKind, string? OriginPayload,

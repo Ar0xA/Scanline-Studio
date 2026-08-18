@@ -1326,6 +1326,21 @@
                                                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                                         Content="{loc:Translate Panes.TxImageEditor.AddImageFromFile}"
                                                         Command="{Binding AddImageFromFileCommand}" />
+                                                <!-- Auditor usability review follow-up (2026-08-18):
+                                                     4th source, clipboard paste — Phase 2's own
+                                                     logged scope cut ("zero precedent for either
+                                                     [clipboard-paste/OS drag-drop] anywhere in this
+                                                     codebase"), picked back up now that
+                                                     ClipboardExtensions.TryGetBitmapAsync gives a
+                                                     real, cross-platform precedent. Silently no-ops
+                                                     (no toast/dialog) if there's nothing image-shaped
+                                                     on the clipboard — same "nothing to add yet"
+                                                     shape as AddLastRxImageCommand's own empty-buffer
+                                                     case just below. -->
+                                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
+                                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                        Content="{loc:Translate Panes.TxImageEditor.AddImageFromClipboard}"
+                                                        Command="{Binding AddImageFromClipboardCommand}" />
                                                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
                                                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                                         Content="{loc:Translate Panes.TxImageEditor.AddImageFromLastRx}"
@@ -1708,10 +1723,6 @@
                                     <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{bearing}" />
                                 </WrapPanel>
-                                <Border Classes="IndustryRow" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}"><Grid ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.SourceLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxImageEditor.SourceValue}" />
-                                </Grid></Border>
 
                                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.AddPlate}"
