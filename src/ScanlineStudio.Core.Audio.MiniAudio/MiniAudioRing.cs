@@ -41,7 +41,11 @@ internal sealed unsafe class MiniAudioRing : IDisposable
     /// <summary>Writes as many frames from <paramref name="data"/> as fit; never blocks. Returns
     /// the number of frames actually written (0..the input's own frame count), which may be less
     /// than requested if the ring is full -- the same partial-acceptance contract as
-    /// <c>IAudioEngine.EnqueuePlaybackSamples</c> (piece Audio 2).</summary>
+    /// <c>IAudioEngine.EnqueuePlaybackSamples</c> (piece Audio 2). Single-producer only, same
+    /// reasoning as that method's own doc comment (round-1 functional-audit addition) -- the
+    /// native `ma_pcm_rb` this wraps is genuinely single-producer/single-consumer; the read lock
+    /// here guards lifetime against a concurrent <see cref="Dispose"/>, not single-writer, and
+    /// deliberately still permits multiple concurrent callers through.</summary>
     public int Write(ReadOnlySpan<float> data)
     {
         _lifetimeLock.EnterReadLock();
@@ -57,6 +61,18 @@ internal sealed unsafe class MiniAudioRing : IDisposable
             }
 
             var frameCount = data.Length / _channels;
+            // Round-1 functional-audit finding: Span<T>.GetPinnableReference returns a null ref
+            // for a zero-length span, so `fixed` pins a NULL pointer -- the native shim's own
+            // NULL guard (yoniq_audio.c) then returns -1, silently violating this method's own
+            // documented "0..the input's own frame count" contract (a caller doing offset
+            // arithmetic on a negative return would misbehave). Zero frames requested is
+            // trivially satisfied by writing zero frames -- short-circuit before ever reaching
+            // `fixed`, never call into native code for an empty span.
+            if (frameCount == 0)
+            {
+                return 0;
+            }
+
             fixed (float* ptr = data)
             {
                 return NativeAudio.yoniq_audio_ring_write(_handle, ptr, frameCount);
@@ -70,7 +86,10 @@ internal sealed unsafe class MiniAudioRing : IDisposable
 
     /// <summary>Reads as many frames into <paramref name="destination"/> as are available; never
     /// blocks. Returns the number of frames actually read (0..the destination's own frame
-    /// count), which may be less than requested if the ring doesn't have that much buffered.</summary>
+    /// count), which may be less than requested if the ring doesn't have that much buffered.
+    /// Single-consumer only, symmetric to <see cref="Write"/>'s own single-producer note -- the
+    /// underlying `ma_pcm_rb` is single-producer/single-consumer by construction; the read lock
+    /// here guards lifetime against a concurrent <see cref="Dispose"/>, not single-reader.</summary>
     public int Read(Span<float> destination)
     {
         _lifetimeLock.EnterReadLock();
@@ -83,6 +102,12 @@ internal sealed unsafe class MiniAudioRing : IDisposable
             }
 
             var frameCount = destination.Length / _channels;
+            // Same zero-length-pins-NULL reasoning as Write above.
+            if (frameCount == 0)
+            {
+                return 0;
+            }
+
             fixed (float* ptr = destination)
             {
                 return NativeAudio.yoniq_audio_ring_read(_handle, ptr, frameCount);

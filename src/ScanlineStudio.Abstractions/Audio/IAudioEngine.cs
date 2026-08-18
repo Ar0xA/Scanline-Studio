@@ -117,6 +117,14 @@ public interface IAudioEngine : IAsyncDisposable
     /// real transmission into an already-full buffer. Callers must check the return value and
     /// retry/wait for the remainder rather than assuming everything was accepted. See the class doc
     /// comment's Lifecycle-error contract for what happens before <see cref="StartPlaybackAsync"/>
-    /// has been called.</summary>
+    /// has been called.
+    ///
+    /// <b>Single-producer only</b> (round-1 functional-audit addition): the underlying playback
+    /// ring is single-producer/single-consumer by construction (`ma_pcm_rb`) -- this method must
+    /// only ever be called from one logical caller at a time (today's one sequential TX pump
+    /// satisfies this; thread hops across an `await` are fine, that's still serialized, not
+    /// concurrent). Two genuinely concurrent callers race the same write region and corrupt the
+    /// ring -- there is no internal lock enforcing single-writer, by design, since that lock would
+    /// sit on this method's hot path for no benefit to the one real caller.</summary>
     int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples);
 }
