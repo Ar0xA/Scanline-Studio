@@ -2381,8 +2381,25 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 // mechanism Scottie DX's own existing exclusion already uses (PixelSampleReader's own
                 // `_neverPeakPicks` field, already unit-tested in isolation) -- OR'd together, not a
                 // separate code path.
+                // Functional-audit fix (chunk D4 round 1): was `Math.Clamp(index, _bufferBase,
+                // TotalSamplesReceived - 1)` -- the lower bound silently substituted the oldest
+                // retained sample for any index behind the trim watermark, defeating Rel()'s own
+                // deliberate throw guard (Rel's doc comment names a silently-wrong translation as
+                // the dangerous failure class here, not a loud one) in the single hottest read path
+                // in this file. No reachable trip site was found (TrimBuffers' locked-branch
+                // watermark tracks _consumedSamples via _slantProcessedUpTo, and this reader is only
+                // ever constructed for the current, not-yet-trimmed line), so dropping it is a pure
+                // defense-in-depth restoration, not a behavior change today. The upper bound stays,
+                // but round 1's own justification for it was wrong (round-2 correction): KSB
+                // peek-ahead can't be the reason -- PixelSampleReader.ReadPeakPicked already bails
+                // out without reading the peek whenever it would land at/past this line's own
+                // exclusive end (lineEndSampleExclusive == nextLineStartSample, itself already
+                // proven <= TotalSamplesReceived by the availability guard above). The real
+                // (currently unreached) case this upper bound guards is a start index landing at or
+                // past the line end for a decoder whose per-pixel sample pitch is under ~2-3 samples
+                // (sub-11025Hz rates at wide-image modes) -- kept for that reason, not KSB peek-ahead.
                 var reader = new PixelSampleReader(
-                    index => DemodulatedFrequencyAt(Math.Clamp(index, _bufferBase, TotalSamplesReceived - 1)),
+                    index => DemodulatedFrequencyAt(Math.Min(index, TotalSamplesReceived - 1)),
                     SstvModeRegistry.GetKsbSamples(mode, effectiveSampleRate),
                     nextLineStartSample,
                     mode.LuminanceMinHz,
@@ -2608,7 +2625,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
             if (restarted)
             {
-                continue; // new transmission is either already Commit()-ed, or (AVT) mid-training -- either way, _mode is null and the outer loop's own header-detection branch takes it from here
+                // Functional-audit fix (chunk D4 round 1): the old comment here claimed "_mode is
+                // null" unconditionally, which is false for the common mid-reception restart path --
+                // TryVisLockStateMachine's Commit() call sets _mode to the newly-matched mode (and
+                // _pendingAnchorCorrectionMode), not null. Both cases are still handled correctly by
+                // falling through to the top of the outer loop: the `_mode is null` branch picks up
+                // a fresh header search when true, and the `_pendingAnchorCorrectionMode is not
+                // null` branch (above) picks up the pending anchor otherwise -- only the STATED
+                // invariant was wrong, not the control flow.
+                continue;
             }
 
             if (_nextLine >= mode.ImageHeight)
@@ -2620,11 +2645,31 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     }
 
     // Direct port of Stop() (sstv.cpp:1769-1791) + cases 512/513's 0.5s dead-time wait
-    // (sstv.cpp:2243-2252), called once _nextLine reaches mode.ImageHeight -- i.e. right where
-    // legacy's own `m_AY > SSTVSET.m_L` check calls Stop() (Main.cpp:5014-5017). Modeled as an
+    // (sstv.cpp:2243-2252), called once _nextLine reaches mode.ImageHeight. Modeled as an
     // analytic skip rather than a literal per-sample countdown (the same style already used for
     // fixed-duration header skips): jump straight to _consumedSamples + 0.5s worth of samples,
     // rather than simulating 0.5s of idle per-sample ticks.
+    //
+    // NOT a byte-exact port of WHEN Stop() fires (functional-audit finding, chunk D4 round 1, figures
+    // corrected round 2 -- an earlier version of this comment understated Martin M1's gap 3.2x and
+    // contradicted its own overshoot-count sentence for Scottie): legacy's own check is `m_AY >
+    // SSTVSET.m_L` (Main.cpp:5014-5017), where m_AY is the row index of the last sample of the page
+    // just DRAWN -- so legacy always draws/consumes at least one row index past the last valid image
+    // row before calling Stop() (2 transmission lines for the y-indexed families at Main.cpp:4165, 1
+    // line for Scottie's 1-based ScanLine[y-1] at Main.cpp:4152). This port's `_nextLine >=
+    // mode.ImageHeight` check stops at exactly ImageHeight decoded transmission lines, zero
+    // overshoot. Net effect: the 0.5s dead-time skip (and therefore next-header scanning) begins one
+    // full transmission-line duration earlier than legacy for Scottie modes, or two for every other
+    // family -- concretely, ~1.05s early for Scottie DX (1 line x 1050.3ms) and ~0.89s early for
+    // Martin M1 (2 lines x 446.446ms; both figures independently re-derived from each mode's own
+    // LineSegments in SstvModeRegistry.cs, not eyeballed) -- accepted as-is (not matched to legacy's
+    // overshoot) since it causes no pixel divergence for the image just decoded (verified: legacy's
+    // own overshoot lines set gp=NULL and draw nothing, Main.cpp:4156-4157/4170-4173); the only
+    // residual risk is handing slightly more of the outgoing footer/FSK-ID audio to the next header
+    // search than legacy would, which has no mode allowlist protecting against it either way -- and
+    // the footer itself carries no 1200Hz sync structure and no 300ms+ leader for the sync-bypass or
+    // VIS-lock paths to latch onto, so this is judged low-risk, not zero-analysis-accepted. Revisit
+    // if a real false-lock-on-footer report ever surfaces.
     //
     // Not literally "no detectable effect either way" (an earlier version of this comment overclaimed
     // this, caught by independent review): the skip advances the resonator-fed detectors'
@@ -2697,6 +2742,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
         _agcDeadZoneCatchUpTarget = resumeFrom;
     }
+
+    // Functional-audit fix (chunk D4 round 1): `EndOfImage` itself has no precondition on decode
+    // state (every field it touches is unconditionally reassigned, not conditionally read first),
+    // so it's safe to call directly on a freshly-constructed decoder -- this internal wrapper (same
+    // "internal for direct testability" convention as Rel/FirstLockedBandpassIndex/etc.) lets a test
+    // pin the applyDeadTime:true/false VALUE deterministically, instead of relying on Auto Stop's
+    // own statistical trigger (which every existing Auto-Stop test already needs "several
+    // consecutive qualifying lines" to reach) -- EndOfImageResetTests/AutoStopTests use this.
+    internal void EndOfImageForTests(bool applyDeadTime) => EndOfImage(applyDeadTime);
 
     // Discriminates between a normal/extended-VIS header and an MN/MC narrow-mode-announce packet
     // (see VisHeader.GenerateNarrowModeSegments) before either has fully arrived. Both start with
