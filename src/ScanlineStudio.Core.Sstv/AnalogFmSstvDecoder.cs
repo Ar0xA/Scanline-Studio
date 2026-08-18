@@ -386,28 +386,43 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private SyncEnvelopeDetector? _syncEnvelopeDetector;
     private SlantTracker? _slantTracker;
     private int? _lastReplayOriginForTests; // RX buffer subsystem Phase 6c -- set inside PerformReplay, test-only
-    // RX buffer subsystem Phase 6c round-2 code-review fix (round-3 correction: this is a RUNNING
-    // OFFSET, not a fixed anchor -- see below): the value such that `_consumedSamples -
-    // _rxBufferAnchorSample == (a raw-sample-equivalent count of everything staged in
-    // _rxLineStagingBuffer, plus whatever's been consumed live but not yet flushed there)`. Set
-    // initially to _consumedSamples's own value at the moment the buffer is Clear()ed (InitializeSlant),
-    // matching "local index 0 corresponds to THIS raw sample" at that instant -- but that identity only
-    // holds as long as every unit _consumedSamples advances by is EITHER eventually staged OR explicitly
-    // compensated for here. DrainPendingSkip's own per-sample skip loop advances this field by 1 per
-    // skipped sample, keeping the invariant true across a manual-ReSync-driven skip. Round-4 code review
-    // correction: PerformReplay's own forward cursor jump does NOT advance this field additively anymore
-    // (an earlier, round-3 version of this fix did) -- round-4's own two-pass trace found the additive
-    // fix kept this COUNT invariant true while leaving the staging buffer PHYSICALLY discontinuous (the
-    // jumped samples are never staged, but the flat buffer has no gap marker), so a SECOND replay pass
-    // would read straight across the splice as if it were continuous audio. PerformReplay now truncates
-    // the staging buffer at its own jump instead (see that method's own doc comment), which makes a
-    // direct re-anchor (`_rxBufferAnchorSample = _consumedSamples`) the correct operation there, not an
-    // additive one -- the buffer is empty again, so "local index 0" genuinely IS "this raw sample" once
-    // more, the same identity InitializeSlant establishes at a fresh lock. Deliberately NOT derived from
-    // _consumedSamples/_rxBufferLineDemod.Count/stagedSampleCount at read time, which round-1 code
-    // review found silently decouples from the true anchor once TryAppendLine starts rejecting lines at
-    // capacity (ApplySlantTracking still clears the per-line capture accumulators on a rejected append --
-    // see that method's own capture-flush hook).
+    // RX buffer subsystem Phase 6c round-2 code-review fix. PRIMARY DEFINITION (functional-audit
+    // fix, D3+D8+D9 coupled round 2 correction -- round 1's own fix, described further down, got
+    // this backwards): a FIXED COORDINATE MAP, `d(raw) = origin + (raw - anchor)`, mapping a raw
+    // sample index to its position in the staging buffer's own local/destination coordinate space.
+    // "Fixed" means unchanged between re-anchor events -- it is NOT a running tally of how much has
+    // been staged. Only two things ever legitimately move it: InitializeSlant sets it to
+    // _consumedSamples's own value at the moment the buffer is Clear()ed (a fresh lock -- "local
+    // index 0 IS this raw sample" at that instant), and PerformReplay's own truncation re-anchors it
+    // the same way after a replay pass (the buffer is empty again, so the identity re-establishes).
+    // DrainPendingSkip's per-sample skip loop advances this field by 1 per skipped sample -- correct,
+    // because a manual-ReSync-driven skip genuinely DELETES that raw sample from the image-time
+    // timeline the map describes (see DrainPendingSkip's own doc comment), so the map's origin must
+    // shift to compensate. A REJECTED (buffer-full) TryAppendLine is different in kind, not degree:
+    // the line was still decoded and stamped into the image at its normal position -- only STAGING
+    // (for a potential future replay) failed, not decoding -- so the raw-to-destination map is
+    // UNCHANGED and this field must NOT move for it. PerformReplay's own resumeDest computation
+    // (see that method's doc comment at its own call site) depends on exactly this: it needs the
+    // LIVE cursor's true destination-coordinate position, including however far it has run AHEAD of
+    // what's actually staged once rejections start -- not "wherever staging happens to have
+    // gotten to," which is a different, smaller number once anything has been rejected.
+    //
+    // Round-1 functional-audit history (D3+D8+D9 coupled track, corrected in round 2): round 1
+    // treated an earlier draft of this comment's "_consumedSamples - anchor == staged + in-flight"
+    // phrasing as a hard invariant, and "fixed" a perceived violation by advancing this field on
+    // every rejection (matching DrainPendingSkip's own `++` shape). That phrasing was itself the
+    // bug -- it only happens to hold in the common case where every consumed sample is eventually
+    // staged, and is not what the map is actually FOR. The round-1 fix pinned resumeDest to the
+    // staged extent instead of the live cursor's true position, confirmed via a worked numeric trace
+    // during round 2 review to silently re-stamp already-decoded rows with stale audio on the next
+    // replay pass -- reverted; see ApplySlantTracking's own capture-flush hook for where that fix
+    // used to live and why it doesn't belong there.
+    //
+    // Known, deferred gap (unchanged by either round): a rejected line followed by a LATER accepted
+    // shorter line (line lengths vary +/-1 sample, and can drop on an Auto-Slant commit) would leave
+    // the staging buffer with a real physical discontinuity that nothing currently detects -- same
+    // defect class as the already-documented, already-deferred DrainPendingSkip mid-buffer-hole gap.
+    // Not fixed here; flagged so it isn't mistaken for closed.
     private int _rxBufferAnchorSample;
     // RX buffer subsystem Phase 6c round-4 fix, companion to _rxBufferAnchorSample: the TRANSMISSION-LINE
     // index (not bitmap row -- multiply by RowsPerTransmissionLine at use, matching _nextLine's own
@@ -2523,10 +2538,26 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                     }
                 }
 
+                // Functional-audit fix (D3+D8+D9 coupled round 1): was missing
+                // `!_slantCorrectionsDisabledForRestOfImage`, unlike its two sibling entry points
+                // above (the once-per-image latch at :2450 and the manual Correct-Slant drain at
+                // :2510) -- both of which gate on it for the identical reason: ApplySyncCorrection
+                // leaves a mid-buffer HOLE in RxLineStagingBuffer (DrainPendingSkip's own skipped
+                // samples advance _consumedSamples/_rxBufferAnchorSample without ever being staged),
+                // and PerformReplay must never run across that hole. The old inline comment argued
+                // this drain was "structurally unreachable" while the flag is set, since it lives
+                // inside ProcessSlantTrackingSample's own commit branch, which itself requires
+                // `!_slantCorrectionsDisabledForRestOfImage` -- true PER LINE COMPLETION, but
+                // ApplySlantTracking() can complete more than one line in a single call (per-line
+                // rounding against _effectiveSamplesPerLine), so a second line's own TryAutoSync ->
+                // ApplySyncCorrection can set the flag AFTER the first line's commit already set
+                // _pendingReplayRequested, all within the SAME ApplySlantTracking() call -- this
+                // statement would then run PerformReplay() across a hole that opened moments earlier
+                // in the same loop iteration. Matching the sibling gates closes it.
                 if (_pendingReplayRequested)
                 {
                     _pendingReplayRequested = false;
-                    if (!_autoStopTriggered && !SuppressAutomaticReplayForTests)
+                    if (!_autoStopTriggered && !_slantCorrectionsDisabledForRestOfImage && !SuppressAutomaticReplayForTests)
                     {
                         PerformReplay();
                     }
@@ -4539,10 +4570,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     internal int? LastReplayOriginForTests => _lastReplayOriginForTests;
 
     /// <summary>Test-only visibility into <see cref="_rxBufferAnchorSample"/> -- RX buffer subsystem
-    /// Phase 6c round-4: lets a test confirm the invariant that field's own doc comment states
-    /// (<c>_consumedSamples - _rxBufferAnchorSample == staged + in-flight</c>) directly, e.g. that it
-    /// equals <see cref="ConsumedSamplesForTests"/> immediately after a <see cref="PerformReplay"/>
-    /// truncation (staged + in-flight == 0 right then).</summary>
+    /// Phase 6c round-4, corrected D3+D8+D9 coupled round 3 (the general "staged + in-flight" count
+    /// phrasing this comment previously repeated is exactly what that field's own doc comment now
+    /// calls out as the round-1 regression's root cause -- removed here rather than left to
+    /// contradict it). Lets a test confirm it equals <see cref="ConsumedSamplesForTests"/> immediately
+    /// after a <see cref="PerformReplay"/> truncation, which IS still true (the buffer is empty right
+    /// then, so the coordinate map's origin and the live cursor coincide).</summary>
     internal int RxBufferAnchorSampleForTests => _rxBufferAnchorSample;
 
     /// <summary>Test-only visibility into <see cref="_rxBufferBaseTransmissionLine"/> -- RX buffer
@@ -4959,11 +4992,30 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // buffer-full admission test). Runs regardless of which branch inside
             // ProcessSlantTrackingSample fired (suppressed, history-only, or a real ProcessLine commit)
             // -- legacy's own capture (Main.cpp:4996-5013) happens unconditionally in the general
-            // per-line draw loop too, before any Auto-Slant-family branching. A rejected (buffer-full)
-            // append is silently dropped, matching RxLineStagingBuffer's own documented "capture simply
-            // stops" behavior -- nothing here needs to react to the return value.
+            // per-line draw loop too, before any Auto-Slant-family branching.
             if (lineCompleted && _rxLineStagingBuffer is not null)
             {
+                // Functional-audit fix (D3+D8+D9 coupled round 1 introduced a regression here, caught
+                // and reverted in round 2 -- see _rxBufferAnchorSample's own doc comment for the full
+                // corrected reasoning): a round-1 attempt bumped _rxBufferAnchorSample by this line's
+                // own sample count whenever TryAppendLine below returns false (rejected, buffer-full),
+                // reasoning that the field's own doc comment described a "count invariant"
+                // (_consumedSamples - anchor == staged + in-flight) that a rejection would silently
+                // break. That reasoning inverted the field's actual, load-bearing meaning: it defines
+                // a FIXED coordinate map (`d(raw) = origin + (raw - anchor)`, established once at the
+                // last re-anchor -- a fresh lock or a replay truncation -- and unchanged in between),
+                // not a running tally of staged content. PerformReplay's own resumeDest computation
+                // (this method's sibling, see its own doc comment there) explicitly depends on that
+                // map staying fixed so it reflects the LIVE cursor's true position even when it has
+                // moved past un-staged (rejected) content -- moving the anchor on rejection instead
+                // pins resumeDest to the STAGED extent, which is exactly the wrong quantity that doc
+                // comment already warns against, and silently re-stamps already-correct rows with
+                // stale audio on the next replay pass. Confirmed via a worked numeric trace during
+                // round 2 review: pre-round-1 behavior (anchor untouched here) computes the correct
+                // resume row; round-1's fix computes a row 5+ positions too early for the same input.
+                // No compensation belongs here -- a rejected line simply means this line's samples
+                // are not part of the replayable buffer at all, correctly reflected by resumeDest
+                // legitimately running ahead of stagedSampleCount once decode has passed them.
                 _rxLineStagingBuffer.TryAppendLine(CollectionsMarshal.AsSpan(_rxBufferLineDemod), CollectionsMarshal.AsSpan(_rxBufferLineSync));
                 _rxBufferLineDemod.Clear();
                 _rxBufferLineSync.Clear();
@@ -5582,8 +5634,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _slantLinePeakPosition = 0;
 
         // Round-4 code-review BLOCKER fix, superseding round-3's `_rxBufferAnchorSample += jumpSamples`:
-        // that fix kept the COUNT invariant (_consumedSamples - _rxBufferAnchorSample == staged +
-        // in-flight) true across the jump, but the jump ALSO leaves the staged stream PHYSICALLY
+        // that fix kept round-3's own assumed count identity (_consumedSamples - _rxBufferAnchorSample
+        // == staged + in-flight -- since repudiated as this field's actual contract, see its own doc
+        // comment) true across the jump, but the jump ALSO leaves the staged stream PHYSICALLY
         // discontinuous -- `jumpSamples` raw samples (always >= 1) are consumed and never staged, while
         // RxLineStagingBuffer is a single flat, contiguous list with no gap marker. A SECOND replay pass
         // (which Phase 6d will trigger routinely, once per Auto-Slant commit -- not a rare scenario)

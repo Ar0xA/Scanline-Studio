@@ -743,6 +743,92 @@ public class ReplayEngineTests
         Assert.True(onDelta < offDelta, $"Expected RxBufferMode.On (delta {onDelta:F2}) to decode measurably better than Off (delta {offDelta:F2}) under a real clock mismatch -- if this fails, the RX buffer subsystem's own core value proposition isn't actually holding end to end, even though every individual piece tests correct in isolation.");
     }
 
+    [Fact]
+    public void PerformReplay_AfterRejectionAtCapacity_ResumesFromTheLiveCursorNotTheStagedExtent()
+    {
+        // Functional-audit fix (D3+D8+D9 coupled round 2, correcting a round-1 regression): a
+        // rejected (buffer-full) TryAppendLine call must NOT move _rxBufferAnchorSample -- see that
+        // field's own doc comment for the full corrected reasoning (it defines a FIXED coordinate
+        // map, not a running "how much has been staged" tally; a rejected line was still decoded and
+        // stamped into the image, only STAGING for a future replay failed, so the map is unchanged).
+        // Round 1 got this backwards and advanced the anchor on every rejection, which pins
+        // PerformReplay's own resumeDest to the STAGED extent instead of the live cursor's true
+        // position -- confirmed via a worked numeric trace during round 2 review to silently rewind
+        // _nextLine after a replay pass, re-stamping already-decoded rows with stale audio. This test
+        // proves the actual consequence directly, not a bookkeeping proxy for it: after real decode
+        // runs well past RAM capacity (every line from that point on rejected), a real PerformReplay
+        // pass must resume from the TRUE live position (NextLineForTests staying at/near where live
+        // decode actually was), not collapse back down to roughly how many lines were staged before
+        // capacity was hit.
+        var mode = SstvModeRegistry.MartinM1;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        var transmissionSamples = Encode(mode, sourceImage, SampleRate);
+
+        // autoSyncEnabled:false -- isolates this test to the rejection behavior alone. A real
+        // Auto-Sync correction (TryAutoSync -> ApplySyncCorrection) can set _pendingSkipSamples
+        // mid-decode, but that's only ever drained at the START of the NEXT PushSamples call
+        // (DrainPendingSkip's own call site) -- this test pushes a large chunk in one call, so a
+        // naturally-triggered correction would leave a skip un-drained, moving NextLineForTests for
+        // reasons unrelated to the fix under test.
+        using var decoder = new AnalogFmSstvDecoder(SampleRate, autoSyncEnabled: false, rxBufferMode: RxBufferMode.On);
+        var locked = false;
+        decoder.ModeDetected += _ => locked = true;
+
+        // Small chunks so we stop soon after lock (Commit/InitializeSlant, which constructs the real
+        // staging buffer and sets the initial anchor) -- header detection itself can need buffered
+        // lookahead beyond the header's own nominal boundary, so some real lines may already be
+        // captured by the time ModeDetected fires within whichever chunk's PushSamples call actually
+        // triggers it; the pre-fill below reads the buffer's own real Count rather than assuming 0.
+        const int chunkSize = 256;
+        var offset = 0;
+        while (offset < transmissionSamples.Length && !locked)
+        {
+            var length = Math.Min(chunkSize, transmissionSamples.Length - offset);
+            decoder.PushSamples(transmissionSamples.AsMemory(offset, length));
+            offset += length;
+        }
+
+        Assert.True(locked, "Test setup problem -- decoder never locked onto the header.");
+        var buffer = Assert.IsType<RxLineStagingBuffer>(decoder.RxLineStagingBufferForTests);
+
+        var fillerLength = buffer.CapacitySamples - 1 - buffer.Count;
+        Assert.True(fillerLength > 0, $"Test setup problem -- real decode already staged {buffer.Count} samples before this test could pre-fill the rest, leaving no room; buffer.CapacitySamples={buffer.CapacitySamples}.");
+        var filler = new double[fillerLength];
+        Assert.True(buffer.TryAppendLine(filler, filler), "Test setup problem -- pre-fill append was rejected; CapacitySamples may have changed.");
+
+        // Automatic replay stays suppressed while decoding the rest -- the synthetic filler above is
+        // all-zero garbage, not a real demodulated/sync-envelope stream, so an automatic replay
+        // reading it mid-decode (Auto-Slant is on by default) would confound the rest of this test
+        // with unrelated pixel/state churn. This test drives PerformReplay itself, once, explicitly,
+        // via PerformReplayForTests, after enough real (rejected) decode has happened.
+        decoder.SuppressAutomaticReplayForTests = true;
+
+        // Decode roughly half of what's left -- comfortably mid-transmission, not the trailing
+        // footer/EndOfImage, so _mode/_lineDecoder/_pixels are still live when PerformReplayForTests
+        // runs below (EndOfImage nulls them once the image completes, which would make PerformReplay
+        // a no-op and defeat this test). Every real line decoded from here on is rejected -- the
+        // buffer admission test is `Count + length >= Capacity`, so at Count == Capacity - 1 (this
+        // test's pre-fill target) even a 1-sample line is rejected -- zero usable headroom, not 1.
+        var remaining = transmissionSamples.Length - offset;
+        decoder.PushSamples(transmissionSamples.AsMemory(offset, remaining / 2));
+
+        var lineBeforeReplay = decoder.NextLineForTests;
+        Assert.True(lineBeforeReplay > 10, $"Test setup problem -- expected many real (rejected) lines decoded by now, only got to line {lineBeforeReplay}.");
+
+        decoder.PerformReplayForTests();
+
+        // PerformReplay only ever redraws ALREADY-decoded rows from staged content and then computes
+        // where LIVE decode should resume from -- it never consumes new audio itself, so the correct
+        // post-replay NextLineForTests should land at/near lineBeforeReplay (within a row or two of
+        // rounding slack at the destination-coordinate line boundary), not drift far in EITHER
+        // direction. Round 1's regression would have collapsed this back down to roughly however many
+        // lines were staged before the pre-fill (a handful -- far below lineBeforeReplay here, since
+        // this test decodes dozens of real lines past that point) -- the lower bound below is what
+        // that regression actually violates; the upper bound pins the same value against an
+        // unexpected overshoot in the other direction.
+        Assert.InRange(decoder.NextLineForTests, lineBeforeReplay - 1, lineBeforeReplay + 2);
+    }
+
     private static float[] Encode(SstvModeDefinition mode, IImageSource sourceImage, int sampleRate)
     {
         var encoder = new AnalogFmSstvEncoder(sampleRate);
