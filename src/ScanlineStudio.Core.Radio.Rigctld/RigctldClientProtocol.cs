@@ -148,7 +148,23 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
                 }
             }
 
-            return new RadioState(hz, mode, isTransmitting, SignalStrengthDb: null, DateTimeOffset.UtcNow, swr, alc, powerPercent);
+            // Opposite gating from the TX-only meters above -- see RadioState.SignalStrengthDb's own
+            // doc comment. RIG_LEVEL_STRENGTH is documented "arg int (dB)" in rig.h (unlike
+            // SWR/ALC/RFPOWER_METER, which are float) -- rigctld's `l <LEVEL>` line protocol still
+            // emits it as a single plain-text line either way (verified against a local Hamlib clone,
+            // rigctl_parse.c), so the existing float-parsing TryGetMeterAsync/ParseMeterFloat still
+            // parses it correctly; only the STORED type differs (rounded to int here to match
+            // RadioState.SignalStrengthDb's own int? type).
+            int? signalStrengthDb = null;
+            if (!isTransmitting && Capabilities.HasFlag(RadioCapabilities.SignalMeter))
+            {
+                var raw = await TryGetMeterAsync("l STRENGTH", ct).ConfigureAwait(false);
+                signalStrengthDb = raw is { } v && !float.IsNaN(v) && !float.IsInfinity(v)
+                    ? (int)MathF.Round(v)
+                    : null;
+            }
+
+            return new RadioState(hz, mode, isTransmitting, signalStrengthDb, DateTimeOffset.UtcNow, swr, alc, powerPercent);
         }
         finally
         {
@@ -288,6 +304,15 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         if (!IsErrorLine(await ReadLineAsync(ct).ConfigureAwait(false)))
         {
             caps |= RadioCapabilities.PowerMeter;
+        }
+
+        // RIG_LEVEL_STRENGTH is an int-typed level (rig.h), unlike the three float-typed levels
+        // above -- still probed the same way: rigctld's `l <LEVEL>` responds with exactly one line
+        // either way, RPRT-error-means-absent.
+        await WriteCommandAsync("l STRENGTH", ct).ConfigureAwait(false);
+        if (!IsErrorLine(await ReadLineAsync(ct).ConfigureAwait(false)))
+        {
+            caps |= RadioCapabilities.SignalMeter;
         }
 
         return caps;

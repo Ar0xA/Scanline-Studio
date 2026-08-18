@@ -15,23 +15,23 @@ namespace ScanlineStudio.Core.Radio.Tests;
 /// <see cref="RigctldDummyRigIntegrationTests"/> is what retires that caveat.
 ///
 /// Every scenario connects fresh, so every script starts with the capability-negotiation probe
-/// (`f`, `m`, `t`, then `l SWR`/`l ALC`/`l RFPOWER_METER` -- spec/04-rigctld.md's "Discovery and
-/// capability negotiation") before whatever the test is actually targeting. Meter probes default to
-/// unsupported ("RPRT -11") in every test that isn't specifically about meters, to keep those
-/// tests' existing assertions unchanged.</summary>
+/// (`f`, `m`, `t`, then `l SWR`/`l ALC`/`l RFPOWER_METER`/`l STRENGTH` -- spec/04-rigctld.md's
+/// "Discovery and capability negotiation") before whatever the test is actually targeting. Meter
+/// probes default to unsupported ("RPRT -11") in every test that isn't specifically about meters, to
+/// keep those tests' existing assertions unchanged.</summary>
 public class RigctldClientProtocolTests
 {
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
 
-    /// <summary>The three meter probes as unsupported -- appended after `f`/`m`/`t` in every script
-    /// that isn't specifically testing meter behavior.</summary>
-    private static readonly string[] MetersUnsupportedProbe = ["RPRT -11", "RPRT -11", "RPRT -11"];
+    /// <summary>The four meter probes as unsupported (SWR/ALC/RFPOWER_METER/STRENGTH) -- appended
+    /// after `f`/`m`/`t` in every script that isn't specifically testing meter behavior.</summary>
+    private static readonly string[] MetersUnsupportedProbe = ["RPRT -11", "RPRT -11", "RPRT -11", "RPRT -11"];
 
     [Fact]
     public async Task PollAsync_FullCapabilities_ReturnsFullyPopulatedState()
     {
         var script = Script(
-            ["14074000", "USB", "0", "0", .. MetersUnsupportedProbe], // probe: f, m (2 lines), t, l SWR, l ALC, l RFPOWER_METER
+            ["14074000", "USB", "0", "0", .. MetersUnsupportedProbe], // probe: f, m (2 lines), t, l SWR, l ALC, l RFPOWER_METER, l STRENGTH
             ["14074000", "USB", "0", "0"]); // poll: f, m (2 lines), t (not transmitting -- meters never read)
         var transport = new FakeRadioTransport(script);
         var sut = new RigctldClientProtocol(transport, ConnectTimeout);
@@ -49,7 +49,7 @@ public class RigctldClientProtocolTests
             RadioCapabilities.ReadFrequency | RadioCapabilities.SetFrequency |
             RadioCapabilities.ReadMode | RadioCapabilities.SetMode | RadioCapabilities.PttControl,
             sut.Capabilities);
-        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nf\nm\nt\n", transport.WrittenText);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nf\nm\nt\n", transport.WrittenText);
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public class RigctldClientProtocolTests
         Assert.Equal(RadioMode.Unknown, state.Mode);
         Assert.False(state.IsTransmitting);
         Assert.Equal(RadioCapabilities.ReadFrequency | RadioCapabilities.SetFrequency, sut.Capabilities);
-        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nf\n", transport.WrittenText);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nf\n", transport.WrittenText);
     }
 
     [Fact]
@@ -146,8 +146,8 @@ public class RigctldClientProtocolTests
     public async Task PollAsync_WhileTransmittingWithFullMeterCapabilities_ReadsAllThreeMeters()
     {
         var script = Script(
-            ["14074000", "USB", "0", "0", "2.500000", "45", "0.8"], // probe: f, m, t, l SWR, l ALC, l RFPOWER_METER
-            ["14074000", "USB", "0", "1", "1.200000", "50", "0.75"]); // poll: transmitting -- all three meters read
+            ["14074000", "USB", "0", "0", "2.500000", "45", "0.8", "-9"], // probe: f, m, t, l SWR, l ALC, l RFPOWER_METER, l STRENGTH
+            ["14074000", "USB", "0", "1", "1.200000", "50", "0.75"]); // poll: transmitting -- TX meters read, STRENGTH is not (RX-only)
         var transport = new FakeRadioTransport(script);
         var sut = new RigctldClientProtocol(transport, ConnectTimeout);
 
@@ -157,20 +157,25 @@ public class RigctldClientProtocolTests
         Assert.Equal(1.2f, state.SwrRatio);
         Assert.Equal(50f, state.AlcLevel);
         Assert.Equal(75f, state.PowerPercent); // 0.75 fraction -> 75%
+        // STRENGTH capability is negotiated (probe succeeded), but the value itself stays null this
+        // poll -- IsTransmitting is true, and SignalStrengthDb is RX-only (opposite gating from the
+        // three TX-only meters just asserted above).
+        Assert.Null(state.SignalStrengthDb);
         Assert.Equal(
             RadioCapabilities.ReadFrequency | RadioCapabilities.SetFrequency |
             RadioCapabilities.ReadMode | RadioCapabilities.SetMode | RadioCapabilities.PttControl |
-            RadioCapabilities.SwrMeter | RadioCapabilities.AlcMeter | RadioCapabilities.PowerMeter,
+            RadioCapabilities.SwrMeter | RadioCapabilities.AlcMeter | RadioCapabilities.PowerMeter |
+            RadioCapabilities.SignalMeter,
             sut.Capabilities);
-        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nf\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\n", transport.WrittenText);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nf\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\n", transport.WrittenText);
     }
 
     [Fact]
     public async Task PollAsync_WhileNotTransmitting_NeverReadsMetersEvenIfCapable()
     {
         var script = Script(
-            ["14074000", "USB", "0", "0", "2.500000", "45", "0.8"], // probe
-            ["14074000", "USB", "0", "0"]); // poll: not transmitting -- meter commands never sent
+            ["14074000", "USB", "0", "0", "2.500000", "45", "0.8", "-9"], // probe
+            ["14074000", "USB", "0", "0", "-9"]); // poll: not transmitting -- SWR/ALC/PWR never sent, STRENGTH IS
         var transport = new FakeRadioTransport(script);
         var sut = new RigctldClientProtocol(transport, ConnectTimeout);
 
@@ -180,7 +185,69 @@ public class RigctldClientProtocolTests
         Assert.Null(state.SwrRatio);
         Assert.Null(state.AlcLevel);
         Assert.Null(state.PowerPercent);
-        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nf\nm\nt\n", transport.WrittenText);
+        Assert.Equal(-9, state.SignalStrengthDb);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nf\nm\nt\nl STRENGTH\n", transport.WrittenText);
+    }
+
+    [Fact]
+    public async Task PollAsync_WhileTransmitting_NeverReadsSignalStrengthEvenIfCapable()
+    {
+        // Mirrors PollAsync_WhileNotTransmitting_NeverReadsMetersEvenIfCapable above, but for the
+        // opposite (RX-only) gating direction.
+        var script = Script(
+            ["14074000", "USB", "0", "0", "2.500000", "45", "0.8", "-9"], // probe
+            ["14074000", "USB", "0", "1", "1.200000", "50", "0.75"]); // poll: transmitting -- l STRENGTH never sent
+        var transport = new FakeRadioTransport(script);
+        var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.True(state.IsTransmitting);
+        Assert.Null(state.SignalStrengthDb);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nf\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\n", transport.WrittenText);
+    }
+
+    [Fact]
+    public async Task PollAsync_SignalStrengthRoundsToNearestInt()
+    {
+        var script = Script(
+            ["14074000", "USB", "0", "0", "RPRT -11", "RPRT -11", "RPRT -11", "-13.6"], // probe: only STRENGTH supported
+            ["14074000", "USB", "0", "0", "-13.6"]); // poll
+        var transport = new FakeRadioTransport(script);
+        var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.Equal(-14, state.SignalStrengthDb); // MidpointRounding.ToEven doesn't apply here -- -13.6 rounds to -14, not -13
+    }
+
+    [Fact]
+    public async Task PollAsync_SignalStrengthCapabilityAbsent_YieldsNull()
+    {
+        var script = Script(
+            ["14074000", "USB", "0", "0", "RPRT -11", "RPRT -11", "RPRT -11", "RPRT -11"], // probe: nothing supported
+            ["14074000", "USB", "0", "0"]); // poll
+        var transport = new FakeRadioTransport(script);
+        var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.Null(state.SignalStrengthDb);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nf\nm\nt\n", transport.WrittenText);
+    }
+
+    [Fact]
+    public async Task PollAsync_SignalStrengthReadFails_YieldsNull_DoesNotThrow()
+    {
+        var script = Script(
+            ["14074000", "USB", "0", "0", "RPRT -11", "RPRT -11", "RPRT -11", "-9"], // probe: only STRENGTH supported
+            ["14074000", "USB", "0", "0", "RPRT -11"]); // poll: STRENGTH read fails this cycle
+        var transport = new FakeRadioTransport(script);
+        var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.Null(state.SignalStrengthDb);
     }
 
     [Fact]
@@ -189,7 +256,7 @@ public class RigctldClientProtocolTests
         // A meter read failing (e.g. transient RPRT error) must never abort the whole poll -- unlike
         // frequency, a per-meter failure degrades to "unknown this poll," not a poll-level exception.
         var script = Script(
-            ["14074000", "USB", "0", "0", "2.500000", "45", "0.8"], // probe
+            ["14074000", "USB", "0", "0", "2.500000", "45", "0.8", "-9"], // probe
             ["14074000", "USB", "0", "1", "RPRT -11", "50", "0.75"]); // poll: SWR read fails this cycle
         var transport = new FakeRadioTransport(script);
         var sut = new RigctldClientProtocol(transport, ConnectTimeout);
@@ -207,7 +274,7 @@ public class RigctldClientProtocolTests
         // rig.h documents SWR's range as "0.0 ... infinite" -- Hamlib's own %g printf can legitimately
         // emit "inf"; this must parse as a real (cutoff-worthy) value, not silently become null.
         var script = Script(
-            ["14074000", "USB", "0", "0", "inf", "RPRT -11", "RPRT -11"], // probe: only SWR supported
+            ["14074000", "USB", "0", "0", "inf", "RPRT -11", "RPRT -11", "RPRT -11"], // probe: only SWR supported
             ["14074000", "USB", "0", "1", "inf"]); // poll
         var transport = new FakeRadioTransport(script);
         var sut = new RigctldClientProtocol(transport, ConnectTimeout);
@@ -227,7 +294,7 @@ public class RigctldClientProtocolTests
         // invariant-culture call path is used: an explicit decimal value with a '.' must round-trip
         // exactly regardless of the machine's own culture.
         var script = Script(
-            ["14074000", "USB", "0", "0", "1.500000", "RPRT -11", "RPRT -11"],
+            ["14074000", "USB", "0", "0", "1.500000", "RPRT -11", "RPRT -11", "RPRT -11"],
             ["14074000", "USB", "0", "1", "1.500000"]);
         var transport = new FakeRadioTransport(script);
         var sut = new RigctldClientProtocol(transport, ConnectTimeout);
@@ -246,7 +313,7 @@ public class RigctldClientProtocolTests
 
         await sut.SetFrequencyAsync(7074000, CancellationToken.None);
 
-        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nF 7074000\n", transport.WrittenText);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nF 7074000\n", transport.WrittenText);
     }
 
     [Fact]
@@ -271,7 +338,7 @@ public class RigctldClientProtocolTests
 
         // Passband 0 = Hamlib's RIG_PASSBAND_NORMAL sentinel (verified against rig.h) -- ScanlineStudio's
         // domain model has no passband field, so this is always what's requested.
-        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nM LSB 0\n", transport.WrittenText);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nM LSB 0\n", transport.WrittenText);
     }
 
     [Fact]
@@ -295,7 +362,7 @@ public class RigctldClientProtocolTests
 
         await sut.SetPttAsync(true, CancellationToken.None);
 
-        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nT 1\n", transport.WrittenText);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nT 1\n", transport.WrittenText);
     }
 
     [Fact]
@@ -311,7 +378,7 @@ public class RigctldClientProtocolTests
         await sut.PollAsync(CancellationToken.None);
         await sut.PollAsync(CancellationToken.None);
 
-        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nf\nm\nt\nf\nm\nt\n", transport.WrittenText);
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nf\nm\nt\nf\nm\nt\n", transport.WrittenText);
         Assert.True(transport.IsOpen);
     }
 
