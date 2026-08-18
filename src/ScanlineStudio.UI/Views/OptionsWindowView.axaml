@@ -224,6 +224,21 @@
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Port}" />
                                             <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding RigctldPort}" HorizontalAlignment="Left" />
                                         </Grid>
+                                        <!-- Auditor usability review follow-up (2026-08-18): tests
+                                             whatever is CURRENTLY TYPED into Host/Port above (not
+                                             necessarily saved yet) via a fresh, disposable connection
+                                             attempt — never disturbs the app's own real, persistent
+                                             radio session (TestRigctldConnectionCommand's own doc
+                                             comment). -->
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
+                                                    Content="{loc:Translate Options.Radio.TestConnection}"
+                                                    Command="{Binding TestRigctldConnectionCommand}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                       TextWrapping="Wrap"
+                                                       Text="{Binding TestConnectionStatusMessage}"
+                                                       IsVisible="{Binding TestConnectionStatusMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        </Grid>
                                     </StackPanel>
 
                                     <StackPanel IsVisible="{Binding IsHamlibSelected}" Spacing="{StaticResource IndustrySpacingSnug}">

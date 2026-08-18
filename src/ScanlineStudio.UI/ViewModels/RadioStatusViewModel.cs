@@ -109,6 +109,39 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private string _utcClockDisplay = string.Empty;
 
+    /// <summary>User-reported gap (2026-08-18): "while TX lights up, receiving should not stay
+    /// green" -- the Transceiver card's Receiving toggle stayed visually lit the same color
+    /// throughout a local transmission, even though <see cref="ISstvSessionService.TransmitAsync"/>
+    /// genuinely pauses capture for that window. Deliberately does NOT touch <see cref="IsReceiving"/>
+    /// itself (the toggle's own Checked/click-handling semantics stay "capture is armed" --
+    /// unchecking it still really stops capture) -- this is a SEPARATE, purely visual dim flag, so
+    /// the fix is exactly the surgical scope the user asked for, not a redefinition of what
+    /// "Receiving" means or does. Mirrors <see cref="ISstvSessionService.CapturePausedForTransmitChanged"/>
+    /// exactly -- see that event's own doc comment for why it only fires for a TX-caused pause, not
+    /// a manual Halt click.</summary>
+    [ObservableProperty]
+    private bool _isCapturePausedForTx;
+
+    /// <summary>Auditor usability review follow-up (2026-08-18): the VFO card's "rig meters" pill
+    /// (`RadioHeaderView.axaml`) was a literal "—" stub, disabled + tooltipped, on the STATED
+    /// assumption that "no rig-meters concept exists on IRadioSessionService today"
+    /// (spec/16-gui-wiring-survey.md:347) -- verified that assumption directly against
+    /// <c>RigctldClientProtocol.PollAsync</c>/<c>HamlibRadioProtocol.PollAsync</c> before touching
+    /// anything: it was WRONG. <see cref="RadioState.SwrRatio"/>/<see cref="RadioState.AlcLevel"/>/
+    /// <see cref="RadioState.PowerPercent"/> are real, live, already-polled TX-only meter readings
+    /// (real `l SWR`/`l ALC`/`l RFPOWER_METER` rigctld queries, gated on <c>IsTransmitting</c> +
+    /// per-meter capability flags) -- this VM's own <see cref="OnStateChanged"/> just never read them
+    /// out. (By contrast, the ADJACENT "RX level" meter, a SEPARATE stub in the Transceiver card, is
+    /// genuinely still a stub: <see cref="RadioState.SignalStrengthDb"/> IS hardcoded <see langword="null"/>
+    /// in both protocol implementations today -- not touched here, still a real gap, not a trivial
+    /// bind like this one turned out to be.)
+    /// <para>Joins whichever of the three meters are actually non-null this poll (independently
+    /// absent per <see cref="RadioState"/>'s own doc comment -- capability absent, RX-time, or a
+    /// failed read), "—" only when none are -- a rig missing one meter capability still shows the
+    /// other two instead of the whole pill going blank.</para></summary>
+    [ObservableProperty]
+    private string _rigMetersDisplay = "—";
+
     /// <summary>Raw Hz mirror of <see cref="FrequencyDisplay"/> -- that property is a formatted
     /// string, not round-trippable, so <see cref="StoreCurrentPresetAsync"/> needs its own copy of
     /// the last <see cref="RadioState.FrequencyHz"/> to build a <see cref="FrequencyPreset"/> from.</summary>
@@ -135,6 +168,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         sstvSession.MaintenanceWarningRaised += OnMaintenanceWarningRaised;
         sstvSession.MaintenanceWarningCleared += OnMaintenanceWarningCleared;
         sstvSession.MaintenanceCriticalStopRaised += OnMaintenanceCriticalStopRaised;
+        sstvSession.CapturePausedForTransmitChanged += OnCapturePausedForTransmitChanged;
 
         _ = LoadPresetsSafeAsync();
         _ = LoadTxVolumeSafeAsync();
@@ -202,7 +236,36 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             _suppressModeCommand = false;
 
             IsKeyed = state.IsTransmitting;
+            RigMetersDisplay = FormatRigMeters(state);
         });
+    }
+
+    /// <summary>Split out from <see cref="OnStateChanged"/> so it's unit-testable without a real
+    /// <see cref="Dispatcher.UIThread"/> pump around it (same reasoning precedent as
+    /// <c>TxImageEditorPaneView.ComputeElementResize</c>'s own doc comment: pure formatting logic
+    /// doesn't need cross-thread machinery wrapped around it just to verify). Invariant-culture: this
+    /// is a live UI readout, not a persisted/round-tripped value, so culture-formatted decimals are
+    /// fine here (unlike <c>MacroTextResolver.FormatFrequency</c>'s own baked-into-the-transmitted-
+    /// image reasoning for InvariantCulture, which doesn't apply to a screen-only readout).</summary>
+    private static string FormatRigMeters(RadioState state)
+    {
+        List<string> parts = [];
+        if (state.SwrRatio is { } swr)
+        {
+            parts.Add($"SWR {swr:0.0}");
+        }
+
+        if (state.AlcLevel is { } alc)
+        {
+            parts.Add($"ALC {alc:0}%");
+        }
+
+        if (state.PowerPercent is { } power)
+        {
+            parts.Add($"PWR {power:0}%");
+        }
+
+        return parts.Count > 0 ? string.Join(" · ", parts) : "—";
     }
 
     private void OnConnectionEvent(RadioConnectionEvent evt)
@@ -429,6 +492,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             _suppressReceivingCommand = false;
         });
     }
+
+    // User-reported gap (2026-08-18): same cross-thread marshaling contract as every other
+    // ISstvSessionService event this class already subscribes to above (fires synchronously from
+    // whatever thread paused/resumed capture, not the UI thread).
+    private void OnCapturePausedForTransmitChanged(bool paused) => Dispatcher.UIThread.Post(() => IsCapturePausedForTx = paused);
 
     partial void OnIsReceivingChanged(bool value)
     {

@@ -478,6 +478,130 @@ public sealed class SstvSessionServiceTests
         Assert.False(audioEngine.IsCapturing);
     }
 
+    // User-reported gap (2026-08-18): the header's Receiving indicator stayed visually lit
+    // throughout a local transmission -- IsReceiving itself already correctly flips false during
+    // the pause, but nothing ever PUSHED that change to a subscriber (a plain, non-eventing
+    // property). CapturePausedForTransmitChanged closes that gap.
+
+    [Fact]
+    public async Task TransmitAsync_WhileReceiving_RaisesCapturePausedThenResumed()
+    {
+        var (service, _, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+        List<bool> raised = [];
+        service.CapturePausedForTransmitChanged += paused => raised.Add(paused);
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.Equal([true, false], raised);
+    }
+
+    [Fact]
+    public async Task TransmitAsync_WhileNotReceiving_NeverRaisesCapturePaused()
+    {
+        // Nothing was actually running to pause -- see this event's own doc comment: it's
+        // specifically "a running capture was paused for THIS transmission," not a generic
+        // TX-in-progress signal.
+        var (service, _, _, _, _, _) = CreateService();
+        var raised = false;
+        service.CapturePausedForTransmitChanged += _ => raised = true;
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.False(raised);
+    }
+
+    [Fact]
+    public async Task SetPttLockAsync_LockedThenTransmitThenUnlocked_RaisesCapturePausedFalseOnlyAtDeferredResume()
+    {
+        // The lock case defers the actual resume to SetPttLockAsync(false) -- see
+        // TransmitAsync_WhileReceiving_StopsCaptureDuringTxAndRestartsAfterward's own sibling test
+        // and PlayWithPttAsync's own doc comment for the full state machine this exercises.
+        var (service, _, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+        await service.SetPttLockAsync(true);
+        List<bool> raised = [];
+        service.CapturePausedForTransmitChanged += paused => raised.Add(paused);
+
+        await service.TransmitAsync(TestMode, TestImage);
+        Assert.Equal([true], raised);
+
+        await service.SetPttLockAsync(false);
+        Assert.Equal([true, false], raised);
+    }
+
+    [Fact]
+    public async Task TuneAsync_TokenCancelledMidTone_StillRaisesCapturePausedFalse()
+    {
+        // Auditor round-1 finding: an abnormal termination (SWR auto-cutoff / manual Stop TX both
+        // work by cancelling the token, same as TuneAsync_TokenCancelledMidTone_StillUnkeysPttAndRestartsCapture
+        // below) must still end with `false` raised, not leave the Receiving indicator stuck dimmed
+        // just because the transmission itself failed rather than completing normally.
+        var (service, _, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+        List<bool> raised = [];
+        service.CapturePausedForTransmitChanged += paused => raised.Add(paused);
+
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(10));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token));
+
+        Assert.Equal([true, false], raised);
+    }
+
+    [Fact]
+    public async Task TuneAsync_LeaveKeyedAfterCallAndNotLocked_StillRaisesCapturePausedFalse()
+    {
+        // Auditor round-1 finding: the residual leaveKeyedAfterCall=true/not-locked case (no
+        // production caller sets this today -- TuneAsync's own "stay keyed" option is unwired) is a
+        // latent bug otherwise: RX intentionally stays stopped here (pre-existing, unchanged
+        // behavior), but this transmission's own pause window is still over, so the event must not
+        // stay stuck `true` forever with no `false` ever coming.
+        var (service, audioEngine, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+        List<bool> raised = [];
+        service.CapturePausedForTransmitChanged += paused => raised.Add(paused);
+
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1), leaveKeyedAfterTune: true);
+
+        Assert.Equal([true, false], raised);
+        Assert.False(audioEngine.IsCapturing, "RX intentionally stays stopped in this case -- only the event must not get stuck");
+    }
+
+    [Fact]
+    public async Task LockedTransmitThenLockedCancelledTune_StillResumesRxAndRaisesCapturePausedFalse()
+    {
+        // Round-2 auditor finding: a locked TX (#1) defers its RX resume via
+        // _rxPendingResumeAfterUnlock (see SetPttLockAsync_LockedThenTransmitThenUnlocked_... above).
+        // If a SECOND locked call is then cancelled (SWR cutoff / Stop TX) before anyone ever calls
+        // SetPttLockAsync(false), that second call's own `wasReceiving` is false (capture was already
+        // stopped by #1) -- without PlayWithPttAsync's own stranded-flag consumption (added for this
+        // finding), the pending resume would never fire: IsPttLocked already reads false (force-
+        // cleared by the abnormal-termination unkey), so the natural SetPttLockAsync(false) trigger
+        // that would otherwise consume the flag may never come, leaving RX stopped and the Receiving
+        // indicator dimmed forever.
+        var (service, audioEngine, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+        await service.SetPttLockAsync(true);
+        List<bool> raised = [];
+        service.CapturePausedForTransmitChanged += paused => raised.Add(paused);
+
+        await service.TransmitAsync(TestMode, TestImage); // #1: pauses RX, defers resume (still locked)
+        Assert.False(audioEngine.IsCapturing);
+        Assert.Equal([true], raised);
+
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(10));
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token)); // #2: cancelled while still locked
+
+        Assert.False(service.IsPttLocked, "abnormal termination must still force-clear the lock");
+        Assert.True(audioEngine.IsCapturing, "the stranded resume from #1 must not be lost just because #2 force-unkeyed instead of an explicit unlock");
+        Assert.Equal([true, false], raised);
+    }
+
     [Fact]
     public async Task SetPttLockAsync_Locked_KeysPttImmediatelyAndReportsLocked()
     {

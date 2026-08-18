@@ -196,6 +196,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 {
                     Log.CleanupStepFailed(_logger, "Resume RX (after unlock)", ex);
                 }
+                finally
+                {
+                    // User-reported gap (2026-08-18): the deferred half of PlayWithPttAsync's own
+                    // pause -- see CapturePausedForTransmitChanged's own doc comment for why this
+                    // fires here too, not just at PlayWithPttAsync's own immediate-resume point.
+                    RaiseCapturePausedForTransmitChanged(false);
+                }
             }
         }
         finally
@@ -225,6 +232,33 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <summary>See <see cref="ISstvSessionService.TransmitProgressChanged"/> for the full threading
     /// contract. Raised from <see cref="PumpToPlaybackAsync"/> via <see cref="ReportTransmitProgress"/>.</summary>
     public event Action<TransmitProgressInfo>? TransmitProgressChanged;
+
+    public event Action<bool>? CapturePausedForTransmitChanged;
+
+    /// <summary>Auditor-caught (round 1): the raw <c>CapturePausedForTransmitChanged?.Invoke(...)</c>
+    /// calls this wraps were previously inline at each call site, unguarded -- unlike this class's own
+    /// established convention for the sibling <see cref="TransmitProgressChanged"/> event
+    /// (<see cref="ReportTransmitProgress"/>'s own try/catch), a throwing subscriber could propagate
+    /// out of <see cref="PlayWithPttAsync"/> (leaving RX permanently stopped, since the `true` raise
+    /// sits outside that method's own guarded region by design -- see this method's own call site) or
+    /// out of a `finally` block, masking the real exception/original cancellation reason a caller like
+    /// <c>TxControlsPaneViewModel</c> distinguishes on. Not rate-limited like
+    /// <see cref="ReportTransmitProgress"/>'s own catch (that one is a genuine hot path, ~every 4096
+    /// samples; this fires at most twice per transmission -- or once for a stranded deferred-lock
+    /// resume, see this method's other call sites -- so a plain per-occurrence Error (matching the
+    /// sibling <c>MaintenanceHandlerFailed</c>/<c>TransmitProgressHandlerFailed</c> level) cannot
+    /// flood the log).</summary>
+    private void RaiseCapturePausedForTransmitChanged(bool paused)
+    {
+        try
+        {
+            CapturePausedForTransmitChanged?.Invoke(paused);
+        }
+        catch (Exception ex)
+        {
+            Log.CapturePausedHandlerFailed(_logger, paused, ex);
+        }
+    }
 
     public async Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default)
     {
@@ -557,6 +591,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         if (wasReceiving)
         {
             await StopReceivingAsync().ConfigureAwait(false);
+            // User-reported gap (2026-08-18): see CapturePausedForTransmitChanged's own doc comment.
+            // Raised AFTER the await completes -- capture is genuinely stopped by the time a
+            // subscriber sees this, not merely "about to stop." Deliberately OUTSIDE the guarded
+            // try/finally just below (this line runs before it starts) -- RaiseCapturePausedForTransmitChanged's
+            // own try/catch is what keeps a throwing subscriber here from propagating out of this
+            // method with capture already stopped and no cleanup ever run (auditor round-1 finding).
+            RaiseCapturePausedForTransmitChanged(true);
         }
 
         var abnormalTermination = false;
@@ -636,6 +677,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     _pttLocked = false;
                     Log.PttReleased(_logger);
                 }
+
+                // Auditor-caught (round 2): a PRIOR locked call may have already stopped capture and
+                // set _rxPendingResumeAfterUnlock (see the deferred-lock branch below) before THIS
+                // call force-unkeyed on an abnormal termination -- if so, THIS call's own
+                // `wasReceiving` is false (capture was already stopped by that earlier call), so the
+                // `if (wasReceiving)` block below would never see it, leaving RX stopped forever with
+                // IsPttLocked already reporting false (so the natural SetPttLockAsync(false) trigger
+                // that would otherwise consume it may never come). Guarded on `!wasReceiving` so this
+                // never double-fires alongside that block's own resume for THIS call.
+                if (!wasReceiving && _rxPendingResumeAfterUnlock)
+                {
+                    _rxPendingResumeAfterUnlock = false;
+                    await TryCleanupAsync("Resume RX (stranded lock pending-resume)", () => StartReceivingAsync(cleanupCts.Token)).ConfigureAwait(false);
+                    RaiseCapturePausedForTransmitChanged(false);
+                }
             }
 
             if (wasReceiving)
@@ -643,6 +699,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 if (!skipUnkeyAndRxResume)
                 {
                     await TryCleanupAsync("Resume RX", () => StartReceivingAsync(cleanupCts.Token)).ConfigureAwait(false);
+                    // User-reported gap (2026-08-18): fires once the resume attempt has finished,
+                    // success or failure -- TryCleanupAsync's own best-effort/swallowed-failure
+                    // contract means _isReceiving may still be false here on a real failure, but
+                    // this event is specifically "no longer paused FOR THIS transmission," not a
+                    // restatement of IsReceiving itself (see this event's own doc comment).
+                    RaiseCapturePausedForTransmitChanged(false);
                 }
                 else if (!abnormalTermination && _pttLocked)
                 {
@@ -650,8 +712,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // indefinitely with no automatic next step, unlike a Tune-into-satellite-pass
                     // workflow where the very next action is expected to key PTT again anyway. RX
                     // must resume once SetPttLockAsync(false) eventually un-keys, not be silently
-                    // forgotten -- consumed there.
+                    // forgotten -- consumed there. CapturePausedForTransmitChanged deliberately stays
+                    // `true` until that deferred resume actually happens (raised there instead).
                     _rxPendingResumeAfterUnlock = true;
+                }
+                else
+                {
+                    // Auditor-caught (round 1): the residual case -- leaveKeyedAfterCall=true and NOT
+                    // locked (TuneAsync's own unwired "stay keyed" option). RX intentionally stays
+                    // stopped here (pre-existing, unchanged behavior -- nobody's job to resume it),
+                    // but THIS transmission's own pause window is over either way, so the event must
+                    // not stay stuck `true` forever with no `false` ever coming (a real latent bug:
+                    // harmless today since no production caller sets leaveKeyedAfterCall=true, but
+                    // would permanently freeze the Receiving indicator dimmed the moment one did).
+                    RaiseCapturePausedForTransmitChanged(false);
                 }
             }
         }
@@ -1011,5 +1085,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Error, Message = "TransmitProgressChanged handler threw ({Count} occurrence(s) so far this session)")]
         public static partial void TransmitProgressHandlerFailed(ILogger logger, int count, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "CapturePausedForTransmitChanged handler threw (paused={Paused})")]
+        public static partial void CapturePausedHandlerFailed(ILogger logger, bool paused, Exception ex);
     }
 }

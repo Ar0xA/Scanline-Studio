@@ -446,6 +446,95 @@ public sealed class RadioStatusViewModelTests
         Assert.False(vm.IsKeyed);
     }
 
+    // Auditor usability review follow-up (2026-08-18): the VFO card's rig-meters pill was a literal
+    // stub on the false premise that no rig-meters concept exists on IRadioSessionService today --
+    // RadioState.SwrRatio/AlcLevel/PowerPercent are real, already-polled data, just never read out.
+
+    [AvaloniaFact]
+    public void RigMetersDisplay_AllThreeMetersPresent_JoinsAllThree()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.Push(new RadioState(
+            14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow,
+            SwrRatio: 1.2f, AlcLevel: 50f, PowerPercent: 75f));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("SWR 1.2 · ALC 50% · PWR 75%", vm.RigMetersDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RigMetersDisplay_NoMetersRead_ShowsPlaceholder()
+    {
+        // Not transmitting (or a rig with no meter capability at all) -- RadioState's own convention
+        // is null-means-"not read this poll," never a meaningful zero.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("—", vm.RigMetersDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RigMetersDisplay_OnlySomeMetersCapable_ShowsOnlyThoseNonNull()
+    {
+        // A rig missing one meter capability (e.g. no ALC readback) still shows the other two --
+        // the pill doesn't go blank just because one of three is absent.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.Push(new RadioState(
+            14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow,
+            SwrRatio: 1.5f, AlcLevel: null, PowerPercent: 100f));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("SWR 1.5 · PWR 100%", vm.RigMetersDisplay);
+    }
+
+    // User-reported gap (2026-08-18): "while TX lights up, receiving should not stay green" -- the
+    // header's Receiving toggle stayed visually lit throughout a local transmission. IsCapturePausedForTx
+    // is a SEPARATE, purely visual flag; IsReceiving itself must stay untouched by this event.
+
+    [AvaloniaFact]
+    public void IsCapturePausedForTx_TracksSstvSessionCapturePausedEvent()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsCapturePausedForTx);
+
+        sstvSession.RaiseCapturePausedForTransmitChanged(true);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsCapturePausedForTx);
+
+        sstvSession.RaiseCapturePausedForTransmitChanged(false);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsCapturePausedForTx);
+    }
+
+    [AvaloniaFact]
+    public void IsCapturePausedForTx_DoesNotChangeIsReceivingItself()
+    {
+        // The toggle's own Checked/click-handling semantics ("capture is armed") are deliberately
+        // untouched by this event -- only its visual Opacity binding reacts to it (RadioHeaderView.axaml).
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsReceiving = true;
+
+        sstvSession.RaiseCapturePausedForTransmitChanged(true);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsReceiving);
+        Assert.True(vm.IsCapturePausedForTx);
+    }
+
     [AvaloniaFact]
     public void IsKeyed_NeverSetByAnyRadioState_StaysFalse()
     {
