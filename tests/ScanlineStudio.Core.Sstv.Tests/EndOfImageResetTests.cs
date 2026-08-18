@@ -66,6 +66,45 @@ public class EndOfImageResetTests
         Assert.True(MeasureDelta(sourceImage2, decodedImages[1]) <= 14.0, "Second transmission exceeded tolerance.");
     }
 
+    [Fact]
+    public void EndOfImageForTests_WithApplyDeadTimeTrue_AdvancesConsumedSamplesByExactlyTheDeadTimeConstant()
+    {
+        // Functional-audit fix (chunk D4 round 1): this analytic 0.5s dead-time skip was previously
+        // pinned only indirectly, via TwoCompleteBackToBackTransmissions_BothDecodeCorrectly's
+        // second-transmission header search resolving through VisLockStateMachine's own forward
+        // search -- that test's own comment already says a header landing mid-footer is resolved
+        // there instead, so a wrong dead-time constant (e.g. 0.3 or 0.8 instead of 0.5) would very
+        // likely still pass it. Pins the VALUE directly instead, via EndOfImageForTests.
+        const int sampleRate = 11025;
+        var decoder = new AnalogFmSstvDecoder(sampleRate);
+        var before = decoder.ConsumedSamplesForTests;
+
+        decoder.EndOfImageForTests(applyDeadTime: true);
+
+        var expectedJump = (int)Math.Round(0.5 * sampleRate);
+        Assert.Equal(before + expectedJump, decoder.ConsumedSamplesForTests);
+    }
+
+    [Fact]
+    public void EndOfImageForTests_WithApplyDeadTimeFalse_DoesNotAdvanceConsumedSamplesAtAll()
+    {
+        // Functional-audit fix (chunk D4 round 1): applyDeadTime:false is Auto Stop's own call site
+        // (RxAutoPush's own m_SyncMode=0 overriding Stop()'s m_SyncMode=512, Main.cpp:6053) --
+        // header scanning is supposed to resume from the CURRENT sample, not 0.5s later. Every
+        // existing Auto Stop test recovers via a SEPARATE PushSamples call carrying a whole fresh
+        // transmission, so all of them would pass identically whether or not this wrongly applied
+        // the 0.5s skip -- exactly the "silent ~500ms blind spot no duration/round-trip test could
+        // surface" EndOfImage's own doc comment already names as the reason this branch exists.
+        // Pins the VALUE directly instead, via EndOfImageForTests.
+        const int sampleRate = 11025;
+        var decoder = new AnalogFmSstvDecoder(sampleRate);
+        var before = decoder.ConsumedSamplesForTests;
+
+        decoder.EndOfImageForTests(applyDeadTime: false);
+
+        Assert.Equal(before, decoder.ConsumedSamplesForTests);
+    }
+
     private static ArrayImageSource CreateGradientTestImage(int width, int height, int offset)
     {
         var pixels = new Rgb24[width * height];
