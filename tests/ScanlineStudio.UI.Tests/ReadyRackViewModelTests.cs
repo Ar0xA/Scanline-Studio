@@ -15,7 +15,7 @@ namespace ScanlineStudio.UI.Tests;
 public sealed class ReadyRackViewModelTests
 {
     private static ReadyRackViewModel CreateReadyRack(FakeTemplateStore? templateStore = null, FakeSettingsStore? settingsStore = null) =>
-        new(templateStore ?? new FakeTemplateStore(), settingsStore ?? new FakeSettingsStore(), NullLogger<ReadyRackViewModel>.Instance);
+        new(templateStore ?? new FakeTemplateStore(), settingsStore ?? new FakeSettingsStore(), new FakeLocalizationService(), NullLogger<ReadyRackViewModel>.Instance);
 
     private static async Task<string> SaveTemplateAsync(FakeTemplateStore store, string name)
     {
@@ -108,10 +108,52 @@ public sealed class ReadyRackViewModelTests
         await readyRack.RefreshAsync();
         var tenthRow = readyRack.AllTemplates.Single(r => r.Id == tenthId);
 
+        // Backlog item (auditor usability review, 2026-08-17): "PIN silently no-ops on a full rack
+        // but the toggle visually latches 'pinned' anyway." CanPin is now false for an unpinned row
+        // on a full rack, computed fresh by RefreshAsync -- see its own doc comment for why disabling
+        // the button pre-emptively is the fix, not chasing a visual desync after the fact.
+        Assert.False(tenthRow.CanPin);
+
         await readyRack.TogglePinCommand.ExecuteAsync(tenthRow);
 
         Assert.False(tenthRow.IsPinned);
         Assert.All(readyRack.Slots, slot => Assert.NotNull(slot.Template));
+    }
+
+    [Fact]
+    public async Task RefreshAsync_RackNotFull_EveryRowHasCanPinTrue()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "Only one");
+
+        await readyRack.RefreshAsync();
+
+        Assert.All(readyRack.AllTemplates, row => Assert.True(row.CanPin));
+    }
+
+    // Backlog item (auditor usability review, 2026-08-17): "Template DELETE is a single unconfirmed
+    // click in a dense row." Arm/confirm -- see DeleteAsync's own doc comment.
+
+    [Fact]
+    public async Task DeleteAsync_ClickingADifferentRow_ReArmsForTheNewTargetInsteadOfConfirmingTheOldOne()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "First");
+        await SaveTemplateAsync(templateStore, "Second");
+        await readyRack.RefreshAsync();
+        var first = readyRack.AllTemplates[0];
+        var second = readyRack.AllTemplates[1];
+
+        await readyRack.DeleteCommand.ExecuteAsync(first);
+        Assert.True(first.IsPendingDelete);
+
+        await readyRack.DeleteCommand.ExecuteAsync(second);
+
+        Assert.False(first.IsPendingDelete);
+        Assert.True(second.IsPendingDelete);
+        Assert.Equal(2, (await templateStore.ListAsync()).Count); // neither actually deleted yet
     }
 
     [Fact]
@@ -126,6 +168,12 @@ public sealed class ReadyRackViewModelTests
         await readyRack.TogglePinCommand.ExecuteAsync(row);
         Assert.NotNull(readyRack.Slots[0].Template);
 
+        // Backlog item (auditor usability review, 2026-08-17): DeleteAsync is now arm/confirm --
+        // see its own doc comment. The FIRST call only arms (IsPendingDelete flips true, nothing
+        // deleted yet); the SECOND call on the same row actually deletes.
+        await readyRack.DeleteCommand.ExecuteAsync(readyRack.AllTemplates[0]);
+        Assert.True(readyRack.AllTemplates[0].IsPendingDelete);
+        Assert.Empty(templateStore.DeletedIds);
         await readyRack.DeleteCommand.ExecuteAsync(readyRack.AllTemplates[0]);
 
         Assert.Contains(templateId, templateStore.DeletedIds);

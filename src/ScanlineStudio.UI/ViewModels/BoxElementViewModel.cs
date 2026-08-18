@@ -33,6 +33,9 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     private bool _locked;
 
     [ObservableProperty]
+    private bool _isSelected;
+
+    [ObservableProperty]
     private Rgb24 _fillColor = new(64, 64, 64);
 
     [ObservableProperty]
@@ -80,6 +83,30 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// pipeline-side rendering so the editor canvas is actually WYSIWYG for a bordered box.</summary>
     public double CanvasBorderThicknessPixels => BorderThickness * ImageHeight;
 
+    /// <summary>Backlog item (auditor usability review, 2026-08-17) -- same nullable-color/checkbox
+    /// bridge as <see cref="OverlayElementViewModel.HasStroke"/>, so the new BOX STYLE inspector
+    /// block can bind a plain CheckBox to a <c>Rgb24?</c> the same way TEXT STYLE's own Outline row
+    /// already does, including that row's own "ColorPicker un-nulls a disabled nullable color" fix
+    /// (see <see cref="BorderColorForPicker"/> below).</summary>
+    public bool HasBorder
+    {
+        get => BorderColor is not null;
+        set => BorderColor = value ? (BorderColor ?? new Rgb24(0, 0, 0)) : null;
+    }
+
+    /// <inheritdoc cref="OverlayElementViewModel.StrokeColorForPicker"/>
+    public Rgb24 BorderColorForPicker
+    {
+        get => BorderColor ?? new Rgb24(0, 0, 0);
+        set
+        {
+            if (HasBorder)
+            {
+                BorderColor = value;
+            }
+        }
+    }
+
     partial void OnXChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
 
     partial void OnYChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
@@ -118,4 +145,10 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     }
 
     partial void OnBorderThicknessChanged(double value) => OnPropertyChanged(nameof(CanvasBorderThicknessPixels));
+
+    partial void OnBorderColorChanged(Rgb24? value)
+    {
+        OnPropertyChanged(nameof(HasBorder));
+        OnPropertyChanged(nameof(BorderColorForPicker));
+    }
 }

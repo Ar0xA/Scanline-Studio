@@ -1,7 +1,10 @@
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.UI.Views;
@@ -165,6 +168,19 @@ public partial class TxImageEditorPaneView : UserControl
 
         vm.SelectedOverlayElement = element;
 
+        // Backlog item (auditor usability review, 2026-08-17): "No inline canvas text editing (no
+        // double-click/F2)." A double-click on a selected, unlocked TEXT element enters edit mode
+        // (see OverlayElementViewModel.IsEditingText's own doc comment) instead of starting a drag --
+        // editing and dragging the same gesture would be confusing, and legacy creative-tool
+        // convention (Figma/PowerPoint/etc.) reserves double-click for "start editing" specifically.
+        if (e.ClickCount == 2 && element is OverlayElementViewModel text && !element.Locked)
+        {
+            text.IsEditingText = true;
+            FocusInlineTextEditor(sender as Visual);
+            e.Handled = true;
+            return;
+        }
+
         if (element.Locked || !e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed)
         {
             return;
@@ -172,6 +188,35 @@ public partial class TxImageEditorPaneView : UserControl
 
         _draggedElement = element;
         StartDrag(DragMode.Overlay, e);
+    }
+
+    /// <summary>Best-effort focus grab for the inline edit TextBox that
+    /// <c>TxImageEditorPaneView.axaml</c>'s text DataTemplate reveals when
+    /// <see cref="OverlayElementViewModel.IsEditingText"/> flips true (double-click above, F2 in
+    /// <see cref="OnRootKeyDown"/>). Deferred to <see cref="DispatcherPriority.Loaded"/> -- the
+    /// TextBox's own <c>IsVisible</c> binding hasn't necessarily applied/measured yet in the same
+    /// synchronous callback that just set <c>IsEditingText</c> (same "binding write now, layout
+    /// later" ordering this file's own <see cref="OnEditorWheelChanged"/> already has to account for
+    /// via <see cref="ScrollViewer.UpdateLayout"/>). A missed focus grab (control not yet realized,
+    /// or already dismissed by the time this runs) degrades to "click into the now-visible TextBox
+    /// once" -- a minor UX wrinkle, not a broken feature.</summary>
+    private static void FocusInlineTextEditor(Visual? elementRoot)
+    {
+        if (elementRoot is null)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                if (elementRoot.GetVisualDescendants().OfType<TextBox>().FirstOrDefault() is { } textBox)
+                {
+                    textBox.Focus();
+                    textBox.SelectAll();
+                }
+            },
+            DispatcherPriority.Loaded);
     }
 
     /// <summary>Single bottom-right resize handle per element (Phase 1 plan-review finding: mirrors
@@ -238,9 +283,20 @@ public partial class TxImageEditorPaneView : UserControl
         // push here -- they push via ITemplateElementViewModel's own On*Changing hooks instead (see
         // PushUndoSnapshotForGeometryChange's own doc comment), a path that ALSO covers the X/Y/
         // Width/Height sidebar TextBoxes, which a View-level drag-only push here never would have.
-        if (!_pushedUndoThisGesture && _dragMode is not (DragMode.Overlay or DragMode.ElementResize) && (dxNormalized != 0 || dyNormalized != 0))
+        // Backlog item (auditor usability review, 2026-08-17): _pushedUndoThisGesture is now tracked
+        // for EVERY drag mode (previously only CropMove/CropResize) so Escape-cancel-drag
+        // (OnRootKeyDown) has a reliable per-gesture "did anything actually change" signal to decide
+        // whether a single Undo call is needed. The explicit PushUndoSnapshotForDragGesture() call
+        // stays CropMove/CropResize-only -- Overlay/ElementResize still push through each element's
+        // own On*Changing-coalesced PushUndoSnapshotForGeometryChange hook (unchanged), this only
+        // adds bookkeeping, not a second push.
+        if (!_pushedUndoThisGesture && (dxNormalized != 0 || dyNormalized != 0))
         {
-            vm.PushUndoSnapshotForDragGesture();
+            if (_dragMode is not (DragMode.Overlay or DragMode.ElementResize))
+            {
+                vm.PushUndoSnapshotForDragGesture();
+            }
+
             _pushedUndoThisGesture = true;
         }
 
@@ -368,12 +424,86 @@ public partial class TxImageEditorPaneView : UserControl
 
     /// <summary>Legacy's own real precision mechanism (verified in <c>TxImageEditorPaneViewModel</c>'s
     /// own doc comment against `PicRect.cpp:925-1001`): plain arrow moves, Ctrl+arrow moves faster,
-    /// Shift+arrow resizes instead of moving.</summary>
-    private void OnCanvasKeyDown(object? sender, KeyEventArgs e)
+    /// Shift+arrow resizes instead of moving. Merged with the former, canvas-only <c>OnCanvasKeyDown</c>
+    /// (auditor usability review, 2026-08-17, item 4: "editor keyboard shortcuts go dead after
+    /// clicking any sidebar control") -- these shortcuts were wired on <c>EditorCanvas</c>'s own
+    /// <c>KeyDown</c>, which only ever RECEIVES a routed key event while the canvas itself is the
+    /// focused element or one of its own descendants; clicking a sidebar control (Lock toggle,
+    /// GEOMETRY TextBox, a Templates button, ...) moves focus OUTSIDE that subtree entirely, so the
+    /// event never reaches it again. Wiring everything here instead -- the root
+    /// <see cref="UserControl"/>, already used for the ready-rack number-key recall below for the
+    /// identical reason -- fixes it for free: a routed <c>KeyDown</c> bubbles from wherever focus
+    /// actually is up through every ancestor, and the root is always an ancestor of every control
+    /// on this whole pane. The established <c>e.Source is TextBox</c> guard (previously local to the
+    /// number-key recall only) now covers every shortcut below for the same reason it already covered
+    /// number keys: Delete/arrows/Ctrl+C/V/Z/Y are all real, expected TextBox-native operations (text
+    /// deletion, caret movement, native text undo, OS clipboard) that must not be hijacked while the
+    /// operator is typing into ANY of this editor's own name/X/Y/size/font-size/outline-width/QSO-fill
+    /// fields.</summary>
+    private void OnRootKeyDown(object? sender, KeyEventArgs e)
     {
         if (ViewModel is not { } vm)
         {
             return;
+        }
+
+        // Backlog item (auditor usability review, 2026-08-17, item 14): Escape while inline-editing
+        // text on the canvas (the TextBox OnOverlayElementPointerPressed's double-click branch/F2
+        // below reveals) exits edit mode -- checked BEFORE the general TextBox guard just below,
+        // since this IS the TextBox-focused case this branch exists to handle.
+        if (e.Key == Key.Escape && e.Source is TextBox
+            && vm.SelectedOverlayElement is OverlayElementViewModel { IsEditingText: true } editingText)
+        {
+            editingText.IsEditingText = false;
+            e.Handled = true;
+            return;
+        }
+
+        // Backlog item (auditor usability review, 2026-08-17, item 15): Escape cancels an
+        // in-progress crop/element drag -- checked before the TextBox guard too (a real drag can
+        // never be in progress while a TextBox has focus, so ordering is moot, but this keeps every
+        // Escape-means-"cancel/dismiss the active thing" branch grouped together at the top).
+        if (e.Key == Key.Escape && _dragMode != DragMode.None)
+        {
+            CancelActiveDrag(vm);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Source is TextBox)
+        {
+            return;
+        }
+
+        // Ready rack number-key recall (spec/15-template-designer.md Phase 5) -- Key.D1..Key.D9 AND
+        // Key.NumPad1..Key.NumPad9. Backlog item (auditor usability review, 2026-08-17, item 17):
+        // "Ready Rack number keys fire with modifiers held" -- e.g. Ctrl+1 could plausibly mean
+        // something else entirely (a future tab-switch shortcut, a browser-style binding); requiring
+        // NO modifiers here is the same "don't steal a chord that isn't unambiguously ours" discipline
+        // Ctrl/Cmd+C/X/V/Z/Y below already apply in reverse (they DO require a modifier, specifically
+        // so a bare keystroke doesn't get hijacked).
+        if (e.KeyModifiers == KeyModifiers.None)
+        {
+            var slot = e.Key switch
+            {
+                Key.D1 or Key.NumPad1 => 1,
+                Key.D2 or Key.NumPad2 => 2,
+                Key.D3 or Key.NumPad3 => 3,
+                Key.D4 or Key.NumPad4 => 4,
+                Key.D5 or Key.NumPad5 => 5,
+                Key.D6 or Key.NumPad6 => 6,
+                Key.D7 or Key.NumPad7 => 7,
+                Key.D8 or Key.NumPad8 => 8,
+                Key.D9 or Key.NumPad9 => 9,
+                _ => (int?)null,
+            };
+
+            if (slot is { } slotNumber)
+            {
+                vm.ReadyRack.RecallSlotCommand.Execute(slotNumber);
+                e.Handled = true;
+                return;
+            }
         }
 
         // Phase 6 (spec/15-template-designer.md, plan-review blocker): the ONLY deselect affordance
@@ -384,6 +514,55 @@ public partial class TxImageEditorPaneView : UserControl
         if (e.Key == Key.Escape && vm.SelectedOverlayElement is not null)
         {
             vm.SelectedOverlayElement = null;
+            e.Handled = true;
+            return;
+        }
+
+        // Control OR Meta (task #23's own Ctrl/Cmd+wheel precedent) -- Ctrl on Windows/Linux, Cmd on
+        // macOS.
+        var ctrlOrCmd = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+
+        // Backlog item (auditor usability review, 2026-08-17, item 1): "Ctrl+Z/Ctrl+Y not wired
+        // (Undo/Redo mouse-only, conspicuous next to the new Ctrl+C/X/V)." CanExecute-gated (matches
+        // this editor's own established "check CanExecute before Execute for a keyboard shortcut"
+        // convention, see the Paste branch below) rather than letting Execute silently no-op, so a
+        // Ctrl+Z with nothing to undo falls through unhandled instead of eating the keystroke.
+        if (ctrlOrCmd && e.Key == Key.Z && vm.UndoCommand.CanExecute(null))
+        {
+            vm.UndoCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        if (ctrlOrCmd && e.Key == Key.Y && vm.RedoCommand.CanExecute(null))
+        {
+            vm.RedoCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        // Backlog item (auditor usability review, 2026-08-17, item 15): "No Apply keyboard shortcut."
+        // Ctrl/Cmd+Enter -- plain Enter is left alone (native default-button/TextBox behavior
+        // elsewhere on this pane, e.g. committing a QSO-fill/template-name TextBox), matching the
+        // common "primary action" chord convention (email clients, chat apps, IDEs).
+        if (ctrlOrCmd && e.Key == Key.Enter && vm.ApplyCommand.CanExecute(null))
+        {
+            vm.ApplyCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        // Backlog item (auditor usability review, 2026-08-17, item 14): F2 enters inline canvas text
+        // editing for the selected, unlocked text element -- see
+        // OverlayElementViewModel.IsEditingText's own doc comment. No auto-focus grab here (unlike
+        // the double-click path in OnOverlayElementPointerPressed, which has a real Visual to search
+        // from) -- F2 can fire from anywhere in this pane, including a sidebar control with no
+        // relation to the canvas element's own visual subtree; the operator clicks into the now-
+        // visible TextBox once, same documented minor wrinkle as FocusInlineTextEditor's own doc
+        // comment.
+        if (e.Key == Key.F2 && vm.SelectedOverlayElement is OverlayElementViewModel { Locked: false } textToEdit)
+        {
+            textToEdit.IsEditingText = true;
             e.Handled = true;
             return;
         }
@@ -402,9 +581,7 @@ public partial class TxImageEditorPaneView : UserControl
         }
 
         // Backlog item (user request, 2026-08-17): in-editor Copy/Cut/Paste for the selected canvas
-        // element. Control OR Meta (task #23's own Ctrl/Cmd+wheel precedent) -- Ctrl on Windows/
-        // Linux, Cmd on macOS.
-        var ctrlOrCmd = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        // element.
         if (ctrlOrCmd && e.Key == Key.C && vm.SelectedOverlayElement is not null)
         {
             vm.CopySelectedElementCommand.Execute(null);
@@ -440,6 +617,17 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
+        // Backlog item (auditor usability review, 2026-08-17, item 18): "no keyboard element-resize
+        // path at all." Ctrl+Shift+arrow resizes the selected, unlocked element instead of the crop
+        // rect -- checked BEFORE the bare-Shift branch below so it takes priority over Phase 6's own
+        // "Shift+arrow always means crop-resize" rule (still true for bare Shift, unchanged).
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && ctrlOrCmd && vm.SelectedOverlayElement is { Locked: false })
+        {
+            vm.NudgeElementResize(dir);
+            e.Handled = true;
+            return;
+        }
+
         // Phase 6: Shift+arrow stays bound to crop-RESIZE unconditionally (plan-review-scoped
         // decision -- this phase does NOT add an element-resize-by-nudge counterpart, only move).
         // Plain arrow nudges the selected element instead of the crop rect when one is selected and
@@ -463,44 +651,67 @@ public partial class TxImageEditorPaneView : UserControl
         e.Handled = true;
     }
 
-    /// <summary>Ready rack number-key recall (spec/15-template-designer.md Phase 5) --
-    /// <c>Key.D1</c>..<c>Key.D9</c> AND <c>Key.NumPad1</c>..<c>Key.NumPad9</c> (plan-review-decided
-    /// plain <c>KeyDown</c> handler, no keybinding-registration service exists anywhere in this
-    /// codebase -- same pattern as <see cref="OnCanvasKeyDown"/>'s own arrow-key nudge). Wired on
-    /// the root <see cref="UserControl"/> itself, not a sub-control, so it fires regardless of which
-    /// child currently holds focus (routed KeyDown events bubble up the visual tree) -- EXCEPT a
-    /// focused <see cref="TextBox"/> (code-review finding): Avalonia's <see cref="TextBox"/> doesn't
-    /// mark a plain digit <c>KeyDown</c> as handled (character insertion happens on a separate
-    /// <c>TextInput</c> event), so without this guard typing an ordinary digit into this editor's own
-    /// name/X/Y/size/font-size/outline-width fields would bubble up and silently replace the entire
-    /// overlay layout mid-edit.</summary>
-    private void OnRootKeyDown(object? sender, KeyEventArgs e)
+    /// <summary>Backlog item (auditor usability review, 2026-08-17, item 15) -- reverts whatever this
+    /// gesture already changed (a single Undo call, since every drag gesture -- crop or element --
+    /// pushes exactly ONE coalesced undo step regardless of which of the two push mechanisms fired,
+    /// see <see cref="OnCanvasPointerMoved"/>'s own updated comment) and stops responding to further
+    /// pointer moves. Deliberately does NOT release pointer capture here -- <see cref="Pointer"/> isn't
+    /// reachable from a <see cref="KeyEventArgs"/>; leaving capture in place is harmless, since
+    /// <see cref="OnCanvasPointerMoved"/> already no-ops once <see cref="_dragMode"/> is
+    /// <see cref="DragMode.None"/>, and the eventual real pointer-release still runs
+    /// <see cref="OnCanvasPointerReleased"/> normally (whose own snap-to-grid branch is also gated on
+    /// <see cref="_dragMode"/>, so it correctly does nothing for an already-cancelled gesture).</summary>
+    private void CancelActiveDrag(TxImageEditorPaneViewModel vm)
     {
-        if (ViewModel is not { } vm || e.Source is TextBox)
+        if (_pushedUndoThisGesture && vm.UndoCommand.CanExecute(null))
         {
-            return;
+            vm.UndoCommand.Execute(null);
         }
 
-        var slot = e.Key switch
-        {
-            Key.D1 or Key.NumPad1 => 1,
-            Key.D2 or Key.NumPad2 => 2,
-            Key.D3 or Key.NumPad3 => 3,
-            Key.D4 or Key.NumPad4 => 4,
-            Key.D5 or Key.NumPad5 => 5,
-            Key.D6 or Key.NumPad6 => 6,
-            Key.D7 or Key.NumPad7 => 7,
-            Key.D8 or Key.NumPad8 => 8,
-            Key.D9 or Key.NumPad9 => 9,
-            _ => (int?)null,
-        };
+        _dragMode = DragMode.None;
+        _draggedElement = null;
+    }
 
-        if (slot is not { } slotNumber)
+    /// <summary>Backlog item (auditor usability review, 2026-08-17, item 13): "ELEMENTS rows don't
+    /// select or highlight on click." Selection stays UNGATED (any button, any child control inside
+    /// the row, selects) -- same reasoning as <see cref="OnOverlayElementPointerPressed"/>'s own
+    /// canvas-click selection (its own doc comment: clicking the row's Lock toggle or "x" delete
+    /// button also selecting first is harmless, matching that established precedent exactly).
+    /// Highlighting itself is driven by <see cref="ITemplateElementViewModel.IsSelected"/>, set by
+    /// <c>TxImageEditorPaneViewModel.OnSelectedOverlayElementChanged</c> -- this handler only needs
+    /// to write the selection, not the highlight.</summary>
+    private void OnElementRowPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is Control { DataContext: ITemplateElementViewModel element } && ViewModel is { } vm)
         {
-            return;
+            vm.SelectedOverlayElement = element;
         }
+    }
 
-        vm.ReadyRack.RecallSlotCommand.Execute(slotNumber);
-        e.Handled = true;
+    /// <summary>Backlog item (auditor usability review, 2026-08-17, item 14) -- commits and exits the
+    /// canvas inline text editor when it loses focus (clicking elsewhere, tabbing away). No separate
+    /// "commit" step needed -- the TextBox's own <c>Text</c> binding is two-way against
+    /// <see cref="OverlayElementViewModel.Text"/> already, the same property the ELEMENTS-row TextBox
+    /// commits through, so every keystroke is already live.</summary>
+    private void OnElementTextEditLostFocus(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Control { DataContext: OverlayElementViewModel text })
+        {
+            text.IsEditingText = false;
+        }
+    }
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17, item 14) -- Enter commits/exits
+    /// the same way losing focus does (a single-line text element has no legitimate use for a literal
+    /// newline); Escape is handled by <see cref="OnRootKeyDown"/>'s own dedicated branch instead (that
+    /// one needs <c>e.Source is TextBox</c> visibility this handler already implies, kept in one place
+    /// rather than duplicated).</summary>
+    private void OnElementTextEditKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && sender is Control { DataContext: OverlayElementViewModel text })
+        {
+            text.IsEditingText = false;
+            e.Handled = true;
+        }
     }
 }

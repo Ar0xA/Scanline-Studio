@@ -47,6 +47,18 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     private bool _locked;
 
     [ObservableProperty]
+    private bool _isSelected;
+
+    /// <summary>Backlog item (auditor usability review, 2026-08-17) -- gates the canvas's own inline
+    /// edit TextBox (double-click/F2 on a selected, unlocked text element), so <see cref="Text"/>
+    /// becomes directly editable on the canvas itself instead of only via the ELEMENTS panel's own
+    /// row TextBox. No separate commit/cancel plumbing needed -- the inline TextBox binds
+    /// <see cref="Text"/> two-way, the exact same property the row TextBox already commits through
+    /// directly, so toggling this back off is the only state this needs to own.</summary>
+    [ObservableProperty]
+    private bool _isEditingText;
+
+    [ObservableProperty]
     private double _fontSizeRelative = 0.1;
 
     [ObservableProperty]

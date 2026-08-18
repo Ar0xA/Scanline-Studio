@@ -50,6 +50,17 @@
                  the row instead of adding a sibling, so the rule spans the same Padding-inset width
                  the row's own content already does. -->
             <Border Grid.Row="0" BorderThickness="0,0,0,1" BorderBrush="{StaticResource IndustryChromeBorder}" Padding="0,0,0,6" Margin="0,0,0,6">
+            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+            <!-- Backlog item (auditor usability review, 2026-08-17, item 11): "No error surface
+                 anywhere in the editor." A dismissible-by-nature banner (it clears itself on the next
+                 successful action, see StatusMessage's own doc comment) rather than a toast/dialog —
+                 no such infrastructure exists anywhere in this codebase. Doubles as the Cancel/Recall
+                 arm-confirm surface (items 2/17), placed at the TOP of the editor so it's visible
+                 regardless of which inspector tab is open. -->
+            <Border Classes="Industry IndustryMini" IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    Background="{StaticResource IndustryDangerTint}" BorderBrush="{StaticResource IndustryDangerTintBorder}">
+                <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource IndustryDangerTintText}" TextWrapping="Wrap" />
+            </Border>
             <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" VerticalAlignment="Center">
                 <TextBlock Classes="IndustryGbTitle" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ContextBarTitle}" />
                 <Border Grid.Column="1" Width="1" Height="16" Margin="10,0" Background="{StaticResource IndustryChromeBorder}" />
@@ -81,6 +92,7 @@
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RevertCommand}" Content="{loc:Translate Panes.TxImageEditor.Revert}" />
                 </StackPanel>
             </Grid>
+            </StackPanel>
             </Border>
 
             <!-- Merged tool strip: Move/Crop/Scale/.../Pick RadioButton group, IndustryMiniRadioTheme
@@ -273,6 +285,12 @@
                              other panel in this codebase already lives with a title-only tab for the
                              same reason — this is the first one that also needed a trailing badge. -->
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                            <!-- Backlog item (auditor usability review, 2026-08-17, item 11): rack-level
+                                 error surface (a failed Refresh/Delete) — see
+                                 ReadyRackViewModel.StatusMessage's own doc comment. -->
+                            <TextBlock Classes="IndustryRowLabel" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                       Text="{Binding ReadyRack.StatusMessage}"
+                                       IsVisible="{Binding ReadyRack.StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                             <TextBlock Classes="IndustryKicker" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxImageEditor.ReadyRackKeysHint}" />
                             <ItemsControl ItemsSource="{Binding ReadyRack.Slots}">
                             <ItemsControl.ItemTemplate>
@@ -370,11 +388,25 @@
                                                     <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
                                                     <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
                                                             Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding LoadCommand}" CommandParameter="{Binding}" />
+                                                    <!-- Backlog item (auditor usability review, 2026-08-17, item 9): "PIN
+                                                         silently no-ops on a full rack but the toggle visually latches
+                                                         'pinned' anyway." Disabled pre-emptively via CanPin instead of
+                                                         chasing the visual desync after the fact — see that property's
+                                                         own doc comment. -->
                                                     <ToggleButton Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                                                  IsChecked="{Binding IsPinned, Mode=OneWay}" Command="{Binding TogglePinCommand}" CommandParameter="{Binding}"
+                                                                  IsChecked="{Binding IsPinned, Mode=OneWay}" IsEnabled="{Binding CanPin}"
+                                                                  Command="{Binding TogglePinCommand}" CommandParameter="{Binding}"
                                                                   Content="{loc:Translate Panes.TxImageEditor.PinTemplate}" />
-                                                    <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                                            Content="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" Command="{Binding DeleteCommand}" CommandParameter="{Binding}" />
+                                                    <!-- Backlog item (auditor usability review, 2026-08-17, item 3):
+                                                         "Template DELETE is a single unconfirmed click." Arm/confirm —
+                                                         see ReadyRackViewModel.DeleteAsync's own doc comment. -->
+                                                    <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding IsPendingDelete}"
+                                                            Padding="6,0" Command="{Binding DeleteCommand}" CommandParameter="{Binding}">
+                                                        <Panel>
+                                                            <TextBlock Text="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" IsVisible="{Binding !IsPendingDelete}" />
+                                                            <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmDeleteTemplate}" IsVisible="{Binding IsPendingDelete}" />
+                                                        </Panel>
+                                                    </Button>
                                                 </Grid>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
@@ -478,7 +510,6 @@
                                 Height="{Binding CanvasDisplayHeight}"
                                 Focusable="True"
                                 Background="Transparent"
-                                KeyDown="OnCanvasKeyDown"
                                 PointerMoved="OnCanvasPointerMoved"
                                 PointerReleased="OnCanvasPointerReleased">
 
@@ -533,6 +564,42 @@
                                        IsVisible="{Binding SafeAreaVisible}"
                                        Stroke="{StaticResource IndustryAccent}" Opacity="0.55"
                                        StrokeThickness="1" StrokeDashArray="4,2" />
+
+                            <!-- Backlog item (auditor usability review, 2026-08-17, item 10): "SNAP TO
+                                 GRID has no visible grid; snap only applies on drop, not to nudge/
+                                 numeric entry." Visual-only fix — a real grid overlay so the operator
+                                 can see the 5%-of-working-copy lines an element drag/resize snaps to
+                                 (TxImageEditorPaneView.axaml.cs's own SnapElementBoundsToGrid gridSize
+                                 default). Extending snap itself to keyboard nudge/numeric-entry stays
+                                 explicitly out of scope — nudge is a precision 1px/16px keyboard
+                                 control (PicRect.cpp's own real legacy mechanism, NudgeCropMove's own
+                                 doc comment), a different use case a 5%-grid snap would fight against,
+                                 not a gap. DrawingBrush tiled at 5%/5% of the rectangle's own bounding
+                                 box (RelativeToBoundingBox, via the "%" suffix on DestinationRect) —
+                                 this is why no VM-side pixel math is needed here, unlike every other
+                                 pixel-space property on this canvas: the tile scales with
+                                 CanvasDisplayWidth/Height for free. IsHitTestVisible="False" so the
+                                 real crop/overlay pointer handlers stay unaffected, same as the safe-
+                                 area guide just above. -->
+                            <Rectangle IsHitTestVisible="False"
+                                       Width="{Binding CanvasDisplayWidth}" Height="{Binding CanvasDisplayHeight}"
+                                       IsVisible="{Binding SnapToGrid}"
+                                       Opacity="0.3">
+                                <Rectangle.Fill>
+                                    <DrawingBrush TileMode="Tile" Stretch="None" DestinationRect="0%,0%,5%,5%">
+                                        <DrawingBrush.Drawing>
+                                            <GeometryDrawing>
+                                                <GeometryDrawing.Pen>
+                                                    <Pen Brush="{StaticResource IndustryAccent}" Thickness="1" />
+                                                </GeometryDrawing.Pen>
+                                                <GeometryDrawing.Geometry>
+                                                    <RectangleGeometry Rect="0,0,1,1" />
+                                                </GeometryDrawing.Geometry>
+                                            </GeometryDrawing>
+                                        </DrawingBrush.Drawing>
+                                    </DrawingBrush>
+                                </Rectangle.Fill>
+                            </Rectangle>
 
                             <!-- Width/Height bound explicitly (real-window code-review finding, via
                                  Avalonia DevTools): a Canvas ItemsPanel does NOT auto-size to its
@@ -735,7 +802,12 @@
                                                      has no native drop-shadow primitive, so this fakes
                                                      it the same way the real pipeline does: a second,
                                                      offset copy of the glyph run. -->
+                                                <!-- Outer Panel: Border only accepts a single Child —
+                                                     this wraps the display Panel below and the inline
+                                                     edit TextBox as siblings (see that TextBox's own
+                                                     doc comment). -->
                                                 <Panel>
+                                                <Panel IsVisible="{Binding !IsEditingText}">
                                                     <TextBlock Text="{Binding ResolvedText}"
                                                                FontSize="{Binding CanvasFontSize}"
                                                                FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
@@ -771,6 +843,28 @@
                                                                StrokeThickness="{Binding CanvasStrokeThicknessPixels}"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                                                IsHitTestVisible="False" />
+                                                </Panel>
+                                                <!-- Backlog item (auditor usability review,
+                                                     2026-08-17, item 14): "No inline canvas text
+                                                     editing (no double-click/F2)." Two-way bound
+                                                     straight to Text, the SAME property the ELEMENTS
+                                                     panel's own row TextBox already commits through
+                                                     — no separate commit/cancel plumbing needed, only
+                                                     IsEditingText's own show/hide. Entered via
+                                                     double-click (OnOverlayElementPointerPressed) or
+                                                     F2 (OnRootKeyDown); exited via LostFocus, Enter,
+                                                     or Escape (OnElementTextEditLostFocus/
+                                                     OnElementTextEditKeyDown/OnRootKeyDown). -->
+                                                <TextBox Text="{Binding Text}"
+                                                         IsVisible="{Binding IsEditingText}"
+                                                         Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
+                                                         Classes="Industry IndustryInput"
+                                                         FontSize="{Binding CanvasFontSize}"
+                                                         FontFamily="{Binding FontFamily, Converter={x:Static conv:PipelineFontFamilyNameConverter.Instance}}"
+                                                         TextWrapping="NoWrap" AcceptsReturn="False"
+                                                         VerticalContentAlignment="Center"
+                                                         LostFocus="OnElementTextEditLostFocus"
+                                                         KeyDown="OnElementTextEditKeyDown" />
                                                 </Panel>
                                             </Border>
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
@@ -839,14 +933,12 @@
                                     <!-- Phase 2 (spec/15-template-designer.md): third polymorphic branch,
                                          image elements. CanvasBitmap is a cached WriteableBitmap on the
                                          VM itself (rebuilt only when Source changes, not per-frame) —
-                                         see ImageElementViewModel's own doc comment. Stretch="Fill" here
-                                         is deliberate: the Image control just fills its own
-                                         CanvasWidth/HeightPixels box exactly like the box/text elements'
-                                         own Border does — actual Fit-mode (Stretch/Contain/Cover)
-                                         cropping/letterboxing happens in the real pipeline
-                                         (TransmitImagePreparer.DrawTemplateImage), not duplicated here;
-                                         this is WYSIWYG for POSITION/SIZE, not yet for Fit mode (Fit
-                                         isn't user-editable until Phase 4's style panel). -->
+                                         see ImageElementViewModel's own doc comment. Backlog item
+                                         (auditor usability review, 2026-08-17): Stretch now bound via
+                                         ImageFitModeToStretchConverter instead of a hardcoded Fill — the
+                                         GEOMETRY tab's new image-only Fit row (see that tab, further
+                                         down this file) makes Fit user-editable, so the canvas is now
+                                         WYSIWYG for Fit mode too, not just position/size. -->
                                     <DataTemplate DataType="vm:ImageElementViewModel">
                                         <Canvas Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}">
                                             <!-- Image has NO explicit Width/Height (code-review nit fixed
@@ -901,7 +993,7 @@
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
                                                 <Image Source="{Binding CanvasBitmap}"
-                                                       Stretch="Fill"
+                                                       Stretch="{Binding Fit, Converter={x:Static conv:ImageFitModeToStretchConverter.Instance}}"
                                                        IsHitTestVisible="False" />
                                             </Border>
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
@@ -1138,9 +1230,24 @@
                                      on the header action group and the (future) GEOMETRY tab, not
                                      duplicated per row; extending/replacing the original Phase 1 row
                                      layout, not a separate new panel. -->
+                                <!-- Backlog item (auditor usability review, 2026-08-17, item 13):
+                                     "ELEMENTS rows don't select or highlight on click." Each row Grid
+                                     dynamically toggles the "elementRowSelected" class off
+                                     IsSelected (ITemplateElementViewModel.IsSelected, parent-pushed by
+                                     TxImageEditorPaneViewModel.OnSelectedOverlayElementChanged) —
+                                     this Style just supplies the visual for that class, reusing the
+                                     same accent-tint tokens the context bar's own UNSAVED EDITS chip
+                                     already established for "this is currently true." -->
+                                <ItemsControl.Styles>
+                                    <Style Selector="Grid.elementRowSelected">
+                                        <Setter Property="Background" Value="{StaticResource IndustrySelectTint}" />
+                                    </Style>
+                                </ItemsControl.Styles>
                                 <ItemsControl.DataTemplates>
                                     <DataTemplate DataType="vm:OverlayElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2">
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2"
+                                              Classes.elementRowSelected="{Binding IsSelected}"
+                                              PointerPressed="OnElementRowPointerPressed">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeText}" />
                                             <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding Text}" IsEnabled="{Binding !Locked}" Margin="2,0" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
@@ -1161,7 +1268,9 @@
                                         </Grid>
                                     </DataTemplate>
                                     <DataTemplate DataType="vm:BoxElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2">
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2"
+                                              Classes.elementRowSelected="{Binding IsSelected}"
+                                              PointerPressed="OnElementRowPointerPressed">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeBox}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ToolBox}" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
@@ -1191,7 +1300,9 @@
                                          via the row's own context menu instead (Task #24, already ships
                                          this item). -->
                                     <DataTemplate DataType="vm:ImageElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2">
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2"
+                                              Classes.elementRowSelected="{Binding IsSelected}"
+                                              PointerPressed="OnElementRowPointerPressed">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeImage}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.AddImage}" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
@@ -1322,7 +1433,7 @@
                                 <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.HasStroke}"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.OutlineThicknessLabel}" />
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
-                                             Text="{Binding SelectedTextElement.StrokeThickness}" />
+                                             Text="{Binding SelectedTextElementStrokeThicknessPx}" />
                                 </Grid></Border>
 
                                 <!-- Phase 8 (spec/15-template-designer.md, YONIQ-style text-effects
@@ -1345,12 +1456,12 @@
                                 <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.HasShadow}"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.ShadowOffsetXLabel}" />
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
-                                             Text="{Binding SelectedTextElement.ShadowOffsetX}" />
+                                             Text="{Binding SelectedTextElementShadowOffsetXPx}" />
                                 </Grid></Border>
                                 <Border Classes="IndustryRow" IsEnabled="{Binding SelectedTextElement.HasShadow}"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.ShadowOffsetYLabel}" />
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
-                                             Text="{Binding SelectedTextElement.ShadowOffsetY}" />
+                                             Text="{Binding SelectedTextElementShadowOffsetYPx}" />
                                 </Grid></Border>
                                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.RotationLabel}" />
@@ -1437,24 +1548,80 @@
                                    IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNull}}" />
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
                                     IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <!-- Backlog item (auditor usability review, 2026-08-17, item 8): "GEOMETRY
+                                 X/Y/W/H are raw full-precision doubles, no px option." Bound through
+                                 the parent VM's new SelectedElement*Px properties instead of the raw
+                                 [0,1]-normalized X/Y/Width/Height — same target/working-copy-pixel
+                                 conversion convention SIZE (PX) already established for text (see
+                                 SelectedElementLeftPx's own doc comment). Label text unchanged
+                                 (GeometryXLabel etc.) but now reads "X (PX)" style via the updated
+                                 locale strings. -->
                             <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="4">
                                 <StackPanel>
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GeometryXLabel}" />
-                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedOverlayElement.X}" />
+                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedElementLeftPx}" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="1">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GeometryYLabel}" />
-                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedOverlayElement.Y}" />
+                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedElementTopPx}" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="2">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GeometryWidthLabel}" />
-                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedOverlayElement.Width}" />
+                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedElementWidthPx}" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="3">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GeometryHeightLabel}" />
-                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedOverlayElement.Height}" />
+                                    <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedElementHeightPx}" />
                                 </StackPanel>
                             </Grid>
+
+                            <!-- Backlog item (auditor usability review, 2026-08-17, item 5): "Box
+                                 elements have no style UI at all." Lives here (GEOMETRY, the one tab
+                                 shared across all 3 element types) rather than TEXT STYLE, which is
+                                 real text-only (SelectedTextElement narrows to OverlayElementViewModel
+                                 specifically) — gated on SelectedOverlayElement being a BoxElementViewModel,
+                                 mutually exclusive with the text-only TEXT STYLE tab's own content. -->
+                            <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
+                                        IsVisible="{Binding SelectedOverlayElement, Converter={x:Static conv:IsBoxElementConverter.Instance}}">
+                                <TextBlock Classes="IndustryGbTitle" Margin="0,4,0,0" Text="{loc:Translate Panes.TxImageEditor.BoxStyleHeader}" />
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FillColorLabel}" />
+                                    <ColorPicker Grid.Column="1" HorizontalAlignment="Right"
+                                                 Color="{Binding SelectedBoxElement.FillColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
+                                    <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.BorderLabel}"
+                                              IsChecked="{Binding SelectedBoxElement.HasBorder}" />
+                                    <ColorPicker Grid.Column="2" HorizontalAlignment="Right"
+                                                 IsEnabled="{Binding SelectedBoxElement.HasBorder}"
+                                                 Color="{Binding SelectedBoxElement.BorderColorForPicker, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedBoxElement.HasBorder}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.BorderThicknessLabel}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                             Text="{Binding SelectedBoxElementBorderThicknessPx}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.OpacityLabel}" />
+                                    <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0"
+                                            Minimum="0" Maximum="1" Value="{Binding SelectedBoxElement.Opacity}" VerticalAlignment="Center" />
+                                </Grid></Border>
+                            </StackPanel>
+
+                            <!-- Backlog item (auditor usability review, 2026-08-17, item 6): "Image
+                                 elements' Fit mode isn't editable." Same gated-block shape as BOX STYLE
+                                 above. -->
+                            <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
+                                        IsVisible="{Binding SelectedImageElement, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                <TextBlock Classes="IndustryGbTitle" Margin="0,4,0,0" Text="{loc:Translate Panes.TxImageEditor.ImageStyleHeader}" />
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FitModeLabel}" />
+                                    <ComboBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch"
+                                              ItemsSource="{Binding AvailableImageFitModes}"
+                                              SelectedItem="{Binding SelectedImageElement.Fit}" />
+                                </Grid></Border>
+                            </StackPanel>
+
                             <TextBlock Classes="IndustryRowLabel" Margin="0,4,0,0" Text="{loc:Translate Panes.TxImageEditor.AlignToCropLabel}" />
                             <Grid ColumnDefinitions="*,*,*,*,*,*" ColumnSpacing="3">
                                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
@@ -1612,9 +1779,19 @@
                             <TextBlock Grid.Column="1" Classes="IndustryKicker" HorizontalAlignment="Right" VerticalAlignment="Center" Text="{Binding SendMetaText}" />
                         </Grid>
                         <Grid ColumnDefinitions="110,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
-                            <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                    Content="{loc:Translate Panes.TxImageEditor.Cancel}"
-                                    Command="{Binding CancelCommand}" />
+                            <!-- Backlog item (auditor usability review, 2026-08-17, item 2): "Cancel
+                                 discards all edits with no confirmation." Arm/confirm — see
+                                 IsCancelArmed's own doc comment. Classes.IndustryBtnDanger dynamically
+                                 toggled on top of the normal Secondary look, same visual language a
+                                 destructive action already uses elsewhere in this design system. -->
+                            <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding IsCancelArmed}"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Command="{Binding CancelCommand}">
+                                <Panel>
+                                    <TextBlock Text="{loc:Translate Panes.TxImageEditor.Cancel}" IsVisible="{Binding !IsCancelArmed}" />
+                                    <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmCancelDiscardShort}" IsVisible="{Binding IsCancelArmed}" />
+                                </Panel>
+                            </Button>
                             <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                     Content="{loc:Translate Panes.TxImageEditor.Apply}"
                                     Command="{Binding ApplyCommand}" />
