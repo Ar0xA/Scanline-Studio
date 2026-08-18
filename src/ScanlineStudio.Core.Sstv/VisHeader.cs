@@ -106,11 +106,19 @@ internal static class VisHeader
         + ExtendedDataBitCount * BitDurationMs;
 
     /// <summary><c>AnalogFmSstvDecoder.TryDecodeNarrowModeHeader</c>'s own local search-ceiling
-    /// formula (see that method's doc comment) — guard-tone hold + mode-2's own timeout window,
+    /// formula (see that method's doc comment) — the 300ms leader itself (functional-audit fix, D6
+    /// round 3: previously omitted here despite headerStart marking where the leader begins, matching
+    /// this file's own NarrowHeaderTotalDurationMs -- an earlier version of this constant silently
+    /// under-covered by exactly that amount) + guard-tone hold + mode-2's own timeout window,
     /// start-bit training pulse, 24 data bits, plus the same <see cref="RetryMarginMs"/> every other
-    /// local scan in this file budgets.</summary>
+    /// local scan in this file budgets. <c>TryDecodeNarrowModeHeader</c> now reads this constant
+    /// directly (functional-audit fix, D6 round 4) rather than hand-transcribing the same arithmetic
+    /// a second time, so this and <see cref="MaxSearchCeilingMs"/> can never silently desync again --
+    /// exactly the failure mode <see cref="NormalSearchCeilingMs"/>'s own doc comment already
+    /// explains this pattern exists to prevent, which this constant didn't originally follow.</summary>
     public const double NarrowSearchCeilingMs =
-        NarrowGuardDurationMs * 2
+        NarrowLeaderDurationMs
+        + NarrowGuardDurationMs * 2
         + NarrowBitDurationMs * (1 + 24)
         + RetryMarginMs;
 

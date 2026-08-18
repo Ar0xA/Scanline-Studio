@@ -214,6 +214,83 @@ public class AfcTests
     }
 
     [Fact]
+    public async Task AnalogFmSstvDecoder_RealMistunedDecodeWithAutoSlant_AfcCorrectionKeepsPaceThroughTheLastLine()
+    {
+        // Functional-audit fix (D7, round 1): _afcProcessedUpTo/_afcBoundSample cap AFC correction
+        // at this image's own NOMINAL (pre-slant-correction) extent -- a bound legacy has no
+        // equivalent of (legacy's own AFC correction is unconditional for every sample while
+        // m_Sync, sstv.cpp:2270). Auto Slant lengthening the actual per-line stride under a real
+        // clock mismatch can make the image's TRUE elapsed sample count exceed that nominal bound
+        // before the last line finishes -- and this exact field already shipped one silent
+        // total-AFC-disable regression once (see _afcBoundSample's own call-site comment: Commit's
+        // body was inlined instead of calling it, which meant this field was never set at all for a
+        // while). Zero test coverage existed for whether AFC correction actually reaches the LAST
+        // line of a real image, not just the first few -- this proves it does, through a real
+        // encode-at-a-mistuned-rate/decode-at-the-declared-rate round trip with Auto Slant active
+        // (the default), same pattern as the sibling test above.
+        var mode = SstvModeRegistry.Robot36; // many transmission lines, real multi-second duration
+        var pixels = new ScanlineStudio.Abstractions.Imaging.Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new ScanlineStudio.Abstractions.Imaging.Rgb24(200, 120, 60));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = 44100;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.0005); // same 500ppm mismatch AfcTests/SlantTests already use -- triggers a real Auto-Slant correction
+
+        var encoder = new AnalogFmSstvEncoder(trueSampleRate);
+        var samples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            samples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate);
+
+        int? afcProcessedUpToAtLastLine = null;
+        int? consumedSamplesAtLastLine = null;
+        int? nextLineAtLastLine = null;
+        var hadAfcTrackerAtLastLine = false;
+        decoder.LineDecoded += _ =>
+        {
+            // Captured HERE, not after PushSamples returns: EndOfImage nulls _afcTracker once the
+            // whole (single-frame) image finishes decoding within this one PushSamples call, so a
+            // post-call read would always see it already gone.
+            afcProcessedUpToAtLastLine = decoder.AfcProcessedUpToForTests;
+            consumedSamplesAtLastLine = decoder.ConsumedSamplesForTests;
+            nextLineAtLastLine = decoder.NextLineForTests;
+            hadAfcTrackerAtLastLine = decoder.HasAfcTrackerForTests;
+        };
+
+        decoder.PushSamples(samples.ToArray());
+
+        // Functional-audit fix (D7, round 2 -- corrected twice: Auto Slant's own PerformReplay
+        // redraws earlier rows, inflating the raw LineDecoded event COUNT well past ImageHeight, so
+        // counting events isn't a reliable "did decode reach the end" signal here; and
+        // NextLineForTests is snapshotted at the LAST LineDecoded event, which fires BEFORE that
+        // row's own `_nextLine += RowsPerTransmissionLine` runs -- confirmed empirically, not
+        // assumed: this test's own real run measured 239, one less than ImageHeight's 240, for
+        // Robot36's RowsPerTransmissionLine of 1). Without this, a future change that truncated
+        // decode early (e.g. at line 3) would still pass -- the assertions below only ever check the
+        // LAST observed snapshot, whatever line that happened to be, not that decode actually
+        // reached the real end of the image.
+        Assert.True(
+            nextLineAtLastLine >= mode.ImageHeight - 1,
+            $"Expected decode to have reached (within one row's pre-increment lag of) the real end of the image, but the last LineDecoded snapshot had NextLineForTests={nextLineAtLastLine} against ImageHeight={mode.ImageHeight}.");
+
+        Assert.NotNull(afcProcessedUpToAtLastLine);
+        Assert.NotNull(consumedSamplesAtLastLine);
+        Assert.True(hadAfcTrackerAtLastLine, "Test setup problem -- AFC tracker was never active for this non-AVT mode.");
+
+        // AFC correction must have kept pace through to (near) the live cursor by the last decoded
+        // line -- if _afcBoundSample cut it off early, afcProcessedUpToAtLastLine would freeze well
+        // below consumedSamplesAtLastLine instead of tracking within about one line's width of it.
+        var lagSamples = consumedSamplesAtLastLine.Value - afcProcessedUpToAtLastLine.Value;
+        var oneLineWidthSamples = mode.LineDurationMs / 1000.0 * declaredSampleRate;
+        Assert.True(
+            lagSamples < oneLineWidthSamples,
+            $"Expected AFC correction to have caught up to within one line of the live cursor by the last decoded line, but it lagged by {lagSamples} samples (afcProcessedUpTo={afcProcessedUpToAtLastLine.Value}, consumedSamples={consumedSamplesAtLastLine.Value}, oneLineWidthSamples={oneLineWidthSamples:F0}) -- _afcBoundSample may be cutting off correction before the image actually ends.");
+    }
+
+    [Fact]
     public void AnalogFmSstvDecoder_AfcEnabledTrue_AvtStillExcludedRegardlessOfTheToggle()
     {
         // AVT's own exclusion (real legacy behavior) must survive this new toggle unchanged --
