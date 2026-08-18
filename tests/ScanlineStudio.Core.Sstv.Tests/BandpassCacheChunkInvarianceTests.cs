@@ -117,6 +117,38 @@ public class BandpassCacheChunkInvarianceTests
         Assert.Equal(lockAnchorSample!.Value, decoder.FirstLockedBandpassIndex!.Value);
     }
 
+    [Fact]
+    public async Task FirstNarrowDemodIndex_EqualsTheLockAnchor_ForANarrowMode()
+    {
+        // Functional-audit fix (chunk D1, round 1): DemodulatedFrequencyAt's own `isNarrow` gate
+        // (Band-2 item S6) is structurally identical to BandpassFilteredSampleAt's H1/H2 gate above --
+        // same captured _bandpassLockedFromSample anchor, same "cursor trails the anchor at Commit()"
+        // property this class's own doc comments assert -- but only the bandpass gate got a diagnostic
+        // + test after item 4b's finding. This sibling gate cannot be covered by
+        // FirstLockedFilterSample_EqualsTheLockAnchor above: that test uses MartinM1 (a wide mode),
+        // and this gate only ever fires for narrow modes by design. Uses Mn73, a real MN-family narrow
+        // mode (SstvModeRegistry.Mn73).
+        var mode = SstvModeRegistry.Mn73;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+
+        var encoder = new AnalogFmSstvEncoder(44100);
+        var transmissionSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            transmissionSamples.Add(sample);
+        }
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        int? lockAnchorSample = null;
+        decoder.LockAnchorCommitted += anchor => lockAnchorSample ??= anchor;
+
+        decoder.PushSamples(transmissionSamples.ToArray());
+
+        Assert.NotNull(lockAnchorSample);
+        Assert.NotNull(decoder.FirstNarrowDemodIndex);
+        Assert.Equal(lockAnchorSample!.Value, decoder.FirstNarrowDemodIndex!.Value);
+    }
+
     private static ArrayImageSource CreateGradientTestImage(int width, int height)
     {
         var pixels = new Rgb24[width * height];
