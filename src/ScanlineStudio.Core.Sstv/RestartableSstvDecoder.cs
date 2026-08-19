@@ -255,6 +255,15 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
         lock (_gate)
         {
+            // D2 round 2 fix: without this, a post-dispose call landing in the _criticalThresholdSamples
+            // or _warningThresholdSamples branch below would call Swap(), which constructs a FRESH,
+            // undisposed AnalogFmSstvDecoder and pushes to it successfully -- silently violating the
+            // ObjectDisposedException contract ISstvDecoder.PushSamples now documents, AND leaking that
+            // new inner decoder (this wrapper's own _disposed is already true, so nothing will ever
+            // dispose it). Previously this only happened to throw as a side effect of forwarding to an
+            // already-disposed _inner in the non-Swap branches.
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
             var n = _inner.TotalSamplesReceived;
 
             if (n >= _criticalThresholdSamples)
