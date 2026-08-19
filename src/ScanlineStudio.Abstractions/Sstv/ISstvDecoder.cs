@@ -116,7 +116,18 @@ public interface ISstvDecoder
 
     /// <summary>Resets AGC/level-tracking state to its power-on defaults. Legacy calls its equivalent
     /// (<c>CLVL::Init</c>) at every TX&lt;-&gt;RX transition (`Sound.cpp:398,443`) -- callers should
-    /// invoke this at the same transition points (ultracode audit finding #6).</summary>
+    /// invoke this at the same transition points (ultracode audit finding #6).
+    ///
+    /// Concurrency contract (D0-audit round-6 finding: unlike <see cref="RequestReSync"/>/
+    /// <see cref="RequestCorrectSlant"/>/<see cref="ForceMode"/>, this is NOT a deferred single-field
+    /// write consumed later on the decode thread -- it mutates the underlying level-tracking state
+    /// directly and synchronously, on whichever thread calls it, right now. Calling it while a
+    /// concurrent <see cref="PushSamples"/> call is in flight on another thread is a genuine data
+    /// race on that state (bounded: at worst a torn read briefly under-clamps AGC'd samples for one
+    /// ~100ms `Fix()` window, never wrong pixel data or a crash) -- callers must call this only at a
+    /// TX/RX transition boundary where no concurrent <see cref="PushSamples"/> call can be in
+    /// flight, not from an arbitrary thread at an arbitrary time the way the deferred siblings
+    /// allow.</summary>
     void ResetAgc();
 
     /// <summary>Requests a one-time manual sync correction — the port of legacy's real "ReSync" button
