@@ -36,6 +36,12 @@ coverage*.info
 # be silently caught by coverage*.json above.
 !coverage-thresholds.json
 
+# UI design-mockup working files (screenshots, zips, scratch layout exports) -- not build inputs.
+# Note: mockups/guidance/ and a handful of other files under mockups/ were already tracked before
+# this entry was added; this only stops NEW untracked drops from showing up in git status going
+# forward, it does not untrack what's already committed.
+mockups/
+
 # OS cruft
 .DS_Store
 Thumbs.db
