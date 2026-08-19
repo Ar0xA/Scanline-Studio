@@ -3966,29 +3966,52 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // + 24 data bits' worth (24*22ms) + a 200ms retry margin, matching TryDecodeVisDataBits' own
     // generous-but-local shape.
     //
-    // Commit point: headerStart + the packet's fixed nominal duration (VisHeader.NarrowHeaderTotalDurationMs),
-    // NOT whatever sample NarrowFskHeaderDecoder happens to lock on -- confirmed by round-2 auditor
-    // review against TX's real placement (Main.cpp:7423-7424 puts image data at a fixed offset after
-    // the checksum bits, not at Start()'s slightly-earlier legacy firing point) and matching this
-    // method's own prior (buggy) behavior, which the currently-passing
-    // SstvRoundTripTests.NarrowModeHeader_IsDetected_ForMnFamily test already relies on.
-    // Functional-audit finding, OPEN (D6, round 4 -- not fixed, needs an explicit decision):
-    // AnalogFmSstvEncoder.cs's GenerateOutHeadSegments emits a 400ms burst BEFORE every narrow
-    // packet, unconditionally, for every encode this port produces. `headerStart` below (==
-    // `_consumedSamples`) is assumed to be where the real narrow packet itself begins (delta = 0) --
-    // but `_consumedSamples` never advances pre-lock, so delta == 400ms for this port's own encoder
-    // output, and for any real MMSSTV transmission carrying the same burst. Even after round 3's own
-    // ceiling widening (below, ~306ms of real tolerance past the packet's own minimum decode point)
-    // and round 4's delta-robust anchor fix (also below), the search window still can't reach a
-    // 400ms delta -- meaning this fixed-window narrow path remains DEAD CODE for realistic audio
-    // today, exactly like its VIS sibling (see TryDecodeVisHeader's own identical note for the full
-    // shared derivation and the two remedy options). The round-3/round-4 fixes in this method were
-    // still worth landing regardless (they widen the window without weakening it, and the
-    // delta-robust anchor removes a real correctness trap for whenever this gets revisited) -- but
-    // they do not, by themselves, revive this path. Left as an open architectural decision (make
-    // delta-robust and widen far enough to clear OutHEAD, or retire this path and
-    // TryDecodeVisHeader together along with MaxSearchCeilingMs's own first-refusal gate), not
-    // picked unilaterally this round.
+    // Commit point (functional-audit correction, D6 round 5: this paragraph previously described
+    // the FIXED-OFFSET formula round 4 replaced -- "headerStart + the packet's fixed nominal
+    // duration, NOT whatever sample NarrowFskHeaderDecoder happens to lock on" -- which argued for
+    // the OLD, since-reverted behavior; corrected to describe what the code actually does now): the
+    // commit anchor is derived from the ACTUAL sample the lock completed at (delta-robust, see the
+    // method body's own comment at the anchor computation), not a fixed offset from headerStart.
+    //
+    // Round-6 correction: an earlier version of THIS sentence claimed the delta-robust formula
+    // reproduces "the exact same value" as the old fixed formula at delta=0, calling it "verified" --
+    // that overstated it. `NarrowFskNoiseTolerantDetectionTests.cs`'s own measured acceptance
+    // criterion (its own comment there) puts the real-world delta-robust anchor ~104 samples
+    // (~9.4ms at 11025Hz) LATE versus the fixed formula's value, consistently -- real
+    // envelope-detector settling lag on the mode-2 trigger (the same category of delay already
+    // documented for VisLockStateMachine's own ~7.3ms trigger lag and TryDecodeVisDataBits' own
+    // ~14.5ms), not a derivation error, and not something the fixed formula ever had to account for
+    // (it never measured anything, just assumed the idealized offset). So round 4's fix traded a
+    // real delta bug for a small, measured, already-tolerated late bias -- a strict improvement, but
+    // not the no-op the word "verified" implied. The TX-placement fact this method relies on
+    // (confirmed against Main.cpp:7423-7424, image data at a fixed offset after the checksum bits --
+    // see VisHeader.cs:340 for the same citation) and
+    // SstvRoundTripTests.NarrowModeHeader_IsDetected_ForMnFamily's own passing
+    // status are both still accurate regardless (that test asserts mode identity only, resolves via
+    // TryNarrowFskScan since this path is dead for encoder output either way, and was never
+    // sensitive to this anchor's exact value) -- only the "exact same value, verified" framing was
+    // wrong.
+    //
+    // Functional-audit finding, DECIDED (D6, rounds 4-6 -- user explicitly chose to leave THIS
+    // method's fully-dead-code path as documented rather than fix or retire it; see
+    // TryDecodeVisHeader's own note for the shared derivation -- no longer identical to this one,
+    // since round 5 found TryDecodeVisHeader is only PARTIALLY dead, with a separate, still-open
+    // 0-185ms live-band finding this method does not share; see project memory
+    // "narrow-vis-header-paths-left-dead" for the recorded decision): AnalogFmSstvEncoder.cs's
+    // GenerateOutHeadSegments emits a 400ms burst BEFORE every narrow packet, unconditionally, for
+    // every encode this port produces. `headerStart` below (== `_consumedSamples`) is assumed to be
+    // where the real narrow packet itself begins (delta = 0) -- but `_consumedSamples` never
+    // advances pre-lock, so delta == 400ms for this port's own encoder output, and for any real
+    // MMSSTV transmission carrying the same burst. Even after round 3's own ceiling widening (below,
+    // ~306ms of real tolerance past the packet's own minimum decode point) and round 4's
+    // delta-robust anchor fix (also below), the search window still can't reach a 400ms delta --
+    // meaning this fixed-window narrow path remains fully dead code for realistic audio today
+    // (unlike its VIS sibling, which round 5 found is only PARTIALLY dead -- live and correctness-
+    // risky for a narrower 0-185ms delta band; see TryDecodeVisHeader's own note). The round-3/
+    // round-4 fixes in this method were still worth landing regardless (they widen the window
+    // without weakening it, and the delta-robust anchor removes a real correctness trap for whenever
+    // this gets revisited) -- but they do not, by themselves, revive this path. That's fine: the
+    // user's own decision above already accepts this path staying fully dead.
     private bool TryDecodeNarrowModeHeader()
     {
         var totalHeaderSampleCount = (int)Math.Round(VisHeader.NarrowHeaderTotalDurationMs / 1000.0 * _sampleRate);
@@ -4299,29 +4322,51 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // with each other, not a bug to unify.
     private int MsToSamples(double ms) => (int)Math.Round(ms / 1000.0 * _sampleRate);
 
-    // Functional-audit finding, OPEN (D6, round 4 -- not fixed, needs an explicit decision, see
-    // TryDecodeNarrowModeHeader's own identical note for the full derivation): this fixed-window
-    // path assumes `headerStart` (== `_consumedSamples`) is where the real VIS/narrow packet itself
-    // begins (delta = 0). AnalogFmSstvEncoder.cs's GenerateOutHeadSegments emits an 800ms burst
-    // BEFORE every normal/extended VIS packet (400ms before every narrow one), unconditionally, for
-    // every encode this port produces -- and `_consumedSamples` never advances pre-lock, so
-    // delta == that OutHEAD duration for this port's own encoder output, and for any real MMSSTV
-    // transmission carrying the same burst. This method's own search ceiling (`VisHeader.
-    // NormalSearchCeilingMs`/`ExtendedSearchCeilingMs`, ~1065/1305ms) tolerates delta up to only
-    // ~185ms -- meaning this fixed-window VIS path is DEAD CODE for realistic audio today, same as
-    // the narrow sibling. No wrong output results (TryInterleavedHeaderScan's fallback scanners --
-    // VisLockStateMachine/TryNarrowFskScan -- cover every case that reaches production; the
-    // round-trip/golden-vector suite passes entirely through them), but a documented "primary"
-    // detection path delivers nothing on any input that isn't hand-constructed to start exactly at
-    // delta=0. Two ways to close this, neither done here: (a) make this method delta-robust the same
-    // way TryNarrowFskScan already is (search for the packet's own start within a widened window,
-    // derive the anchor from where it's actually found rather than a fixed offset from headerStart --
-    // TryDecodeNarrowModeHeader's own round-4 fix demonstrates the technique for the narrow case);
-    // or (b) retire both fixed-window paths as dead code and drop `MaxSearchCeilingMs`'s own
-    // first-refusal gate in `TryInterleavedHeaderScan` (which exists solely to give these paths a
-    // fair chance to win a race they can now never enter). Left as an open decision rather than
-    // picked unilaterally -- this is an architectural call (delta-robustness work vs. deleting a
-    // documented detection path), not a same-shape audit-fix-pass edit.
+    // Functional-audit finding, DECIDED for the >~185ms band / OPEN for the 0-185ms band (D6,
+    // rounds 4-6 -- see project memory "narrow-vis-header-paths-left-dead" for the recorded
+    // decision, and TryDecodeNarrowModeHeader's own note for the shared derivation, though the two
+    // are no longer identical -- see below for the difference). This fixed-window path assumes
+    // `headerStart` (== `_consumedSamples`) is where the real VIS/narrow packet itself begins
+    // (delta = 0). AnalogFmSstvEncoder.cs's GenerateOutHeadSegments emits an 800ms burst BEFORE
+    // every normal/extended VIS packet (400ms before every narrow one), unconditionally, for every
+    // encode this port produces -- and `_consumedSamples` never advances pre-lock, so delta == that
+    // OutHEAD duration for this port's own encoder output, and for any real MMSSTV transmission
+    // carrying the same burst. This method's own search ceiling (`VisHeader.NormalSearchCeilingMs`/
+    // `ExtendedSearchCeilingMs`, ~1065/1305ms) tolerates delta up to only ~185ms.
+    //
+    // Round-5 correction: NOT fully dead code, and the prior "no wrong output results" claim here
+    // was false for the live band. For 0 < delta <= ~185ms (e.g. a short lead-in capture, or a real
+    // transmission whose OutHEAD is shorter/absent -- legacy's own OutHEAD is VOX-mode-dependent,
+    // Main.cpp:7274-7292, unlike this port's own encoder which emits it unconditionally), this path
+    // DOES fire (bit decoding is trigger-search-based, so it tolerates delta fine) but commits at
+    // the fixed `headerStart + totalHeaderSampleCount + extraSampleCount` (the exact call, `:4477`
+    // below -- `extraSampleCount` is nonzero for Scottie's own extra post-header pulse) -- an
+    // anchor `delta` samples too early, unlike TryDecodeNarrowModeHeader's own sibling, which round
+    // 4 already made delta-robust.
+    //
+    // Impact bound, corrected (round 6, citations corrected round 7): "TryResolveSyncAnchorCorrection's
+    // own fold re-phases the anchor modulo the line width" is true ONLY for the non-AVT commit
+    // (`:4477`) -- AVT never reaches that method (`Commit`'s own AVT branch finalizes inline, matching
+    // legacy's `Main.cpp:3754-3758` early-out for `smAVT`), so AVT's OWN fallback commit
+    // (`Commit(SstvModeRegistry.Avt, _avtTrainingFallbackDeadlineSample)` in `TryResolveAvtTraining`,
+    // reached when the AVT training lock doesn't confirm before `_avtTrainingFallbackDeadlineSample` --
+    // AVT is a normal VIS byte, 68, not the 0x23 extended-VIS escape code, so it never goes through the
+    // extended path above) has NO fold applied -- a raw, unfolded sub-line shift up to ~185ms (roughly
+    // half an AVT image line, 3x125ms), not the "integer transmission lines" shape the folded case
+    // gets. For the folded (non-AVT)
+    // case, "1-2 transmission lines" is also mode-dependent, not a universal bound: RM8's own line
+    // is ~66.9ms (SstvModeRegistry.cs), so a 185ms delta folds to ~3 lines there, not 1-2 -- the
+    // real bound is `ceil(185ms / thatMode'sOwnLineDurationMs)` transmission lines, smaller for
+    // slower modes, larger for faster ones.
+    //
+    // A delta-robust anchor fix for THIS method (porting the same technique already proven in
+    // TryNarrowFskScan and TryDecodeNarrowModeHeader) is queued, not done here -- unlike the narrow
+    // case, where the fix reused an already-computed value
+    // (`FskDecodeResult.SamplesSinceBitClockOrigin`), TryDecodeVisDataBits has no equivalent
+    // trigger-position value exposed to its caller yet; adding one is new, real derivation work (not
+    // a mechanical port of an already-proven pattern) and deserves its own focused pass rather than
+    // being rushed alongside an unrelated finding. Fully separate from, and does NOT reopen, the
+    // user's own decision to leave the >~185ms fully-dead band exactly as documented.
     private bool TryDecodeVisHeader()
     {
         // S10 fix: prefix now covers the first FULL byte (leader/break/leader/start-bit + 7 data bits
