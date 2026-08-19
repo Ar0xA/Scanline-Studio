@@ -2784,9 +2784,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 if (_correctSlantRequested)
                 {
                     _correctSlantRequested = false;
-                    if (!_autoStopTriggered && !_slantCorrectionsDisabledForRestOfImage && TryCorrectSlant())
+                    // D0-audit round-10 structural fix: TryCorrectSlant() + PerformReplay() (called
+                    // separately here up through round 9) are now one transaction,
+                    // TryCorrectSlantAndApply() -- see its own doc comment for why a bare sequential
+                    // call pair could leave TryCorrectSlant's own commits stranded on a PerformReplay
+                    // bail.
+                    if (!_autoStopTriggered && !_slantCorrectionsDisabledForRestOfImage && TryCorrectSlantAndApply())
                     {
-                        PerformReplay();
                         _pendingReplayRequested = false; // subsume: this replay already covers what a same-line automatic trigger wanted
 
                         // Deliberately NOT setting _anyCorrectionCommittedThisImage here (auditor
@@ -5917,11 +5921,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// one piece of this area that would be real follow-up work if ever prioritized, tracked as a
     /// pre-existing, already-documented, already-accepted tradeoff -- not new scope from this
     /// investigation.</summary>
-    private void PerformReplay()
+    // D0-audit round-10 structural fix: return type is now bool, not void. false means NOTHING in
+    // this method ran (all 3 early exits below sit before any of this method's own mutations) --
+    // the caller (TryCorrectSlantAndApply, for the manual path) uses this to know whether a
+    // just-committed TryCorrectSlant() result must be rolled back, matching legacy's own
+    // commit-or-revert shape (Main.cpp:5415-5423). true covers both a normal full pass AND
+    // checkpoint 2's bail below (that bail runs AFTER this method's own resets have already fired --
+    // deliberately not rolled back, a pre-existing, already-accepted design this fix does not
+    // change, see that checkpoint's own doc comment). The automatic _pendingReplayRequested caller
+    // needs no change and discards this return value -- ProcessSlantTrackingSample's own commit tail
+    // already normalizes the accumulator/envelope fields at its own line boundary, independent of
+    // this method's outcome (round-2 plan-review, re-derived from source).
+    private bool PerformReplay()
     {
         if (_rxLineStagingBuffer is null || _mode is null || _slantTracker is null || _lineDecoder is null || _pixels is null)
         {
-            return; // not in a state replay applies to (AVT/pre-lock/RxBufferMode.Off -- matches ApplySlantTracking's own guard; code-review fix: Extended DOES replay as of Phase 7's decoder-wiring sub-piece, via this same is-null gate)
+            return false; // not in a state replay applies to (AVT/pre-lock/RxBufferMode.Off -- matches ApplySlantTracking's own guard; code-review fix: Extended DOES replay as of Phase 7's decoder-wiring sub-piece, via this same is-null gate)
         }
 
         var mode = _mode;
@@ -5953,13 +5968,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // _lineBoundaries non-zero against a file that was never actually truncated).
         if (stagingBuffer.HasWriteFailed)
         {
-            return;
+            return false;
         }
 
         var stagedSampleCount = stagingBuffer.Count;
         if (stagedSampleCount == 0)
         {
-            return; // nothing staged yet
+            return false; // nothing staged yet
         }
 
         // Reset-then-rebuild, immediately before every replay pass (Main.cpp:5600ish's InitAutoStop
@@ -5996,9 +6011,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _slantTracker.ResetBaseline();
 
         // Clean slate for replay's own per-sample walk -- see this method's own doc comment for why
-        // this is a one-time reset, never restored. _slantIdealSamplesSoFarInLine is NOT included here
-        // (unlike an earlier version of this method) -- it needs to be seeded relative to `origin`, not
-        // zeroed, computed further below once `origin` is known.
+        // this is a one-time reset, never restored. _slantIdealSamplesSoFarInLine is NOT zeroed here --
+        // it needs to be seeded relative to `origin`, not zeroed, computed further below (the
+        // `firstFedDest`-based assignment, once `origin` is known), and that assignment overwrites the
+        // modulo below on every path that reaches it. D0-audit round-10 structural fix: the modulo IS
+        // placed here (not omitted, as an earlier version of this method did) so it runs before
+        // checkpoint 2 below -- on that checkpoint's own bail (after this point, before the
+        // `firstFedDest` seed), it is the only thing keeping the accumulator valid against the
+        // just-corrected _effectiveSamplesPerLine, since TryCorrectSlant's caller
+        // (TryCorrectSlantAndApply) treats a checkpoint-2 bail as a committed replay, not a revert --
+        // matching this method's own already-accepted "resets already ran, not rolled back" design at
+        // that checkpoint, see its own doc comment. A no-op on every other path (overwritten by the
+        // `firstFedDest` seed further below, then again by the cursor-reanchor seed near this method's
+        // own tail).
+        _slantIdealSamplesSoFarInLine %= _effectiveSamplesPerLine;
         _slantLineEnvelopeSeeded = false;
         _slantLineMaxEnvelope = double.NegativeInfinity;
         _slantLineMinEnvelope = double.PositiveInfinity;
@@ -6064,7 +6090,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // to a bail that happens here instead.
         if (stagingBuffer.HasWriteFailed)
         {
-            return;
+            return true; // D0-audit round-10 structural fix: this bail's own resets already ran (see this checkpoint's own doc comment above) -- treated as a committed replay, not reverted, matching the pre-existing accepted design.
         }
 
         // Auto-Sync/Auto-Slant re-feed: ONE continuous per-sample walk over the whole valid staged
@@ -6252,6 +6278,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _rxBufferLineSync.Clear();
         _rxBufferAnchorSample = _consumedSamples;
         _rxBufferBaseTransmissionLine = resumeRowTransmissionLine;
+
+        return true;
     }
 
     /// <summary>
@@ -6584,42 +6612,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
         _effectiveSamplesPerLine = candidateLineWidthSamples;
 
-        // D0-audit round-8 finding: TryCorrectSlant is the only writer of _effectiveSamplesPerLine
-        // that commits MID-LINE -- the automatic path (ProcessSlantTrackingSample) always commits
-        // exactly at a line boundary and subtracts completedLineSamples immediately after, leaving
-        // _slantIdealSamplesSoFarInLine safely in [0, E) by construction (round-9 correction: NOT
-        // [0,1) as an earlier version of this comment claimed -- SlantTests.cs's own history records
-        // that a [0,1) bound was tried and failed; the accumulator legitimately ranges across the
-        // whole line width in steady state). This manual path instead relied entirely on
-        // PerformReplay() below (a few lines down) to reseed the accumulator against the new width.
-        // If PerformReplay never reaches its own reseed -- reachable via RxBufferMode.Extended's own
-        // HasWriteFailed bail, checked at both of that method's early returns -- the accumulator
-        // keeps holding a value that was valid against the OLD (larger) width but can exceed the NEW
-        // one, violating SlantIdealSamplesSoFarInLineForTests' own documented invariant and producing
-        // one spurious immediate line-boundary in ProcessSlantTrackingSample.
+        // D0-audit round-8/9 history (superseded, kept for context): TryCorrectSlant is the only
+        // writer of _effectiveSamplesPerLine that commits MID-LINE, unlike the automatic path
+        // (ProcessSlantTrackingSample), which always commits at a line boundary and re-anchors the
+        // accumulator/envelope fields immediately after, by construction. Rounds 8 and 9 patched this
+        // method itself to re-anchor the same fields here, to cover PerformReplay's own checkpoint-1
+        // bail (RxBufferMode.Extended's HasWriteFailed) -- but that patch left this method's OWN
+        // commits (_effectiveSamplesPerLine and the tracker's adopted rate, immediately below)
+        // stranded uncommitted-but-unreverted on that exact bail: the accumulator/envelope fields
+        // ended up correctly re-anchored against a rate that was never actually applied. Same bug
+        // class rounds 8/9 were trying to close, one layer up.
         //
-        // D0-audit round-9 correction: round 8's own fix normalized ONLY the accumulator, but this
-        // file's four other re-anchor sites (InitializeSlant, ProcessSlantTrackingSample's own
-        // line-boundary tail, and both of PerformReplay's own resets) always move the accumulator
-        // TOGETHER with the four per-line envelope fields below -- round 8's comment claiming this
-        // "makes correctness independent of whatever the caller does next" was itself an overclaim:
-        // on the exact bail path this fix exists for, those four fields stay un-re-anchored,
-        // expressed in pre-wrap accumulator coordinates, so the line completing after the bail
-        // computes its sync-peak measurement from a peak that belongs to the discarded partial line.
-        // Matching all five sibling sites' own shape closes that gap too.
-        //
-        // D0-audit round-9 nit fix, same bail window: RecomputeAutoSyncThresholds() derives
-        // _autoSyncBaseMult/_autoSyncDiff from _effectiveSamplesPerLine, but the only call site was
-        // PerformReplay's own top (a few lines down) -- if that never runs, Auto-Sync's cluster/step
-        // thresholds stay derived from the pre-correction width for the rest of the image. Calling it
-        // here too (harmless on the non-bail path -- PerformReplay's own call re-derives the same
-        // values from the same now-already-current _effectiveSamplesPerLine moments later) closes it.
-        _slantIdealSamplesSoFarInLine %= _effectiveSamplesPerLine;
-        _slantLineEnvelopeSeeded = false;
-        _slantLineMaxEnvelope = double.NegativeInfinity;
-        _slantLineMinEnvelope = double.PositiveInfinity;
-        _slantLinePeakPosition = 0;
-        RecomputeAutoSyncThresholds();
+        // D0-audit round-10 structural fix: this method now commits ONLY _effectiveSamplesPerLine and
+        // the tracker's rate (immediately below) -- it no longer touches the accumulator/envelope
+        // fields/Auto-Sync thresholds at all. The caller, TryCorrectSlantAndApply(), snapshots this
+        // method's full commit set BEFORE calling it and reverts everything if the subsequent
+        // PerformReplay() call reports it never started applying the correction (its own new bool
+        // return) -- a real commit-or-revert transaction, matching legacy's own shape exactly
+        // (Main.cpp:5415-5423). The accumulator/envelope-field re-anchor rounds 8/9 added here moved
+        // into PerformReplay itself (right after its own checkpoint 1), the one place a
+        // checkpoint-2-only bail (deliberately not rolled back, a separate, unchanged, pre-existing
+        // acceptance) can still need it live.
 
         // Auditor code-review finding, Phase 8c round 1: without this, _slantTracker's own evolving
         // _currentSampleRate/_nominalSamplesPerLine stay at their pre-manual values, so the NEXT
@@ -6632,6 +6645,73 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _slantTracker?.AdoptCorrectedRate(candidateSampleRate);
 
         return true;
+    }
+
+    /// <summary>Transactional wrapper around <see cref="TryCorrectSlant"/> + <see cref="PerformReplay"/>
+    /// for the manual Correct Slant path only -- D0-audit round-10 structural fix, replacing rounds
+    /// 8/9's incremental patches inside <see cref="TryCorrectSlant"/> itself (see that method's own
+    /// doc comment for why those were still incomplete). Snapshots every field
+    /// <see cref="TryCorrectSlant"/> can mutate BEFORE calling it. If it returns
+    /// <see langword="false"/>, nothing was touched, so there is nothing to revert. If it returns
+    /// <see langword="true"/>, calls <see cref="PerformReplay"/>; a <see langword="false"/> result
+    /// there (only reachable via <see cref="PerformReplay"/>'s own pre-mutation early exits --
+    /// checkpoint 1 among them, see its own doc comment) means the whole correction must revert,
+    /// restoring every snapshotted field verbatim -- matching legacy's own commit-or-revert shape
+    /// (<c>Main.cpp:5415-5423</c>: <c>RedrawSampFreq(FALSE)</c> only when about to redraw, otherwise
+    /// <c>m_SampFreq = StartSamp; SetSampFreq();</c>). The accumulator/envelope/Auto-Sync-threshold
+    /// fields are snapshotted too even though <see cref="TryCorrectSlant"/> no longer writes them
+    /// directly (round-2 plan-review: kept as cheap, currently-inert insurance against this method's
+    /// own snapshot list silently going stale -- NOT a guarantee that any future change to which of
+    /// <see cref="PerformReplay"/>'s exits return true vs. false stays safe on its own: this list must
+    /// still be re-audited against <see cref="PerformReplay"/>'s full mutation set, including
+    /// <c>_lastLineSyncPeakPosition</c>/<c>_suppressNextSlantProcessLine</c>/the tracker's baseline/the
+    /// Auto-Sync observation history, none of which are snapshotted here, whenever that boundary
+    /// changes). <see cref="SlantTracker.AdoptCorrectedRate"/>'s revert restores the
+    /// rate pair only, not the baseline/history its own <c>Reset()</c> already cleared on the forward
+    /// call -- that reset is unrecoverable and NOT rolled back, a documented, accepted,
+    /// degradation-only gap vs. legacy (whose own revert arm is a bare <c>SetSampFreq()</c>, no
+    /// <c>InitAutoStop</c> call, so legacy's baseline genuinely does survive a revert -- round-2
+    /// plan-review, verified against <c>Main.cpp:5420-5423</c>). The two
+    /// <c>*SafetyCheckCountForTests</c> diagnostic counters are deliberately excluded from the
+    /// snapshot: they count how many times a check ran, not correction state, and must keep
+    /// incrementing regardless of outcome.</summary>
+    private bool TryCorrectSlantAndApply()
+    {
+        var preCommitEffectiveSamplesPerLine = _effectiveSamplesPerLine;
+        var preCommitIdealSamplesSoFarInLine = _slantIdealSamplesSoFarInLine;
+        var preCommitLineEnvelopeSeeded = _slantLineEnvelopeSeeded;
+        var preCommitLineMaxEnvelope = _slantLineMaxEnvelope;
+        var preCommitLineMinEnvelope = _slantLineMinEnvelope;
+        var preCommitLinePeakPosition = _slantLinePeakPosition;
+        var preCommitAutoSyncBaseMult = _autoSyncBaseMult;
+        var preCommitAutoSyncDiff = _autoSyncDiff;
+
+        if (!TryCorrectSlant())
+        {
+            return false;
+        }
+
+        if (PerformReplay())
+        {
+            return true;
+        }
+
+        // Revert -- see this method's own doc comment. `_mode` is guaranteed non-null here:
+        // TryCorrectSlant only returns true after its own `_mode is null` entry guard has passed, and
+        // nothing between there and here can null it (decode-thread-only, no re-entrancy).
+        _effectiveSamplesPerLine = preCommitEffectiveSamplesPerLine;
+        _slantIdealSamplesSoFarInLine = preCommitIdealSamplesSoFarInLine;
+        _slantLineEnvelopeSeeded = preCommitLineEnvelopeSeeded;
+        _slantLineMaxEnvelope = preCommitLineMaxEnvelope;
+        _slantLineMinEnvelope = preCommitLineMinEnvelope;
+        _slantLinePeakPosition = preCommitLinePeakPosition;
+        _autoSyncBaseMult = preCommitAutoSyncBaseMult;
+        _autoSyncDiff = preCommitAutoSyncDiff;
+
+        var preCommitSampleRate = preCommitEffectiveSamplesPerLine / (_mode!.LineDurationMs / 1000.0);
+        _slantTracker?.AdoptCorrectedRate(preCommitSampleRate);
+
+        return false;
     }
 
     /// <summary>Pure safety predicate for manual Correct Slant's unbounded regression result.
@@ -6724,8 +6804,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <summary>Test-only entry point for <see cref="PerformReplay"/> -- lets a test drive a single
     /// replay pass directly and deterministically, without depending on the automatic triggers'
     /// (RX buffer subsystem Phase 6d) own timing. Mirrors the established <c>InitializeAfcForTests</c>
-    /// precedent (a thin pass-through wrapper around an otherwise-private method).</summary>
-    internal void PerformReplayForTests() => ExecuteWithDeferredSubscriberFailures(PerformReplay);
+    /// precedent (a thin pass-through wrapper around an otherwise-private method). Stays
+    /// <see langword="void"/> even though <see cref="PerformReplay"/> itself now returns
+    /// <see langword="bool"/> (D0-audit round-10 structural fix) -- <see cref="ExecuteWithDeferredSubscriberFailures"/>
+    /// only has an <see cref="Action"/> overload, and no existing test reads a return value here
+    /// (<c>ReplayEngineTests.cs</c>'s own <c>Assert.Throws&lt;InvalidOperationException&gt;(decoder.PerformReplayForTests)</c>
+    /// depends on this staying a plain method group).</summary>
+    internal void PerformReplayForTests() => ExecuteWithDeferredSubscriberFailures(() => PerformReplay());
 
     /// <summary>Test-only: when <see langword="true"/>, <see cref="TryProcessBuffer"/>'s own automatic
     /// replay drain (RX buffer subsystem Phase 6d) becomes a no-op (the pending flag is still cleared,
