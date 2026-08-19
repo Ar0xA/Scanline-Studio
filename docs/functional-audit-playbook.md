@@ -275,3 +275,41 @@ CoreCLR twice), a diagnostic double-read race in the two new
 messages themselves, an `internal` type name leaking into one
 `ObjectDisposedException` message. Update this table's status inline as
 batches complete rather than maintaining a separate tracking doc.
+
+**Batch 1 RE-AUDIT (2026-08-19), process note first:** the orchestrating session offered "start
+Batch 1" to the user as if it were an unstarted option, without checking this status line first --
+a real process miss (this section already said "done" at the time). The user picked it anyway;
+what followed found a genuine new bug, so it's recorded here as an unplanned re-audit, not
+conflated with the original 4-round closure above. Re-audit round 1: NOT clean, 3 real risks.
+**Real deadlock**, the most significant finding: `MiniAudioEngine.DisposeAsync()`'s second-caller
+branch had no reentrancy awareness at all, unlike `StopCaptureAsync`'s own already-fixed self-join
+guard (from the ORIGINAL Batch 1 closure above) -- a `SamplesCaptured` subscriber reentrantly
+calling `DisposeAsync()` synchronously on the capture drain thread (a pattern the class's own doc
+comment explicitly advertises as supported) could lose the `_disposed` `Interlocked.Exchange` race
+to a concurrent external caller and block forever on `_disposedSignal`, while that caller's own
+`Task.Run(session.Dispose)` blocked forever joining the very drain thread now stuck on the signal.
+Given CLAUDE.md's concurrency-review cadence: 2 rounds of plan-review (round 1 found the original
+proposed mechanism's own "same critical section" rationale wrong -- the reader never takes
+`_captureLock`, so WRITE ORDER combined with `volatile`'s release/acquire ordering is what actually
+matters, not lock-based mutual exclusion; round 2 confirmed the corrected write-order mechanism is
+sound), then implementation (`_captureSessionBeingDisposed` field, write-before-null ordering in
+`ClaimCaptureSessionLocked`, exact-reverse read order in `DisposeAsync`'s own second-caller branch),
+then 2 rounds of code review (round 1: go, 3 comment-accuracy nits, fixed; round 2: confirmed, zero
+new findings). 2 new regression tests, mutation-verified by the implementing session (temporarily
+disabled the fix -- the forced-interleaving test correctly failed with a 15s timeout, the
+opportunistic-probe test correctly passed regardless, exactly as its own honest doc comment
+predicts it should). Also fixed: a native-side integer-overflow guard in
+`yoniq_audio_ring_create` (`ma_pcm_rb_init`'s own `ma_uint32` multiplication can wrap before its
+internal overflow guard ever sees it -- not reachable today, closed before a future settings-driven
+buffer-size knob could make it live; mechanical fix, no separate review round needed). Documented,
+not fixed: every `[RequiresPipeWireFact]`-gated test -- including ALL of this cluster's hardest
+concurrency guarantees -- silently skips on any CI runner other than a Linux one with a live
+PipeWire/PulseAudio server, and this project's own CI matrix doesn't document running one; recorded
+as an accepted, durable position in `RequiresPipeWireFactAttribute.cs`'s own doc comment per the
+audit's own gate (a stated decision, not silence). Verification: scoped `MiniAudioRingTests` 15/15,
+full `ScanlineStudio.Core.Audio.MiniAudio.Tests` 73/73 passing (PipeWire IS available in this
+sandbox -- the reentrant-dispose tests genuinely ran, not skipped), full solution build clean.
+Commits `dbf4b43` (deadlock fix + overflow guard), `e0594dd` (CI-coverage-risk documentation).
+Re-audit round 2 is next -- Tier A needs 2 consecutive clean rounds from this re-audit's own round
+1 forward (a real bug was just found, so the count restarts at zero here, independent of the
+original 4-round closure above).
