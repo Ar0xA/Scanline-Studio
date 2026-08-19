@@ -213,6 +213,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// difference.</summary>
     public int BufferedSampleCount => _rawSamples.Count;
 
+    /// <summary>Diagnostic-only: largest retained length among the four decoder-wide sample caches
+    /// that must trim in lockstep with <see cref="BufferedSampleCount"/>. A maximum (rather than a
+    /// sum) lets the bounded-retention test fail if any single cache stops trimming.</summary>
+    internal int LargestCoreSampleCacheBufferedCountForTests => Math.Max(
+        Math.Max(_demodulatedFrequencies.Count, _bandpassFilteredSamples.Count),
+        Math.Max(_agcSamples.Count, _agcCurMaxSamples.Count));
+
     /// <summary>Diagnostic-only: combined physical length of the persistent VIS-bit/narrow-mode-header
     /// detector caches added for Band-2 item S5 (<see cref="D11At"/>/<see cref="D12At"/>/<see cref="D19At"/>)
     /// and item S14 (<see cref="FskSpaceAt"/>). Exists because an auditor code-level review of S5's plan
@@ -819,6 +826,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// Restart-only, same reasoning/limitation as every other parameter here.</param>
     public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 1);
+
         _sampleRate = sampleRate;
         _afcEnabled = afcEnabled;
         _autoSyncEnabled = autoSyncEnabled;
