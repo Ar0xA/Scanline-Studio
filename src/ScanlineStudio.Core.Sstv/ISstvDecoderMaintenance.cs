@@ -5,7 +5,13 @@ namespace ScanlineStudio.Core.Sstv;
 /// <c>TreatWarningsAsErrors</c> would force <see cref="AnalogFmSstvDecoder"/> to declare events it
 /// never raises (CS0067) if these lived there instead. Consumers that care (currently only
 /// <c>ScanlineStudio.Application.SstvSessionService</c>) test for this via <c>is</c> on their injected
-/// <c>ISstvDecoder</c>.</summary>
+/// <c>ISstvDecoder</c>.
+///
+/// All maintenance events are invoked synchronously on the thread calling
+/// <c>ISstvDecoder.PushSamples</c>, after the swap lock is released and after the triggering chunk's
+/// decode attempt. There is no buffering, dropping, or marshaling: a slow subscriber blocks that
+/// caller. Subscriber exceptions propagate, and normal multicast-event semantics mean a throwing
+/// subscriber can prevent later subscribers to the same event from running.</summary>
 public interface ISstvDecoderMaintenance
 {
     /// <summary>Fires at most once per restart cycle when the decoder has gone

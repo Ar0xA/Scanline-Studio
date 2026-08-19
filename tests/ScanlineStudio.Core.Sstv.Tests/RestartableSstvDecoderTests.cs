@@ -549,6 +549,71 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void PushSamples_CriticalSwap_RaisesMaintenanceEvents_WhenReplacementPushThrows()
+    {
+        var creationCount = 0;
+        AnalogFmSstvDecoder CreateDecoder()
+        {
+            var inner = new AnalogFmSstvDecoder();
+            creationCount++;
+            if (creationCount == 2)
+            {
+                inner.Dispose();
+            }
+
+            return inner;
+        }
+
+        using var decoder = new RestartableSstvDecoder(
+            afcEnabled: true,
+            warningThresholdSamples: 1,
+            criticalThresholdSamples: 1,
+            decoderFactoryForTests: CreateDecoder);
+        decoder.PushSamples(new float[16]);
+
+        var criticalCount = 0;
+        var restartedCount = 0;
+        decoder.RestartCriticallyOverdue += () => criticalCount++;
+        decoder.Restarted += () => restartedCount++;
+
+        Assert.Throws<ObjectDisposedException>(() => decoder.PushSamples(new float[1]));
+        Assert.Equal(1, decoder.RestartCountForTests);
+        Assert.Equal(1, criticalCount);
+        Assert.Equal(1, restartedCount);
+    }
+
+    [Fact]
+    public void PushSamples_WhenReplacementConstructionThrows_KeepsOutgoingInnerObservable()
+    {
+        var outgoing = new AnalogFmSstvDecoder();
+        var creationCount = 0;
+        AnalogFmSstvDecoder CreateDecoder()
+        {
+            creationCount++;
+            return creationCount == 1
+                ? outgoing
+                : throw new IOException("Injected replacement-construction failure.");
+        }
+
+        using var decoder = new RestartableSstvDecoder(
+            afcEnabled: true,
+            warningThresholdSamples: 1,
+            criticalThresholdSamples: 1,
+            decoderFactoryForTests: CreateDecoder);
+        decoder.PushSamples(new float[16]);
+
+        SstvModeDefinition? detectedMode = null;
+        decoder.ModeDetected += mode => detectedMode = mode;
+
+        Assert.Throws<IOException>(() => decoder.PushSamples(new float[1]));
+        Assert.Equal(0, decoder.RestartCountForTests);
+
+        decoder.ForceMode(SstvModeRegistry.Avt);
+        outgoing.PushSamples(new float[64]);
+        Assert.Equal(SstvModeRegistry.Avt.Id, detectedMode?.Id);
+    }
+
+    [Fact]
     public void PushSamples_PastWarningThresholdWhileNeverIdle_RaisesRestartOverdueExactlyOnce()
     {
         var mode = SstvModeRegistry.Robot36;
