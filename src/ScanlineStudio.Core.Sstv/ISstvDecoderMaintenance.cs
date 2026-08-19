@@ -10,8 +10,9 @@ namespace ScanlineStudio.Core.Sstv;
 /// All maintenance events are invoked synchronously on the thread calling
 /// <c>ISstvDecoder.PushSamples</c>, after the swap lock is released and after the triggering chunk's
 /// decode attempt. There is no buffering, dropping, or marshaling: a slow subscriber blocks that
-/// caller. Subscriber exceptions propagate, and normal multicast-event semantics mean a throwing
-/// subscriber can prevent later subscribers to the same event from running.</summary>
+/// caller. Every eligible event and every subscriber are attempted in event order. If inner decode
+/// failed, that exception takes precedence after maintenance delivery; otherwise the first maintenance
+/// subscriber exception propagates after all notifications finish.</summary>
 public interface ISstvDecoderMaintenance
 {
     /// <summary>Fires at most once per restart cycle when the decoder has gone

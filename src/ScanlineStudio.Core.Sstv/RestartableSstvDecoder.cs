@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Sstv;
 
 namespace ScanlineStudio.Core.Sstv;
@@ -66,7 +68,9 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private readonly long _criticalThresholdSamples;
     private readonly int _maximumSafeSampleIndex;
     private readonly Func<int, AnalogFmSstvDecoder>? _decoderFactoryForTests;
+    private readonly ILoggerFactory? _loggerFactory;
     private readonly object _gate = new();
+    private int _pushActive;
 
     // NOT readonly, unlike every toggle above -- StationIdDecodeEnabled is deliberately
     // LIVE-settable (see ISstvDecoder.StationIdDecodeEnabled's own doc comment for why), so this is
@@ -223,7 +227,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, int sampleRate = SstvSampleRate.Default)
+    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, int sampleRate = SstvSampleRate.Default, ILoggerFactory? loggerFactory = null)
         : this(
             afcEnabled,
             ComputeDefaultThresholds(sampleRate).WarningThresholdSamples,
@@ -238,7 +242,9 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             rxBpfPreset,
             rxBufferMode,
             sampleRate,
-            ComputeDefaultThresholds(sampleRate).MaximumSafeSampleIndex)
+            ComputeDefaultThresholds(sampleRate).MaximumSafeSampleIndex,
+            decoderFactoryForTests: null,
+            loggerFactory: loggerFactory)
     {
     }
 
@@ -246,7 +252,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// the rate-aware production values --
     /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
     /// trigger is sample-count-based, not wall-clock-based.</summary>
-    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, int sampleRate = SstvSampleRate.Default, int maximumSafeSampleIndex = int.MaxValue, Func<int, AnalogFmSstvDecoder>? decoderFactoryForTests = null)
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, int sampleRate = SstvSampleRate.Default, int maximumSafeSampleIndex = int.MaxValue, Func<int, AnalogFmSstvDecoder>? decoderFactoryForTests = null, ILoggerFactory? loggerFactory = null)
     {
         if (!SstvSampleRate.IsSupported(sampleRate))
         {
@@ -269,18 +275,34 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         _criticalThresholdSamples = criticalThresholdSamples;
         _maximumSafeSampleIndex = maximumSafeSampleIndex;
         _decoderFactoryForTests = decoderFactoryForTests;
+        _loggerFactory = loggerFactory;
         _stationIdDecodeEnabled = stationIdDecodeEnabled;
         _inner = CreateInner();
     }
 
-    /// <summary>Not safe to call concurrently from multiple threads -- `_gate` only protects the swap
-    /// itself (so a same-thread re-entrant call, e.g. from a critical-stop handler's <see cref="ResetAgc"/>,
-    /// can't deadlock), not general thread-safety: <c>current</c> is dereferenced OUTSIDE the lock
-    /// (matching <see cref="AnalogFmSstvDecoder"/>'s own single-caller assumption), and two concurrent
-    /// callers could both read a stale `current` or interleave against the same inner instance. Today's
-    /// sole caller (<c>ScanlineStudio.Abstractions.Audio.IAudioEngine.SamplesCaptured</c>'s drain thread) already
-    /// satisfies this.</summary>
+    /// <summary>Accepts one active producer call at a time. Recursive or concurrent overlapping calls
+    /// are rejected before threshold evaluation, so an event handler cannot swap/dispose the inner
+    /// decoder whose callback is still executing. The guard remains held through maintenance-event
+    /// delivery; non-Push callbacks such as a critical-stop handler's <see cref="ResetAgc"/> remain
+    /// valid and do not run under <see cref="_gate"/>.</summary>
     public void PushSamples(ReadOnlyMemory<float> samples)
+    {
+        if (Interlocked.CompareExchange(ref _pushActive, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("Recursive or concurrent PushSamples calls are not supported.");
+        }
+
+        try
+        {
+            PushSamplesCore(samples);
+        }
+        finally
+        {
+            Volatile.Write(ref _pushActive, 0);
+        }
+    }
+
+    private void PushSamplesCore(ReadOnlyMemory<float> samples)
     {
         AnalogFmSstvDecoder current;
         var raiseWarning = false;
@@ -331,39 +353,54 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             current = _inner;
         }
 
+        ExceptionDispatchInfo? innerFailure = null;
         try
         {
             current.PushSamples(samples);
         }
-        finally
+        catch (Exception ex)
         {
-            // A swap is already committed before the triggering chunk is forwarded. Its maintenance
-            // notifications must therefore still be attempted if decoding (or a decode subscriber)
-            // throws while processing that chunk. Nested finally blocks also ensure Restarted is
-            // attempted if a critical handler throws, and RestartOverdue if a prior handler throws.
+            innerFailure = ExceptionDispatchInfo.Capture(ex);
+        }
+
+        // A committed swap's notifications are all attempted even when decoding failed. The inner
+        // failure remains primary; maintenance failures are surfaced only when decoding succeeded.
+        ExceptionDispatchInfo? maintenanceFailure = null;
+        if (raiseCritical)
+        {
+            RaiseMaintenanceSubscribers(RestartCriticallyOverdue, ref maintenanceFailure);
+        }
+
+        if (raiseRestarted)
+        {
+            RaiseMaintenanceSubscribers(Restarted, ref maintenanceFailure);
+        }
+
+        if (raiseWarning)
+        {
+            RaiseMaintenanceSubscribers(RestartOverdue, ref maintenanceFailure);
+        }
+
+        innerFailure?.Throw();
+        maintenanceFailure?.Throw();
+    }
+
+    private static void RaiseMaintenanceSubscribers(Action? handlers, ref ExceptionDispatchInfo? firstFailure)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (var handler in handlers.GetInvocationList().Cast<Action>())
+        {
             try
             {
-                if (raiseCritical)
-                {
-                    RestartCriticallyOverdue?.Invoke();
-                }
+                handler();
             }
-            finally
+            catch (Exception ex)
             {
-                try
-                {
-                    if (raiseRestarted)
-                    {
-                        Restarted?.Invoke();
-                    }
-                }
-                finally
-                {
-                    if (raiseWarning)
-                    {
-                        RestartOverdue?.Invoke();
-                    }
-                }
+                firstFailure ??= ExceptionDispatchInfo.Capture(ex);
             }
         }
     }
@@ -580,21 +617,10 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         UnsubscribeFrom(outgoing);
         _inner = incoming;
 
-        // Code-review finding: RxDiskLineStagingBuffer.Dispose() calls FileStream.Dispose()
-        // unguarded, which flushes and can throw IOException (a full disk during that final flush --
-        // exactly the failure mode this subsystem's own HasWriteFailed design already anticipates
-        // elsewhere). Letting that propagate here would skip _warningRaised/RestartCountForTests
-        // below AND abort PushSamples before its own RestartCriticallyOverdue/Restarted raise --
-        // silently defeating the overflow-safety guarantee this whole class exists for, over a
-        // disposal-time I/O failure in an already-outgoing, already-replaced instance. The swap
-        // itself (_inner reassignment above) has already fully happened by this point regardless.
-        try
-        {
-            outgoing.Dispose();
-        }
-        catch (IOException)
-        {
-        }
+        // The disk-backed staging buffer performs each teardown step independently, logs failures,
+        // and never throws, so disposing the outgoing decoder cannot suppress the already-committed
+        // swap's bookkeeping or maintenance notifications.
+        outgoing.Dispose();
 
         _warningRaised = false;
         RestartCountForTests++;
@@ -603,7 +629,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private AnalogFmSstvDecoder CreateInner()
     {
         var decoder = _decoderFactoryForTests?.Invoke(_sampleRate)
-            ?? new AnalogFmSstvDecoder(sampleRate: _sampleRate, afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode);
+            ?? new AnalogFmSstvDecoder(sampleRate: _sampleRate, afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode, loggerFactory: _loggerFactory);
         if (decoder.SampleRate != _sampleRate)
         {
             decoder.Dispose();
@@ -683,13 +709,36 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         decoder.StationIdDecoded -= OnStationIdDecoded;
     }
 
-    private void OnLineDecoded(DecodedImageUpdate update) => LineDecoded?.Invoke(update);
+    private void OnLineDecoded(DecodedImageUpdate update) => RaiseForwardedSubscribers(LineDecoded, update);
 
-    private void OnModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
+    private void OnModeDetected(SstvModeDefinition mode) => RaiseForwardedSubscribers(ModeDetected, mode);
 
-    private void OnDecodeRestarted(SstvModeDefinition mode) => DecodeRestarted?.Invoke(mode);
+    private void OnDecodeRestarted(SstvModeDefinition mode) => RaiseForwardedSubscribers(DecodeRestarted, mode);
 
-    private void OnStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
+    private void OnStationIdDecoded(FskStationIdDecodedInfo info) => RaiseForwardedSubscribers(StationIdDecoded, info);
+
+    private static void RaiseForwardedSubscribers<T>(Action<T>? handlers, T value)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        ExceptionDispatchInfo? firstFailure = null;
+        foreach (var handler in handlers.GetInvocationList().Cast<Action<T>>())
+        {
+            try
+            {
+                handler(value);
+            }
+            catch (Exception ex)
+            {
+                firstFailure ??= ExceptionDispatchInfo.Capture(ex);
+            }
+        }
+
+        firstFailure?.Throw();
+    }
 
     // RX buffer subsystem Phase 7 (disposal-chain sub-piece): disposes whichever AnalogFmSstvDecoder
     // is current at teardown time -- the outgoing-instance disposal inside Swap() (above) only covers

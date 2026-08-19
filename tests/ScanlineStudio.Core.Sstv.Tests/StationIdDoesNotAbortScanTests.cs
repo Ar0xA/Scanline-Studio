@@ -87,4 +87,24 @@ public class StationIdDoesNotAbortScanTests
 
         Assert.Empty(stationIdEvents);
     }
+
+    [Fact]
+    public void StationIdTransmission_ThrowingFirstSubscriber_DoesNotStarveLaterSubscriberOrRepeatScan()
+    {
+        var segments = FskStationIdEncoder.Generate("W1AW", null);
+        var samples = PadPastFixedWindowCeiling(AnalogFmSstvEncoder.RenderSegments(segments, SampleRate));
+        using var decoder = new AnalogFmSstvDecoder(SampleRate) { StationIdDecodeEnabled = true };
+        var expected = new InvalidOperationException("Injected station-ID subscriber failure.");
+        var observed = new List<FskStationIdDecodedInfo>();
+        decoder.StationIdDecoded += _ => throw expected;
+        decoder.StationIdDecoded += observed.Add;
+
+        var actual = Assert.Throws<InvalidOperationException>(() => decoder.PushSamples(samples));
+
+        Assert.Same(expected, actual);
+        Assert.Single(observed);
+        Assert.Equal("W1AW", observed[0].Callsign);
+        decoder.PushSamples(new float[64]);
+        Assert.Single(observed);
+    }
 }

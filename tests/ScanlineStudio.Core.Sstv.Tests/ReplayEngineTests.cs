@@ -74,6 +74,45 @@ public class ReplayEngineTests
     }
 
     [Fact]
+    public void PerformReplay_ThrowingSubscriber_IsDeferredUntilReplayTailAndLiveDecodeCanResume()
+    {
+        var mode = SstvModeRegistry.Robot36;
+        var samples = Encode(mode, CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight), SampleRate);
+        using var decoder = new AnalogFmSstvDecoder(SampleRate, rxBufferMode: RxBufferMode.On);
+        decoder.SuppressAutomaticReplayForTests = true;
+
+        const int chunkSize = 256;
+        var offset = 0;
+        while (offset < samples.Length && decoder.NextLineForTests < 12)
+        {
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            offset += length;
+        }
+
+        Assert.True(decoder.NextLineForTests >= 12, "Test setup problem: insufficient live decode before replay.");
+        Assert.True(decoder.RxLineStagingBufferForTests!.Count > 0);
+        var expected = new InvalidOperationException("Injected replay subscriber failure.");
+        var replayRows = new List<int>();
+        Action<DecodedImageUpdate> throwingHandler = _ => throw expected;
+        decoder.LineDecoded += throwingHandler;
+        decoder.LineDecoded += update => replayRows.Add(update.Line);
+
+        var actual = Assert.Throws<InvalidOperationException>(decoder.PerformReplayForTests);
+
+        Assert.Same(expected, actual);
+        Assert.NotEmpty(replayRows);
+        Assert.Equal(0, decoder.RxLineStagingBufferForTests.Count);
+        Assert.True(decoder.RxBufferBaseTransmissionLineForTests > 0,
+            "Replay must reach its cursor-reconciliation/truncation tail before surfacing the subscriber failure.");
+
+        decoder.LineDecoded -= throwingHandler;
+        var nextLineAfterReplay = decoder.NextLineForTests;
+        decoder.PushSamples(samples.AsMemory(offset, Math.Min(chunkSize, samples.Length - offset)));
+        Assert.True(decoder.NextLineForTests >= nextLineAfterReplay);
+    }
+
+    [Fact]
     public void PerformReplay_HasWriteFailed_IsASafeNoOp_NeverRedrawsFromCorruptedData()
     {
         // spec/18-path-to-1.0.md High item 6. PerformReplay has two write-failure checkpoints (see

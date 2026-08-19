@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
@@ -370,6 +372,126 @@ public class RxDiskLineStagingBufferTests
     }
 
     [Fact]
+    public void Dispose_FirstStreamStageFailure_LogsAndAttemptsEveryLaterStageExactlyOnce()
+    {
+        var logger = new RecordingLogger<RxDiskLineStagingBuffer>();
+        var stages = new List<RxDiskLineStagingBuffer.DisposeStage>();
+        var returnedSnapshots = new List<double[]>();
+        var buffer = new RxDiskLineStagingBuffer(
+            channelCapacityLines: 8,
+            logger,
+            disposeStageFaultForTests: stage =>
+            {
+                stages.Add(stage);
+                if (stage == RxDiskLineStagingBuffer.DisposeStage.DisposeDemodStream)
+                {
+                    throw new IOException("Injected dispose-stage failure.");
+                }
+            },
+            returnSnapshotForTests: snapshot =>
+            {
+                returnedSnapshots.Add(snapshot);
+                System.Buffers.ArrayPool<double>.Shared.Return(snapshot);
+            });
+        buffer.TryAppendLine([1.0], [2.0]);
+        _ = buffer.DemodulatedAt(0); // materializes both pooled snapshots so both return stages run
+        var demodPath = buffer.DemodPathForTests;
+        var syncPath = buffer.SyncPathForTests;
+
+        var exception = Record.Exception(buffer.Dispose);
+
+        Assert.Null(exception);
+        Assert.Equal(Enum.GetValues<RxDiskLineStagingBuffer.DisposeStage>(), stages);
+        Assert.Contains(logger.Entries, entry =>
+            entry.Level == LogLevel.Warning && entry.Message.Contains("DisposeDemodStream", StringComparison.Ordinal));
+        Assert.True(buffer.DemodStreamClosedForTests);
+        Assert.True(buffer.SyncStreamClosedForTests);
+        Assert.True(buffer.DemodSignalDisposedForTests);
+        Assert.True(buffer.SyncSignalDisposedForTests);
+        Assert.Equal(2, returnedSnapshots.Count);
+        Assert.False(File.Exists(demodPath));
+        Assert.False(File.Exists(syncPath));
+
+        buffer.Dispose();
+        Assert.Equal(Enum.GetValues<RxDiskLineStagingBuffer.DisposeStage>(), stages);
+    }
+
+    [Fact]
+    public void Dispose_ThrowingLogger_CannotEscapeOrSkipCleanupTail()
+    {
+        var stages = new List<RxDiskLineStagingBuffer.DisposeStage>();
+        var buffer = new RxDiskLineStagingBuffer(
+            channelCapacityLines: 8,
+            logger: new ThrowingLogger<RxDiskLineStagingBuffer>(),
+            disposeStageFaultForTests: stage =>
+            {
+                stages.Add(stage);
+                if (stage == RxDiskLineStagingBuffer.DisposeStage.DisposeDemodStream)
+                {
+                    throw new IOException("Injected dispose-stage failure.");
+                }
+            });
+        var syncPath = buffer.SyncPathForTests;
+
+        var exception = Record.Exception(buffer.Dispose);
+
+        Assert.Null(exception);
+        Assert.Contains(RxDiskLineStagingBuffer.DisposeStage.DeleteSyncFile, stages);
+        Assert.True(buffer.DemodStreamClosedForTests);
+        Assert.True(buffer.SyncStreamClosedForTests);
+        Assert.True(buffer.DemodSignalDisposedForTests);
+        Assert.True(buffer.SyncSignalDisposedForTests);
+        Assert.False(File.Exists(syncPath));
+    }
+
+    [Fact]
+    public void Dispose_ConsumerWaitTimeout_IsLoggedAndDoesNotSkipLaterCleanup()
+    {
+        var logger = new RecordingLogger<RxDiskLineStagingBuffer>();
+        var stages = new List<RxDiskLineStagingBuffer.DisposeStage>();
+        var returnedConsumerBuffers = 0;
+        using var releaseConsumers = new ManualResetEventSlim(false);
+        using var consumersEntered = new CountdownEvent(2);
+        var buffer = new RxDiskLineStagingBuffer(
+            channelCapacityLines: 8,
+            logger,
+            disposeStageFaultForTests: stages.Add,
+            returnConsumerBufferForTests: buffer =>
+            {
+                Interlocked.Increment(ref returnedConsumerBuffers);
+                System.Buffers.ArrayPool<double>.Shared.Return(buffer);
+            },
+            beforeConsumerWriteForTests: _ =>
+            {
+                consumersEntered.Signal();
+                releaseConsumers.Wait();
+            },
+            disposeDrainTimeoutForTests: TimeSpan.FromMilliseconds(20));
+        Assert.True(buffer.TryAppendLine([1.0], [2.0]));
+        Assert.True(consumersEntered.Wait(TimeSpan.FromSeconds(2)), "Test setup problem: both real consumers must be blocked inside their write path.");
+        Assert.True(buffer.TryAppendLine([3.0], [4.0]), "Each channel needs a second queued rental to verify the timeout tail returns more than the current item.");
+
+        var exception = Record.Exception(buffer.Dispose);
+
+        Assert.Null(exception);
+        Assert.False(buffer.ConsumersCompletedForTests, "Both consumer waits must have timed out while the real tasks remained blocked.");
+        Assert.Contains(RxDiskLineStagingBuffer.DisposeStage.DeleteSyncFile, stages);
+        Assert.Contains(logger.Entries, entry =>
+            entry.Level == LogLevel.Warning && entry.Message.Contains("WaitDemodConsumer", StringComparison.Ordinal));
+        Assert.Contains(logger.Entries, entry =>
+            entry.Level == LogLevel.Warning && entry.Message.Contains("WaitSyncConsumer", StringComparison.Ordinal));
+        Assert.True(buffer.DemodStreamClosedForTests);
+        Assert.True(buffer.SyncStreamClosedForTests);
+        Assert.True(buffer.DemodSignalDisposedForTests);
+        Assert.True(buffer.SyncSignalDisposedForTests);
+
+        releaseConsumers.Set();
+        Assert.True(SpinWait.SpinUntil(() => buffer.ConsumersCompletedForTests, TimeSpan.FromSeconds(2)),
+            "Consumers must exit cleanly after the test releases the injected write barrier.");
+        Assert.Equal(4, Volatile.Read(ref returnedConsumerBuffers));
+    }
+
+    [Fact]
     public void Clear_NeverThrows_EvenAfterAWriteFailure()
     {
         // Clear() is called from the decode path (InitializeSlant, and the tail of every
@@ -385,5 +507,37 @@ public class RxDiskLineStagingBufferTests
         var exception = Record.Exception(buffer.Clear);
 
         Assert.Null(exception);
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
+    }
+
+    private sealed class ThrowingLogger<T> : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            throw new InvalidOperationException("Injected logger failure.");
     }
 }

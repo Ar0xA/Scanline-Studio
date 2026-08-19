@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ScanlineStudio.Core.Sstv;
 
@@ -67,8 +69,24 @@ namespace ScanlineStudio.Core.Sstv;
 /// proportional to whatever's staged since the last replay pass (accepted tradeoff, round-2
 /// confirmed).
 /// </summary>
-internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
+internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
 {
+    internal enum DisposeStage
+    {
+        CompleteDemodChannel,
+        CompleteSyncChannel,
+        WaitDemodConsumer,
+        WaitSyncConsumer,
+        DisposeDemodStream,
+        DisposeSyncStream,
+        DisposeDemodSignal,
+        DisposeSyncSignal,
+        ReturnDemodSnapshot,
+        ReturnSyncSnapshot,
+        DeleteDemodFile,
+        DeleteSyncFile,
+    }
+
     // The production default -- generous slack against transient I/O hiccups without meaningfully
     // capping "no RAM cap" intent (a small, fixed overhead, 128 lines' worth of in-flight pooled
     // buffers, regardless of reception length).
@@ -113,8 +131,15 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
 
     private volatile bool _hasWriteFailed;
     private bool _disposed;
+    private readonly ILogger<RxDiskLineStagingBuffer> _logger;
+    private readonly Action<DisposeStage>? _disposeStageFaultForTests;
+    private readonly Action<double[]> _returnSnapshot;
+    private readonly Action<double[]> _returnConsumerBuffer;
+    private readonly Action<bool>? _beforeConsumerWriteForTests;
+    private readonly TimeSpan _disposeDrainTimeout;
 
-    public RxDiskLineStagingBuffer() : this(DefaultChannelCapacityLines)
+    public RxDiskLineStagingBuffer(ILogger<RxDiskLineStagingBuffer>? logger = null)
+        : this(DefaultChannelCapacityLines, logger)
     {
     }
 
@@ -122,7 +147,14 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
     /// "writer can't keep up" admission-rejection path (<see cref="TryAppendLine"/>'s own capacity
     /// check) can be exercised deterministically, without racing a real background writer task at the
     /// production default of <see cref="DefaultChannelCapacityLines"/>.</summary>
-    internal RxDiskLineStagingBuffer(int channelCapacityLines)
+    internal RxDiskLineStagingBuffer(
+        int channelCapacityLines,
+        ILogger<RxDiskLineStagingBuffer>? logger = null,
+        Action<DisposeStage>? disposeStageFaultForTests = null,
+        Action<double[]>? returnSnapshotForTests = null,
+        Action<double[]>? returnConsumerBufferForTests = null,
+        Action<bool>? beforeConsumerWriteForTests = null,
+        TimeSpan? disposeDrainTimeoutForTests = null)
     {
         // Round-2 code-review nit: the leak-prevention try/catch below only covers the temp-file/
         // stream creation steps, not the later Channel.CreateBounded calls -- a 0-or-negative capacity
@@ -132,6 +164,12 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
         // the one realistic trigger without needing to widen that try/catch's scope.
         ArgumentOutOfRangeException.ThrowIfLessThan(channelCapacityLines, 1);
         _channelCapacityLines = channelCapacityLines;
+        _logger = logger ?? NullLogger<RxDiskLineStagingBuffer>.Instance;
+        _disposeStageFaultForTests = disposeStageFaultForTests;
+        _returnSnapshot = returnSnapshotForTests ?? (snapshot => ArrayPool<double>.Shared.Return(snapshot));
+        _returnConsumerBuffer = returnConsumerBufferForTests ?? (buffer => ArrayPool<double>.Shared.Return(buffer));
+        _beforeConsumerWriteForTests = beforeConsumerWriteForTests;
+        _disposeDrainTimeout = disposeDrainTimeoutForTests ?? DrainTimeout;
 
         // Code-review nit: if any step here throws (a second GetTempFileName/FileStream open
         // failing after the first succeeded is the realistic case -- e.g. a genuinely full temp
@@ -214,6 +252,16 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
     /// reasoning as <see cref="DemodPathForTests"/>.</summary>
     internal string SyncPathForTests => _syncPath;
 
+    internal bool DemodStreamClosedForTests => _demodWriteStream.SafeFileHandle.IsClosed;
+
+    internal bool SyncStreamClosedForTests => _syncWriteStream.SafeFileHandle.IsClosed;
+
+    internal bool DemodSignalDisposedForTests => IsDisposed(_demodFlushSignal);
+
+    internal bool SyncSignalDisposedForTests => IsDisposed(_syncFlushSignal);
+
+    internal bool ConsumersCompletedForTests => _demodConsumerTask.IsCompleted && _syncConsumerTask.IsCompleted;
+
     /// <summary>Test-only fault injection: disposes the demodulated-stream write handle out from
     /// under the background consumer task, deterministically exercising the real write-failure
     /// detection path (the consumer's own <c>catch</c> in <see cref="ConsumeAsync"/>) without needing
@@ -259,8 +307,8 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
         {
             // Unreachable given the capacity check above under the single-producer assumption --
             // handled defensively rather than assumed.
-            ArrayPool<double>.Shared.Return(demodRented);
-            ArrayPool<double>.Shared.Return(syncRented);
+            _returnConsumerBuffer(demodRented);
+            _returnConsumerBuffer(syncRented);
             _hasWriteFailed = true;
             return false;
         }
@@ -273,7 +321,7 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             // two files silently drift out of lockstep -- this is exactly the corruption the
             // capacity pre-check above exists to prevent, so reaching here means that invariant
             // broke somewhere.
-            ArrayPool<double>.Shared.Return(syncRented);
+            _returnConsumerBuffer(syncRented);
             _hasWriteFailed = true;
             return false;
         }
@@ -374,54 +422,82 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
 
         _disposed = true;
 
-        _demodChannel.Writer.TryComplete();
-        _syncChannel.Writer.TryComplete();
+        TryDisposeStage(DisposeStage.CompleteDemodChannel, () => _demodChannel.Writer.TryComplete());
+        TryDisposeStage(DisposeStage.CompleteSyncChannel, () => _syncChannel.Writer.TryComplete());
+        TryDisposeStage(DisposeStage.WaitDemodConsumer, () => WaitForConsumer(_demodConsumerTask, "demodulated"));
+        TryDisposeStage(DisposeStage.WaitSyncConsumer, () => WaitForConsumer(_syncConsumerTask, "sync-envelope"));
+        TryDisposeStage(DisposeStage.DisposeDemodStream, _demodWriteStream.Dispose);
+        TryDisposeStage(DisposeStage.DisposeSyncStream, _syncWriteStream.Dispose);
+        TryDisposeStage(DisposeStage.DisposeDemodSignal, _demodFlushSignal.Dispose);
+        TryDisposeStage(DisposeStage.DisposeSyncSignal, _syncFlushSignal.Dispose);
 
-        // Bounded wait for each consumer to finish draining whatever was already queued -- never
-        // propagates a fault (the consumer's own try/catch guarantees its task always completes
-        // successfully, see ConsumeAsync).
+        var demodSnapshot = _demodSnapshot;
+        _demodSnapshot = null;
+        if (demodSnapshot is not null)
+        {
+            TryDisposeStage(DisposeStage.ReturnDemodSnapshot, () => _returnSnapshot(demodSnapshot));
+        }
+
+        var syncSnapshot = _syncSnapshot;
+        _syncSnapshot = null;
+        if (syncSnapshot is not null)
+        {
+            TryDisposeStage(DisposeStage.ReturnSyncSnapshot, () => _returnSnapshot(syncSnapshot));
+        }
+
+        // Explicit delete (not FileOptions.DeleteOnClose -- see this class's own doc comment on why).
+        // Each path is independent so one failed close/delete cannot skip the other file's cleanup.
+        TryDisposeStage(DisposeStage.DeleteDemodFile, () => File.Delete(_demodPath));
+        TryDisposeStage(DisposeStage.DeleteSyncFile, () => File.Delete(_syncPath));
+    }
+
+    private void WaitForConsumer(Task consumerTask, string streamName)
+    {
+        var completed = consumerTask.Wait(_disposeDrainTimeout);
+        if (!completed)
+        {
+            throw new TimeoutException($"Timed out draining the {streamName} RX staging consumer.");
+        }
+    }
+
+    private void TryDisposeStage(DisposeStage stage, Action action)
+    {
         try
         {
-            _demodConsumerTask.Wait(DrainTimeout);
+            // The real action remains guaranteed even when the test seam injects a stage failure;
+            // this prevents a test from claiming a resource-dispose attempt that it actually skipped.
+            try
+            {
+                _disposeStageFaultForTests?.Invoke(stage);
+            }
+            finally
+            {
+                action();
+            }
+        }
+        catch (Exception ex)
+        {
+            TryLogDisposeStageFailure(stage, ex);
+        }
+    }
+
+    private void TryLogDisposeStageFailure(DisposeStage stage, Exception exception)
+    {
+        try
+        {
+            Log.DisposeStageFailed(_logger, stage, exception);
         }
         catch
         {
+            // A logger provider is external teardown infrastructure. It must not defeat the cleanup
+            // isolation this method exists to provide.
         }
+    }
 
-        try
-        {
-            _syncConsumerTask.Wait(DrainTimeout);
-        }
-        catch
-        {
-        }
-
-        _demodWriteStream.Dispose();
-        _syncWriteStream.Dispose();
-        _demodFlushSignal.Dispose();
-        _syncFlushSignal.Dispose();
-
-        InvalidateSnapshot();
-
-        // Explicit delete (not FileOptions.DeleteOnClose -- see this class's own doc comment on why)
-        // -- best-effort backstop; the real cleanup guarantee is this Dispose() method itself being
-        // called (RX buffer subsystem Phase 7's disposal-chain sub-piece wires that up the decoder ->
-        // RestartableSstvDecoder -> SstvSessionService chain).
-        try
-        {
-            File.Delete(_demodPath);
-        }
-        catch
-        {
-        }
-
-        try
-        {
-            File.Delete(_syncPath);
-        }
-        catch
-        {
-        }
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "RX disk staging cleanup stage {Stage} failed")]
+        public static partial void DisposeStageFailed(ILogger logger, DisposeStage stage, Exception exception);
     }
 
     private async Task ConsumeAsync(ChannelReader<(double[] Buffer, int Length)> reader, FileStream stream, bool isDemod)
@@ -439,6 +515,7 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             {
                 try
                 {
+                    _beforeConsumerWriteForTests?.Invoke(isDemod);
                     if (!_hasWriteFailed)
                     {
                         stream.Write(MemoryMarshal.AsBytes(item.Buffer.AsSpan(0, item.Length)));
@@ -454,7 +531,7 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
                 }
                 finally
                 {
-                    ArrayPool<double>.Shared.Return(item.Buffer);
+                    _returnConsumerBuffer(item.Buffer);
 
                     // Always increment/release, even on failure or when skipped above -- otherwise a
                     // drain barrier waiting for this item would hang forever.
@@ -474,6 +551,23 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
         catch
         {
             _hasWriteFailed = true;
+        }
+        finally
+        {
+            // If teardown timed out, Dispose can close the signal while this consumer is blocked.
+            // The current item's Release then throws and exits the loop; explicitly drain every
+            // still-queued rental so the pool does not leak the remainder of the channel.
+            while (reader.TryRead(out var pending))
+            {
+                try
+                {
+                    _returnConsumerBuffer(pending.Buffer);
+                }
+                catch
+                {
+                    _hasWriteFailed = true;
+                }
+            }
         }
     }
 
@@ -605,6 +699,19 @@ internal sealed class RxDiskLineStagingBuffer : IRxLineStagingBuffer
         {
             ArrayPool<double>.Shared.Return(_syncSnapshot);
             _syncSnapshot = null;
+        }
+    }
+
+    private static bool IsDisposed(SemaphoreSlim signal)
+    {
+        try
+        {
+            _ = signal.AvailableWaitHandle;
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return true;
         }
     }
 }
