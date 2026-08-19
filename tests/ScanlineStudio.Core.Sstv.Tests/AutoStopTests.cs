@@ -148,6 +148,32 @@ public class AutoStopTests
     }
 
     [Fact]
+    public void Triggering_ThrowingDecodeRestartedSubscriber_DoesNotPreventAbandonmentOrRecovery()
+    {
+        var abandonedMode = SstvModeRegistry.Robot36;
+        var noisy = ReplaceTailWithNoise(EncodeRealTransmission(abandonedMode, out _));
+        using var decoder = new AnalogFmSstvDecoder(11025, autoStopEnabled: true);
+        var expected = new InvalidOperationException("Injected Auto Stop subscriber failure.");
+        var laterSubscribers = 0;
+        decoder.DecodeRestarted += _ => throw expected;
+        decoder.DecodeRestarted += _ => laterSubscribers++;
+
+        var actual = Assert.Throws<InvalidOperationException>(() => decoder.PushSamples(noisy));
+
+        Assert.Same(expected, actual);
+        Assert.True(decoder.AutoStopTriggerCountForTests > 0, "Test setup problem -- Auto Stop never fired.");
+        Assert.True(laterSubscribers > 0);
+        Assert.True(decoder.IsIdle, "Auto Stop must finish EndOfImage before the deferred subscriber failure escapes.");
+
+        var recoveryMode = SstvModeRegistry.ScottieS1;
+        var detected = new List<SstvModeDefinition>();
+        decoder.ModeDetected += detected.Add;
+        decoder.PushSamples(EncodeRealTransmission(recoveryMode, out _));
+
+        Assert.Contains(detected, mode => mode.Id == recoveryMode.Id);
+    }
+
+    [Fact]
     public async Task Avt_NeverRunsAutoStopBookkeepingAtAll()
     {
         // AVT exclusion is free via InitializeSlant nulling _slantTracker for AVT (ApplySlantTracking

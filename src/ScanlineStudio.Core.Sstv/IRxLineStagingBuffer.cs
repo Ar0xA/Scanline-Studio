@@ -46,8 +46,9 @@ internal interface IRxLineStagingBuffer : IDisposable
     /// Once set, every subsequent <see cref="TryAppendLine"/> call returns <see langword="false"/>
     /// immediately -- capture simply stops, same silent "buffer full" contract
     /// <see cref="RxLineStagingBuffer"/> already establishes for RAM capacity exhaustion, just a
-    /// different trigger. No logging happens inside this project's DSP core (a deliberate existing
-    /// layering boundary, `Core.Sstv` has zero <c>ILogger</c> usage anywhere).
+    /// different trigger. Runtime write failures still latch silently on the hot decode path;
+    /// <see cref="RxDiskLineStagingBuffer"/> logs only bounded teardown-stage failures, where logging
+    /// cannot add per-line audio-thread I/O.
     ///
     /// <b>Not currently observable outside this class</b> (functional-audit correction, D3+D8+D9
     /// coupled round 2: an earlier version of this comment claimed "a caller with a path to the
