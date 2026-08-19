@@ -3348,7 +3348,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // but must NOT abort/restart the in-progress image -- this call's own caller-side gate
             // used to be the only enforcement of that, one level up (see TryVisLockStateMachine's own
             // caller, in TryProcessBuffer), which over-suppressed the whole scan instead of just the
-            // commit.
+            // commit. D0-audit round-12 nit: this port has no equivalent of legacy's third term,
+            // `m_SyncMode >= 0` -- legacy's only two `m_SyncMode = -1` assignments (sstv.cpp:1723,
+            // transient inside Start(void); sstv.cpp:1765, Start(int, f==0)'s "set mode without
+            // starting" arm) have no port counterpart, since PerformForceMode always commits
+            // immediately. An unreachable divergence, not a gap to close.
             if (_syncRestartEnabled || _mode is null)
             {
                 Commit(mode, anchor);
@@ -5510,6 +5514,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _pendingReplayRequested = false; // RX buffer subsystem Phase 6d -- a stale request from an abandoned prior image must not replay against the NEW one's staging buffer
         _correctSlantRequested = false; // RX buffer subsystem Phase 8c -- same reasoning as _pendingReplayRequested above: a stale manual request from an abandoned prior image must not search against the NEW one's staging buffer
         _anyCorrectionCommittedThisImage = false; // RX buffer subsystem Phase 6d round-2 -- fresh lock, fresh image, no commit has happened yet
+        // D0-audit round-12 fix: moved ahead of the AVT early-return below, matching every other
+        // per-line-accounting reset above -- the real, mode-specific value is still assigned further
+        // down for non-AVT modes (this method's own tail), this is only the AVT-lock default. Provably
+        // unread for AVT either way (its only reader, ProcessSlantTrackingSample, is unreachable once
+        // _slantTracker is null, see the AVT branch immediately below) -- inert today, fixed for
+        // consistency with this method's own established convention rather than left as the sole
+        // exception to it.
+        _syncSegmentOffsetSamples = 0;
 
         if (mode == SstvModeRegistry.Avt)
         {
