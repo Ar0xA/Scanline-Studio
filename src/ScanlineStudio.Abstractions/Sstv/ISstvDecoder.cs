@@ -175,14 +175,19 @@ public interface ISstvDecoder
     /// an oversight.
     ///
     /// Safe to read from any thread (e.g. a GUI polling this on a timer while another thread drives
-    /// <see cref="PushSamples"/>) -- unlike <see cref="RequestReSync"/>/<see cref="ForceMode"/>, this
-    /// is a plain field read with no cross-thread write to synchronize, so a concurrent read can
-    /// observe a momentarily stale value (never a torn/corrupt one) but never throws. "Never torn" here
-    /// relies on the underlying <c>double</c> field being naturally aligned and read/written whole (D2
-    /// round 1 correction: an earlier version of this sentence didn't state that this is an
-    /// ECMA-335 guarantee that only holds on platforms whose native word size is at least 8 bytes --
-    /// true for every 64-bit target .NET 8 actually runs this app on, not a universal CLR
-    /// guarantee).</summary>
+    /// <see cref="PushSamples"/>) -- unlike <see cref="RequestReSync"/>/<see cref="ForceMode"/>, never
+    /// throws and never observes a torn/corrupt value, only a momentarily stale one. The mechanism
+    /// differs by implementation, and this sentence previously described only one of the two (D2 round
+    /// 4 correction): <c>AnalogFmSstvDecoder</c> is a plain field read with no cross-thread write to
+    /// synchronize -- "never torn" there relies on the underlying <c>double</c> field being naturally
+    /// aligned and read/written whole, an ECMA-335 guarantee that only holds on platforms whose native
+    /// word size is at least 8 bytes (true for every 64-bit target .NET 8 actually runs this app on,
+    /// not a universal CLR guarantee; D2 round 1 correction). <c>RestartableSstvDecoder</c> -- the
+    /// actual DI-registered production implementation the UI receives -- instead takes its own internal
+    /// lock for this and every other getter on this interface, so "never throws"/"never torn" still
+    /// hold, but a polling read can genuinely BLOCK if a concurrent <see cref="PushSamples"/> call is
+    /// mid-swap: see that class's own <c>Swap</c> doc comment for the already-accepted worst-case
+    /// blocking duration.</summary>
     double? SlantPpm { get; }
 
     /// <summary>Most recent per-line sync-envelope offset, in samples, relative to where the locked
