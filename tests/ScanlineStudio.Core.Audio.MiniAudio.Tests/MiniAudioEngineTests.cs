@@ -546,6 +546,167 @@ public class MiniAudioEngineTests
         }
     }
 
+    // Tier A Batch 1 functional-audit finding: unlike StopCaptureAsync's own self-join guard above,
+    // DisposeAsync had NO reentrancy awareness at all for its own second-caller branch -- a
+    // SamplesCaptured subscriber reentrantly calling engine.DisposeAsync() (the "supported pattern"
+    // MiniAudioEngine's own class doc comment describes) could lose the _disposed Interlocked.Exchange
+    // race to a concurrent EXTERNAL DisposeAsync caller and then block on _disposedSignal forever,
+    // while that external caller's own Task.Run(session.Dispose) blocked forever joining THIS
+    // thread's own drain loop -- a real deadlock, fixed via _captureSessionBeingDisposed (see that
+    // field's own doc comment on MiniAudioEngine for the fix mechanism).
+    //
+    // This test forces the interleaving where the external caller has already won the exchange AND
+    // claimed the session (past ClaimCaptureSessionAsync, into DisposeCaptureSessionAsync's own
+    // Task.Run/Join) by the time the drain-thread subscriber makes its own reentrant call -- the
+    // Thread.Sleep(100) below deliberately gives it that head start, matching this file's own
+    // established contention-forcing idiom (see StopCaptureAsync_ContendedByExternalCallerWhileSelfDisposing_
+    // DoesNotDeadlock's own comment for why an immediate call would let scheduling luck decide
+    // whether this interleaving is genuinely exercised). This specifically exercises the
+    // _captureSessionBeingDisposed half of the fix's two-field check (the session has already been
+    // unpublished from _captureSession by the time the drain thread checks).
+    //
+    // Deliberately does NOT assert "both callers observe a torn-down engine" the way
+    // DisposeAsync_CalledConcurrentlyTwice_BothCompleteWithoutHanging does above -- that assertion
+    // would be satisfied by the _disposed latch alone regardless of whether THIS fix works (the
+    // reentrant caller returns before the external caller's own teardown, including
+    // MiniAudioContext.Release(), has necessarily finished), so it would prove nothing about the
+    // specific mechanism this test exists to cover. The only meaningful assertion here is that
+    // neither call hangs.
+    [RequiresPipeWireFact]
+    public async Task DisposeAsync_ReenteredFromDrainThreadWhileExternalCallerAlreadyMidTeardown_DoesNotDeadlock()
+    {
+        var sinkName = $"sstv_engine_reentrant_dispose_race_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Engine_Reentrant_Dispose_Race_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        Process? toneProcess = null;
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            toneProcess = StartToneIntoSink(sinkName, durationSeconds: 5);
+
+            var selfDisposeReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var externalDisposeStarting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var alreadyDisposedFromCallback = 0;
+
+            var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
+            engine.SamplesCaptured += chunk =>
+            {
+                if (chunk.Length > 0 && Interlocked.Exchange(ref alreadyDisposedFromCallback, 1) == 0)
+                {
+                    externalDisposeStarting.TrySetResult();
+                    Thread.Sleep(100);
+                    // The actual hazard: calling DisposeAsync (synchronously blocking on it via
+                    // .GetAwaiter().GetResult(), since this handler is not itself async) from the
+                    // same drain thread that is currently invoking this very callback, while a
+                    // separate external caller is already mid-teardown.
+                    engine.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    selfDisposeReturned.TrySetResult();
+                }
+            };
+
+            await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
+
+            var externalDisposeTask = Task.Run(async () =>
+            {
+                await externalDisposeStarting.Task.ConfigureAwait(false);
+                await engine.DisposeAsync().AsTask().ConfigureAwait(false);
+            });
+
+            var allDone = Task.WhenAll(selfDisposeReturned.Task, externalDisposeTask);
+            var completed = await Task.WhenAny(allDone, Task.Delay(TimeSpan.FromSeconds(15)));
+            Assert.Same(allDone, completed); // else one of the two DisposeAsync calls hung -- the reentrant-teardown deadlock regressed
+        }
+        finally
+        {
+            if (toneProcess is not null && !toneProcess.HasExited)
+            {
+                toneProcess.Kill(entireProcessTree: true);
+            }
+
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    // Companion to the test above, aiming at the OTHER half of the fix's two-field check
+    // (_captureSession itself, still published, not yet claimed) -- the window where the external
+    // caller has won the _disposed exchange but has not yet reached ClaimCaptureSessionAsync's own
+    // claim. That window is a handful of field reads/awaits wide and not reliably reachable without
+    // instrumenting the production code purely for a test (which this project's own established
+    // practice avoids) -- unlike the test above, this one does NOT force the interleaving it names,
+    // it only gives the external caller LESS head start (no Thread.Sleep) than the test above does,
+    // so it is an honest opportunistic probe, not a guaranteed exercise of that specific window. Kept
+    // anyway because it costs little and sometimes DOES land in that window under real scheduling --
+    // but code-review correction: it does NOT reliably hang without the fix the way the test above
+    // does. Without the deliberate delay, the drain thread typically WINS the _disposed exchange
+    // race instead of losing it (queuing/dispatching the external Task.Run's continuation takes
+    // longer than the drain thread's own next few statements), which routes it through the
+    // already-correct inline-dispose path instead of the guarded branch this fix adds -- so this
+    // test passes on both the fixed and unfixed code in the common case, and is not a reliable
+    // regression guard on its own. The test above is.
+    [RequiresPipeWireFact]
+    public async Task DisposeAsync_ReenteredFromDrainThreadRacingExternalCallerImmediately_DoesNotDeadlock()
+    {
+        var sinkName = $"sstv_engine_reentrant_dispose_immediate_race_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Engine_Reentrant_Dispose_Immediate_Race_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        Process? toneProcess = null;
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            toneProcess = StartToneIntoSink(sinkName, durationSeconds: 5);
+
+            var selfDisposeReturned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var externalDisposeStarting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var alreadyDisposedFromCallback = 0;
+
+            var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
+            engine.SamplesCaptured += chunk =>
+            {
+                if (chunk.Length > 0 && Interlocked.Exchange(ref alreadyDisposedFromCallback, 1) == 0)
+                {
+                    externalDisposeStarting.TrySetResult();
+                    engine.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    selfDisposeReturned.TrySetResult();
+                }
+            };
+
+            await engine.StartCaptureAsync(monitor!, sampleRate: 44100);
+
+            var externalDisposeTask = Task.Run(async () =>
+            {
+                await externalDisposeStarting.Task.ConfigureAwait(false);
+                await engine.DisposeAsync().AsTask().ConfigureAwait(false);
+            });
+
+            var allDone = Task.WhenAll(selfDisposeReturned.Task, externalDisposeTask);
+            var completed = await Task.WhenAny(allDone, Task.Delay(TimeSpan.FromSeconds(15)));
+            Assert.Same(allDone, completed); // else one of the two DisposeAsync calls hung
+        }
+        finally
+        {
+            if (toneProcess is not null && !toneProcess.HasExited)
+            {
+                toneProcess.Kill(entireProcessTree: true);
+            }
+
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
     // Piece Engine 4: DisposeAsync's real scope -- stop capture AND drain-then-stop playback if
     // both are active at once, not just whichever one happens to have been exercised by an earlier,
     // narrower test. Real virtual sink/monitor, real sessions on both sides simultaneously.
