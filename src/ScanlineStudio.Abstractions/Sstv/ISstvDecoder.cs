@@ -9,8 +9,11 @@ public interface ISstvDecoder
     /// <summary>Feeds one block of demodulated audio samples into the decoder. Intended to be called
     /// from a single, consistent producer thread (e.g. an audio-capture callback) -- see the events
     /// below for this class's general concurrency contract. Throws <see cref="ObjectDisposedException"/>
-    /// if called after <see cref="IDisposable.Dispose"/> (D2 round 1 fix: previously undocumented and
-    /// inconsistently enforced across implementations).</summary>
+    /// after the implementation is disposed (D2 round 1 fix: previously undocumented and inconsistently
+    /// enforced across implementations; D2 round 2 correction: this interface does not itself extend
+    /// <see cref="IDisposable"/>, so the earlier cref to <c>IDisposable.Dispose</c> pointed at a member
+    /// not reachable through this type -- every implementation this codebase ships also implements
+    /// <see cref="IDisposable"/> separately, and that is what this contract refers to).</summary>
     void PushSamples(ReadOnlyMemory<float> samples);
 
     /// <summary>Fires once per decoded transmission line (functional-audit fix, D3+D8+D9 coupled

@@ -259,6 +259,20 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void PushSamples_ThrowsObjectDisposedException_AfterDispose()
+    {
+        // D2 round 2 fix: without the ObjectDisposedException.ThrowIf guard this test pins, a
+        // post-dispose PushSamples call landing in the critical/warning-threshold branch would call
+        // Swap(), constructing a FRESH, undisposed inner AnalogFmSstvDecoder and pushing to it
+        // successfully -- silently violating ISstvDecoder.PushSamples' own documented contract and
+        // leaking that new inner instance (this wrapper's own Dispose() never runs again to catch it).
+        var decoder = new RestartableSstvDecoder();
+        decoder.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => decoder.PushSamples(new float[16]));
+    }
+
+    [Fact]
     public void StationIdDecoded_ForwardsFromTheCurrentInner()
     {
         // CW-ID/FSK station-ID subsystem Phase 5 (RestartableSstvDecoder.StationIdDecoded's own doc

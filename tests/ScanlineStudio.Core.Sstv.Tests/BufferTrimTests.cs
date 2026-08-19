@@ -106,6 +106,19 @@ public class BufferTrimTests
     }
 
     [Fact]
+    public void PushSamples_ThrowsObjectDisposedException_AfterDispose()
+    {
+        // D2 round 2 fix: PushSamples' own ObjectDisposedException.ThrowIf guard (D2 round 1) had no
+        // direct test -- every other such guard in this repo (MiniAudioEngineTests,
+        // MiniAudioRingTests, HamlibRadioProtocolTests, FakeRadioTransportTests) has one.
+        const int sampleRate = 11025;
+        var decoder = new AnalogFmSstvDecoder(sampleRate);
+        decoder.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => decoder.PushSamples(new float[16]));
+    }
+
+    [Fact]
     public void BufferedSampleCount_StaysBounded_ForLongNeverLockingStream_WithRxBpfOff()
     {
         // RX BPF subsystem Phase 2 -- round-1 auditor plan-review blocker, verified directly: the
