@@ -58,6 +58,14 @@ namespace ScanlineStudio.Core.Audio.MiniAudio;
 /// `SemaphoreSlim.Wait()`, which cannot hop, rather than the async `WaitAsync()` a Start call or
 /// another claim could contend against) -- see that method's own doc comment for the full
 /// reasoning and why the fix carries no native-lifetime risk.
+///
+/// Tier A Batch 1 functional-audit fix: the re-entrant self-dispose pattern above extends to
+/// <see cref="DisposeAsync"/> too, with the same shape of deadlock (a second, concurrent, non-drain-
+/// thread caller can block <see cref="DisposeAsync"/>'s own teardown on this session's drain thread
+/// exiting, while a reentrant subscriber call on that same drain thread blocks waiting for that
+/// teardown to finish) -- see <see cref="_captureSessionBeingDisposed"/>'s own doc comment for the
+/// fix, and <see cref="DisposeCaptureSessionAsync"/>'s own doc comment for the one real boundary on
+/// what counts as "reentrant" for this purpose (synchronous, on-thread only -- not `Task.Run(...).Wait()`).
 /// </summary>
 public sealed partial class MiniAudioEngine : IAudioEngine
 {
@@ -74,6 +82,34 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     private readonly SemaphoreSlim _playbackLock = new(1, 1);
 
     private volatile MiniAudioCaptureSession? _captureSession;
+
+    // Functional-audit fix (Tier A Batch 1, native/managed boundary): tracks the specific capture
+    // session a DisposeAsync-initiated teardown is currently responsible for, from the moment its
+    // own claim (ClaimCaptureSessionLocked, called with trackForDisposeAsync: true) removes it from
+    // _captureSession above through the moment its own disposal actually finishes -- separate from
+    // _captureSession because that field is nulled at CLAIM time, before disposal starts (see
+    // ClaimCaptureSessionLocked's own doc comment for why that early nulling exists and must not
+    // change). Exists ONLY to let DisposeAsync's own second-caller branch (below) recognize "the
+    // calling thread IS the drain thread of the session currently being torn down" even after
+    // _captureSession has already gone null -- without it, a SamplesCaptured subscriber that
+    // re-entrantly self-disposes (see DisposeCaptureSessionAsync's own doc comment for that
+    // supported pattern) can lose the _disposed Interlocked.Exchange race to a concurrent external
+    // caller and then block forever on _disposedSignal below, while that external caller's own
+    // Task.Run(session.Dispose) blocks forever joining THIS thread's own drain loop -- a real,
+    // reachable deadlock this field closes. Single-writer by construction: only DisposeAsync ever
+    // passes trackForDisposeAsync: true, and the _disposed latch below admits at most one
+    // DisposeAsync-initiated teardown per engine instance -- do NOT widen tracking to
+    // StopCaptureAsync to close a real but narrower residual gap: if a concurrent, untracked
+    // StopCaptureAsync claims the session FIRST, DisposeAsync's own claim returns null and this
+    // field never gets set for that session, so a reentrant drain-thread caller falls through to
+    // awaiting _disposedSignal after all -- code-review-confirmed as latency, not deadlock, though:
+    // DisposeAsync's remaining teardown (playback only, at that point) has no dependency on this
+    // drain thread, so the signal still fires and the reentrant caller unblocks, delayed by up to
+    // DrainTimeout + DrainTailMargin + the playback session's own CloseTimeout. Widening tracking to
+    // close even that latency would require Interlocked.CompareExchange instead of a plain clear
+    // (multiple concurrent StopCaptureAsync calls are possible, unlike DisposeAsync's single-writer
+    // guarantee) and would conflict with `volatile` (CS0420) -- not worth it for a bounded stall.
+    private volatile MiniAudioCaptureSession? _captureSessionBeingDisposed;
 
     private int _disposed;
 
@@ -107,6 +143,13 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     // actually finished, rather than letting it return immediately once _disposed is latched (the
     // original behavior let a second caller's `await DisposeAsync()` complete while the first
     // caller's teardown -- native close, MiniAudioContext.Release() -- was still in progress).
+    //
+    // Functional-audit fix (Tier A Batch 1): NOT an unconditional contract for every second caller.
+    // A second caller that IS the active-or-being-torn-down capture session's own drain thread
+    // (reentering synchronously via a SamplesCaptured subscriber, not via Task.Run(...).Wait() --
+    // see _captureSessionBeingDisposed's own doc comment) returns immediately WITHOUT awaiting this
+    // signal, since waiting is exactly what would deadlock the first caller's own teardown. Every
+    // OTHER second caller still awaits this signal and observes true completion as documented above.
     private readonly TaskCompletionSource _disposedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // ILoggerFactory optional, defaulting to null: when supplied (as Program.cs does today via DI,
@@ -236,7 +279,7 @@ public sealed partial class MiniAudioEngine : IAudioEngine
 
     public async Task StopCaptureAsync()
     {
-        var session = await ClaimCaptureSessionAsync().ConfigureAwait(false);
+        var session = await ClaimCaptureSessionAsync(trackForDisposeAsync: false).ConfigureAwait(false);
         if (session is not null)
         {
             await DisposeCaptureSessionAsync(session).ConfigureAwait(false);
@@ -253,8 +296,17 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     /// let <c>DrainLoop</c> exit -- deadlocking the thread the Join is waiting for. Releasing the
     /// lock as soon as the session reference is claimed means a second concurrent caller (drain
     /// thread or otherwise) always finds <see cref="_captureSession"/> already null and returns
-    /// immediately as a no-op, instead of ever contending with an in-progress disposal.</summary>
-    private async Task<MiniAudioCaptureSession?> ClaimCaptureSessionAsync()
+    /// immediately as a no-op, instead of ever contending with an in-progress disposal.
+    ///
+    /// <paramref name="trackForDisposeAsync"/>: <see langword="true"/> only from <see cref="DisposeAsync"/>'s
+    /// own call site -- see <see cref="_captureSessionBeingDisposed"/>'s own doc comment for why.
+    /// <see cref="StopCaptureAsync"/> always passes <see langword="false"/>: it has no
+    /// <see cref="_disposedSignal"/>-style "second caller waits for true completion" contract to
+    /// protect (a second concurrent <see cref="StopCaptureAsync"/> already just finds
+    /// <see cref="_captureSession"/> null and no-ops, per this method's own reasoning above), so it
+    /// is never at risk of the deadlock this tracking exists to prevent -- deliberately not widened,
+    /// see <see cref="_captureSessionBeingDisposed"/>'s own doc comment for why.</summary>
+    private async Task<MiniAudioCaptureSession?> ClaimCaptureSessionAsync(bool trackForDisposeAsync)
     {
         // Round-3-engine-review fix: closes the residual race this class's own doc comment used to
         // describe as "not safely fixable without touching MiniAudioCaptureSession" -- that framing
@@ -280,7 +332,7 @@ public sealed partial class MiniAudioEngine : IAudioEngine
             _captureLock.Wait();
             try
             {
-                return ClaimCaptureSessionLocked();
+                return ClaimCaptureSessionLocked(trackForDisposeAsync);
             }
             finally
             {
@@ -291,7 +343,7 @@ public sealed partial class MiniAudioEngine : IAudioEngine
         await _captureLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            return ClaimCaptureSessionLocked();
+            return ClaimCaptureSessionLocked(trackForDisposeAsync);
         }
         finally
         {
@@ -300,9 +352,24 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     }
 
     /// <summary>Must be called with <see cref="_captureLock"/> already held.</summary>
-    private MiniAudioCaptureSession? ClaimCaptureSessionLocked()
+    private MiniAudioCaptureSession? ClaimCaptureSessionLocked(bool trackForDisposeAsync)
     {
         var session = _captureSession;
+
+        // Functional-audit fix (Tier A Batch 1): write order here is load-bearing, NOT stylistic --
+        // do not reorder these two statements, and do not "simplify" by moving this write after
+        // `_captureSession = null` below. See _captureSessionBeingDisposed's own doc comment for the
+        // deadlock this exists to prevent; the mechanism only works because DisposeAsync's own
+        // second-caller check (which reads _captureSession, then _captureSessionBeingDisposed, in
+        // that order, WITHOUT taking _captureLock) is guaranteed -- by volatile's release/acquire
+        // ordering, not by this lock -- to observe THIS write once it observes _captureSession
+        // having gone null. Swapping the order reopens a real interleaving where a reader can
+        // observe both fields as stale/null and deadlock exactly as before this fix.
+        if (trackForDisposeAsync)
+        {
+            _captureSessionBeingDisposed = session;
+        }
+
         _captureSession = null;
 
         // Round-2-engine-review fix: unsubscribe as soon as a session is claimed, not only
@@ -374,7 +441,17 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     /// currently forwarding" field, which could not tell one session's drain thread apart from
     /// another's if a subscriber stopped one session and started a new one from within the same
     /// callback invocation -- fixed by asking the session itself). Dispatches to a pool thread via
-    /// <c>Task.Run</c> otherwise, matching every other session-closing call in this class.</summary>
+    /// <c>Task.Run</c> otherwise, matching every other session-closing call in this class.
+    ///
+    /// A <see cref="SamplesCaptured"/> subscriber re-entrantly calling <see cref="DisposeAsync"/>
+    /// (this class's own top-of-file doc comment's "supported pattern") is only actually safe when
+    /// it calls it SYNCHRONOUSLY, directly on this drain thread (functional-audit fix, Tier A Batch
+    /// 1) -- see <see cref="_captureSessionBeingDisposed"/>'s own doc comment for the mechanism that
+    /// makes it safe. A subscriber that instead dispatches via <c>Task.Run(() =&gt; engine.DisposeAsync()).Wait()</c>
+    /// moves the caller onto a POOL thread, where <see cref="MiniAudioCaptureSession.IsRunningOnDrainThread"/>
+    /// is false -- that variant is NOT covered and can still deadlock the same way; this is a
+    /// pre-existing limitation of the reentrant-self-dispose pattern generally, not a regression
+    /// this fix introduces or a gap it closes.</summary>
     private async Task DisposeCaptureSessionAsync(MiniAudioCaptureSession session)
     {
         // Checked once here, at the single point every capture-stop path (explicit StopCaptureAsync
@@ -599,6 +676,33 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
+            // Functional-audit fix (Tier A Batch 1): checked BEFORE awaiting the completion signal
+            // below -- a real, reachable deadlock otherwise. If the calling thread is the drain
+            // thread of the capture session that a WINNING concurrent DisposeAsync caller is
+            // currently tearing down (this thread reentered via a SamplesCaptured subscriber calling
+            // DisposeAsync synchronously -- this class's own top-of-file doc comment's "supported
+            // pattern", with the one boundary DisposeCaptureSessionAsync's own doc comment states),
+            // blocking here would wait on a signal that caller can only set AFTER its own
+            // Task.Run(session.Dispose) finishes joining THIS thread's own drain loop -- which
+            // cannot happen while this thread is blocked right here. Returning immediately breaks
+            // that cycle.
+            //
+            // Read order matters and must NOT change: _captureSession first, THEN
+            // _captureSessionBeingDisposed -- the exact reverse of the write order
+            // ClaimCaptureSessionLocked uses (see that method's own doc comment for why the reverse
+            // order is what makes this safe under volatile's release/acquire ordering, without
+            // taking _captureLock here). Both members read below (IsRunningOnDrainThread) are
+            // deliberately lock-free AND never throw ObjectDisposedException on an already-disposed
+            // session -- a future addition to this check must preserve both properties, or it can
+            // reintroduce this exact deadlock (a lock-taking member would block against the write
+            // lock DisposeCaptureSessionAsync's own inline/Task.Run Dispose() call holds for its
+            // entire duration).
+            if (_captureSession?.IsRunningOnDrainThread == true || _captureSessionBeingDisposed?.IsRunningOnDrainThread == true)
+            {
+                Log.DisposeAsyncReenteredFromDrainThread(_logger);
+                return;
+            }
+
             // Round-1-engine-review fix: this used to return immediately here, before the first
             // caller's teardown (native close, MiniAudioContext.Release()) had necessarily
             // finished -- a second concurrent `await engine.DisposeAsync()` could complete while
@@ -606,7 +710,8 @@ public sealed partial class MiniAudioEngine : IAudioEngine
             // session types' own "Dispose blocks a second caller until the first is done"
             // convention (there via a write lock; here via a TaskCompletionSource, since disposal
             // itself must never be blocked by a Start/Stop racing in ahead of it the way a shared
-            // lock would force).
+            // lock would force). Every caller other than the reentrant-drain-thread case just
+            // handled above still goes through this normal path and observes true completion.
             await _disposedSignal.Task.ConfigureAwait(false);
             return;
         }
@@ -620,7 +725,7 @@ public sealed partial class MiniAudioEngine : IAudioEngine
             // try/finally so a failure in one never prevents the other from being attempted.
             try
             {
-                var captureSession = await ClaimCaptureSessionAsync().ConfigureAwait(false);
+                var captureSession = await ClaimCaptureSessionAsync(trackForDisposeAsync: true).ConfigureAwait(false);
                 if (captureSession is not null)
                 {
                     await DisposeCaptureSessionAsync(captureSession).ConfigureAwait(false);
@@ -628,6 +733,15 @@ public sealed partial class MiniAudioEngine : IAudioEngine
             }
             finally
             {
+                // Functional-audit fix (Tier A Batch 1): cleared here, at the top of this existing
+                // finally block (not restructured into a new one -- this block's own try/finally
+                // shape is itself a round-2 fix, see this method's own comment above), so it runs
+                // whether or not DisposeCaptureSessionAsync threw. By the time this statement runs,
+                // that call has already fully returned (successfully or not) -- meaning any
+                // Task.Run(session.Dispose) it started has already completed its own drain-thread
+                // Join -- so no reentrant caller can still be relying on this field at this point.
+                _captureSessionBeingDisposed = null;
+
                 var playbackSession = await ClaimPlaybackSessionAsync().ConfigureAwait(false);
                 if (playbackSession is not null)
                 {
@@ -705,6 +819,18 @@ public sealed partial class MiniAudioEngine : IAudioEngine
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Capture stopped")]
         public static partial void CaptureStopped(ILogger logger);
+
+        // Functional-audit fix (Tier A Batch 1): NOT a hot-path/per-chunk event -- fires when a
+        // SamplesCaptured subscriber's own reentrant DisposeAsync call loses the race to a
+        // concurrent external caller, which only happens once the caller latches _disposed itself
+        // (code-review correction: not literally "at most once" -- an unusual subscriber that calls
+        // DisposeAsync on every chunk, rather than latching its own single attempt like this file's
+        // established pattern, could hit this on a few consecutive chunks within the claim/Task.Run
+        // window before _stopping takes effect; still bounded, still not a steady-state hot path).
+        // See _captureSessionBeingDisposed's own doc comment for why this branch exists and returns
+        // without waiting for true completion.
+        [LoggerMessage(Level = LogLevel.Debug, Message = "DisposeAsync re-entered from the capture drain thread -- returning without waiting for the concurrent teardown already in progress to finish")]
+        public static partial void DisposeAsyncReenteredFromDrainThread(ILogger logger);
 
         // Round-3 functional-audit addition: TimedOutDuringClose was already set by
         // MiniAudioCaptureSession/MiniAudioPlaybackSession's own Dispose() on a genuine hot-unplug

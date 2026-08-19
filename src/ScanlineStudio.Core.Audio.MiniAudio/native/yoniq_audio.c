@@ -434,6 +434,20 @@ yoniq_audio_ring *yoniq_audio_ring_create(int capacity_frames, int channels)
         return NULL;
     }
 
+    /* Functional-audit fix: ma_pcm_rb_init (below) multiplies capacity_frames * bytes-per-frame as
+     * ma_uint32 math before ma_rb_init_ex's own `> 0x7FFFFFFF` guard ever runs -- for a large enough
+     * capacity_frames, that product wraps mod 2^32 BEFORE the guard sees it, silently creating a
+     * ring far smaller than requested instead of failing loudly. Not reachable today (this port's
+     * only caller uses a small, fixed capacity), but a future settings-driven buffer-size knob could
+     * make it live. Reject anything that would overflow here, in 64-bit math, before that
+     * multiplication ever runs -- sizeof(float) matches ma_get_bytes_per_frame's own result for
+     * ma_format_f32 (this ring's only format, see the ma_pcm_rb_init call below), checked directly
+     * rather than duplicating that internal computation. */
+    if ((ma_uint64)capacity_frames * (ma_uint64)channels * sizeof(float) > 0x7FFFFFFFULL)
+    {
+        return NULL;
+    }
+
     yoniq_audio_ring *ring = (yoniq_audio_ring *)malloc(sizeof(yoniq_audio_ring));
     if (ring == NULL)
     {
