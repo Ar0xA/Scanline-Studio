@@ -477,6 +477,13 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
+    /// <summary>Forwards to whichever inner instance is current. See
+    /// <see cref="ISstvDecoder.ResetAgc"/> for the full concurrency contract this method's caller
+    /// must honor (D0-audit round-6 finding on the base implementation) -- deliberately called
+    /// outside <see cref="_gate"/> once the current inner reference is captured, matching every
+    /// other non-<see cref="PushSamples"/> deferred-request forward below, so a swap racing this call
+    /// is silently applied to whichever inner instance was current at the moment of the call, same
+    /// fire-and-forget shape as <see cref="RequestReSync"/> immediately below.</summary>
     public void ResetAgc()
     {
         AnalogFmSstvDecoder current;
