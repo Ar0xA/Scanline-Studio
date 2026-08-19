@@ -505,6 +505,10 @@ public class CorrectSlantTests
 
         Assert.True(result, "Test setup problem: the hand-traced fixture should produce a real, committed correction.");
         Assert.Equal(6615.012, decoder.EffectiveSamplesPerLineForTests, tolerance: 1e-9);
+        Assert.Equal(1, decoder.ManualSlantEntrySafetyCheckCountForTests);
+        Assert.True(
+            decoder.ManualSlantCandidateSafetyCheckCountForTests > 0,
+            "A computed correction candidate reached commit without passing through the projection-safety guard.");
     }
 
     [Fact]

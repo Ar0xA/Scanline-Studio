@@ -117,7 +117,7 @@ public sealed partial class OptionsSettingsService
             CultureCode: localization.CultureCode,
             CaptureDeviceId: audio.CaptureDeviceId,
             PlaybackDeviceId: audio.PlaybackDeviceId,
-            SampleRate: audio.SampleRate,
+            SampleRate: SstvSampleRate.NormalizePersisted(audio.SampleRate),
             RadioBackendId: radio.BackendId,
             RigctldHost: radio.Host,
             RigctldPort: radio.Port,
@@ -156,6 +156,9 @@ public sealed partial class OptionsSettingsService
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
     {
         var previousAudio = _loadedSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
+        var sampleRateToPersist = SstvSampleRate.IsSupported(snapshot.SampleRate)
+            ? snapshot.SampleRate
+            : SstvSampleRate.NormalizePersisted(previousAudio.SampleRate);
         var previousRadio = _loadedSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
         var previousDecoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
         var previousStationId = _loadedSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
@@ -174,7 +177,10 @@ public sealed partial class OptionsSettingsService
                 {
                     CaptureDeviceId = snapshot.CaptureDeviceId,
                     PlaybackDeviceId = snapshot.PlaybackDeviceId,
-                    SampleRate = snapshot.SampleRate,
+                    // Legacy Options preserves the previous valid rate when the typed value is
+                    // outside 5000..CLOCKMAX (Option.cpp:421-424); startup's invalid-value behavior
+                    // is deliberately different and falls back to 11025.
+                    SampleRate = sampleRateToPersist,
                     CaptureChannelSource = snapshot.CaptureChannelSource,
                     StereoTxEnabled = snapshot.StereoTxEnabled,
                 },
@@ -268,7 +274,7 @@ public sealed partial class OptionsSettingsService
 
         await _settingsStore.SaveAsync(settings, ct).ConfigureAwait(false);
         _loadedSettings = settings;
-        Log.Saved(_logger, snapshot.RadioBackendId, snapshot.SampleRate, snapshot.CultureCode);
+        Log.Saved(_logger, snapshot.RadioBackendId, sampleRateToPersist, snapshot.CultureCode);
     }
 
     private static partial class Log

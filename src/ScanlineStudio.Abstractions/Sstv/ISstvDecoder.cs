@@ -6,6 +6,11 @@ public sealed record DecodedImageUpdate(int Line, IImageSource Image);
 
 public interface ISstvDecoder
 {
+    /// <summary>Immutable whole-Hz sample rate expected by <see cref="PushSamples"/>. The capture
+    /// pipeline, waterfall, and encoder must use this same process-lifetime value; changing the
+    /// persisted setting requires an application restart.</summary>
+    int SampleRate { get; }
+
     /// <summary>Feeds one block of demodulated audio samples into the decoder. Intended to be called
     /// from a single, consistent producer thread (e.g. an audio-capture callback) -- see the events
     /// below for this class's general concurrency contract. The two PRODUCTION implementations

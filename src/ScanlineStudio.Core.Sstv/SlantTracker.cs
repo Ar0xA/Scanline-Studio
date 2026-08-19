@@ -253,8 +253,7 @@ internal sealed class SlantTracker
             _bitMask |= 16;
         }
 
-        var clampedRate = Math.Min(candidateSampleRate, _sampleRate * 1100.0 / 1060.0); // Main.cpp:4012-4014 -- clamp uses the FIXED rate, not the evolving one (matches legacy's bare `SampFreq` there)
-        var correctedRate = NormalSampleRate(clampedRate, 50); // Main.cpp:4015
+        var correctedRate = ClampAndNormalizeAutoSlantRate(candidateSampleRate, _sampleRate);
 
         // RX buffer subsystem Phase 6b: legacy's own `if(!m_ASDis){...}` gate (Main.cpp:4011) wraps
         // exactly this block (the SetSampFreq-consistency comment below and the InitAutoStop-after-
@@ -328,6 +327,15 @@ internal sealed class SlantTracker
 
     /// <summary><c>NormalSampFreq</c> (`ComLib.cpp:203-207`) -- rounds to the nearest 1/m fraction.</summary>
     private static double NormalSampleRate(double value, double precision) => (int)(value * precision + 0.5) / precision;
+
+    /// <summary>Live Auto Slant clamp and normalization from <c>Main.cpp:4012-4015</c>. The clamp
+    /// uses the fixed declared rate, not the evolving corrected rate (matching legacy's bare
+    /// <c>SampFreq</c> there).</summary>
+    internal static double ClampAndNormalizeAutoSlantRate(double candidateSampleRate, double declaredSampleRate)
+    {
+        var clampedRate = Math.Min(candidateSampleRate, declaredSampleRate * 1100.0 / 1060.0);
+        return NormalSampleRate(clampedRate, 50);
+    }
 
     /// <summary>Current drift, in parts-per-million relative to the fixed declared sample rate --
     /// legacy's own <c>DrawSlantInfo</c> ppm readout formula (`Main.cpp:5537`:

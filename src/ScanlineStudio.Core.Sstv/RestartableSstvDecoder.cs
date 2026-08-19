@@ -3,7 +3,7 @@ using ScanlineStudio.Abstractions.Sstv;
 namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>Fixes ultracode audit finding #34 (AnalogFmSstvDecoder's absolute sample-index space is
-/// `int`, wrapping after ~13.5h of continuous streaming @44100Hz) by periodically discarding and
+/// `int`) by periodically discarding and
 /// reconstructing the whole <see cref="AnalogFmSstvDecoder"/> object graph instead of widening every
 /// affected field -- a fresh instance gives every field a correct starting value by construction, the
 /// same effect as a user restarting the application (already the case today, since
@@ -18,17 +18,19 @@ namespace ScanlineStudio.Core.Sstv;
 /// and the sample count always reflect settled state as of the end of the previous call, and a swap
 /// never splits one chunk across old/new):
 /// <list type="number">
-/// <item>`n &gt;= criticalThreshold` (regardless of idle): force the swap UNCONDITIONALLY. This is the
-/// actual overflow-safety guarantee -- it never waits for idle, so it can never wedge and can never
-/// fail to happen. Self-clearing: the swap resets `n` back to ~0, so this can't re-fire on the very
-/// next call.</item>
+/// <item>If the incoming chunk itself exceeds the safe ceiling, reject it without mutation. Otherwise,
+/// if forwarding it would cross that ceiling, force a critical swap before forwarding the whole
+/// chunk to the fresh decoder.</item>
+/// <item>Else if `n &gt;= criticalThreshold` (regardless of idle): force the swap unconditionally.
+/// These first two swap paths are the actual overflow-safety guarantee: neither waits for idle.
+/// Self-clearing: the swap resets `n` back near zero.</item>
 /// <item>Else if idle and `n &gt;= warningThreshold`: normal swap (the common path in real usage,
 /// since real receiving has gaps).</item>
 /// <item>Else if not idle and `n &gt;= warningThreshold`: raise <see cref="RestartOverdue"/> once
 /// (guarded so it doesn't fire on every subsequent call for the rest of the window).</item>
 /// </list>
-/// This makes the swap itself (case 1) unconditional and independent of the visibility layer (cases
-/// 2-3) -- even a bug in whatever consumes <see cref="RestartOverdue"/>/<see cref="RestartCriticallyOverdue"/>
+/// This makes the safety swaps independent of the visibility layer -- even a bug in whatever consumes
+/// <see cref="RestartOverdue"/>/<see cref="RestartCriticallyOverdue"/>
 /// can't let the counter actually overflow.
 ///
 /// <b>Locking</b>: the swap happens under <c>lock (_gate)</c>. All three maintenance events are raised
@@ -40,14 +42,15 @@ namespace ScanlineStudio.Core.Sstv;
 /// already fully happened by the time any handler runs.</summary>
 public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, IDisposable
 {
-    // Sized against AnalogFmSstvDecoder's own constructor default (11025) -- this class never passes
-    // a different sampleRate (matching Program.cs's actual registration today), so these constants
-    // really do mean 12h/13h in production. If the decoder's sample rate is ever made configurable
-    // to match the capture device's actual rate (a separate, pre-existing, unrelated mismatch), these
-    // must be recomputed against THAT rate, not left as a raw sample count sized for 11025.
-    internal const int ProductionSampleRate = 11025;
+    internal const int ProductionSampleRate = SstvSampleRate.Default;
     internal const long DefaultWarningThresholdSamples = 12L * 3600 * ProductionSampleRate;
     internal const long DefaultCriticalThresholdSamples = 13L * 3600 * ProductionSampleRate;
+
+    internal readonly record struct RestartThresholds(
+        long WarningThresholdSamples,
+        long CriticalThresholdSamples,
+        int MaximumSafeSampleIndex,
+        long ProjectionReserveSamples);
 
     private readonly bool _afcEnabled;
     private readonly bool _syncRestartEnabled;
@@ -58,9 +61,11 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private readonly DemodType _demodType;
     private readonly RxBpfPreset _rxBpfPreset;
     private readonly RxBufferMode _rxBufferMode;
+    private readonly int _sampleRate;
     private readonly long _warningThresholdSamples;
     private readonly long _criticalThresholdSamples;
-    private readonly Func<AnalogFmSstvDecoder>? _decoderFactoryForTests;
+    private readonly int _maximumSafeSampleIndex;
+    private readonly Func<int, AnalogFmSstvDecoder>? _decoderFactoryForTests;
     private readonly object _gate = new();
 
     // NOT readonly, unlike every toggle above -- StationIdDecodeEnabled is deliberately
@@ -72,6 +77,10 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private AnalogFmSstvDecoder _inner;
     private bool _warningRaised;
+
+    /// <summary>See <see cref="ISstvDecoder.SampleRate"/>. Every inner decoder is validated against
+    /// this immutable value before it can be installed.</summary>
+    public int SampleRate => _sampleRate;
 
     public event Action<DecodedImageUpdate>? LineDecoded;
     public event Action<SstvModeDefinition>? ModeDetected;
@@ -214,16 +223,38 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On)
-        : this(afcEnabled, DefaultWarningThresholdSamples, DefaultCriticalThresholdSamples, syncRestartEnabled, autoSyncEnabled, autoStopEnabled, autoSlantEnabled, senseLevel, stationIdDecodeEnabled, demodType, rxBpfPreset, rxBufferMode)
+    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, int sampleRate = SstvSampleRate.Default)
+        : this(
+            afcEnabled,
+            ComputeDefaultThresholds(sampleRate).WarningThresholdSamples,
+            ComputeDefaultThresholds(sampleRate).CriticalThresholdSamples,
+            syncRestartEnabled,
+            autoSyncEnabled,
+            autoStopEnabled,
+            autoSlantEnabled,
+            senseLevel,
+            stationIdDecodeEnabled,
+            demodType,
+            rxBpfPreset,
+            rxBufferMode,
+            sampleRate,
+            ComputeDefaultThresholds(sampleRate).MaximumSafeSampleIndex)
     {
     }
 
-    /// <summary>Test-only seam for injecting short thresholds instead of the real 12h/13h ones --
+    /// <summary>Test-only seam for injecting short thresholds/a small safe-index ceiling instead of
+    /// the rate-aware production values --
     /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
     /// trigger is sample-count-based, not wall-clock-based.</summary>
-    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, Func<AnalogFmSstvDecoder>? decoderFactoryForTests = null)
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, int sampleRate = SstvSampleRate.Default, int maximumSafeSampleIndex = int.MaxValue, Func<int, AnalogFmSstvDecoder>? decoderFactoryForTests = null)
     {
+        if (!SstvSampleRate.IsSupported(sampleRate))
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate), sampleRate, $"Sample rate must be between {SstvSampleRate.Minimum} and {SstvSampleRate.Maximum} Hz inclusive.");
+        }
+
+        ArgumentOutOfRangeException.ThrowIfLessThan(maximumSafeSampleIndex, 1);
+
         _afcEnabled = afcEnabled;
         _syncRestartEnabled = syncRestartEnabled;
         _autoSyncEnabled = autoSyncEnabled;
@@ -233,8 +264,10 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         _demodType = demodType;
         _rxBpfPreset = rxBpfPreset;
         _rxBufferMode = rxBufferMode;
+        _sampleRate = sampleRate;
         _warningThresholdSamples = warningThresholdSamples;
         _criticalThresholdSamples = criticalThresholdSamples;
+        _maximumSafeSampleIndex = maximumSafeSampleIndex;
         _decoderFactoryForTests = decoderFactoryForTests;
         _stationIdDecodeEnabled = stationIdDecodeEnabled;
         _inner = CreateInner();
@@ -265,9 +298,20 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             // already-disposed _inner in the non-Swap branches.
             ObjectDisposedException.ThrowIf(_disposed, this);
 
+            if (samples.Length > _maximumSafeSampleIndex)
+            {
+                throw new ArgumentOutOfRangeException(nameof(samples), samples.Length, "A single sample chunk cannot exceed the decoder's safe absolute-index capacity.");
+            }
+
             var n = _inner.TotalSamplesReceived;
 
-            if (n >= _criticalThresholdSamples)
+            if (samples.Length > _maximumSafeSampleIndex - n)
+            {
+                Swap();
+                raiseCritical = true;
+                raiseRestarted = true;
+            }
+            else if (n >= _criticalThresholdSamples)
             {
                 Swap();
                 raiseCritical = true;
@@ -526,7 +570,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         // ~10s worst case), so a genuinely stuck writer blocks whichever UI-thread property getter
         // (SignalPeakLevel/SlantPpm/BufferedSampleCount) is waiting on this same lock for up to that
         // long. Code-review-accepted: only reachable under a pathological stuck-writer condition at
-        // the ~12h swap interval, not a normal-operation cost.
+        // a many-hour maintenance swap interval, not a normal-operation cost.
         var outgoing = _inner;
 
         // Construct and fully subscribe the replacement before disconnecting the installed decoder.
@@ -558,14 +602,77 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private AnalogFmSstvDecoder CreateInner()
     {
-        var decoder = _decoderFactoryForTests?.Invoke()
-            ?? new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode);
+        var decoder = _decoderFactoryForTests?.Invoke(_sampleRate)
+            ?? new AnalogFmSstvDecoder(sampleRate: _sampleRate, afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode);
+        if (decoder.SampleRate != _sampleRate)
+        {
+            decoder.Dispose();
+            throw new InvalidOperationException($"Decoder factory returned {decoder.SampleRate} Hz; expected {_sampleRate} Hz.");
+        }
+
         decoder.StationIdDecodeEnabled = _stationIdDecodeEnabled;
         decoder.LineDecoded += OnLineDecoded;
         decoder.ModeDetected += OnModeDetected;
         decoder.DecodeRestarted += OnDecodeRestarted;
         decoder.StationIdDecoded += OnStationIdDecoded;
         return decoder;
+    }
+
+    internal static RestartThresholds ComputeDefaultThresholds(int sampleRate)
+    {
+        if (!SstvSampleRate.IsSupported(sampleRate))
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate), sampleRate, $"Sample rate must be between {SstvSampleRate.Minimum} and {SstvSampleRate.Maximum} Hz inclusive.");
+        }
+
+        var projectionReserveSamples = checked((long)Math.Ceiling(3600d * SstvSampleRate.MaximumAutoSlantRate(sampleRate)));
+        var maximumSafeSampleIndex = checked((int)(int.MaxValue - projectionReserveSamples));
+        var preferredCritical = checked(13L * 3600L * sampleRate);
+        var critical = Math.Min(preferredCritical, maximumSafeSampleIndex);
+        var preferredWarning = checked(12L * 3600L * sampleRate);
+        var warning = Math.Min(preferredWarning, checked(critical - 3600L * sampleRate));
+
+        if (warning <= 0 || warning >= critical || critical > maximumSafeSampleIndex)
+        {
+            throw new InvalidOperationException("Computed restart thresholds are not strictly ordered inside the decoder's safe sample-index range.");
+        }
+
+        return new RestartThresholds(warning, critical, maximumSafeSampleIndex, projectionReserveSamples);
+    }
+
+    /// <summary>Conservative composed forward horizon for every current absolute-index addition in
+    /// <see cref="AnalogFmSstvDecoder"/>. Several terms are mutually exclusive and paired-row modes
+    /// are deliberately over-counted; the purpose is a durable upper-bound proof against the
+    /// one-hour reserve, not a tight runtime estimate. Absolute-index additions bounded directly by
+    /// already-received data (for example <c>_syncBypassProcessedUpTo + 1</c>) add no forward term.</summary>
+    internal static long ComputeMaximumComposedProjectionSamples(int sampleRate)
+    {
+        if (!SstvSampleRate.IsSupported(sampleRate))
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        }
+
+        var effectiveRate = SstvSampleRate.MaximumAutoSlantRate(sampleRate);
+        static long DurationSamples(double durationMs, double rate) =>
+            checked((long)Math.Ceiling(durationMs / 1000d * rate));
+
+        var fixedForwardAdditions = checked(
+            DurationSamples(500d, effectiveRate) // EndOfImage dead-time cursor
+            + DurationSamples(VisHeader.MaxSearchCeilingMs, effectiveRate) // standard/fixed VIS ceiling
+            + DurationSamples(VisHeader.NarrowSearchCeilingMs, effectiveRate) // narrow VIS ceiling
+            + DurationSamples(VisHeader.NarrowPostBitClockOriginDurationMs, effectiveRate) // narrow-FSK completion-to-anchor offset
+            + DurationSamples(VisLockStateMachine.AnchorReconciliationDurationMs, effectiveRate) // VIS state-machine completion-to-anchor reconciliation
+            + DurationSamples(VisHeader.ScottiePostVisPulseDurationMs, effectiveRate) // maximum VIS state-machine mode-specific tail
+            + DurationSamples(2d * VisHeader.AvtVisBlockDurationMs, effectiveRate) // AVT training origin
+            + DurationSamples(VisHeader.AvtExtraHeaderDurationMs, effectiveRate) // AVT fallback/training ceiling
+            + AnalogFmSstvDecoder.AnchorWarmupSamples); // anchor/dead-zone warm-up margin
+
+        var maximumFullImage = SstvModeRegistry.All.Max(mode =>
+            DurationSamples(mode.LineDurationMs * mode.ImageHeight, effectiveRate));
+        var maximumLine = SstvModeRegistry.All.Max(mode =>
+            DurationSamples(mode.LineDurationMs, effectiveRate));
+
+        return checked(fixedForwardAdditions + maximumFullImage + 2L * maximumLine);
     }
 
     private void UnsubscribeFrom(AnalogFmSstvDecoder decoder)

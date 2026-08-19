@@ -10,6 +10,7 @@ using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
+using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Audio.MiniAudio;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Localization;
@@ -141,48 +142,14 @@ internal static partial class Program
 
         // SSTV DSP core -- one decoder/encoder/waterfall per app session (Phase 3 scope: a single
         // concurrent session, matching the single IAudioEngine instance above).
-        // Factory, not an eagerly-constructed instance (unlike ISstvEncoder/IWaterfallSource below) --
-        // needs to read SstvDecoderSettings.AfcEnabled from ISettingsStore (registered above) before
-        // constructing, so this must defer until first resolution rather than running at this line.
+        // Factories, not eagerly-constructed instances: the decoder reads both decoder settings and
+        // the process-lifetime DSP sample rate; encoder and waterfall resolve that decoder-owned rate
+        // so capture/RX/display/TX cannot silently disagree.
         // Ultracode audit finding #34: RestartableSstvDecoder (not AnalogFmSstvDecoder directly)
         // periodically discards/reconstructs the whole decoder object graph to avoid an int-overflow
-        // after ~13.5h of continuous streaming @44100Hz -- see that class's own doc comment. Every
+        // before its int absolute-index space can overflow -- see that class's own doc comment. Every
         // consumer only ever holds ISstvDecoder, so this swap is fully transparent.
-        hostBuilder.Services.AddSingleton<ISstvDecoder>(sp =>
-        {
-            var appSettings = sp.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult();
-            var decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
-                ?? new SstvDecoderSettings();
-            // Absent -> Hilbert (legacy's real compiled-in default); present-but-out-of-range (e.g. a
-            // hand-edited settings.json with an enum member this build doesn't know) ALSO clamps to
-            // Hilbert -- see SstvDecoderSettings.DemodType's own doc comment for why this is a
-            // deliberate, sane divergence from legacy's own real inconsistency here, not a copy of
-            // SenseLevel's own "different fallback for absent vs. out-of-range" shape below -- that
-            // one's out-of-range half isn't even in THIS file, it lives in
-            // AnalogFmSstvDecoder's own ctor (`senseLevel is >= 0 and <= 3 ? senseLevel : 0`,
-            // matching sstv.cpp:1811-1815's SetSenseLvl `default:` arm).
-            var demodType = decoderSettings.DemodType is { } dt && Enum.IsDefined(dt) ? dt : DemodType.Hilbert;
-            // Same absent-or-out-of-range clamp shape as demodType above (Wide is legacy's real
-            // compiled-in default, sstv.cpp:1416 -- see SstvDecoderSettings.RxBpfPreset's own doc
-            // comment for why the out-of-range half is a deliberate divergence, not a replicated bug).
-            var rxBpfPreset = decoderSettings.RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : RxBpfPreset.Wide;
-            // Same absent-or-out-of-range clamp shape as demodType/rxBpfPreset above (On is legacy's
-            // real compiled-in default, Main.cpp:899 -- see SstvDecoderSettings.RxBufferMode's own doc
-            // comment).
-            var rxBufferMode = decoderSettings.RxBufferMode is { } rxb && Enum.IsDefined(rxb) ? rxb : RxBufferMode.On;
-            return new RestartableSstvDecoder(
-                afcEnabled: decoderSettings.AfcEnabled ?? true,
-                syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true,
-                autoSyncEnabled: decoderSettings.AutoSyncEnabled ?? true,
-                autoStopEnabled: decoderSettings.AutoStopEnabled ?? false, // legacy fresh default is OFF (Main.cpp:900), unlike the other four
-                autoSlantEnabled: decoderSettings.AutoSlantEnabled ?? true,
-                senseLevel: decoderSettings.SenseLevel ?? 1,
-                demodType: demodType,
-                rxBpfPreset: rxBpfPreset,
-                rxBufferMode: rxBufferMode);
-        });
-        hostBuilder.Services.AddSingleton<ISstvEncoder>(new AnalogFmSstvEncoder());
-        hostBuilder.Services.AddSingleton<IWaterfallSource>(new WaterfallSource(sampleRate: 11025));
+        RegisterSstvServices(hostBuilder.Services);
 
         // Image pipeline (step 5) -- ReceivedImageBuffer's constructor takes ISstvDecoder, resolved
         // automatically from the registration above (it subscribes to LineDecoded/DecodeRestarted
@@ -426,6 +393,46 @@ internal static partial class Program
             throw;
         }
     }
+
+    internal static void RegisterSstvServices(IServiceCollection services)
+    {
+        services.AddSingleton<ISstvDecoder>(CreateSstvDecoder);
+        services.AddSingleton<ISstvEncoder>(CreateSstvEncoder);
+        services.AddSingleton<IWaterfallSource>(CreateWaterfallSource);
+    }
+
+    internal static RestartableSstvDecoder CreateSstvDecoder(IServiceProvider services)
+    {
+        var appSettings = services.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult();
+        var audioSettings = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
+            ?? new AudioDeviceSettings();
+        var sampleRate = SstvSampleRate.NormalizePersisted(audioSettings.SampleRate);
+        var decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
+            ?? new SstvDecoderSettings();
+
+        // Absent or out-of-range values use the documented legacy-derived defaults. SenseLevel's
+        // distinct out-of-range fallback remains inside AnalogFmSstvDecoder's constructor.
+        var demodType = decoderSettings.DemodType is { } dt && Enum.IsDefined(dt) ? dt : DemodType.Hilbert;
+        var rxBpfPreset = decoderSettings.RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : RxBpfPreset.Wide;
+        var rxBufferMode = decoderSettings.RxBufferMode is { } rxb && Enum.IsDefined(rxb) ? rxb : RxBufferMode.On;
+        return new RestartableSstvDecoder(
+            afcEnabled: decoderSettings.AfcEnabled ?? true,
+            syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true,
+            autoSyncEnabled: decoderSettings.AutoSyncEnabled ?? true,
+            autoStopEnabled: decoderSettings.AutoStopEnabled ?? false,
+            autoSlantEnabled: decoderSettings.AutoSlantEnabled ?? true,
+            senseLevel: decoderSettings.SenseLevel ?? 1,
+            demodType: demodType,
+            rxBpfPreset: rxBpfPreset,
+            rxBufferMode: rxBufferMode,
+            sampleRate: sampleRate);
+    }
+
+    internal static AnalogFmSstvEncoder CreateSstvEncoder(IServiceProvider services) =>
+        new(services.GetRequiredService<ISstvDecoder>().SampleRate);
+
+    internal static WaterfallSource CreateWaterfallSource(IServiceProvider services) =>
+        new(services.GetRequiredService<ISstvDecoder>().SampleRate);
 
     // Avalonia configuration, don't remove; also used by the visual designer.
     public static AppBuilder BuildAvaloniaApp() => App.BuildAvaloniaApp();

@@ -80,6 +80,7 @@ internal sealed class VisLockStateMachine
     private const double ConfirmLockDurationMs = 15; // sstv.cpp:1948
     private const double BitDurationMs = 30; // sstv.cpp:1965/1986 (case1's post-lock reset, case2/9's per-bit window)
     private const double VerifyDurationMs = 30; // sstv.cpp:1965 reused for case3's own m_SyncTime (2131-2133 reads the same 30ms-window pattern)
+    internal const double AnchorReconciliationDurationMs = 15.0;
 
     private enum LockState { Search, ConfirmLock, DecodeVis, DecodeExtendedVis, Verify }
 
@@ -318,7 +319,7 @@ internal sealed class VisLockStateMachine
                         var anchorOffsetSamples = MsToSamples(ConfirmLockDurationMs)
                             + bitCount * MsToSamples(BitDurationMs)
                             + MsToSamples(VerifyDurationMs)
-                            + MsToSamples(15.0) // reconciles this state machine's own boundary with VisHeader's, see ProcessSample's doc comment
+                            + MsToSamples(AnchorReconciliationDurationMs) // reconciles this state machine's own boundary with VisHeader's, see ProcessSample's doc comment
                             + (SstvModeRegistry.IsScottieFamily(mode) ? MsToSamples(VisHeader.ScottiePostVisPulseDurationMs) : 0);
 
                         var lineStartSample = _triggerFireSample + anchorOffsetSamples;
