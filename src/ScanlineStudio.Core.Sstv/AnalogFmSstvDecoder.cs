@@ -1,4 +1,7 @@
 using System.Runtime.InteropServices;
+using System.Runtime.ExceptionServices;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 
@@ -835,7 +838,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <see cref="RxBufferMode.On"/> (`Main.cpp:899`, `sys.m_UseRxBuff=1`). Gates real decode-path
     /// behavior -- see <see cref="_rxBufferMode"/>'s own doc comment for the current read sites.
     /// Restart-only, same reasoning/limitation as every other parameter here.</param>
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On)
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, ILoggerFactory? loggerFactory = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 1);
 
@@ -870,7 +873,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _rxLineStagingBuffer = rxBufferMode switch
         {
             RxBufferMode.On => new RxLineStagingBuffer(sampleRate),
-            RxBufferMode.Extended => new RxDiskLineStagingBuffer(),
+            RxBufferMode.Extended => new RxDiskLineStagingBuffer(
+                (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RxDiskLineStagingBuffer>()),
             _ => null,
         };
         _syncBypass1Tracker = new SyncIntervalTracker(sampleRate, isNarrow: false, SstvModeRegistry.GetSyncIntervalCandidates(sampleRate));
@@ -1269,15 +1273,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // Slow-subscriber behavior: BLOCKS. A subscriber that does real work (rendering, I/O) blocks
     // PushSamples -- and therefore the caller -- for the duration. No buffering, no dropping.
     //
-    // Re-entrancy: UNGUARDED. A subscriber that calls PushSamples again (directly, or indirectly via
-    // a scheduler that re-enters synchronously) re-enters TryProcessBuffer while `mode`/`pixels`/
-    // `lineDecoder` locals from the OUTER call are still live on the stack, mutating the same
-    // `_consumedSamples`/`_nextLine`/`_mode`/`_pixels` fields the outer call will resume reading from
-    // once the inner call returns -- the outer call then continues against fields that may belong to
-    // a different image/epoch than its own captured locals. No production caller does this today (no
-    // reachable path re-enters PushSamples from within one of these three handlers), so currently
-    // safe -- but a future UI/`ScanlineStudio.Application` subscriber must not call back into this decoder
-    // synchronously from any of these three handlers.
+    // Re-entrancy: REJECTED. A subscriber that calls PushSamples again (directly or indirectly) gets
+    // InvalidOperationException before it can mutate the outer call's live state. That exception is
+    // treated as a subscriber failure: later subscribers still run, the outer transition completes,
+    // and the exception is rethrown from the stable PushSamples boundary.
     //
     // LineDecoded specifically also hands out a LIVE ALIAS of this decoder's own mutable pixel
     // buffer, not a copy -- MutableImageSource wraps `pixels` (the same array `Commit`/
@@ -1296,6 +1295,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     public event Action<SstvModeDefinition>? ModeDetected;
 
     public event Action<SstvModeDefinition>? DecodeRestarted;
+
+    // Public decode notifications are synchronous, but a subscriber failure must not interrupt a
+    // partially-completed decoder transition. One PushSamples call owns this scope; event fan-out
+    // records the first subscriber failure and processing continues to the stable operation tail.
+    private int _pushActive;
+    private bool _subscriberFailureDeferralActive;
+    private ExceptionDispatchInfo? _deferredSubscriberFailure;
 
     /// <summary>See <see cref="ISstvDecoder.ResetAgc"/>.</summary>
     public void ResetAgc() => _levelAgc.Init();
@@ -1418,6 +1424,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
+        if (Interlocked.CompareExchange(ref _pushActive, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("Recursive or concurrent PushSamples calls are not supported.");
+        }
+
+        try
+        {
+            ExecuteWithDeferredSubscriberFailures(() => PushSamplesCore(samples));
+        }
+        finally
+        {
+            Volatile.Write(ref _pushActive, 0);
+        }
+    }
+
+    private void PushSamplesCore(ReadOnlyMemory<float> samples)
+    {
         // D2 round 1 fix: this was the only real gap in the public IDisposable contract -- no member
         // on this type previously threw ObjectDisposedException after Dispose(), and behavior was
         // actually INCONSISTENT across code paths (RxBufferMode.Extended's disk-backed replay path
@@ -1463,6 +1486,70 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         TryProcessBuffer();
         AdvanceAgcThroughDeadZone();
         TrimBuffers();
+    }
+
+    private void ExecuteWithDeferredSubscriberFailures(Action action)
+    {
+        if (_subscriberFailureDeferralActive)
+        {
+            throw new InvalidOperationException("A subscriber-failure deferral scope is already active.");
+        }
+
+        _subscriberFailureDeferralActive = true;
+        _deferredSubscriberFailure = null;
+        ExceptionDispatchInfo? decoderFailure = null;
+        ExceptionDispatchInfo? subscriberFailure;
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            decoderFailure = ExceptionDispatchInfo.Capture(ex);
+        }
+        finally
+        {
+            subscriberFailure = _deferredSubscriberFailure;
+            _deferredSubscriberFailure = null;
+            _subscriberFailureDeferralActive = false;
+        }
+
+        // Decoder/state-machine failures take precedence over notification failures observed during
+        // the same operation. In either case ExceptionDispatchInfo preserves the original identity
+        // and stack instead of replacing it at this arbitration boundary.
+        decoderFailure?.Throw();
+        subscriberFailure?.Throw();
+    }
+
+    private void RaiseSubscribers<T>(Action<T>? handlers, T value)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        ExceptionDispatchInfo? localFailure = null;
+        foreach (var handler in handlers.GetInvocationList().Cast<Action<T>>())
+        {
+            try
+            {
+                handler(value);
+            }
+            catch (Exception ex)
+            {
+                var failure = ExceptionDispatchInfo.Capture(ex);
+                if (_subscriberFailureDeferralActive)
+                {
+                    _deferredSubscriberFailure ??= failure;
+                }
+                else
+                {
+                    localFailure ??= failure;
+                }
+            }
+        }
+
+        localFailure?.Throw();
     }
 
     // Manual ReSync (legacy's KRFSClick, Main.cpp:14004-14020 -- ported line-for-line, not
@@ -1881,7 +1968,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // would discard a buffer it never allocated).
         if (previousMode is not null && !hadPendingAnchor)
         {
-            DecodeRestarted?.Invoke(previousMode);
+            RaiseSubscribers(DecodeRestarted, previousMode);
         }
     }
 
@@ -2506,7 +2593,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 _idealLineStartSample += _effectiveSamplesPerLine;
                 _consumedSamples = nextLineStartSample;
 
-                LineDecoded?.Invoke(new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
+                RaiseSubscribers(LineDecoded, new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
                 _nextLine += lineDecoder.RowsPerTransmissionLine;
 
                 // RX buffer subsystem Phase 6d: the once-per-image replay latch -- port of legacy's
@@ -2678,7 +2765,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                     // The abandoned mode -- same local already used by the DecodeRestarted invoke below
                     // for the OTHER restart path; matches that event's existing "abandoned mode, not a
                     // new one" contract (see ISstvDecoder.cs's own DecodeRestarted doc comment).
-                    DecodeRestarted?.Invoke(mode);
+                    RaiseSubscribers(DecodeRestarted, mode);
                     // applyDeadTime:false -- RxAutoPush's own m_SyncMode=0 (Main.cpp:6053) overrides
                     // Stop()'s own m_SyncMode=512 dead-time state (sstv.cpp:1786) immediately, skipping
                     // the 0.5s dead-time wait entirely and resuming scanning from the current sample.
@@ -2731,7 +2818,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                     // did, via `_mode!`) is a trap review caught: a caller that allocates a buffer on
                     // ModeDetected and discards on DecodeRestarted would discard the buffer it just
                     // allocated for the new mode, not the old one it actually needs to throw away.
-                    DecodeRestarted?.Invoke(mode);
+                    RaiseSubscribers(DecodeRestarted, mode);
                     break;
                 }
             }
@@ -3050,7 +3137,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // to `bound`, exactly like the "unregistered mode code" case below already does.
             if (result.Value.ModeCode is null)
             {
-                StationIdDecoded?.Invoke(new FskStationIdDecodedInfo(
+                RaiseSubscribers(StationIdDecoded, new FskStationIdDecodedInfo(
                     result.Value.StationIdCallsign, result.Value.StationIdCompactNr, result.Value.StationIdNrText));
                 continue;
             }
@@ -3694,7 +3781,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         AbandonInProgressImage();
         _consumedSamples = Math.Max(0, lineStartSample);
         _idealLineStartSample = _consumedSamples; // MUST 4 -- see field's own doc comment
-        LockAnchorCommitted?.Invoke(_consumedSamples);
+        RaiseSubscribers(LockAnchorCommitted, _consumedSamples);
         _bandpassLockedFromSample = _consumedSamples; // Band-1 item 4b -- see field's own doc comment
         _mode = matched;
         _lineDecoder = ScanlineCodecFactory.CreateDecoder(matched.ColorEncoding);
@@ -3828,7 +3915,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
         InitializeAfc(matched);
         InitializeSlant(matched);
-        ModeDetected?.Invoke(matched);
+        RaiseSubscribers(ModeDetected, matched);
     }
 
     // Piece 8c: port of TMmsstv::SyncSSTV (Main.cpp:3751-3799) -- see SyncAnchorCorrector's own doc
@@ -5883,7 +5970,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 SstvModeRegistry.NeverPeakPicks(mode) || _rxBufferMode == RxBufferMode.Extended);
 
             lineDecoder.DecodeLine(mode, roundedSampleRate, lineStartDest, bitmapRow, reader, pixels);
-            LineDecoded?.Invoke(new DecodedImageUpdate(bitmapRow, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
+            RaiseSubscribers(LineDecoded, new DecodedImageUpdate(bitmapRow, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
         }
 
         // Sample-cursor re-anchor -- see this method's own doc comment for the full derivation and why
@@ -6405,7 +6492,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// replay pass directly and deterministically, without depending on the automatic triggers'
     /// (RX buffer subsystem Phase 6d) own timing. Mirrors the established <c>InitializeAfcForTests</c>
     /// precedent (a thin pass-through wrapper around an otherwise-private method).</summary>
-    internal void PerformReplayForTests() => PerformReplay();
+    internal void PerformReplayForTests() => ExecuteWithDeferredSubscriberFailures(PerformReplay);
 
     /// <summary>Test-only: when <see langword="true"/>, <see cref="TryProcessBuffer"/>'s own automatic
     /// replay drain (RX buffer subsystem Phase 6d) becomes a no-op (the pending flag is still cleared,

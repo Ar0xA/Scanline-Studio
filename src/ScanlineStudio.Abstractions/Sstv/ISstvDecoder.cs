@@ -25,7 +25,14 @@ public interface ISstvDecoder
     /// implementations, which are test doubles under `tests/`: two don't implement
     /// <see cref="IDisposable"/> at all, and the third does but deliberately doesn't enforce the throw.
     /// This contract is scoped to the two production implementations only; test doubles make no such
-    /// promise and callers must not rely on it when testing against one.</summary>
+    /// promise and callers must not rely on it when testing against one.
+    ///
+    /// Those same two production implementations reject recursive or concurrent overlapping calls on
+    /// one decoder instance with <see cref="InvalidOperationException"/>. Decode-event handlers are
+    /// still synchronous and blocking, but every registered handler is attempted and the first handler
+    /// exception is deferred until this call reaches a stable decoder boundary. A decoder-internal
+    /// failure takes precedence and propagates unchanged if both occur. The production session service
+    /// rate-limits/logs and swallows the completed-call failure so later capture chunks can continue.</summary>
     void PushSamples(ReadOnlyMemory<float> samples);
 
     /// <summary>Fires once per decoded transmission line (functional-audit fix, D3+D8+D9 coupled
@@ -42,7 +49,8 @@ public interface ISstvDecoder
     /// wrapping that SAME live array -- a subscriber that defers work sees only the array's final
     /// state, and a slow one stalls the entire burst, not just one line. Any UI-facing consumer must
     /// dispatch to its own thread immediately rather than doing real work inline here, same
-    /// established pattern as <see cref="StationIdDecoded"/>.</summary>
+    /// established pattern as <see cref="StationIdDecoded"/>. Subscriber failure isolation and
+    /// exception precedence follow <see cref="PushSamples"/>'s contract.</summary>
     event Action<DecodedImageUpdate>? LineDecoded;
 
     /// <summary>Fires once a mode is identified and its sync anchor has resolved -- either a fresh
@@ -53,7 +61,7 @@ public interface ISstvDecoder
     /// thread runs decode, with no buffering and no marshaling -- a slow or blocking subscriber blocks
     /// decode. Any UI-facing consumer must dispatch to its own thread immediately rather than doing
     /// real work inline here, same established pattern as the other decode-thread events on this
-    /// interface.</summary>
+    /// interface. Subscriber failure isolation follows <see cref="PushSamples"/>.</summary>
     event Action<SstvModeDefinition>? ModeDetected;
 
     /// <summary>Delivery channel for a decoded FSK station-ID callsign/NR-RST (legacy STX
@@ -63,7 +71,8 @@ public interface ISstvDecoder
     /// blocking subscriber blocks decode. Any UI-facing consumer must dispatch to its own thread
     /// itself, immediately, rather than doing real work inline here (see
     /// <c>ScanlineStudio.UI.ViewModels.RxImagePaneViewModel.OnStationIdDecoded</c> for the
-    /// established pattern). Gated by <see cref="StationIdDecodeEnabled"/> below.</summary>
+    /// established pattern). Gated by <see cref="StationIdDecodeEnabled"/> below. Subscriber failure
+    /// isolation follows <see cref="PushSamples"/>.</summary>
     event Action<FskStationIdDecodedInfo>? StationIdDecoded;
 
     /// <summary>Fires when a stronger/cleaner sync lock is found mid-reception, aborting an
@@ -101,7 +110,8 @@ public interface ISstvDecoder
     /// Concurrency contract (CLAUDE.md §4, D2 round 1 fix: this event's extensive ordering discussion
     /// above never actually stated its threading/blocking behavior): same as <see cref="ModeDetected"/>
     /// -- invoked SYNCHRONOUSLY on whatever thread runs decode, with no buffering and no marshaling.
-    /// Any UI-facing consumer must dispatch to its own thread immediately.</summary>
+    /// Any UI-facing consumer must dispatch to its own thread immediately. Subscriber failure
+    /// isolation follows <see cref="PushSamples"/>.</summary>
     event Action<SstvModeDefinition>? DecodeRestarted;
 
     /// <summary>Resets AGC/level-tracking state to its power-on defaults. Legacy calls its equivalent
@@ -179,18 +189,13 @@ public interface ISstvDecoder
     /// between receptions rather than carrying over -- a real, accepted port-level scoping choice, not
     /// an oversight.
     ///
-    /// Safe to read from any thread (e.g. a GUI polling this on a timer while another thread drives
-    /// <see cref="PushSamples"/>) -- unlike <see cref="RequestReSync"/>/<see cref="ForceMode"/>, never
-    /// throws and never observes a torn/corrupt value, only a momentarily stale one. The mechanism
-    /// differs by implementation, and this sentence previously described only one of the two (D2 round
-    /// 4 correction): <c>AnalogFmSstvDecoder</c> is a plain field read with no cross-thread write to
-    /// synchronize -- "never torn" there relies on the underlying <c>double</c> field being naturally
-    /// aligned and read/written whole, an ECMA-335 guarantee that only holds on platforms whose native
-    /// word size is at least 8 bytes (true for every 64-bit target .NET 8 actually runs this app on,
-    /// not a universal CLR guarantee; D2 round 1 correction). <c>RestartableSstvDecoder</c> -- the
-    /// actual DI-registered production implementation the UI receives -- takes an internal lock only
-    /// to stabilize WHICH inner decoder it reads; <c>PushSamples</c> mutates that inner after releasing
-    /// the wrapper lock, so the underlying plain-field atomicity/staleness caveat remains identical.
+    /// Safe to poll from any thread (e.g. a GUI timer while another thread drives
+    /// <see cref="PushSamples"/>) in the limited sense that the getter does not throw. This is
+    /// best-effort diagnostic telemetry: a concurrent poll may be stale, torn, or combine fields from
+    /// different decode epochs, and must never drive decode correctness. <c>AnalogFmSstvDecoder</c>
+    /// uses unsynchronized field reads. <c>RestartableSstvDecoder</c> -- the actual DI-registered
+    /// implementation -- locks only to stabilize WHICH inner decoder it selects; <c>PushSamples</c>
+    /// mutates that inner after releasing the wrapper lock, so it does not create a coherent snapshot.
     /// A polling read can additionally BLOCK if a concurrent <see cref="PushSamples"/> call is
     /// mid-swap: see that class's own <c>Swap</c> doc comment for the already-accepted worst-case
     /// blocking duration.</summary>

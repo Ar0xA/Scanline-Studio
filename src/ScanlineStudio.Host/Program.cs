@@ -425,7 +425,8 @@ internal static partial class Program
             demodType: demodType,
             rxBpfPreset: rxBpfPreset,
             rxBufferMode: rxBufferMode,
-            sampleRate: sampleRate);
+            sampleRate: sampleRate,
+            loggerFactory: services.GetRequiredService<ILoggerFactory>());
     }
 
     internal static AnalogFmSstvEncoder CreateSstvEncoder(IServiceProvider services) =>
