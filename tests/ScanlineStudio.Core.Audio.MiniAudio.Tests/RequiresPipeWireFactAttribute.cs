@@ -11,6 +11,23 @@ namespace ScanlineStudio.Core.Audio.MiniAudio.Tests;
 /// windows-latest, ubuntu-latest, macos-latest) would otherwise fail hard on Windows/macOS (no
 /// pactl binary at all) and unreliably on Linux (not guaranteed to have a running audio server),
 /// rather than reporting an honest, informative skip.
+///
+/// <b>Accepted coverage-risk position (Tier A Batch 1 functional-audit finding, 2026-08-19):</b>
+/// every test gated by this attribute -- which includes ALL of this project's hardest concurrency
+/// guarantees for <see cref="MiniAudioEngine"/>/<see cref="MiniAudioCaptureSession"/>/
+/// <see cref="MiniAudioPlaybackSession"/> (the self-join guard, the contended-claim deadlock fix,
+/// the reentrant-<c>DisposeAsync</c> deadlock fix, per-handler subscriber isolation, stereo TX/RX
+/// channel routing, the underrun-padding fix, concurrent-use-and-dispose safety, the SSTV round
+/// trip) -- silently skips on any CI runner other than a Linux one with a live PipeWire/PulseAudio
+/// server. On this project's own actual CI matrix (windows-latest, ubuntu-latest, macos-latest, none
+/// of which are documented as running such a server), that means these guarantees are validated
+/// only where and when a contributor happens to run the suite on a suitably configured Linux
+/// machine, not by the pipeline itself. This is a real, accepted gap, not an unnoticed one: fixing
+/// it would mean either provisioning a real audio server in CI (a genuine infra change, out of
+/// scope for a code-level audit finding) or rewriting this whole test class against a fake/mocked
+/// backend, which would stop testing the real native P/Invoke boundary and SPSC contract these
+/// tests exist specifically to exercise. Recorded here as the durable, written-down position the
+/// audit's own gate asked for, rather than left as an implicit assumption.
 /// </summary>
 public sealed class RequiresPipeWireFactAttribute : FactAttribute
 {
