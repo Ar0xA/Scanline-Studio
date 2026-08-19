@@ -77,10 +77,29 @@ public sealed class SstvSessionServiceTests
         audioEngine.PushCapturedSamples(samples);
 
         Assert.True(audioEngine.IsCapturing);
+        Assert.Equal(decoder.SampleRate, audioEngine.LastRequestedCaptureSampleRate);
         Assert.Single(decoder.PushedSamples);
         Assert.Single(waterfall.PushedSamples);
         Assert.Equal(samples, decoder.PushedSamples[0].ToArray());
         Assert.Equal(samples, waterfall.PushedSamples[0].ToArray());
+    }
+
+    [Fact]
+    public async Task StartReceivingAsync_UsesImmutableDecoderRate_WhenPersistedRateChangesUntilRestart()
+    {
+        var (service, audioEngine, decoder, _, _, settingsStore) = CreateService();
+        decoder.SampleRate = 22050;
+        var current = settingsStore.Settings.GetSection(
+            AudioDeviceSettings.SectionKey,
+            AudioSettingsJsonContext.Default.AudioDeviceSettings)!;
+        settingsStore.Settings = settingsStore.Settings.WithSection(
+            AudioDeviceSettings.SectionKey,
+            current with { SampleRate = 48500 },
+            AudioSettingsJsonContext.Default.AudioDeviceSettings);
+
+        await service.StartReceivingAsync();
+
+        Assert.Equal(22050, audioEngine.LastRequestedCaptureSampleRate);
     }
 
     [Fact]

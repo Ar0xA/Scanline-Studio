@@ -278,6 +278,24 @@ public class SstvRoundTripTests
         await AssertEncodeThenDecodeRoundTrip(mode, sourceImage, maxAveragePerChannelDelta: 10.0, sampleRate: 11025);
     }
 
+    [Theory]
+    [InlineData(SstvSampleRate.Minimum, 20.0)] // measured 16.77: 2500/2800-Hz filter edges meet/exceed 5kHz Nyquist
+    [InlineData(SstvSampleRate.Maximum, 10.0)]
+    public async Task Robot36_RoundTripsAtConfiguredRateEndpoints_PortSelfConsistencyOnly(int sampleRate, double tolerance)
+    {
+        // Operational endpoint coverage for the newly-wired integer settings range. This is NOT a
+        // legacy golden vector: encoder and decoder can agree while both differ from YONIQ. Actual
+        // legacy-captured 5000/48500-Hz parity remains explicitly unverified.
+        var mode = SstvModeRegistry.Robot36;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+
+        await AssertEncodeThenDecodeRoundTrip(
+            mode,
+            sourceImage,
+            maxAveragePerChannelDelta: tolerance,
+            sampleRate: sampleRate);
+    }
+
     // Robot 36 alone needs a raised tolerance (all other modes hold 10.0) -- diagnosed and
     // independently confirmed (spec/14-roadmap.md, piece 8, "Robot 36 diagnosis", Opus review round
     // 1 mechanical trace) as a genuine pre-existing legacy fragility, not a port bug: RobotScanlineDecoder's

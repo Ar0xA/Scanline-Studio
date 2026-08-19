@@ -14,6 +14,8 @@ namespace ScanlineStudio.Application.Tests;
 // fires, without needing a real RestartableSstvDecoder/AnalogFmSstvDecoder.
 internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, IDisposable
 {
+    public int SampleRate { get; set; } = SstvSampleRate.Default;
+
     public bool DisposedForTests { get; private set; }
 
     public void Dispose() => DisposedForTests = true;

@@ -51,6 +51,26 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal("KD9TAW", vm.Callsign);
     }
 
+    [AvaloniaFact]
+    public void Constructor_InvalidPersistedSampleRate_UsesLegacyStartupDefault()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { SampleRate = 48501 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
+            new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(),
+            settingsStore, new FakeRadioSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(SstvSampleRate.Default, vm.SampleRate);
+    }
+
     // Auditor usability review follow-up (2026-08-18): Radio/CAT tab's "Test Connection" button.
     // Deliberately tests whatever is CURRENTLY TYPED into RigctldHost/Port (not necessarily saved),
     // via a fresh, disposable IRadioSessionService.TestConnectionAsync call -- never the app's own
@@ -155,6 +175,31 @@ public sealed class OptionsWindowViewModelTests
 
         var operatorSettings = settingsStore.Settings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings);
         Assert.Equal("N0CALL", operatorSettings?.Callsign);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_OutOfRangeSampleRate_PreservesPreviousSupportedValue()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { SampleRate = 22050 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
+            new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(),
+            settingsStore, new FakeRadioSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.SampleRate = 4999;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var audio = settingsStore.Settings.GetSection(
+            AudioDeviceSettings.SectionKey,
+            AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        Assert.Equal(22050, audio?.SampleRate);
     }
 
     [AvaloniaFact]
