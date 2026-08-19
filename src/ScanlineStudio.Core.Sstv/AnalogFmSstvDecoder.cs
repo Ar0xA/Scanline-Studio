@@ -6587,16 +6587,39 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // D0-audit round-8 finding: TryCorrectSlant is the only writer of _effectiveSamplesPerLine
         // that commits MID-LINE -- the automatic path (ProcessSlantTrackingSample) always commits
         // exactly at a line boundary and subtracts completedLineSamples immediately after, leaving
-        // _slantIdealSamplesSoFarInLine safely in [0,1) by construction. This manual path instead
-        // relied entirely on PerformReplay() below (a few lines down) to reseed the accumulator
-        // against the new width. If PerformReplay never reaches its own reseed -- reachable via
-        // RxBufferMode.Extended's own HasWriteFailed bail, checked at both of that method's early
-        // returns -- the accumulator keeps holding a value that was valid against the OLD (larger)
-        // width but can exceed the NEW one, violating SlantIdealSamplesSoFarInLineForTests' own
-        // documented invariant and producing one spurious immediate line-boundary in
-        // ProcessSlantTrackingSample. Normalizing here makes correctness independent of whatever the
-        // caller does next, rather than relying entirely on a downstream reseed that can bail out.
+        // _slantIdealSamplesSoFarInLine safely in [0, E) by construction (round-9 correction: NOT
+        // [0,1) as an earlier version of this comment claimed -- SlantTests.cs's own history records
+        // that a [0,1) bound was tried and failed; the accumulator legitimately ranges across the
+        // whole line width in steady state). This manual path instead relied entirely on
+        // PerformReplay() below (a few lines down) to reseed the accumulator against the new width.
+        // If PerformReplay never reaches its own reseed -- reachable via RxBufferMode.Extended's own
+        // HasWriteFailed bail, checked at both of that method's early returns -- the accumulator
+        // keeps holding a value that was valid against the OLD (larger) width but can exceed the NEW
+        // one, violating SlantIdealSamplesSoFarInLineForTests' own documented invariant and producing
+        // one spurious immediate line-boundary in ProcessSlantTrackingSample.
+        //
+        // D0-audit round-9 correction: round 8's own fix normalized ONLY the accumulator, but this
+        // file's four other re-anchor sites (InitializeSlant, ProcessSlantTrackingSample's own
+        // line-boundary tail, and both of PerformReplay's own resets) always move the accumulator
+        // TOGETHER with the four per-line envelope fields below -- round 8's comment claiming this
+        // "makes correctness independent of whatever the caller does next" was itself an overclaim:
+        // on the exact bail path this fix exists for, those four fields stay un-re-anchored,
+        // expressed in pre-wrap accumulator coordinates, so the line completing after the bail
+        // computes its sync-peak measurement from a peak that belongs to the discarded partial line.
+        // Matching all five sibling sites' own shape closes that gap too.
+        //
+        // D0-audit round-9 nit fix, same bail window: RecomputeAutoSyncThresholds() derives
+        // _autoSyncBaseMult/_autoSyncDiff from _effectiveSamplesPerLine, but the only call site was
+        // PerformReplay's own top (a few lines down) -- if that never runs, Auto-Sync's cluster/step
+        // thresholds stay derived from the pre-correction width for the rest of the image. Calling it
+        // here too (harmless on the non-bail path -- PerformReplay's own call re-derives the same
+        // values from the same now-already-current _effectiveSamplesPerLine moments later) closes it.
         _slantIdealSamplesSoFarInLine %= _effectiveSamplesPerLine;
+        _slantLineEnvelopeSeeded = false;
+        _slantLineMaxEnvelope = double.NegativeInfinity;
+        _slantLineMinEnvelope = double.PositiveInfinity;
+        _slantLinePeakPosition = 0;
+        RecomputeAutoSyncThresholds();
 
         // Auditor code-review finding, Phase 8c round 1: without this, _slantTracker's own evolving
         // _currentSampleRate/_nominalSamplesPerLine stay at their pre-manual values, so the NEXT
