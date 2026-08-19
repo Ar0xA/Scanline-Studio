@@ -66,10 +66,10 @@ public sealed class SstvCompositionRootTests
         // persisted Options > Decode setting would silently never reach the decoder AT ALL, not just
         // after a periodic restart (the narrower risk round 8 fixed inside CreateInner itself). Every
         // value below is non-default so no assertion can pass vacuously against a parameter default.
-        // Reads RestartableSstvDecoder's internal Inner*ForTests accessors (round-10 correction:
-        // InnerDemodTypeForTests/InnerRxBpfPresetForTests predate round 8, unlike the other 3 read
-        // here; InternalsVisibleTo was widened to this assembly this same round regardless) except
-        // AutoSlantEnabled, which already has a public wrapper-level getter.
+        // Reads RestartableSstvDecoder's internal Inner*ForTests accessors (round-11 correction of a
+        // round-10 miscount: InnerDemodTypeForTests/InnerRxBpfPresetForTests predate round 8, unlike
+        // the other 5 read here; InternalsVisibleTo was widened to this assembly this same round
+        // regardless) except AutoSlantEnabled, which already has a public wrapper-level getter.
         var settings = new AppSettings()
             .WithSection(
                 AudioDeviceSettings.SectionKey,
