@@ -261,15 +261,22 @@ public class RestartableSstvDecoderTests
     [Fact]
     public void PushSamples_ThrowsObjectDisposedException_AfterDispose()
     {
-        // D2 round 2 fix: without the ObjectDisposedException.ThrowIf guard this test pins, a
-        // post-dispose PushSamples call landing in the critical/warning-threshold branch would call
-        // Swap(), constructing a FRESH, undisposed inner AnalogFmSstvDecoder and pushing to it
-        // successfully -- silently violating ISstvDecoder.PushSamples' own documented contract and
-        // leaking that new inner instance (this wrapper's own Dispose() never runs again to catch it).
-        var decoder = new RestartableSstvDecoder();
+        // D2 round 3 correction: the round-2 version of this test used the PUBLIC ctor (12h/13h-sample
+        // thresholds), so a single 16-sample post-dispose push could never reach the critical/warning
+        // branch that calls Swap() -- it just fell through to the ALREADY-disposed inner's own
+        // ObjectDisposedException (AnalogFmSstvDecoder's round-1 guard), passing even with THIS
+        // wrapper's own round-2 guard fully reverted. That test didn't pin the regression it claimed
+        // to. Fixed by using the internal short-threshold ctor and priming the inner's own sample count
+        // above the critical threshold BEFORE disposal, so the post-dispose call genuinely lands in the
+        // Swap()-calling branch if this wrapper's own guard is missing -- and asserting RestartCountForTests
+        // never moves, which is the actual leaked-Swap() signature this test exists to catch.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 1, criticalThresholdSamples: 1);
+        decoder.PushSamples(new float[16]); // inner's TotalSamplesReceived now >= criticalThresholdSamples
+        var restartCountBeforeDispose = decoder.RestartCountForTests;
         decoder.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() => decoder.PushSamples(new float[16]));
+        Assert.Equal(restartCountBeforeDispose, decoder.RestartCountForTests); // Swap() must never have run
     }
 
     [Fact]
