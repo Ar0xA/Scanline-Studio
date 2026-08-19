@@ -3958,13 +3958,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // machine itself line-by-line against source before this was written; see that class's own doc
     // comment for the full state-transition derivation.
     //
-    // Search ceiling mirrors TryDecodeVisDataBits' own (:1207-1212) for the same reason: an unbounded
+    // Search ceiling mirrors TryDecodeVisDataBits' own (:4209-4211) for the same reason: an unbounded
     // retry-on-reject scanner is by construction what this decoder is (every legacy failure path
     // resumes scanning from mode 0), and an unbounded version was a real, reverted regression there.
     // Narrow modes keep their existing _syncBypassNarrowTracker fallback (m_sint3) if this local,
-    // bounded scan misses a rare edge case. Ceiling = guard(100ms) + timeout(100ms) + start-bit(22ms)
-    // + 24 data bits' worth (24*22ms) + a 200ms retry margin, matching TryDecodeVisDataBits' own
-    // generous-but-local shape.
+    // bounded scan misses a rare edge case. Ceiling = VisHeader.NarrowSearchCeilingMs (round-8
+    // correction: this sentence previously restated the formula inline as guard+timeout+start-bit+24
+    // data bits+200ms retry margin = 950ms, omitting the 300ms leader term -- the code has read the
+    // shared constant, 1250ms, directly since round 3; see VisHeader.NarrowSearchCeilingMs's own doc
+    // comment for the real breakdown), matching TryDecodeVisDataBits' own generous-but-local shape.
     //
     // Commit point (functional-audit correction, D6 round 5: this paragraph previously described
     // the FIXED-OFFSET formula round 4 replaced -- "headerStart + the packet's fixed nominal
