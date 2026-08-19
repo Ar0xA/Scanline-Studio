@@ -56,6 +56,57 @@ public sealed class SstvCompositionRootTests
     }
 
     [Fact]
+    public void SstvServices_UsesEveryPersistedDecoderSetting_ThroughActualRegistration()
+    {
+        // Round-9 D2-audit finding: Program.CreateSstvDecoder forwards 8 SstvDecoderSettings fields
+        // (afcEnabled/syncRestartEnabled/autoSyncEnabled/autoStopEnabled/autoSlantEnabled/senseLevel/
+        // demodType/rxBpfPreset) into RestartableSstvDecoder's constructor, but until this test only
+        // sampleRate and rxBufferMode were ever pinned here -- deleting any of the other 8 (all
+        // optional constructor parameters, so deletion compiles) left this whole suite green while a
+        // persisted Options > Decode setting would silently never reach the decoder AT ALL, not just
+        // after a periodic restart (the narrower risk round 8 fixed inside CreateInner itself). Every
+        // value below is non-default so no assertion can pass vacuously against a parameter default.
+        // Reads the Inner*ForTests accessors added in round 8 (InternalsVisibleTo widened to this
+        // assembly this same round) except AutoSlantEnabled, which already has a public wrapper-level
+        // getter.
+        var settings = new AppSettings()
+            .WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { SampleRate = 11025 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings)
+            .WithSection(
+                SstvDecoderSettings.SectionKey,
+                new SstvDecoderSettings
+                {
+                    AfcEnabled = false,
+                    SyncRestartEnabled = false,
+                    AutoSyncEnabled = false,
+                    AutoStopEnabled = true,
+                    AutoSlantEnabled = false,
+                    SenseLevel = 3,
+                    DemodType = DemodType.Pll,
+                    RxBpfPreset = RxBpfPreset.Narrow,
+                },
+                SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        var services = new ServiceCollection();
+        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(settings));
+        services.AddLogging();
+        Program.RegisterSstvServices(services);
+        using var provider = services.BuildServiceProvider();
+
+        var decoder = Assert.IsType<RestartableSstvDecoder>(provider.GetRequiredService<ISstvDecoder>());
+
+        Assert.False(decoder.AutoSlantEnabled);
+        Assert.False(decoder.InnerAfcEnabledForTests);
+        Assert.False(decoder.InnerSyncRestartEnabledForTests);
+        Assert.False(decoder.InnerAutoSyncEnabledForTests);
+        Assert.True(decoder.InnerAutoStopEnabledForTests);
+        Assert.Equal(3, decoder.InnerSenseLevelForTests);
+        Assert.Equal(DemodType.Pll, decoder.InnerDemodTypeForTests);
+        Assert.Equal(RxBpfPreset.Narrow, decoder.InnerRxBpfPresetForTests);
+    }
+
+    [Fact]
     public void SstvServices_ExtendedBuffer_ThreadsProductionLoggerFactoryThroughActualRegistration()
     {
         var settings = new AppSettings()
