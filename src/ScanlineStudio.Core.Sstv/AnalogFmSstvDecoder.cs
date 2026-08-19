@@ -2125,11 +2125,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         }
     }
 
-    // Band-1 S2 fix (pre-Phase-2 audit): bounds the 5 growing sample buffers (_rawSamples,
-    // _demodulatedFrequencies, _agcSamples, _agcCurMaxSamples, _bandpassFilteredSamples), which
-    // would otherwise grow without limit for the lifetime of this decoder instance (~5.7GB/hr
-    // @44100Hz measured before this fix) -- a real problem the moment a production caller wires this
-    // decoder to continuous live capture, not just a test-only decoder's usual short-lived scope.
+    // Band-1 S2 fix (pre-Phase-2 audit): bounds this decoder's growing per-sample caches (originally
+    // _rawSamples/_demodulatedFrequencies/_agcSamples/_agcCurMaxSamples/_bandpassFilteredSamples;
+    // round-11 D2-audit correction -- more caches have been added to this method since, so this
+    // comment no longer states a fixed count; see this method's own RemoveRange calls below for the
+    // current full list), which would otherwise grow without limit for the lifetime of this decoder
+    // instance (~5.7GB/hr @44100Hz measured before this fix) -- a real problem the moment a
+    // production caller wires this decoder to continuous live capture, not just a test-only
+    // decoder's usual short-lived scope.
     //
     // Auditor plan-review correction, the single most important one: an earlier draft of this method
     // never trimmed while `_mode is null`, on the reasoning that pre-lock state is somehow more

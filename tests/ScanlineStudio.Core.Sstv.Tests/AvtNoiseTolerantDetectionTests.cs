@@ -317,9 +317,13 @@ public class AvtNoiseTolerantDetectionTests
         Assert.True(bufferedAfterLock.Count >= 10, $"Expected enough post-lock samples to compare growth over time, got {bufferedAfterLock.Count}.");
 
         // Code-level review finding: a buffer-shrinks assertion alone doesn't prove decode is still
-        // CORRECT -- PixelSampleReader's index lambda clamps rather than throwing on an out-of-range
-        // read (AnalogFmSstvDecoder.cs:1102), so an over-aggressive watermark would silently corrupt
-        // pixels rather than crash, and this test would stay green without this check.
+        // CORRECT. Historical context: at the time this check was added, PixelSampleReader's index
+        // lambda clamped rather than throwing on an out-of-range read, so an over-aggressive
+        // watermark would silently corrupt pixels rather than crash, and this test would stay green
+        // without this check. Round-11 D2-audit correction: a D4 round-1 fix later removed that
+        // lower-bound clamp, so a behind-the-watermark read now throws from Rel() instead of
+        // silently returning wrong data -- this delta check remains as defense in depth against any
+        // other silent-corruption path, not because that original clamp still exists.
         Assert.NotNull(decodedImage);
         var delta = ComputeAveragePerChannelDelta(avtImage, decodedImage!);
         Assert.True(delta <= 20.0, $"AVT decode average per-channel delta {delta:F2} exceeded tolerance -- mid-image trimming may have released data a live reader still needed.");
