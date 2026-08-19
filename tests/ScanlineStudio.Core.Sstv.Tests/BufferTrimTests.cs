@@ -16,6 +16,14 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// </summary>
 public class BufferTrimTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_NonPositiveSampleRate_Throws(int sampleRate)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AnalogFmSstvDecoder(sampleRate));
+    }
+
     [Fact]
     public void BufferedSampleCount_StaysBounded_ForLongNeverLockingStream()
     {
@@ -46,8 +54,8 @@ public class BufferTrimTests
         // Unbounded growth would leave BufferedSampleCount == totalSamples (330750). The pre-lock
         // retention window (VisHeader.MaxSearchCeilingMs / SyncIntervalTracker.MaxIntervalSamples +
         // AnchorWarmupSamples, all @11025Hz) is under 10 real seconds -- asserting comfortably above
-        // that (15s worth) but far below the full 30s pushed proves trimming actually ran repeatedly
-        // during this test, not just once at the very end.
+        // that (15s worth) but far below the full 30s pushed proves trimming ran and retained only a
+        // bounded trailing window.
         var bufferedSeconds = decoder.BufferedSampleCount / (double)sampleRate;
         Assert.True(
             bufferedSeconds < 15.0,
@@ -64,6 +72,15 @@ public class BufferTrimTests
             visDataSeconds < 15.0,
             $"Expected the VIS-bit-detector caches to stay well below the full 30s pushed too, " +
             $"but {decoder.VisDataDetectorBufferedSampleCount} combined samples ({visDataSeconds:F1}s) are still held -- trimming did not run.");
+
+        // D2 round 5: the two checks above did not observe the other four persistent sample caches,
+        // so any one of them could stop trimming while the test stayed green. The diagnostic reports
+        // their maximum retained length, making one unbounded cache sufficient to fail this bound.
+        var largestCoreCacheSeconds = decoder.LargestCoreSampleCacheBufferedCountForTests / (double)sampleRate;
+        Assert.True(
+            largestCoreCacheSeconds < 15.0,
+            $"Expected every core sample cache to stay below 15s, but the largest retained " +
+            $"{decoder.LargestCoreSampleCacheBufferedCountForTests} samples ({largestCoreCacheSeconds:F1}s).");
     }
 
     [Fact]
@@ -189,7 +206,12 @@ public class BufferTrimTests
 
         var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
         IImageSource? decodedImage = null;
-        decoder.LineDecoded += update => decodedImage = update.Image;
+        var lastDecodedLine = -1;
+        decoder.LineDecoded += update =>
+        {
+            decodedImage = update.Image;
+            lastDecodedLine = Math.Max(lastDecodedLine, update.Line);
+        };
         SstvModeDefinition? detectedMode = null;
         decoder.ModeDetected += m => detectedMode = m;
 
@@ -215,6 +237,7 @@ public class BufferTrimTests
         Assert.NotNull(detectedMode);
         Assert.Equal(mode.Id, detectedMode!.Id);
         Assert.NotNull(decodedImage);
+        Assert.Equal(mode.ImageHeight - 1, lastDecodedLine);
         AssertImagesMatchWithinTolerance(sourceImage, decodedImage!, maxAveragePerChannelDelta: 29.0);
     }
 

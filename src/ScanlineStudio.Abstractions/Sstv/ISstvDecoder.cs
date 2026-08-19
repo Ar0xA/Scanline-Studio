@@ -183,9 +183,10 @@ public interface ISstvDecoder
     /// aligned and read/written whole, an ECMA-335 guarantee that only holds on platforms whose native
     /// word size is at least 8 bytes (true for every 64-bit target .NET 8 actually runs this app on,
     /// not a universal CLR guarantee; D2 round 1 correction). <c>RestartableSstvDecoder</c> -- the
-    /// actual DI-registered production implementation the UI receives -- instead takes its own internal
-    /// lock for this and every other getter on this interface, so "never throws"/"never torn" still
-    /// hold, but a polling read can genuinely BLOCK if a concurrent <see cref="PushSamples"/> call is
+    /// actual DI-registered production implementation the UI receives -- takes an internal lock only
+    /// to stabilize WHICH inner decoder it reads; <c>PushSamples</c> mutates that inner after releasing
+    /// the wrapper lock, so the underlying plain-field atomicity/staleness caveat remains identical.
+    /// A polling read can additionally BLOCK if a concurrent <see cref="PushSamples"/> call is
     /// mid-swap: see that class's own <c>Swap</c> doc comment for the already-accepted worst-case
     /// blocking duration.</summary>
     double? SlantPpm { get; }

@@ -31,10 +31,9 @@ namespace ScanlineStudio.Core.Sstv;
 /// 2-3) -- even a bug in whatever consumes <see cref="RestartOverdue"/>/<see cref="RestartCriticallyOverdue"/>
 /// can't let the counter actually overflow.
 ///
-/// <b>Locking</b>: the swap happens under <c>lock (_gate)</c> (plain <c>Monitor</c>, chosen
-/// specifically for re-entrancy -- a critical-path consumer's response to
-/// <see cref="RestartCriticallyOverdue"/> can call back into <see cref="ResetAgc"/> on the same
-/// thread). All three events are raised strictly AFTER releasing the lock: a round-3 plan review found
+/// <b>Locking</b>: the swap happens under <c>lock (_gate)</c>. All three maintenance events are raised
+/// strictly AFTER releasing the lock, so a critical-path consumer can call back into
+/// <see cref="ResetAgc"/> without contending with the swap. A round-3 plan review found
 /// a rare shutdown-timing path where raising inside the lock could let a handler's continuation resume
 /// on a different thread and then contend for `_gate` against the (still-lock-holding) original
 /// thread -- a genuine deadlock. Raising outside the lock removes the whole class, since the swap has
@@ -61,13 +60,14 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private readonly RxBufferMode _rxBufferMode;
     private readonly long _warningThresholdSamples;
     private readonly long _criticalThresholdSamples;
+    private readonly Func<AnalogFmSstvDecoder>? _decoderFactoryForTests;
     private readonly object _gate = new();
 
     // NOT readonly, unlike every toggle above -- StationIdDecodeEnabled is deliberately
     // LIVE-settable (see ISstvDecoder.StationIdDecodeEnabled's own doc comment for why), so this is
     // both the "what to apply to a freshly-(re)built inner decoder" seed AND the current live value,
-    // kept in sync with _inner.StationIdDecodeEnabled by every write path (the property setter below
-    // and CreateInner) under _gate.
+    // kept in sync with _inner.StationIdDecodeEnabled by the constructor, property setter, and
+    // CreateInner under _gate.
     private bool _stationIdDecodeEnabled;
 
     private AnalogFmSstvDecoder _inner;
@@ -222,7 +222,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// <summary>Test-only seam for injecting short thresholds instead of the real 12h/13h ones --
     /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
     /// trigger is sample-count-based, not wall-clock-based.</summary>
-    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On)
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, Func<AnalogFmSstvDecoder>? decoderFactoryForTests = null)
     {
         _afcEnabled = afcEnabled;
         _syncRestartEnabled = syncRestartEnabled;
@@ -235,6 +235,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         _rxBufferMode = rxBufferMode;
         _warningThresholdSamples = warningThresholdSamples;
         _criticalThresholdSamples = criticalThresholdSamples;
+        _decoderFactoryForTests = decoderFactoryForTests;
         _stationIdDecodeEnabled = stationIdDecodeEnabled;
         _inner = CreateInner();
     }
@@ -286,22 +287,40 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             current = _inner;
         }
 
-        current.PushSamples(samples);
-
-        // Raised strictly after releasing _gate -- see this class' own doc comment.
-        if (raiseCritical)
+        try
         {
-            RestartCriticallyOverdue?.Invoke();
+            current.PushSamples(samples);
         }
-
-        if (raiseRestarted)
+        finally
         {
-            Restarted?.Invoke();
-        }
-
-        if (raiseWarning)
-        {
-            RestartOverdue?.Invoke();
+            // A swap is already committed before the triggering chunk is forwarded. Its maintenance
+            // notifications must therefore still be attempted if decoding (or a decode subscriber)
+            // throws while processing that chunk. Nested finally blocks also ensure Restarted is
+            // attempted if a critical handler throws, and RestartOverdue if a prior handler throws.
+            try
+            {
+                if (raiseCritical)
+                {
+                    RestartCriticallyOverdue?.Invoke();
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (raiseRestarted)
+                    {
+                        Restarted?.Invoke();
+                    }
+                }
+                finally
+                {
+                    if (raiseWarning)
+                    {
+                        RestartOverdue?.Invoke();
+                    }
+                }
+            }
         }
     }
 
@@ -493,8 +512,6 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private void Swap()
     {
-        UnsubscribeFrom(_inner);
-
         // RX buffer subsystem Phase 7 (disposal-chain sub-piece): the outgoing instance's own
         // RxBufferMode.Extended staging buffer (if any) owns scratch files and a background writer
         // task -- disposing it here, before the reference is dropped, is the only place that ever
@@ -511,7 +528,13 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         // long. Code-review-accepted: only reachable under a pathological stuck-writer condition at
         // the ~12h swap interval, not a normal-operation cost.
         var outgoing = _inner;
-        _inner = CreateInner();
+
+        // Construct and fully subscribe the replacement before disconnecting the installed decoder.
+        // Extended mode can fail while creating its scratch-file backend; if that happens, the old
+        // decoder must remain both installed and observable so the failed swap is transactional.
+        var incoming = CreateInner();
+        UnsubscribeFrom(outgoing);
+        _inner = incoming;
 
         // Code-review finding: RxDiskLineStagingBuffer.Dispose() calls FileStream.Dispose()
         // unguarded, which flushes and can throw IOException (a full disk during that final flush --
@@ -535,10 +558,9 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private AnalogFmSstvDecoder CreateInner()
     {
-        var decoder = new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode)
-        {
-            StationIdDecodeEnabled = _stationIdDecodeEnabled,
-        };
+        var decoder = _decoderFactoryForTests?.Invoke()
+            ?? new AnalogFmSstvDecoder(afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode);
+        decoder.StationIdDecodeEnabled = _stationIdDecodeEnabled;
         decoder.LineDecoded += OnLineDecoded;
         decoder.ModeDetected += OnModeDetected;
         decoder.DecodeRestarted += OnDecodeRestarted;
