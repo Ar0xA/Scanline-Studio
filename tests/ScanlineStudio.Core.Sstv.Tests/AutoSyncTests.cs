@@ -98,6 +98,53 @@ public class AutoSyncTests
     }
 
     [Fact]
+    public void SuddenPositionJump_ViaBulkSinglePush_ActuallyDrainsTheTriggeredSkip_NotJustZeroesItAtEndOfImage()
+    {
+        // D0-audit round-4 finding: DrainPendingSkip() only ran at the top of PushSamplesCore before
+        // this fix -- correct for a streaming caller (any chunk shorter than one line, since the
+        // NEXT call's own top-of-method drain runs before the next line can even complete), but a
+        // bulk caller pushing a WHOLE transmission in one PushSamples call (this test's own
+        // scenario, and a real path: WAV/file decode, GoldenVectorTests, and the sibling test above)
+        // never lets a second PushSamplesCore call arrive to drain a skip TriggerAutoSync requests
+        // mid-decode -- so the skip sat pending, unapplied, until EndOfImage's ResetReSyncState()
+        // silently zeroed it, while ApplySyncCorrection's OTHER side-effects
+        // (_slantCorrectionsDisabledForRestOfImage, the Auto-Sync cooldown) still applied regardless
+        // -- paying the suppression cost without the realignment it exists to buy.
+        //
+        // Same splice-based trigger technique as the sibling test above, but this one observes
+        // PendingSkipSamplesForTests on every LineDecoded event, not just the trigger count.
+        // RaiseSubscribers(LineDecoded, ...) fires BEFORE this SAME loop iteration's own
+        // ApplySlantTracking()/DrainPendingSkip() call (verified: LineDecoded is raised at line
+        // ~2643, ApplySlantTracking at ~2691, both inside TryProcessBuffer's one per-line loop
+        // iteration) -- so a skip a line's OWN trigger sets is only ever OBSERVABLE, if it were left
+        // undrained, starting from the NEXT line's LineDecoded event, never that same line's own.
+        // With the fix, DrainPendingSkip() runs in the SAME iteration the trigger sets the skip, so
+        // it is always back to 0 again before the next line's LineDecoded fires -- this should NEVER
+        // observe a nonzero value on any line, despite the trigger definitely having fired (asserted
+        // below). Without the fix, the skip set by the trigger's own line stays nonzero across every
+        // subsequent LineDecoded observation until EndOfImage finally zeroes it, unapplied, at the
+        // very end.
+        var mode = SstvModeRegistry.Robot36;
+        var samples = EncodeRealTransmission(mode, out _);
+        var decoder = new AnalogFmSstvDecoder(11025);
+
+        var spliceIndex = samples.Length * 15 / 100;
+        const int spliceSamples = 150;
+        var spliced = new float[samples.Length + spliceSamples];
+        Array.Copy(samples, 0, spliced, 0, spliceIndex);
+        Array.Copy(samples, spliceIndex, spliced, spliceIndex + spliceSamples, samples.Length - spliceIndex);
+
+        var pendingSkipAfterEachLine = new List<int>();
+        decoder.LineDecoded += _ => pendingSkipAfterEachLine.Add(decoder.PendingSkipSamplesForTests);
+
+        decoder.PushSamples(spliced);
+
+        Assert.True(decoder.AutoSyncTriggerCountForTests > 0,
+            $"Never observed an automatic trigger after a deliberate {spliceSamples}-sample splice -- test setup problem, not what this test targets.");
+        Assert.DoesNotContain(pendingSkipAfterEachLine, v => v > 0);
+    }
+
+    [Fact]
     public void AutoSyncEnabledFalse_NeverTriggers_ButBookkeepingStillRuns()
     {
         // Same splice scenario the test above proves DOES trigger when enabled -- a real end-to-end

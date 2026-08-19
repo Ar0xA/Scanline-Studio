@@ -2069,6 +2069,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // nearly a full line -- applying it in one shot would call AgcSampleAt past the end of the
     // received stream and throw on the audio thread, on the common path.
     //
+    // TWO call sites, D0-audit round-4 fix: the top of PushSamplesCore (streaming pattern -- a skip
+    // requested by PerformReSync, an external/UI-driven trigger, or left over from a chunk that ended
+    // mid-skip) AND, since this fix, TryProcessBuffer's own per-line loop right after
+    // ApplySlantTracking() (a skip TriggerAutoSync -- decode-driven, not caller-driven -- may have
+    // just requested in that same call). The top-level call alone was insufficient for the SAME
+    // caller-chunk-boundary reason _pendingReplayRequested's own drain was moved off it: a bulk
+    // caller pushing a whole transmission in one PushSamplesCore call never lets a SECOND call arrive
+    // to drain a skip TriggerAutoSync requests mid-decode, so it was silently zeroed unapplied by
+    // EndOfImage's ResetReSyncState() while ApplySyncCorrection's other side-effects
+    // (_slantCorrectionsDisabledForRestOfImage, the Auto-Sync cooldown) still applied regardless. Both
+    // sites are safe to call unconditionally on every entry -- this method is a no-op whenever
+    // _pendingSkipSamples is already 0.
+    //
     // Every cursor moves in exact lockstep, one sample per iteration:
     //  * _consumedSamples      -- the decode read cursor; the actual correction.
     //  * _idealLineStartSample -- kept round()-consistent with _consumedSamples at EVERY step, not
@@ -2676,6 +2689,29 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 // tracking catch up through exactly this line's raw samples -- never further ahead,
                 // and never for a line that hasn't been decoded yet.
                 ApplySlantTracking();
+
+                // D0-audit round-4 finding: drain a skip TriggerAutoSync may have just requested
+                // (inside the ApplySlantTracking() call immediately above) HERE, at this same
+                // decoded-line boundary -- not only at the top of the next PushSamplesCore call,
+                // which was this method's ONLY drain site before this fix. Exactly the
+                // caller-chunk-boundary bug class _pendingReplayRequested's own round-1 fix (below)
+                // already exists to prevent, for a sibling flag ApplySyncCorrection sets in the SAME
+                // call: a bulk caller pushing a whole transmission in one PushSamplesCore call would
+                // never see a second call arrive to drain the skip at all, so EndOfImage's
+                // ResetReSyncState() would silently zero _pendingSkipSamples unapplied -- while
+                // _slantCorrectionsDisabledForRestOfImage (set by the SAME ApplySyncCorrection call)
+                // still suppressed Auto-Slant/replay for the rest of the image regardless, paying the
+                // suppression cost without the realignment it exists to buy. A streaming caller (any
+                // chunk shorter than one line) was never affected -- the pre-fix top-of-PushSamplesCore
+                // drain runs before the next line can complete either way -- which is why this was a
+                // risk, not a blocker, in production (MiniAudio capture chunks are always sub-line).
+                // Runs BEFORE the replay-request drains below: DrainPendingSkip can advance
+                // _consumedSamples/_rxBufferAnchorSample (see its own doc comment), and
+                // ReplayOriginCalculator.ComputeOrigin's inputs are bounded by _consumedSamples at
+                // the point PerformReplay actually runs -- draining the skip first matches legacy's
+                // own real-time order (m_Skip's per-sample drain always precedes that sample's own
+                // decode decision, sstv.cpp:2271-2293).
+                DrainPendingSkip();
 
                 // RX buffer subsystem Phase 6d round-1 code-review fix: drain the deferred replay
                 // request HERE, at a DECODED-LINE boundary, not at the top of the next PushSamples
