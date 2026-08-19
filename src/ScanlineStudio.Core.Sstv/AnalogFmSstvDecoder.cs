@@ -3958,15 +3958,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // machine itself line-by-line against source before this was written; see that class's own doc
     // comment for the full state-transition derivation.
     //
-    // Search ceiling mirrors TryDecodeVisDataBits' own (:4209-4211) for the same reason: an unbounded
-    // retry-on-reject scanner is by construction what this decoder is (every legacy failure path
-    // resumes scanning from mode 0), and an unbounded version was a real, reverted regression there.
-    // Narrow modes keep their existing _syncBypassNarrowTracker fallback (m_sint3) if this local,
-    // bounded scan misses a rare edge case. Ceiling = VisHeader.NarrowSearchCeilingMs (round-8
-    // correction: this sentence previously restated the formula inline as guard+timeout+start-bit+24
-    // data bits+200ms retry margin = 950ms, omitting the 300ms leader term -- the code has read the
-    // shared constant, 1250ms, directly since round 3; see VisHeader.NarrowSearchCeilingMs's own doc
-    // comment for the real breakdown), matching TryDecodeVisDataBits' own generous-but-local shape.
+    // Search ceiling mirrors TryDecodeVisDataBits' own search-ceiling logic (round-9: dropped the
+    // in-file line citation this sentence used to carry -- this chunk's own comments have grown across
+    // 9 audit rounds, and every such self-citation has drifted stale at least once; a method-name
+    // pointer can't drift) for the same reason: an unbounded retry-on-reject scanner is by construction
+    // what this decoder is (every legacy failure path resumes scanning from mode 0), and an unbounded
+    // version was a real, reverted regression there. Narrow modes keep their existing
+    // _syncBypassNarrowTracker fallback (m_sint3) if this local, bounded scan misses a rare edge case.
+    // Ceiling = VisHeader.NarrowSearchCeilingMs (round-8 correction: this sentence previously restated
+    // the formula inline as guard+timeout+start-bit+24 data bits+200ms retry margin = 950ms, omitting
+    // the 300ms leader term -- round-9 correction: the code has read the shared constant, 1250ms,
+    // directly since round 4, which replaced round 3's own hand-transcribed-but-corrected value with a
+    // direct read of the constant -- see VisHeader.NarrowSearchCeilingMs's own doc comment for the real
+    // breakdown), matching TryDecodeVisDataBits' own generous-but-local shape.
     //
     // Commit point (functional-audit correction, D6 round 5: this paragraph previously described
     // the FIXED-OFFSET formula round 4 replaced -- "headerStart + the packet's fixed nominal
@@ -4005,7 +4009,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // where the real narrow packet itself begins (delta = 0) -- but `_consumedSamples` never
     // advances pre-lock, so delta == 400ms for this port's own encoder output, and for any real
     // MMSSTV transmission carrying the same burst. Even after round 3's own ceiling widening (below,
-    // ~306ms of real tolerance past the packet's own minimum decode point) and round 4's
+    // ~300ms of real tolerance past the packet's own minimum decode point, NarrowHeaderTotalDurationMs
+    // = 950ms -- round-9 correction: an earlier version of this sentence said "~306ms", which matched
+    // neither the plain 1250-950 arithmetic nor any other derivation checked against it) and round 4's
     // delta-robust anchor fix (also below), the search window still can't reach a 400ms delta --
     // meaning this fixed-window narrow path remains fully dead code for realistic audio today
     // (unlike its VIS sibling, which round 5 found is only PARTIALLY dead -- live and correctness-
@@ -4068,7 +4074,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // A station-ID (STX 0x2a) result reaching this specific single-shot, fixed-headerStart
             // verification is unlikely but not vanishingly so now that StationIdDecodeEnabled can be
             // live-set true (Application-layer settings wiring, see that property's own doc comment) --
-            // a minimal callsign packet, ~600ms, fits inside this method's own ~950ms search ceiling.
+            // a minimal callsign packet, ~600ms, fits inside this method's own ~1250ms search ceiling
+            // (round-9 correction: an earlier version of this sentence said "~950ms", stale since round
+            // 3/4 raised the real ceiling to 1250ms -- the conclusion, that it fits, holds either way).
             // Unlike the "unregistered mode code" case
             // below (a genuinely FAILED decode this method's own design deliberately doesn't retry),
             // a station-ID result isn't a failure -- it's simply not what this method is looking for.
@@ -4341,14 +4349,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // transmission whose OutHEAD is shorter/absent -- legacy's own OutHEAD is VOX-mode-dependent,
     // Main.cpp:7274-7292, unlike this port's own encoder which emits it unconditionally), this path
     // DOES fire (bit decoding is trigger-search-based, so it tolerates delta fine) but commits at
-    // the fixed `headerStart + totalHeaderSampleCount + extraSampleCount` (the exact call, `:4477`
-    // below -- `extraSampleCount` is nonzero for Scottie's own extra post-header pulse) -- an
+    // the fixed `headerStart + totalHeaderSampleCount + extraSampleCount` (the exact call is this
+    // method's own `Commit(mode, ...)` statement below, round-9: dropped the in-file line citation --
+    // `extraSampleCount` is nonzero for Scottie's own extra post-header pulse) -- an
     // anchor `delta` samples too early, unlike TryDecodeNarrowModeHeader's own sibling, which round
     // 4 already made delta-robust.
     //
-    // Impact bound, corrected (round 6, citations corrected round 7): "TryResolveSyncAnchorCorrection's
-    // own fold re-phases the anchor modulo the line width" is true ONLY for the non-AVT commit
-    // (`:4477`) -- AVT never reaches that method (`Commit`'s own AVT branch finalizes inline, matching
+    // Impact bound, corrected (round 6, citations corrected round 7, citations dropped round 9):
+    // "TryResolveSyncAnchorCorrection's own fold re-phases the anchor modulo the line width" is true
+    // ONLY for the non-AVT commit above -- AVT never reaches that method (`Commit`'s own AVT branch finalizes inline, matching
     // legacy's `Main.cpp:3754-3758` early-out for `smAVT`), so AVT's OWN fallback commit
     // (`Commit(SstvModeRegistry.Avt, _avtTrainingFallbackDeadlineSample)` in `TryResolveAvtTraining`,
     // reached when the AVT training lock doesn't confirm before `_avtTrainingFallbackDeadlineSample` --
