@@ -102,6 +102,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     internal readonly double _slvl3;
 
     private readonly int _sampleRate;
+
+    /// <summary>See <see cref="ISstvDecoder.SampleRate"/>. Immutable for this decoder instance.</summary>
+    public int SampleRate => _sampleRate;
     private readonly List<double> _demodulatedFrequencies = [];
     private int _demodulatedFrequenciesProcessedUpTo; // Band-1 item 4a: see DemodulatedFrequencyAt
     private readonly List<float> _rawSamples = [];
@@ -201,7 +204,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // settling time) -- named here, and shared with those two existing sites (previously each had its
     // own independent literal 2000), so TrimBuffers' own lookback requirement can never silently
     // desync from what those warm-ups actually need to read.
-    private const int AnchorWarmupSamples = 2000;
+    internal const int AnchorWarmupSamples = 2000;
 
     /// <summary>See <see cref="ISstvDecoder.BufferedSampleCount"/> -- the number of samples
     /// currently physically held in <c>_rawSamples</c> (i.e. after trimming, NOT
@@ -474,6 +477,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // reads the staging buffer, and PerformReplay is destructive, so draining at a caller-chunk
     // boundary would make the decoded image a function of how the caller sliced its PushSamples calls.
     private volatile bool _correctSlantRequested;
+    private int _manualSlantEntrySafetyCheckCountForTests;
+    private int _manualSlantCandidateSafetyCheckCountForTests;
     private int _pendingSkipSamples; // port-equivalent of legacy's own m_Skip field
     private double? _lastLineSyncPeakPosition; // port-equivalent of m_SyncRPos (see ApplySlantTracking's capture point for why one field also stands in for m_SyncPos at this port's granularity)
     private bool _suppressNextSlantProcessLine;
@@ -801,6 +806,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // side only because this flag didn't exist yet. Restart-only, same reasoning as _afcEnabled above.
     private readonly bool _autoSlantEnabled;
 
+    /// <param name="sampleRate">Positive whole-Hz sample rate for this low-level decoder. Direct
+    /// construction deliberately permits values outside <see cref="SstvSampleRate"/>'s configured
+    /// 5000-48500 Hz policy for focused tests and low-level tools; those values do not carry the
+    /// production long-session index-safety guarantee. Production composition must use
+    /// <see cref="RestartableSstvDecoder"/>, which enforces the configured range and performs
+    /// capacity-aware replacement.</param>
     /// <param name="senseLevel">Squelch preset index (0-3, "Very low".."Very high"), see
     /// <see cref="SenseLevelPresets"/>. Out-of-range values (e.g. a hand-edited settings.json) fall
     /// back to index 0, matching legacy's own SetSenseLvl switch `default:` branch -- deliberately
@@ -4893,6 +4904,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// that inference vacuous -- auditor code-review finding, Phase 8c round 1).</summary>
     internal bool CorrectSlantRequestedForTests => _correctSlantRequested;
 
+    /// <summary>Test-only proof that <see cref="TryCorrectSlant"/>'s entry path invokes the shared
+    /// representability/projection guard before starting its search.</summary>
+    internal int ManualSlantEntrySafetyCheckCountForTests => _manualSlantEntrySafetyCheckCountForTests;
+
+    /// <summary>Test-only proof that each computed correction candidate passes through the shared
+    /// representability/projection guard before it seeds another iteration or commits.</summary>
+    internal int ManualSlantCandidateSafetyCheckCountForTests => _manualSlantCandidateSafetyCheckCountForTests;
+
     /// <summary>Test-only visibility into the current decode read cursor -- manual ReSync
     /// (<see cref="RequestReSync"/>) is the first feature that shifts this outside the normal per-line
     /// loop's own advancement, so tests need to observe it directly.</summary>
@@ -6064,6 +6083,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         var startSampleRate = _effectiveSamplesPerLine / (mode.LineDurationMs / 1000.0);
         var candidateSampleRate = startSampleRate;
         var candidateLineWidthSamples = _effectiveSamplesPerLine;
+        var rowsPerTransmissionLine = _lineDecoder!.RowsPerTransmissionLine;
+        var remainingTransmissionLines = Math.Max(
+            0,
+            (int)Math.Ceiling((mode.ImageHeight - _nextLine) / (double)rowsPerTransmissionLine));
+        if (!IsManualSlantEntryProjectionSafe(
+                candidateSampleRate,
+                mode.LineDurationMs,
+                _consumedSamples,
+                remainingTransmissionLines))
+        {
+            return false;
+        }
 
         // Legacy's own LW: an int, truncates at init and every halving below (Main.cpp:5273/:5413)
         // -- ported literally, not "cleaned up" to a double, since the truncation is load-bearing
@@ -6229,6 +6260,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 fq = Math.Floor(fq * 100.0 + 0.5) / 100.0; // NormalSampFreq(fq, 100) -- half-away-from-zero, NOT Math.Round's banker's rounding (ComLib.cpp:203-206)
             }
 
+            // Legacy keeps fq/m_TW as double and has no corresponding range guard. This port later
+            // narrows both the reconstructed effective rate and line width to int in live/replay
+            // decoding. Reject only candidates those consumers cannot represent, before fq can
+            // seed the next iteration's histogram allocation or mutate live slant state.
+            if (!IsManualSlantCandidateProjectionSafe(
+                    fq,
+                    mode.LineDurationMs,
+                    _consumedSamples,
+                    remainingTransmissionLines))
+            {
+                return false;
+            }
+
             if (Math.Abs(fq - candidateSampleRate) < 0.1 / 11025.0 * candidateSampleRate)
             {
                 candidateSampleRate = fq;
@@ -6268,6 +6312,74 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _slantTracker?.AdoptCorrectedRate(candidateSampleRate);
 
         return true;
+    }
+
+    /// <summary>Pure safety predicate for manual Correct Slant's unbounded regression result.
+    /// Automatic slant has legacy's own upper clamp; this path does not. The two extra line widths
+    /// conservatively cover the live next-line cursor plus ReSync/replay reconciliation beyond the
+    /// remaining image extent.</summary>
+    internal static bool IsManualSlantProjectionSafe(
+        double candidateSampleRate,
+        double lineDurationMs,
+        int currentConsumedSample,
+        int remainingTransmissionLines)
+    {
+        if (!double.IsFinite(candidateSampleRate))
+        {
+            return false;
+        }
+
+        var roundedEffectiveSampleRate = Math.Round(candidateSampleRate);
+        if (!double.IsFinite(roundedEffectiveSampleRate)
+            || roundedEffectiveSampleRate < 1d
+            || roundedEffectiveSampleRate > int.MaxValue)
+        {
+            return false;
+        }
+
+        var candidateLineWidthSamples = lineDurationMs / 1000d * candidateSampleRate;
+        if (!double.IsFinite(candidateLineWidthSamples)
+            || candidateLineWidthSamples < 1d
+            || candidateLineWidthSamples > int.MaxValue)
+        {
+            return false;
+        }
+
+        var projectedSamples = Math.Ceiling(
+            (Math.Max(0, remainingTransmissionLines) + 2d) * candidateLineWidthSamples);
+        // Several absolute-index cache-fill loops use `cursor <= requestedIndex; cursor++`.
+        // Equality with int.MaxValue would therefore wrap the loop cursor after processing the
+        // requested sample; preserve one representable index beyond the projection.
+        return double.IsFinite(projectedSamples)
+            && projectedSamples < int.MaxValue - (double)currentConsumedSample;
+    }
+
+    private bool IsManualSlantEntryProjectionSafe(
+        double candidateSampleRate,
+        double lineDurationMs,
+        int currentConsumedSample,
+        int remainingTransmissionLines)
+    {
+        _manualSlantEntrySafetyCheckCountForTests++;
+        return IsManualSlantProjectionSafe(
+            candidateSampleRate,
+            lineDurationMs,
+            currentConsumedSample,
+            remainingTransmissionLines);
+    }
+
+    private bool IsManualSlantCandidateProjectionSafe(
+        double candidateSampleRate,
+        double lineDurationMs,
+        int currentConsumedSample,
+        int remainingTransmissionLines)
+    {
+        _manualSlantCandidateSafetyCheckCountForTests++;
+        return IsManualSlantProjectionSafe(
+            candidateSampleRate,
+            lineDurationMs,
+            currentConsumedSample,
+            remainingTransmissionLines);
     }
 
     /// <summary>Test-only entry point for <see cref="TryCorrectSlant"/> -- lets a test drive the

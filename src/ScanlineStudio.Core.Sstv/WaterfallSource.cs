@@ -41,6 +41,9 @@ public sealed class WaterfallSource : IWaterfallSource, IDisposable
         _accumulator = new float[windowSize];
     }
 
+    /// <summary>Sample rate used to map FFT bins to frequencies.</summary>
+    public int SampleRate => _sampleRate;
+
     public IObservable<WaterfallFrame> Frames => _frames;
 
     public void PushSamples(ReadOnlyMemory<float> samples)

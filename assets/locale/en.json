@@ -595,7 +595,7 @@
   "Options.Audio.CaptureDevice": "Capture device (RX)",
   "Options.Audio.PlaybackDevice": "Playback device (TX)",
   "Options.Audio.SampleRate": "Sample rate",
-  "Options.Audio.SampleRate.Help": "How many audio samples per second are captured/played. Must match what your sound card and radio audio interface actually support -- 11025 Hz matches legacy MMSSTV's own default and is enough for every SSTV mode's audio bandwidth.",
+  "Options.Audio.SampleRate.Help": "Whole-Hz DSP rate from 5000 to 48500. Decoder, waterfall, capture, and playback use one rate for the process lifetime; restart Scanline Studio after changing it. 11025 Hz is the legacy default.",
   "Options.Radio.Tab": "Radio / CAT",
   "Options.Radio.Backend": "Backend",
   "Options.Radio.Backend.None": "None (no radio control)",

@@ -62,6 +62,8 @@ public sealed class FakeAudioEngine : IAudioEngine
 
     public AudioChannelSource? LastRequestedChannelSource { get; private set; }
 
+    public int? LastRequestedCaptureSampleRate { get; private set; }
+
     public Task StartCaptureAsync(
         AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
         int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
@@ -74,6 +76,7 @@ public sealed class FakeAudioEngine : IAudioEngine
         }
 
         LastRequestedDrainThreadPriority = drainThreadPriority;
+        LastRequestedCaptureSampleRate = sampleRate;
         LastRequestedCapturePeriodSizeInFrames = periodSizeInFrames;
         LastRequestedCapturePeriods = periods;
         LastRequestedChannelSource = channelSource;

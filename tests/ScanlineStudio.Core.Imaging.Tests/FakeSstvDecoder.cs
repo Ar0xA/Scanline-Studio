@@ -4,6 +4,8 @@ namespace ScanlineStudio.Core.Imaging.Tests;
 
 internal sealed class FakeSstvDecoder : ISstvDecoder
 {
+    public int SampleRate => SstvSampleRate.Default;
+
     public event Action<DecodedImageUpdate>? LineDecoded;
 
     public event Action<SstvModeDefinition>? ModeDetected;

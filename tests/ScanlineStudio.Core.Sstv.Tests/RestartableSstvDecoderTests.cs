@@ -552,9 +552,9 @@ public class RestartableSstvDecoderTests
     public void PushSamples_CriticalSwap_RaisesMaintenanceEvents_WhenReplacementPushThrows()
     {
         var creationCount = 0;
-        AnalogFmSstvDecoder CreateDecoder()
+        AnalogFmSstvDecoder CreateDecoder(int sampleRate)
         {
-            var inner = new AnalogFmSstvDecoder();
+            var inner = new AnalogFmSstvDecoder(sampleRate);
             creationCount++;
             if (creationCount == 2)
             {
@@ -583,11 +583,29 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void PushSamples_CriticalHandlerThrows_StillAttemptsRestartedNotification()
+    {
+        using var decoder = new RestartableSstvDecoder(
+            afcEnabled: true,
+            warningThresholdSamples: 1,
+            criticalThresholdSamples: 1);
+        decoder.PushSamples(new float[1]);
+
+        var restartedCount = 0;
+        decoder.RestartCriticallyOverdue += () => throw new InvalidOperationException("Injected critical-handler failure.");
+        decoder.Restarted += () => restartedCount++;
+
+        Assert.Throws<InvalidOperationException>(() => decoder.PushSamples(new float[1]));
+        Assert.Equal(1, decoder.RestartCountForTests);
+        Assert.Equal(1, restartedCount);
+    }
+
+    [Fact]
     public void PushSamples_WhenReplacementConstructionThrows_KeepsOutgoingInnerObservable()
     {
         var outgoing = new AnalogFmSstvDecoder();
         var creationCount = 0;
-        AnalogFmSstvDecoder CreateDecoder()
+        AnalogFmSstvDecoder CreateDecoder(int sampleRate)
         {
             creationCount++;
             return creationCount == 1
@@ -649,6 +667,158 @@ public class RestartableSstvDecoderTests
     {
         Assert.Equal(12L * 3600 * 11025, RestartableSstvDecoder.DefaultWarningThresholdSamples);
         Assert.Equal(13L * 3600 * 11025, RestartableSstvDecoder.DefaultCriticalThresholdSamples);
+
+        var thresholds = RestartableSstvDecoder.ComputeDefaultThresholds(11025);
+        Assert.Equal(RestartableSstvDecoder.DefaultWarningThresholdSamples, thresholds.WarningThresholdSamples);
+        Assert.Equal(RestartableSstvDecoder.DefaultCriticalThresholdSamples, thresholds.CriticalThresholdSamples);
+    }
+
+    [Fact]
+    public void ProductionThresholds_AtMaximumRate_StayInsideProjectionReserve()
+    {
+        var thresholds = RestartableSstvDecoder.ComputeDefaultThresholds(SstvSampleRate.Maximum);
+
+        Assert.True(thresholds.WarningThresholdSamples < thresholds.CriticalThresholdSamples);
+        Assert.True(thresholds.CriticalThresholdSamples <= thresholds.MaximumSafeSampleIndex);
+        Assert.Equal(int.MaxValue - thresholds.ProjectionReserveSamples, thresholds.MaximumSafeSampleIndex);
+        Assert.True(thresholds.CriticalThresholdSamples < 13L * 3600L * SstvSampleRate.Maximum);
+    }
+
+    [Theory]
+    [InlineData(5000, 216000000, 234000000, 2128804399, 18679248)]
+    [InlineData(11025, 476280000, 515970000, 2106295903, 41187744)]
+    [InlineData(48500, 1791694999, 1966294999, 1966294999, 181188648)]
+    public void ProductionThresholds_HaveExactExpectedValues(
+        int sampleRate,
+        long expectedWarning,
+        long expectedCritical,
+        int expectedMaximumSafeIndex,
+        long expectedProjectionReserve)
+    {
+        var thresholds = RestartableSstvDecoder.ComputeDefaultThresholds(sampleRate);
+
+        Assert.Equal(expectedWarning, thresholds.WarningThresholdSamples);
+        Assert.Equal(expectedCritical, thresholds.CriticalThresholdSamples);
+        Assert.Equal(expectedMaximumSafeIndex, thresholds.MaximumSafeSampleIndex);
+        Assert.Equal(expectedProjectionReserve, thresholds.ProjectionReserveSamples);
+    }
+
+    [Fact]
+    public void ComposedForwardProjection_IsInsideReserve_AtEverySupportedIntegerRate()
+    {
+        for (var sampleRate = SstvSampleRate.Minimum; sampleRate <= SstvSampleRate.Maximum; sampleRate++)
+        {
+            var thresholds = RestartableSstvDecoder.ComputeDefaultThresholds(sampleRate);
+            var composedProjection = RestartableSstvDecoder.ComputeMaximumComposedProjectionSamples(sampleRate);
+            Assert.True(
+                composedProjection < thresholds.ProjectionReserveSamples,
+                $"Composed projection {composedProjection} must fit reserve {thresholds.ProjectionReserveSamples} at {sampleRate} Hz.");
+        }
+    }
+
+    // Frozen review values, deliberately not recomputed from the production constants: this test
+    // must fail if any named forward term is accidentally deleted from the composed horizon.
+    [Theory]
+    [InlineData(5000, 3077204)]
+    [InlineData(11025, 6782821)]
+    [InlineData(48500, 29831430)]
+    public void ComposedForwardProjection_HasIndependentlyPinnedEndpointValues(int sampleRate, long expectedSamples) =>
+        Assert.Equal(expectedSamples, RestartableSstvDecoder.ComputeMaximumComposedProjectionSamples(sampleRate));
+
+    [Fact]
+    public void SampleRate_SurvivesPeriodicSwap()
+    {
+        using var decoder = new RestartableSstvDecoder(
+            afcEnabled: true,
+            warningThresholdSamples: 1,
+            criticalThresholdSamples: 1,
+            sampleRate: 22050);
+
+        decoder.PushSamples(new float[1]);
+        decoder.PushSamples(new float[1]);
+
+        Assert.Equal(1, decoder.RestartCountForTests);
+        Assert.Equal(22050, decoder.SampleRate);
+    }
+
+    [Fact]
+    public void Constructor_RejectsInitialFactoryRateMismatch_AndDisposesCandidate()
+    {
+        var candidate = new AnalogFmSstvDecoder(SstvSampleRate.Default);
+
+        Assert.Throws<InvalidOperationException>(() => new RestartableSstvDecoder(
+            afcEnabled: true,
+            warningThresholdSamples: 10,
+            criticalThresholdSamples: 20,
+            sampleRate: 22050,
+            decoderFactoryForTests: _ => candidate));
+
+        Assert.Throws<ObjectDisposedException>(() => candidate.PushSamples(new float[1]));
+    }
+
+    [Fact]
+    public void CapacityReplacementRateMismatch_KeepsOutgoingInstalledAndDisposesCandidate()
+    {
+        var outgoing = new AnalogFmSstvDecoder(SstvSampleRate.Default);
+        var mismatch = new AnalogFmSstvDecoder(22050);
+        var creationCount = 0;
+        using var decoder = new RestartableSstvDecoder(
+            afcEnabled: true,
+            warningThresholdSamples: long.MaxValue,
+            criticalThresholdSamples: long.MaxValue,
+            maximumSafeSampleIndex: 10,
+            decoderFactoryForTests: _ => creationCount++ == 0 ? outgoing : mismatch);
+
+        SstvModeDefinition? detectedMode = null;
+        decoder.ModeDetected += mode => detectedMode = mode;
+
+        decoder.PushSamples(new float[10]);
+        Assert.Throws<InvalidOperationException>(() => decoder.PushSamples(new float[1]));
+        Assert.Equal(0, decoder.RestartCountForTests);
+        Assert.Throws<ObjectDisposedException>(() => mismatch.PushSamples(new float[1]));
+
+        decoder.ForceMode(SstvModeRegistry.Avt);
+        outgoing.PushSamples(new float[64]);
+        Assert.False(outgoing.IsIdle);
+        Assert.Equal(SstvModeRegistry.Avt.Id, detectedMode?.Id);
+    }
+
+    [Fact]
+    public void CapacityPreflight_AcceptsEquality_ThenSwapsBeforeOneMoreSample()
+    {
+        using var decoder = new RestartableSstvDecoder(
+            afcEnabled: true,
+            warningThresholdSamples: long.MaxValue,
+            criticalThresholdSamples: long.MaxValue,
+            maximumSafeSampleIndex: 10);
+        var events = new List<string>();
+        decoder.RestartCriticallyOverdue += () => events.Add("critical");
+        decoder.Restarted += () => events.Add("restarted");
+
+        decoder.PushSamples(new float[10]);
+        Assert.Equal(0, decoder.RestartCountForTests);
+
+        decoder.PushSamples(new float[1]);
+
+        Assert.Equal(1, decoder.RestartCountForTests);
+        Assert.Equal(["critical", "restarted"], events);
+    }
+
+    [Fact]
+    public void CapacityPreflight_RejectsSingleOversizedChunkBeforeSwapOrEvents()
+    {
+        using var decoder = new RestartableSstvDecoder(
+            afcEnabled: true,
+            warningThresholdSamples: long.MaxValue,
+            criticalThresholdSamples: long.MaxValue,
+            maximumSafeSampleIndex: 10);
+        var eventCount = 0;
+        decoder.RestartCriticallyOverdue += () => eventCount++;
+        decoder.Restarted += () => eventCount++;
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => decoder.PushSamples(new float[11]));
+        Assert.Equal(0, decoder.RestartCountForTests);
+        Assert.Equal(0, eventCount);
     }
 
     [Fact]
