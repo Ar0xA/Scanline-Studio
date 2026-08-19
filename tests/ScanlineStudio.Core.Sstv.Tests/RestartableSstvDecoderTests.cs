@@ -215,16 +215,22 @@ public class RestartableSstvDecoderTests
     {
         // Round-8 D2-audit finding: CreateInner() forwards afcEnabled/syncRestartEnabled/
         // autoSyncEnabled/autoStopEnabled/senseLevel like every other constructor-injected toggle
-        // above, but none of the five had an Inner*ForTests accessor -- every existing call site in
-        // this file passes afcEnabled: true as an incidental fixed value, so dropping any one of these
-        // five arguments from CreateInner would leave the whole suite green while silently reverting a
-        // non-default user setting to the C# parameter default on every periodic restart. Same
-        // InnerXForTests pattern as DemodType/RxBpfPreset/RxBufferMode above; all five are exercised
-        // together since they share the same "restart-only, no live read-back" shape. Non-default on
-        // all five so no assertion can pass vacuously against a parameter default (afcEnabled/
-        // syncRestartEnabled/autoSyncEnabled default true, autoStopEnabled defaults false, senseLevel
-        // defaults 1).
-        var decoder = new RestartableSstvDecoder(
+        // above, but none of the five had an Inner*ForTests accessor -- every OTHER test in this file
+        // that exercises maintenance-threshold behavior passes afcEnabled: true as an incidental fixed
+        // value (round-9 correction: 2 call sites -- AutoSlantEnabled_ForwardsTheConstructorValue and
+        // the public-ctor test at the top of Swap_DisposesTheOutgoingInnerDecodersScratchFiles's own
+        // section -- don't pass it at all, relying on the public ctor's own `true` default instead;
+        // neither ever pins `false`, which is what actually matters here), so dropping any one of
+        // these five arguments from CreateInner would leave the whole suite green while silently
+        // reverting a non-default user setting to the C# parameter default on every periodic restart.
+        // Same InnerXForTests pattern as DemodType/RxBpfPreset/RxBufferMode above; all five are
+        // exercised together since they share the same "restart-only, no live read-back" shape.
+        // Non-default on all five so no assertion can pass vacuously against a parameter default
+        // (afcEnabled/syncRestartEnabled/autoSyncEnabled default true, autoStopEnabled defaults false,
+        // senseLevel defaults 1). `using`: round-9 nit fix for consistency with this file's other
+        // RestartableSstvDecoder tests -- harmless either way here since the default RxBufferMode.On
+        // gives the inner decoder a RAM staging buffer whose Dispose() is a documented no-op.
+        using var decoder = new RestartableSstvDecoder(
             afcEnabled: false,
             warningThresholdSamples: 100,
             criticalThresholdSamples: 1000,
