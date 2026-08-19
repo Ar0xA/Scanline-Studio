@@ -804,11 +804,15 @@ public class ReplayEngineTests
         var transmissionSamples = Encode(mode, sourceImage, SampleRate);
 
         // autoSyncEnabled:false -- isolates this test to the rejection behavior alone. A real
-        // Auto-Sync correction (TryAutoSync -> ApplySyncCorrection) can set _pendingSkipSamples
-        // mid-decode, but that's only ever drained at the START of the NEXT PushSamples call
-        // (DrainPendingSkip's own call site) -- this test pushes a large chunk in one call, so a
-        // naturally-triggered correction would leave a skip un-drained, moving NextLineForTests for
-        // reasons unrelated to the fix under test.
+        // Auto-Sync correction (TryAutoSync -> ApplySyncCorrection) sets _pendingSkipSamples plus
+        // _slantCorrectionsDisabledForRestOfImage/an Auto-Sync cooldown, all side effects unrelated
+        // to the rejection behavior this test targets -- disabling Auto-Sync entirely avoids all of
+        // them moving NextLineForTests for reasons unrelated to the fix under test. (D0-audit
+        // round-7 correction: this comment previously justified the disable by DrainPendingSkip
+        // having only one call site, at the top of PushSamplesCore -- since superseded by a D0
+        // round-4 fix adding a second call site inside the per-line loop, so a skip no longer goes
+        // un-drained within a single bulk push either way; the disable is still the right call, for
+        // the broader reason stated above.)
         using var decoder = new AnalogFmSstvDecoder(SampleRate, autoSyncEnabled: false, rxBufferMode: RxBufferMode.On);
         var locked = false;
         decoder.ModeDetected += _ => locked = true;
