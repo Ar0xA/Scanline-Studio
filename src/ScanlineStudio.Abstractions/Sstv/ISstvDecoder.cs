@@ -176,10 +176,13 @@ public interface ISstvDecoder
     /// readout (<c>TMmsstv::DrawSlantInfo</c>, `Main.cpp:5535-5544`:
     /// <c>(SSTVSET.m_SampFreq - sys.m_SampFreq) * 1e6 / sys.m_SampFreq</c>). <see langword="null"/>
     /// before any mode is locked, and for AVT (which has no Auto Slant tracking, matching
-    /// <see cref="RequestReSync"/>'s own no-op condition) -- <c>0.0</c>, not <see langword="null"/>,
-    /// once tracking is active but before the first correction ever commits (drift is genuinely zero
-    /// until then, matching legacy's own <c>SSTVSET.m_SampFreq == sys.m_SampFreq</c> at that
-    /// point).
+    /// <see cref="RequestReSync"/>'s own no-op condition); also <see langword="null"/> during both
+    /// the mid-reception AVT-training-hand-off window and a non-AVT restart's own
+    /// pending-anchor-correction window (a later audit round's finding -- see
+    /// <see cref="SyncFrequencyCorrectionHz"/>'s own doc comment for the full reasoning, which
+    /// applies identically here). <c>0.0</c>, not <see langword="null"/>, once tracking is active
+    /// but before the first correction ever commits (drift is genuinely zero until then, matching
+    /// legacy's own <c>SSTVSET.m_SampFreq == sys.m_SampFreq</c> at that point).
     ///
     /// Lifetime differs from legacy's own readout, not just its null cases: legacy's
     /// <c>SSTVSET.m_SampFreq</c> persists across receptions until a new correction or an explicit
@@ -290,14 +293,17 @@ public interface ISstvDecoder
     /// <see langword="null"/> in every case the underlying tracker doesn't exist: before any mode
     /// is locked or between images; for AVT (no AFC tracking, matching
     /// <see cref="SlantPpm"/>'s own AVT exclusion); when AFC is disabled by configuration (a
-    /// port-only null case with no legacy analogue); and -- the one easy to miss, since the
-    /// underlying tracker is NOT torn down by the same mid-reception AVT-training-hand-off path
-    /// that leaves the current mode momentarily null (same class of gap <see cref="SlantPpm"/> had
-    /// to be fixed for) -- during that same pending-training window. <c>0.0</c>, not
-    /// <see langword="null"/>, once tracking is active but before AFC's first lock (matching
-    /// legacy's own zero-correction-until-locked default) -- verified this can never leak a stale
-    /// non-zero value from a previous lock, since the tracker is always freshly constructed, never
-    /// reset in place.
+    /// port-only null case with no legacy analogue); during the mid-reception AVT-training-hand-off
+    /// window (the tracker is NOT torn down by that path, which leaves the current mode momentarily
+    /// null -- same class of gap <see cref="SlantPpm"/> had to be fixed for); and -- a second,
+    /// distinct window found by a later audit round -- during a NON-AVT mid-reception restart's own
+    /// pending-anchor-correction window, where the mode has already changed to the new one but the
+    /// tracker has not yet been rebuilt for it. <c>0.0</c>, not <see langword="null"/>, once tracking
+    /// is active but before AFC's first lock (matching legacy's own zero-correction-until-locked
+    /// default). Both leak windows are closed by the implementation checking the pending-anchor
+    /// state explicitly, not just the tracker reference or the mode alone -- see
+    /// <c>AnalogFmSstvDecoder.SyncFrequencyCorrectionHz</c>'s own doc comment for the implementation
+    /// detail.
     ///
     /// Safe to read from any thread, same guarantee as <see cref="SlantPpm"/> above.</summary>
     double? SyncFrequencyCorrectionHz { get; }

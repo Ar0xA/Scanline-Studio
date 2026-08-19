@@ -1338,17 +1338,24 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <see cref="_slantTracker"/> alive (see that method's own doc comment) for up to ~7.1s while a
     /// new AVT training lock resolves -- without the explicit <see cref="_mode"/> check here, a
     /// polling GUI would keep reading the ABANDONED image's stale drift for that whole window, not
-    /// null. Reads both fields into locals once, not twice -- see <see cref="SyncOffsetSamples"/>'s
-    /// own doc comment for why a cross-thread poll needs that even though this class documents no
-    /// general thread-safety guarantee beyond the single-producer-thread contract every other member
-    /// already assumes.</summary>
+    /// null. Round-1 D0-audit finding: a SECOND, distinct leak window exists for every NON-AVT
+    /// mid-reception restart too -- <see cref="Commit"/> reassigns <see cref="_mode"/> to the NEW
+    /// mode immediately, but <see cref="_slantTracker"/> is not rebuilt until
+    /// <c>FinalizeAnchorAndStartDecoding</c> resolves <see cref="_pendingAnchorCorrectionMode"/>
+    /// (deliberately deferred, see that field's own doc comment) -- so a poll landing in that window
+    /// would read the ABANDONED image's tracker attributed to the NEW mode instead of null. Checking
+    /// <see cref="_pendingAnchorCorrectionMode"/> here closes that window too. Reads all three fields
+    /// into locals once, not twice -- see <see cref="SyncOffsetSamples"/>'s own doc comment for why a
+    /// cross-thread poll needs that even though this class documents no general thread-safety
+    /// guarantee beyond the single-producer-thread contract every other member already assumes.</summary>
     public double? SlantPpm
     {
         get
         {
             var mode = _mode;
+            var pendingAnchor = _pendingAnchorCorrectionMode;
             var tracker = _slantTracker;
-            return mode is null ? null : tracker?.DriftPpm;
+            return mode is null || pendingAnchor is not null ? null : tracker?.DriftPpm;
         }
     }
 
@@ -1417,15 +1424,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <see cref="_slantTracker"/>, is deliberately NOT nulled by <see cref="AbandonInProgressImage"/>
     /// (see that method's own doc comment) -- so <see cref="_mode"/> must be checked explicitly,
     /// not just the tracker reference, or this would leak an abandoned image's stale correction
-    /// for the whole AVT mid-reception training pending window. Fields read into locals once, same
-    /// TOCTOU reasoning as <see cref="SyncOffsetSamples"/>.</summary>
+    /// for the whole AVT mid-reception training pending window. Round-1 D0-audit finding: also
+    /// gated on <see cref="_pendingAnchorCorrectionMode"/>, same second leak window as
+    /// <see cref="SlantPpm"/>'s own matching fix -- see that property's doc comment for the full
+    /// reasoning. Fields read into locals once, same TOCTOU reasoning as
+    /// <see cref="SyncOffsetSamples"/>.</summary>
     public double? SyncFrequencyCorrectionHz
     {
         get
         {
             var mode = _mode;
+            var pendingAnchor = _pendingAnchorCorrectionMode;
             var tracker = _afcTracker;
-            return mode is null ? null : tracker?.CorrectionHz;
+            return mode is null || pendingAnchor is not null ? null : tracker?.CorrectionHz;
         }
     }
 
@@ -1958,6 +1969,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // ModeDetected for a mode that isn't _mode anymore. hadPendingAnchor above is captured before
         // this clear, so the DecodeRestarted gate below still sees the pre-clear value.
         _pendingAnchorCorrectionMode = null;
+
+        // Round-1 D0-audit finding: legacy's own force-mode-specific Start(int mode, int f) resets
+        // the three sync-interval trackers here (sstv.cpp:1752-1754's m_sint1/m_sint2/m_sint3.Reset())
+        // -- Start(void), the VIS-auto path this method otherwise shares, does NOT. Behaviorally inert
+        // today (these are pre-lock-only state; Commit() below makes _mode non-null immediately,
+        // silencing them, and EndOfImage's own reset block already re-clears all five of these fields
+        // before the decoder's next pre-lock epoch) -- added for legacy fidelity and so a future
+        // pre-lock-adjacent change can't silently observe stale state from before this force-mode call.
+        _syncBypass1Tracker.Reset();
+        _syncBypass1PrimaryHeld = false;
+        _syncBypassTracker.Reset();
+        _syncBypassNarrowTracker.Reset();
+        _syncBypassNarrowPhaseActive = false;
 
         // Anchor at TotalSamplesReceived, NOT _consumedSamples -- pre-lock, _consumedSamples is a
         // frozen header-search start that TrimBuffers stops protecting once _fixedWindowExhausted is
@@ -2925,6 +2949,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // with that -- both orders converge to the identical final state.
         _afcZeroCrossingCounter.SetWidth(isNarrow: false);
         _afcZeroCrossingCounter.Clear();
+        // Round-1 D0-audit finding: _zeroCrossingDemodulator (the main-demod-role instance) was
+        // missing this same reset. Legacy's single m_fqc instance serves both roles, so its real
+        // Stop()-side SetWidth(0)/Clear() (sstv.cpp:1781,1790) implicitly resets whichever port-side
+        // instance is acting as the main demodulator too -- this port's split into two instances
+        // means each needs its own explicit call. Reachable whenever DemodType.ZeroCrossing is
+        // selected; without this, a stale interval estimate/phase from the previous image could leak
+        // into the next image's first demodulated samples, exactly the leak
+        // ZeroCrossingFrequencyCounter.Clear()'s own doc comment says must never happen.
+        _zeroCrossingDemodulator.SetWidth(isNarrow: false);
+        _zeroCrossingDemodulator.Clear();
         _syncEnvelopeDetector = null;
         _slantTracker = null;
         ResetReSyncState(); // legacy's Stop()-side m_Skip = 0, sstv.cpp:1789
@@ -4861,6 +4895,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // match legacy's real unconditional placement and remove that argument-shaped invariant.
         _afcZeroCrossingCounter.SetWidth(mode.NarrowModeCode is not null);
         _afcZeroCrossingCounter.Clear();
+        // Round-1 D0-audit finding: same Start()-side reset applied to _zeroCrossingDemodulator (the
+        // main-demod-role instance) -- see EndOfImage's own matching comment for the full reasoning.
+        _zeroCrossingDemodulator.SetWidth(mode.NarrowModeCode is not null);
+        _zeroCrossingDemodulator.Clear();
 
         // AVT's own exclusion is real legacy behavior (see this method's own doc comment); the
         // !_afcEnabled branch is this port's new settings-driven toggle, layered on top without
@@ -4923,6 +4961,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <see cref="_rxBufferMode"/> is read internally by TryAutoSync/TryResolveSyncAnchorCorrection).
     /// Same reasoning as <see cref="DemodTypeForTests"/>/<see cref="RxBpfPresetForTests"/> above.</summary>
     internal RxBufferMode RxBufferModeForTests => _rxBufferMode;
+
+    /// <summary>Test-only visibility into <see cref="_zeroCrossingDemodulator"/>'s own running
+    /// frequency estimate -- production code has no need to read this back (only
+    /// <see cref="DemodulatedFrequencyAt"/>'s consumption of <c>ProcessSample</c>'s return value
+    /// matters there). Round-1 D0-audit finding: lets a test prove <c>Clear()</c> was actually called
+    /// on this instance at <see cref="EndOfImage"/>/<see cref="InitializeAfc"/>, not just that the
+    /// call compiles.</summary>
+    internal double ZeroCrossingDemodulatorCurrentFrequencyHzForTests => _zeroCrossingDemodulator.CurrentFrequencyHzForTests;
 
     /// <summary>Test-only visibility into the AFC-enable flag this instance was actually constructed
     /// with -- production code has no need to read this back. Same reasoning as
