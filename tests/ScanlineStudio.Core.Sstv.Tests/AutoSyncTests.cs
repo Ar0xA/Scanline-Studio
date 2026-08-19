@@ -114,9 +114,11 @@ public class AutoSyncTests
         // Same splice-based trigger technique as the sibling test above, but this one observes
         // PendingSkipSamplesForTests on every LineDecoded event, not just the trigger count.
         // RaiseSubscribers(LineDecoded, ...) fires BEFORE this SAME loop iteration's own
-        // ApplySlantTracking()/DrainPendingSkip() call (verified: LineDecoded is raised at line
-        // ~2643, ApplySlantTracking at ~2691, both inside TryProcessBuffer's one per-line loop
-        // iteration) -- so a skip a line's OWN trigger sets is only ever OBSERVABLE, if it were left
+        // ApplySlantTracking()/DrainPendingSkip() call (verified: LineDecoded is raised earlier in
+        // TryProcessBuffer's own per-line loop body than ApplySlantTracking is, both inside that
+        // same one per-line loop iteration -- D0-audit round-8: dropped a stale in-file line
+        // citation here, since checked once and never re-verified as this file grew) -- so a skip
+        // a line's OWN trigger sets is only ever OBSERVABLE, if it were left
         // undrained, starting from the NEXT line's LineDecoded event, never that same line's own.
         // With the fix, DrainPendingSkip() runs in the SAME iteration the trigger sets the skip, so
         // it is always back to 0 again before the next line's LineDecoded fires -- this should NEVER
