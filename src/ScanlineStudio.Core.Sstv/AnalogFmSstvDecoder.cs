@@ -2061,7 +2061,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // the moment a fresh lock's InitializeAfc/InitializeSlant runs (Math.Max(...)/direct
             // assignment respectively, both before either method's own AVT early-return), so an
             // abandoned-image tracker's stale cursor position never needs protecting from trimming --
-            // it gets thrown away and re-based, not read from, once the next lock happens.
+            // it gets thrown away and re-based, not read from, once the next lock happens. That's only
+            // half the argument (D2 round 2 addition): the re-base alone wouldn't matter if something
+            // could still READ a tracker's cursor while _mode is null -- it can't, since
+            // ApplyAfcCorrections/ApplySlantTracking are called only from TryProcessBuffer's own locked
+            // per-line loop, never while pre-lock. If that ever changed, this exclusion would need
+            // revisiting even though the re-base fact alone would still be true.
             //
             // _consumedSamples is included ONLY while the fixed-window paths might still run (see
             // TryDecodeHeader's own matching guard, and its doc comment for why skipping is simpler
