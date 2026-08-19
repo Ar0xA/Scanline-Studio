@@ -1339,8 +1339,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <c>_lastLineSyncPeakPosition.Value</c> -- two non-volatile field loads of the same
     /// <see cref="Nullable{T}"/>, which a race between them can turn into a thrown
     /// <see cref="InvalidOperationException"/> instead of a clean null. Reading once into a local and
-    /// pattern-matching it removes that window entirely (a snapshot read can still be stale, but never
-    /// throws).</summary>
+    /// pattern-matching it removes THAT window (the throw) -- it does NOT make the read atomic (D2
+    /// round 1 correction: an earlier version of this sentence said "entirely", which overclaimed).
+    /// <see cref="Nullable{T}"/> is a multi-field struct (a bool plus the payload), so a single field
+    /// read here is a struct copy, not a guaranteed-atomic primitive load -- a genuinely concurrent
+    /// writer (<see cref="ResetReSyncState"/> nulling this field mid-copy) could in principle observe a
+    /// torn combination of an old HasValue with a new payload or vice versa. Never throws either way
+    /// (the local is a plain value, not re-checked), and the worst observable outcome is a stale or
+    /// zero-valued snapshot on one polling tick -- a cosmetic diagnostic blip, not a correctness bug
+    /// for decoded pixel data, which this property never touches.</summary>
     public int? SyncOffsetSamples
     {
         get
@@ -1391,6 +1398,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
+        // D2 round 1 fix: this was the only real gap in the public IDisposable contract -- no member
+        // on this type previously threw ObjectDisposedException after Dispose(), and behavior was
+        // actually INCONSISTENT across code paths (RxBufferMode.Extended's disk-backed replay path
+        // already throws from deep inside a post-dispose PushSamples call via
+        // RxDiskLineStagingBuffer's own guard, while every other path just silently kept running).
+        // Not reachable via the production wrapper today (RestartableSstvDecoder disposes an instance
+        // only after fully unsubscribing and never pushing to it again), but this is a public type with
+        // no such guarantee documented for arbitrary callers.
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
         // Consumed before _reSyncRequested below: legacy resolves the same simultaneous-command
         // question by having Start() unconditionally zero m_Skip (sstv.cpp:1725), i.e. a forced start
         // wins over a pending ReSync. PerformForceMode's own Commit() -> AbandonInProgressImage() ->
@@ -2035,9 +2052,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             watermark = TotalSamplesReceived - preLockRetentionSamples;
 
             // Never trim ahead of any cursor's own current position either -- all of these are valid
-            // pre-lock (AFC/Slant don't exist yet, _afcTracker/_slantTracker are null pre-lock, so
-            // they're excluded here, not because they're unsafe to include but because there's
-            // nothing to include).
+            // pre-lock. AFC/Slant are deliberately NOT in this list (D2 round 1 correction: an earlier
+            // version of this comment claimed _afcTracker/_slantTracker are always null pre-lock,
+            // "so there's nothing to include" -- false during the AVT training-pending window:
+            // AbandonInProgressImage nulls _mode but deliberately leaves both trackers alive, see that
+            // method's own doc comment). The real reason they're excluded here is that their OWN cursor
+            // fields (_afcProcessedUpTo/_slantProcessedUpTo) get re-based forward to _consumedSamples
+            // the moment a fresh lock's InitializeAfc/InitializeSlant runs (Math.Max(...)/direct
+            // assignment respectively, both before either method's own AVT early-return), so an
+            // abandoned-image tracker's stale cursor position never needs protecting from trimming --
+            // it gets thrown away and re-based, not read from, once the next lock happens.
             //
             // _consumedSamples is included ONLY while the fixed-window paths might still run (see
             // TryDecodeHeader's own matching guard, and its doc comment for why skipping is simpler
