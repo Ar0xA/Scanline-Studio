@@ -215,14 +215,14 @@ public class RestartableSstvDecoderTests
     {
         // Round-8 D2-audit finding: CreateInner() forwards afcEnabled/syncRestartEnabled/
         // autoSyncEnabled/autoStopEnabled/senseLevel like every other constructor-injected toggle
-        // above, but none of the five had an Inner*ForTests accessor -- every OTHER test in this file
-        // that exercises maintenance-threshold behavior passes afcEnabled: true as an incidental fixed
-        // value (round-9 correction: 2 call sites -- AutoSlantEnabled_ForwardsTheConstructorValue and
-        // the public-ctor test at the top of Swap_DisposesTheOutgoingInnerDecodersScratchFiles's own
-        // section -- don't pass it at all, relying on the public ctor's own `true` default instead;
-        // neither ever pins `false`, which is what actually matters here), so dropping any one of
-        // these five arguments from CreateInner would leave the whole suite green while silently
-        // reverting a non-default user setting to the C# parameter default on every periodic restart.
+        // above, but none of the five had an Inner*ForTests accessor -- no other test in this file
+        // ever pins any of the five to a non-default value (round-10 correction: dropping the
+        // round-9 fix's own enumeration of specific call sites here, since it named the wrong test
+        // and miscounted -- exactly the citation-drift failure class this codebase's D6 audit chunk
+        // is documented elsewhere as being prone to; the load-bearing claim needs no site list, only
+        // that none exists), so dropping any one of these five arguments from CreateInner would
+        // leave the whole suite green while silently reverting a non-default user setting to the C#
+        // parameter default on every periodic restart.
         // Same InnerXForTests pattern as DemodType/RxBpfPreset/RxBufferMode above; all five are
         // exercised together since they share the same "restart-only, no live read-back" shape.
         // Non-default on all five so no assertion can pass vacuously against a parameter default
