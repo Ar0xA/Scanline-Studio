@@ -2938,6 +2938,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _pixels = null;
         _nextLine = 0;
         _bandpassLockedFromSample = int.MaxValue; // Band-1 item 4b -- see field's own doc comment
+        // Round-2 D0-audit nit fix: defensive clear, matching AbandonInProgressImage's own identical
+        // one (see that method's doc comment for the full reasoning) -- safe today by reachability
+        // alone (TryProcessBuffer always clears this before the per-line loop that can reach
+        // EndOfImage), but costs nothing and keeps both `_mode is null` teardown paths consistent.
+        _pendingAnchorCorrectionMode = null;
 
         _afcTracker = null;
         // Demod-type subsystem Phase 2, landmine #3 -- legacy's Stop() resets m_fqc back to wide too
@@ -2953,11 +2958,21 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // missing this same reset. Legacy's single m_fqc instance serves both roles, so its real
         // Stop()-side SetWidth(0)/Clear() (sstv.cpp:1781,1790) implicitly resets whichever port-side
         // instance is acting as the main demodulator too -- this port's split into two instances
-        // means each needs its own explicit call. Reachable whenever DemodType.ZeroCrossing is
-        // selected; without this, a stale interval estimate/phase from the previous image could leak
-        // into the next image's first demodulated samples, exactly the leak
-        // ZeroCrossingFrequencyCounter.Clear()'s own doc comment says must never happen.
-        _zeroCrossingDemodulator.SetWidth(isNarrow: false);
+        // means each needs its own explicit reset. Reachable whenever DemodType.ZeroCrossing is
+        // selected; without a Clear() here, a stale interval estimate/phase from the previous image
+        // could leak into the next image's first demodulated samples, exactly the leak
+        // ZeroCrossingFrequencyCounter.Clear()'s own doc comment says must never happen. Round-2
+        // D0-audit correction: round 1's own fix ALSO called SetWidth here, mirroring
+        // _afcZeroCrossingCounter's pair above -- but unlike that sibling, _zeroCrossingDemodulator's
+        // width is independently owned by the edge-tracked _mainPathIsNarrow flag (see
+        // DemodulatedFrequencyAt's own `isNarrow != _mainPathIsNarrow` check), which this out-of-band
+        // call did not update -- desyncing the flag from the object's real width state and letting a
+        // later edge-check wrongly skip a needed SetWidth call. Clear() alone is sufficient: it
+        // always resets to whatever width is CURRENTLY active (correct, since _mainPathIsNarrow was
+        // never touched), and the very next real width transition self-corrects normally, same as
+        // before this whole D0 chunk existed -- rescaling an already-cleared value through SetWidth's
+        // own algebraic identity lands on the identical final state either way (verified both
+        // directions). No SetWidth call belongs here.
         _zeroCrossingDemodulator.Clear();
         _syncEnvelopeDetector = null;
         _slantTracker = null;
@@ -4840,14 +4855,24 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
             if (completedAt is not null)
             {
+                // Round-2 D0-audit nit fix: null the other two training fields too, matching the two
+                // narrow-FSK exits above (and EndOfImage's own reset list) -- inert either way (both
+                // are read only while _avtTrainingPending, and TryStartAvtTraining always reconstructs
+                // both before a future training attempt reads them), but keeps all four AVT-training
+                // exits in this method internally consistent instead of two-of-four.
                 _avtTrainingPending = false;
+                _avtTrainingLock = null;
+                _avtPllDemodulator = null;
                 Commit(SstvModeRegistry.Avt, _avtTrainingOriginSample + completedAt.Value);
                 return true;
             }
 
             if (_avtTrainingProcessedUpTo >= _avtTrainingFallbackDeadlineSample)
             {
+                // Round-2 D0-audit nit fix: same consistency fix as the branch above.
                 _avtTrainingPending = false;
+                _avtTrainingLock = null;
+                _avtPllDemodulator = null;
                 Commit(SstvModeRegistry.Avt, _avtTrainingFallbackDeadlineSample);
                 return true;
             }
@@ -4896,8 +4921,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _afcZeroCrossingCounter.SetWidth(mode.NarrowModeCode is not null);
         _afcZeroCrossingCounter.Clear();
         // Round-1 D0-audit finding: same Start()-side reset applied to _zeroCrossingDemodulator (the
-        // main-demod-role instance) -- see EndOfImage's own matching comment for the full reasoning.
-        _zeroCrossingDemodulator.SetWidth(mode.NarrowModeCode is not null);
+        // main-demod-role instance) -- see EndOfImage's own matching comment for the full reasoning,
+        // including round 2's correction removing the SetWidth half (kept only here as Clear()).
+        // Round-2 D0-audit note, not fixed (bounded): unlike _afcProcessedUpTo two lines above,
+        // _demodulatedFrequenciesProcessedUpTo has no equivalent force-advance-to-anchor step here
+        // (adding one would reopen Band-1 item 4a's own pre-anchor-cache reasoning) -- this Clear()
+        // can therefore apply to a cursor that still trails the anchor by up to
+        // TrimBuffers' preLockRetentionSamples (~16k samples @11025Hz) and then goes on to process
+        // chronologically-EARLIER audio than the clear point. The 3rd-order 900Hz output filter
+        // re-settles within a few samples either way, and none of that pre-anchor cache content is
+        // ever read as picture data -- bounded, not chased further.
         _zeroCrossingDemodulator.Clear();
 
         // AVT's own exclusion is real legacy behavior (see this method's own doc comment); the
