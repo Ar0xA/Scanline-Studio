@@ -809,6 +809,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // side only because this flag didn't exist yet. Restart-only, same reasoning as _afcEnabled above.
     private readonly bool _autoSlantEnabled;
 
+    // Clamped index actually used to select SenseLevelPresets below (senseLevel is >= 0 and <= 3 ?
+    // senseLevel : 0) -- stored only for SenseLevelForTests; production code reads the derived
+    // _slvl/_slvl2/_slvl3 thresholds, never this raw index. Restart-only, same reasoning as
+    // _afcEnabled above.
+    private readonly int _senseLevel;
+
     /// <param name="sampleRate">Positive whole-Hz sample rate for this low-level decoder. Direct
     /// construction deliberately permits values outside <see cref="SstvSampleRate"/>'s configured
     /// 5000-48500 Hz policy for focused tests and low-level tools; those values do not carry the
@@ -848,7 +854,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _autoStopEnabled = autoStopEnabled;
         _syncRestartEnabled = syncRestartEnabled;
         _autoSlantEnabled = autoSlantEnabled;
-        (_slvl, _slvl2, _slvl3) = SenseLevelPresets[senseLevel is >= 0 and <= 3 ? senseLevel : 0];
+        _senseLevel = senseLevel is >= 0 and <= 3 ? senseLevel : 0;
+        (_slvl, _slvl2, _slvl3) = SenseLevelPresets[_senseLevel];
         _demodType = demodType;
         _demodulator = new HilbertFmDemodulator(sampleRate);
         _pllDemodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz);
@@ -4913,6 +4920,32 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <see cref="_rxBufferMode"/> is read internally by TryAutoSync/TryResolveSyncAnchorCorrection).
     /// Same reasoning as <see cref="DemodTypeForTests"/>/<see cref="RxBpfPresetForTests"/> above.</summary>
     internal RxBufferMode RxBufferModeForTests => _rxBufferMode;
+
+    /// <summary>Test-only visibility into the AFC-enable flag this instance was actually constructed
+    /// with -- production code has no need to read this back. Same reasoning as
+    /// <see cref="DemodTypeForTests"/> above: exists so a <see cref="RestartableSstvDecoder"/> test can
+    /// prove the value actually reached the LIVE inner decoder after a periodic rebuild, not just that
+    /// the wrapper still remembers what it was told (round-8 D2-audit finding: this flag and its four
+    /// siblings below had no such accessor despite <see cref="RestartableSstvDecoder"/>'s
+    /// <c>CreateInner</c> forwarding all five).</summary>
+    internal bool AfcEnabledForTests => _afcEnabled;
+
+    /// <summary>Test-only visibility into the sync-restart-enable flag this instance was actually
+    /// constructed with. Same reasoning as <see cref="AfcEnabledForTests"/> above.</summary>
+    internal bool SyncRestartEnabledForTests => _syncRestartEnabled;
+
+    /// <summary>Test-only visibility into the Auto Sync-enable flag this instance was actually
+    /// constructed with. Same reasoning as <see cref="AfcEnabledForTests"/> above.</summary>
+    internal bool AutoSyncEnabledForTests => _autoSyncEnabled;
+
+    /// <summary>Test-only visibility into the Auto Stop-enable flag this instance was actually
+    /// constructed with. Same reasoning as <see cref="AfcEnabledForTests"/> above.</summary>
+    internal bool AutoStopEnabledForTests => _autoStopEnabled;
+
+    /// <summary>Test-only visibility into the clamped squelch-preset index this instance was actually
+    /// constructed with (see <see cref="_senseLevel"/>'s own doc comment for the clamping rule). Same
+    /// reasoning as <see cref="AfcEnabledForTests"/> above.</summary>
+    internal int SenseLevelForTests => _senseLevel;
 
     /// <summary>Test-only visibility into the RX buffer subsystem's own staging buffer -- null only
     /// for <see cref="RxBufferMode.Off"/>; non-null for <see cref="RxBufferMode.On"/>

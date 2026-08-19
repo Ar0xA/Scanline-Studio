@@ -227,6 +227,78 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.AfcEnabledForTests"/> directly -- same reasoning/shape as
+    /// <see cref="InnerDemodTypeForTests"/> above (round-8 D2-audit finding: <see cref="CreateInner"/>
+    /// forwards `afcEnabled` and 4 siblings below with no accessor able to prove any of them survive a
+    /// periodic rebuild).</summary>
+    internal bool InnerAfcEnabledForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.AfcEnabledForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.SyncRestartEnabledForTests"/> directly. Same reasoning/shape as
+    /// <see cref="InnerAfcEnabledForTests"/> above.</summary>
+    internal bool InnerSyncRestartEnabledForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.SyncRestartEnabledForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.AutoSyncEnabledForTests"/> directly. Same reasoning/shape as
+    /// <see cref="InnerAfcEnabledForTests"/> above.</summary>
+    internal bool InnerAutoSyncEnabledForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.AutoSyncEnabledForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.AutoStopEnabledForTests"/> directly. Same reasoning/shape as
+    /// <see cref="InnerAfcEnabledForTests"/> above.</summary>
+    internal bool InnerAutoStopEnabledForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.AutoStopEnabledForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.SenseLevelForTests"/> directly. Same reasoning/shape as
+    /// <see cref="InnerAfcEnabledForTests"/> above.</summary>
+    internal int InnerSenseLevelForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.SenseLevelForTests;
+            }
+        }
+    }
+
     public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, int sampleRate = SstvSampleRate.Default, ILoggerFactory? loggerFactory = null)
         : this(
             afcEnabled,
