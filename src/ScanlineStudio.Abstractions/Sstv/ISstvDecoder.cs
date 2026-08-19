@@ -6,6 +6,11 @@ public sealed record DecodedImageUpdate(int Line, IImageSource Image);
 
 public interface ISstvDecoder
 {
+    /// <summary>Feeds one block of demodulated audio samples into the decoder. Intended to be called
+    /// from a single, consistent producer thread (e.g. an audio-capture callback) -- see the events
+    /// below for this class's general concurrency contract. Throws <see cref="ObjectDisposedException"/>
+    /// if called after <see cref="IDisposable.Dispose"/> (D2 round 1 fix: previously undocumented and
+    /// inconsistently enforced across implementations).</summary>
     void PushSamples(ReadOnlyMemory<float> samples);
 
     /// <summary>Fires once per decoded transmission line (functional-audit fix, D3+D8+D9 coupled
@@ -25,6 +30,15 @@ public interface ISstvDecoder
     /// established pattern as <see cref="StationIdDecoded"/>.</summary>
     event Action<DecodedImageUpdate>? LineDecoded;
 
+    /// <summary>Fires once a mode is identified and its sync anchor has resolved -- either a fresh
+    /// detection or a mid-reception restart (see <see cref="DecodeRestarted"/> below for how the two
+    /// relate and for their relative ordering, which is NOT fixed). Concurrency contract (CLAUDE.md §4,
+    /// D2 round 1 fix: this event previously had no doc comment at all, unlike its siblings
+    /// <see cref="LineDecoded"/>/<see cref="StationIdDecoded"/>): invoked SYNCHRONOUSLY on whatever
+    /// thread runs decode, with no buffering and no marshaling -- a slow or blocking subscriber blocks
+    /// decode. Any UI-facing consumer must dispatch to its own thread immediately rather than doing
+    /// real work inline here, same established pattern as the other decode-thread events on this
+    /// interface.</summary>
     event Action<SstvModeDefinition>? ModeDetected;
 
     /// <summary>Delivery channel for a decoded FSK station-ID callsign/NR-RST (legacy STX
@@ -67,7 +81,12 @@ public interface ISstvDecoder
     /// (legacy's erratic/weak-signal detector, <c>sys.m_AutoStop</c>/<c>RxAutoPush</c>,
     /// `Main.cpp:3884-3966`/`:6042-6060`) -- unlike every other case, which is always immediately
     /// followed by a new mode being committed, this one simply re-arms auto-detection with nothing
-    /// queued up. Consumers must not assume a subsequent <see cref="ModeDetected"/> is imminent.</summary>
+    /// queued up. Consumers must not assume a subsequent <see cref="ModeDetected"/> is imminent.
+    ///
+    /// Concurrency contract (CLAUDE.md §4, D2 round 1 fix: this event's extensive ordering discussion
+    /// above never actually stated its threading/blocking behavior): same as <see cref="ModeDetected"/>
+    /// -- invoked SYNCHRONOUSLY on whatever thread runs decode, with no buffering and no marshaling.
+    /// Any UI-facing consumer must dispatch to its own thread immediately.</summary>
     event Action<SstvModeDefinition>? DecodeRestarted;
 
     /// <summary>Resets AGC/level-tracking state to its power-on defaults. Legacy calls its equivalent
@@ -148,7 +167,12 @@ public interface ISstvDecoder
     /// Safe to read from any thread (e.g. a GUI polling this on a timer while another thread drives
     /// <see cref="PushSamples"/>) -- unlike <see cref="RequestReSync"/>/<see cref="ForceMode"/>, this
     /// is a plain field read with no cross-thread write to synchronize, so a concurrent read can
-    /// observe a momentarily stale value (never a torn/corrupt one) but never throws.</summary>
+    /// observe a momentarily stale value (never a torn/corrupt one) but never throws. "Never torn" here
+    /// relies on the underlying <c>double</c> field being naturally aligned and read/written whole (D2
+    /// round 1 correction: an earlier version of this sentence didn't state that this is an
+    /// ECMA-335 guarantee that only holds on platforms whose native word size is at least 8 bytes --
+    /// true for every 64-bit target .NET 8 actually runs this app on, not a universal CLR
+    /// guarantee).</summary>
     double? SlantPpm { get; }
 
     /// <summary>Most recent per-line sync-envelope offset, in samples, relative to where the locked
