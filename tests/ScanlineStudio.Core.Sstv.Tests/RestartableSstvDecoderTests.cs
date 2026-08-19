@@ -194,7 +194,11 @@ public class RestartableSstvDecoderTests
         // RX buffer subsystem Phase 2 -- same reasoning/shape as DemodType/RxBpfPreset's own sibling
         // tests above. Uses Extended (not Off) so the assertion can't pass vacuously against the
         // parameter's own On default.
-        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, rxBufferMode: RxBufferMode.Extended);
+        // `using`: round-8 D2-audit nit fix -- RxBufferMode.Extended constructs a disk-backed
+        // RxDiskLineStagingBuffer; without it, this instance's own scratch files leak past this
+        // test's own end (same fix its sibling Swap_DisposesTheOutgoingInnerDecodersScratchFiles below
+        // already carries).
+        using var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, rxBufferMode: RxBufferMode.Extended);
         Assert.Equal(RxBufferMode.Extended, decoder.InnerRxBufferModeForTests);
 
         for (var i = 0; i < 3; i++)
@@ -204,6 +208,47 @@ public class RestartableSstvDecoderTests
 
         Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
         Assert.Equal(RxBufferMode.Extended, decoder.InnerRxBufferModeForTests);
+    }
+
+    [Fact]
+    public void AfcSyncRestartAutoSyncAutoStopSenseLevel_ConstructorValues_SurviveAPeriodicSwap()
+    {
+        // Round-8 D2-audit finding: CreateInner() forwards afcEnabled/syncRestartEnabled/
+        // autoSyncEnabled/autoStopEnabled/senseLevel like every other constructor-injected toggle
+        // above, but none of the five had an Inner*ForTests accessor -- every existing call site in
+        // this file passes afcEnabled: true as an incidental fixed value, so dropping any one of these
+        // five arguments from CreateInner would leave the whole suite green while silently reverting a
+        // non-default user setting to the C# parameter default on every periodic restart. Same
+        // InnerXForTests pattern as DemodType/RxBpfPreset/RxBufferMode above; all five are exercised
+        // together since they share the same "restart-only, no live read-back" shape. Non-default on
+        // all five so no assertion can pass vacuously against a parameter default (afcEnabled/
+        // syncRestartEnabled/autoSyncEnabled default true, autoStopEnabled defaults false, senseLevel
+        // defaults 1).
+        var decoder = new RestartableSstvDecoder(
+            afcEnabled: false,
+            warningThresholdSamples: 100,
+            criticalThresholdSamples: 1000,
+            syncRestartEnabled: false,
+            autoSyncEnabled: false,
+            autoStopEnabled: true,
+            senseLevel: 3);
+        Assert.False(decoder.InnerAfcEnabledForTests);
+        Assert.False(decoder.InnerSyncRestartEnabledForTests);
+        Assert.False(decoder.InnerAutoSyncEnabledForTests);
+        Assert.True(decoder.InnerAutoStopEnabledForTests);
+        Assert.Equal(3, decoder.InnerSenseLevelForTests);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        Assert.False(decoder.InnerAfcEnabledForTests);
+        Assert.False(decoder.InnerSyncRestartEnabledForTests);
+        Assert.False(decoder.InnerAutoSyncEnabledForTests);
+        Assert.True(decoder.InnerAutoStopEnabledForTests);
+        Assert.Equal(3, decoder.InnerSenseLevelForTests);
     }
 
     [Fact]
