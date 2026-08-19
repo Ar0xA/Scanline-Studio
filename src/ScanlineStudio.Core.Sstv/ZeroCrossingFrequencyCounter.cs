@@ -120,4 +120,10 @@ internal sealed class ZeroCrossingFrequencyCounter
 
         return _outputFilter.Process(_currentFrequencyHz);
     }
+
+    /// <summary>Test-only visibility into the running frequency estimate <see cref="Clear"/> resets
+    /// -- production code has no need to read this back (only <see cref="ProcessSample"/>'s smoothed
+    /// return value is consumed). Round-1 D0-audit finding: lets a test prove <see cref="Clear"/> was
+    /// actually called at a given teardown point, not just that the call compiles.</summary>
+    internal double CurrentFrequencyHzForTests => _currentFrequencyHz;
 }
