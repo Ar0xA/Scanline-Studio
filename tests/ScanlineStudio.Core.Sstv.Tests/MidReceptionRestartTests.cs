@@ -119,6 +119,24 @@ public class MidReceptionRestartTests
         Assert.True(detectedModeCount >= 1, "Never even detected the first transmission -- test setup problem.");
     }
 
+    // D0-audit round-11/12: an end-to-end regression test was attempted here (a station-ID FSK
+    // burst spliced into a locked MartinM1 reception, syncRestartEnabled: false, asserting
+    // StationIdDecoded still fires) to cover round 11's TryNarrowFskScan-hoisting fix. It does not
+    // pass, and -- checked directly -- the SAME construction still fails even with
+    // syncRestartEnabled: true (the pre-round-11 code path, unaffected by that fix): narrow-FSK
+    // never delivers a StationIdDecoded result while genuinely locked mid-reception through
+    // BandpassFilteredSampleAt's `useLocked` (H1) filter selection, in either setting. This means
+    // round 12's specific justification for expecting the test to "just work" (FSK tone frequencies
+    // sit inside the locked filter's nominal passband) was not sufficient in practice -- something
+    // else in the locked-filter path prevents narrow-FSK demodulation from completing, a real,
+    // separate, pre-existing gap this file has apparently never had ANY test coverage for (every
+    // existing StationIdDecoded test is either pre-lock, `StationIdDoesNotAbortScanTests`, or a
+    // post-image FOOTER burst that plays only after EndOfImage has already nulled `_mode` again,
+    // `AnalogFmSstvEncoderStationIdWiringTests` -- neither exercises `_mode is not null` at burst
+    // time). Round 11's own gating fix is independently correct by direct code tracing (confirmed
+    // by two separate audit rounds); this gap is orthogonal to it, not a hole in it. Left
+    // deliberately unfixed and untested here -- diagnosing WHY locked-filter narrow-FSK doesn't
+    // decode is a new, separate investigation, not a one-line follow-up to this fix.
     private static ArrayImageSource CreateGradientTestImage(int width, int height, int offset)
     {
         var pixels = new Rgb24[width * height];
