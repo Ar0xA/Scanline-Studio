@@ -2758,9 +2758,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 // Reentrancy is still respected: ApplySlantTracking()'s own per-sample call stack has
                 // fully unwound by this statement, exactly as it had at the old drain point -- see
                 // _pendingReplayRequested's own doc comment. Cleared-without-replaying when Auto Stop has
-                // just fired (checked below, at :2360 in this same iteration): that block is about to
-                // abandon this image, so redrawing its rows is pointless and PerformReplay would run
-                // against state EndOfImage is about to discard.
+                // just fired (checked further below in this same loop iteration, via
+                // _autoStopTriggered -- D0-audit round-8 correction: dropped a stale in-file line
+                // citation here, same hazard this chunk's own history keeps hitting): that block is
+                // about to abandon this image, so redrawing its rows is pointless and PerformReplay
+                // would run against state EndOfImage is about to discard.
                 //
                 // RX buffer subsystem Phase 8c: the manual "Correct Slant" request is drained HERE, at
                 // the SAME statement position, and BEFORE the automatic _pendingReplayRequested block
@@ -2770,8 +2772,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 // line -- an automatic tracker commit landing on the same line as a manual Correct-Slant
                 // convergence -- and running PerformReplay() twice for one line would sacrifice two rows
                 // and jump the cursor twice instead of once). `!_slantCorrectionsDisabledForRestOfImage`
-                // mirrors the once-per-image latch's own defense-in-depth gate a few lines up (:2392) --
-                // that flag marks a real mid-buffer hole left by DrainPendingSkip's skipped samples, and
+                // mirrors the once-per-image latch's own defense-in-depth gate a few lines up (the
+                // `_replayOnceLatchFired`/`_pendingReplayRequested = true` block earlier in this same
+                // loop iteration -- D0-audit round-8: dropped a stale in-file line citation) -- that
+                // flag marks a real mid-buffer hole left by DrainPendingSkip's skipped samples, and
                 // RequestCorrectSlant is a NEW externally-reachable path into PerformReplay that has no
                 // other structural protection against firing across that hole. Not gated by
                 // SuppressAutomaticReplayForTests -- that flag exists specifically to isolate the
@@ -2787,8 +2791,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
                         // Deliberately NOT setting _anyCorrectionCommittedThisImage here (auditor
                         // code-review finding, Phase 8c: flagged as undocumented, not wrong) -- that
-                        // flag exists solely to arm the once-per-image origin-re-derivation latch a few
-                        // lines up (:2409-2415), whose whole purpose is triggering ONE MORE replay pass
+                        // flag exists solely to arm the once-per-image origin-re-derivation latch
+                        // earlier in this same loop iteration (D0-audit round-8: dropped a stale
+                        // in-file line citation here), whose whole purpose is triggering ONE MORE replay pass
                         // once 16 lines have decoded. This manual commit's own PerformReplay() call
                         // immediately above already re-derived the origin at the corrected rate -- arming
                         // the latch here would only cost a second, unnecessary sacrificed row later in
@@ -2798,8 +2803,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
                 // Functional-audit fix (D3+D8+D9 coupled round 1): was missing
                 // `!_slantCorrectionsDisabledForRestOfImage`, unlike its two sibling entry points
-                // above (the once-per-image latch at :2450 and the manual Correct-Slant drain at
-                // :2510) -- both of which gate on it for the identical reason: ApplySyncCorrection
+                // above (the once-per-image latch, and the manual Correct-Slant drain immediately
+                // above this comment -- D0-audit round-8: dropped 2 stale in-file line citations
+                // here) -- both of which gate on it for the identical reason: ApplySyncCorrection
                 // leaves a mid-buffer HOLE in RxLineStagingBuffer (DrainPendingSkip's own skipped
                 // samples advance _consumedSamples/_rxBufferAnchorSample without ever being staged),
                 // and PerformReplay must never run across that hole. The old inline comment argued
@@ -6050,9 +6056,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // corrupted `origin` (_slantIdealSamplesSoFarInLine, right below) or mutates _pixels (the
         // redraw loop further down) -- this is the last point before either happens. `origin` itself
         // may have been computed from zeroed data in this scenario; harmless, since it's discarded
-        // unused below. Unlike checkpoint 1, the AutoSync/SlantTracker/_slantLine* resets above
-        // (:5296-5316) have ALREADY run by the time this checkpoint can fire -- deliberately not
-        // rolled back (see checkpoint 1's own "accepted note" on this trade-off in the plan doc);
+        // unused below. Unlike checkpoint 1, the AutoSync/SlantTracker/_slantLine* resets earlier in
+        // this method (D0-audit round-8: dropped a stale in-file line citation here) have ALREADY
+        // run by the time this checkpoint can fire -- deliberately not rolled back (see checkpoint
+        // 1's own "accepted note" on this trade-off in the plan doc);
         // don't read checkpoint 1's "exactly as if this replay request had never fired" as applying
         // to a bail that happens here instead.
         if (stagingBuffer.HasWriteFailed)
@@ -6576,6 +6583,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         }
 
         _effectiveSamplesPerLine = candidateLineWidthSamples;
+
+        // D0-audit round-8 finding: TryCorrectSlant is the only writer of _effectiveSamplesPerLine
+        // that commits MID-LINE -- the automatic path (ProcessSlantTrackingSample) always commits
+        // exactly at a line boundary and subtracts completedLineSamples immediately after, leaving
+        // _slantIdealSamplesSoFarInLine safely in [0,1) by construction. This manual path instead
+        // relied entirely on PerformReplay() below (a few lines down) to reseed the accumulator
+        // against the new width. If PerformReplay never reaches its own reseed -- reachable via
+        // RxBufferMode.Extended's own HasWriteFailed bail, checked at both of that method's early
+        // returns -- the accumulator keeps holding a value that was valid against the OLD (larger)
+        // width but can exceed the NEW one, violating SlantIdealSamplesSoFarInLineForTests' own
+        // documented invariant and producing one spurious immediate line-boundary in
+        // ProcessSlantTrackingSample. Normalizing here makes correctness independent of whatever the
+        // caller does next, rather than relying entirely on a downstream reseed that can bail out.
+        _slantIdealSamplesSoFarInLine %= _effectiveSamplesPerLine;
 
         // Auditor code-review finding, Phase 8c round 1: without this, _slantTracker's own evolving
         // _currentSampleRate/_nominalSamplesPerLine stay at their pre-manual values, so the NEXT
