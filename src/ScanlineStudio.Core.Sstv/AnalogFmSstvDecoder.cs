@@ -861,12 +861,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _pllDemodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz);
         _zeroCrossingDemodulator = new ZeroCrossingFrequencyCounter(sampleRate);
         _afcZeroCrossingCounter = new ZeroCrossingFrequencyCounter(sampleRate);
-        // Round-2 auditor finding: pass the `syncRestartEnabled` CTOR PARAMETER directly here, not the
-        // `_syncRestartEnabled` FIELD assigned two lines above -- today the field happens to already be
-        // set first, but that's incidental to field-declaration order, not a guarantee; a future
-        // reorder would silently default the field to `false` with no compiler error and no test
-        // catching it unless a test specifically pins fcl with sync-restart on.
         _rxBpfPreset = rxBpfPreset;
+        // Round-2 auditor finding (D0-audit round-7: moved to sit directly above the call it
+        // actually describes, previously misplaced one statement early): pass the
+        // `syncRestartEnabled` CTOR PARAMETER directly here, not the `_syncRestartEnabled` FIELD
+        // assigned a few lines above -- today the field happens to already be set first, but that's
+        // incidental to field-declaration order, not a guarantee; a future reorder would silently
+        // default the field to `false` with no compiler error and no test catching it unless a test
+        // specifically pins fcl with sync-restart on.
         _searchBandpassFilter = rxBpfPreset == RxBpfPreset.Off
             ? null
             : new SearchBandpassFilter(sampleRate, rxBpfPreset, syncRestartEnabled);
@@ -6154,10 +6156,29 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
         _idealLineStartSample = _consumedSamples + jumpSamples;
         _consumedSamples = (int)Math.Round(_idealLineStartSample);
-        // DrainPendingSkip's own established precedent: never let ApplySlantTracking's normal per-sample
-        // catch-up loop re-walk the skipped span (it would feed those raw samples through the LIVE,
-        // non-suppressed path a second time, reopening exactly the kind of double-count this port's
-        // other cursor-jump call sites already guard against).
+        // Prevents ApplySlantTracking's normal per-sample catch-up loop from re-walking the jumped
+        // span and double-counting it into _slantIdealSamplesSoFarInLine -- that part of this
+        // assignment's original rationale is correct.
+        //
+        // D0-audit round-7 correction: the comment here previously claimed skipping this assignment
+        // would feed the jumped raw samples through the live path "a second time" -- false, and the
+        // opposite of what actually happens. Unlike DrainPendingSkip's own cursor jump (which feeds
+        // every skipped sample through _syncEnvelopeDetector for history continuity before advancing
+        // past it, see that method's own doc comment), THIS jump feeds the span
+        // [pre-jump _consumedSamples, pre-jump _consumedSamples + jumpSamples) to
+        // _syncEnvelopeDetector ZERO times: the replay walk above only re-draws already-STAGED
+        // content (bounded by resumeDest, which sits at or past the staged extent), and this
+        // assignment is what prevents ApplySlantTracking from ever walking that span the "first"
+        // time either. The detector therefore resumes with a discontinuous input -- a real,
+        // unstated port-internal divergence (legacy has no cursor-jump equivalent to compare
+        // against). Bounded and not fixed: the transient is ~3-10ms (this file's own cited
+        // resonator settling constant, see AverageFrequencyInWindow's doc comment) and lands on at
+        // most one post-replay line's own sync measurement; TryAutoSync's own small-step gate on
+        // consecutive observations structurally filters a lone settling-transient outlier, and no
+        // concrete failure could be constructed. A real fix would need DrainPendingSkip's own
+        // incremental/deferred shape (this jump can exceed TotalSamplesReceived in one step, unlike
+        // a bounded inline feed loop), which is a real architectural addition, not a one-liner --
+        // left as a documented, accepted divergence rather than built out speculatively.
         _slantProcessedUpTo = _consumedSamples;
         // Round-4 code-review self-caught bug (found via the two-pass test's own diagnostic output, not
         // by auditor review -- verified by tracing a real gap2=-10 failure back to its cause): `origin`/
