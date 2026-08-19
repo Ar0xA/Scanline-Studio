@@ -2391,13 +2391,34 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 watermark = Math.Min(watermark, _slantProcessedUpTo);
             }
 
-            watermark = Math.Min(watermark, _visLockProcessedUpTo);
+            // D0-audit round-11 fix: only included while _syncRestartEnabled, unlike
+            // _narrowFskProcessedUpTo below. TryVisLockStateMachine (this cursor's only advancer) is
+            // still correctly gated behind _syncRestartEnabled at its own caller -- mid-reception
+            // VIS-lock re-scanning is exactly what disabling Lock/Restart is meant to suppress, unlike
+            // narrow FSK's own unconditional scan (see that caller's own doc comment). So with
+            // Lock/Restart disabled, this cursor is frozen at whatever value it held when this
+            // transmission locked, for the transmission's WHOLE duration -- same "frozen, not stalled"
+            // shape as _syncBypassProcessedUpTo above, just for a user-toggleable reason instead of an
+            // always-true one. Including it unconditionally (as this used to) pinned the trim watermark
+            // for an entire locked image's duration whenever the user disables Lock/Restart -- the same
+            // unbounded-retention failure class the AVT fix above already closed, here gated by a
+            // runtime setting instead of the mode. Safe to exclude when frozen: both EndOfImage
+            // (:3061-ish, its own resumeFrom) and Commit (:3984-ish, its own Math.Max) always
+            // re-anchor this cursor forward past _bufferBase at the next transmission boundary, so
+            // excluding it here can never let trimming pass a value this cursor will actually need to
+            // read again.
+            if (_syncRestartEnabled)
+            {
+                watermark = Math.Min(watermark, _visLockProcessedUpTo);
+            }
 
-            // S8 fix: included here too, unlike _syncBypassProcessedUpTo above -- _narrowFskProcessedUpTo
-            // is NOT frozen while locked (TryVisLockStateMachine, this branch's own mid-reception
-            // caller, calls TryNarrowFskScan every time it runs, once per decoded line -- see that
-            // method's own doc comment), so it keeps advancing here the same way _visLockProcessedUpTo
-            // does, not the way the frozen _syncBypassProcessedUpTo does.
+            // S8 fix: included here unconditionally, unlike _visLockProcessedUpTo just above --
+            // _narrowFskProcessedUpTo is NOT frozen while locked regardless of _syncRestartEnabled
+            // (D0-audit round-11 fix: TryNarrowFskScan is now called every decoded line via its own
+            // hoisted, unconditional caller -- see that call site's own doc comment), so it keeps
+            // advancing here the same way _visLockProcessedUpTo does when Lock/Restart is enabled, not
+            // the way the frozen _syncBypassProcessedUpTo (or now-conditionally-frozen
+            // _visLockProcessedUpTo) does.
             watermark = Math.Min(watermark, _narrowFskProcessedUpTo);
 
             watermark = Math.Min(watermark, _levelAgcProcessedUpTo);
@@ -2891,16 +2912,32 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 // just keep decoding every available sample as if it were more lines of the *first*
                 // transmission -- it has no notion of "this content doesn't actually belong to this
                 // image" -- and would never return control to notice the second transmission's real
-                // header at all. Only VisLockStateMachine runs here, not the fixed-window path (which
-                // assumes _consumedSamples is a header start, not mid-image) or TrySyncIntervalDetectionStep
-                // (m_sint2 is hard-gated behind !m_Sync at every call site in legacy -- case 0's shared
-                // guard, sstv.cpp:1899, and its own case-1 guard, sstv.cpp:1953; m_sint3's calls at
-                // sstv.cpp:1927-1937 sit inside the same case-0 :1899 guard -- they must not run while
-                // locked; round-2-review fix, an earlier version of this citation pointed at m_sint1's
-                // own gates, sstv.cpp:1949/1959, by mistake). Bounded to
-                // _consumedSamples (the current decode position), NOT the whole buffer -- see
-                // TryVisLockStateMachine's own doc comment for the bulk-vs-streaming bug this bound fixes.
-                if (_syncRestartEnabled && TryVisLockStateMachine(_consumedSamples))
+                // header at all. VisLockStateMachine runs here (gated by _syncRestartEnabled, as
+                // described above), not the fixed-window path (which assumes _consumedSamples is a
+                // header start, not mid-image) or TrySyncIntervalDetectionStep (m_sint2 is hard-gated
+                // behind !m_Sync at every call site in legacy -- case 0's shared guard, sstv.cpp:1899,
+                // and its own case-1 guard, sstv.cpp:1953; m_sint3's calls at sstv.cpp:1927-1937 sit
+                // inside the same case-0 :1899 guard -- they must not run while locked; round-2-review
+                // fix, an earlier version of this citation pointed at m_sint1's own gates,
+                // sstv.cpp:1949/1959, by mistake). Bounded to _consumedSamples (the current decode
+                // position), NOT the whole buffer -- see TryVisLockStateMachine's own doc comment for
+                // the bulk-vs-streaming bug this bound fixes.
+                //
+                // D0-audit round-11 fix: TryNarrowFskScan is hoisted OUT of the _syncRestartEnabled
+                // gate below -- narrow FSK has no legacy equivalent of the sstv.cpp:1889 gate this
+                // port's _syncRestartEnabled models (see TryNarrowFskScan's own doc comment: its real
+                // legacy call, DecodeFSK at sstv.cpp:1858, runs unconditionally, 31 lines ABOVE that
+                // gate). The old code called TryNarrowFskScan only indirectly, as TryVisLockStateMachine's
+                // own first step, so gating the WHOLE TryVisLockStateMachine call here starved narrow
+                // FSK of the sample stream -- and its StationIdDecoded delivery -- for an entire locked
+                // image whenever the user disables Lock/Restart. TryNarrowFskScan's own commit is still
+                // correctly suppressed while locked with Restart disabled (see that method's own inner
+                // gate, at its `Commit(mode, anchor)` call) -- sstv.cpp:2592 is where legacy actually
+                // applies `m_SyncRestart`, to the commit only, not to DecodeFSK's own per-sample scan.
+                // TryVisLockStateMachine still calls TryNarrowFskScan internally too (unchanged) -- when
+                // _syncRestartEnabled is true, that internal call is a harmless no-op here, since the
+                // hoisted call already advanced _narrowFskProcessedUpTo to this same bound.
+                if (TryNarrowFskScan(_consumedSamples) || (_syncRestartEnabled && TryVisLockStateMachine(_consumedSamples)))
                 {
                     restarted = true;
                     // The abandoned (local `mode`, captured at the top of this outer-loop iteration),
@@ -3299,8 +3336,26 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // No manual _narrowFskProcessedUpTo++ here, matching every other detector's identical
             // note in this file: Commit() itself fast-forwards this cursor (see its own body) via
             // Math.Max, so incrementing afterward would desync it by exactly one sample.
-            Commit(mode, anchor);
-            return true;
+            //
+            // D0-audit round-11 fix: legacy's own real commit gate, `(m_SyncRestart || !m_Sync) &&
+            // m_NextMode && (m_SyncMode >= 0)` (sstv.cpp:2592), applies ONLY to this commit, not to
+            // DecodeFSK's own per-sample scan/decode above (which legacy runs unconditionally,
+            // sstv.cpp:1858 -- see this method's own doc comment). `_syncRestartEnabled` stands in for
+            // `m_SyncRestart`; `_mode is null` stands in for `!m_Sync` (this method has no direct
+            // m_Sync-equivalent read of its own -- `_mode` already tracks the same "locked" state).
+            // While locked with Lock/Restart disabled, a narrow match still gets scanned (keeps
+            // _narrowFskDecoder's own internal state moving, still delivers StationIdDecoded above)
+            // but must NOT abort/restart the in-progress image -- this call's own caller-side gate
+            // used to be the only enforcement of that, one level up (see TryVisLockStateMachine's own
+            // caller, in TryProcessBuffer), which over-suppressed the whole scan instead of just the
+            // commit.
+            if (_syncRestartEnabled || _mode is null)
+            {
+                Commit(mode, anchor);
+                return true;
+            }
+
+            continue;
         }
 
         return false;
@@ -3629,10 +3684,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // this method -- Commit() only fast-forwards _visLockProcessedUpTo (via Math.Max) when some
     // OTHER path (the fixed-window header paths) committed a match, and never touches
     // _syncBypassProcessedUpTo at all. But this method is only ever entered when _mode is null, and
-    // the only place that becomes true again once a transmission has started is EndOfImage, which
-    // always resets both cursors to the same resumeFrom -- so they are always equal on entry here,
-    // confirmed by checking every _mode assignment in this file, even though nothing enforces that
-    // generally.
+    // the two cursors are always equal at that point -- confirmed by checking every _mode
+    // assignment in this file, even though nothing enforces that generally. D0-audit round-11
+    // correction: an earlier version of this comment claimed EndOfImage is the ONLY place `_mode is
+    // null` becomes true again once a transmission has started -- false, AbandonInProgressImage
+    // also nulls it directly, standalone, from the S7 mid-reception AVT hand-off inside
+    // TryVisLockStateMachine (see that call site's own doc comment), WITHOUT re-syncing these two
+    // cursors (a deliberately accepted extra-retention tradeoff, documented at that same call
+    // site). That window doesn't threaten this method's own invariant, though: TryDecodeHeader's
+    // own `_avtTrainingPending` short-circuit (see that method's own doc comment) routes every call
+    // straight into TryResolveAvtTraining instead of this method for as long as the cursors could be
+    // out of sync from that path -- this method is simply never entered during that window, by a
+    // different mechanism than EndOfImage's own direct resync.
     private bool TryInterleavedHeaderScan()
     {
         // Round-1-review fix: this was a Debug.Assert, which .github/workflows/ci.yml's own
