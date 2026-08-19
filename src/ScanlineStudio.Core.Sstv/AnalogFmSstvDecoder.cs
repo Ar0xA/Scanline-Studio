@@ -1310,7 +1310,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private bool _subscriberFailureDeferralActive;
     private ExceptionDispatchInfo? _deferredSubscriberFailure;
 
-    /// <summary>See <see cref="ISstvDecoder.ResetAgc"/>.</summary>
+    /// <summary>See <see cref="ISstvDecoder.ResetAgc"/> for the full concurrency contract (D0-audit
+    /// round-6 finding: this is the one public mutator on this class that writes DSP state directly
+    /// and synchronously instead of through a deferred flag <see cref="PushSamples"/> consumes --
+    /// contrast <see cref="RequestReSync"/>/<see cref="RequestCorrectSlant"/>/<see cref="ForceMode"/>
+    /// immediately below). Callers must not call this while a concurrent <see cref="PushSamples"/>
+    /// call could be reading/writing the same <see cref="LevelAgc"/> instance.</summary>
     public void ResetAgc() => _levelAgc.Init();
 
     /// <summary>See <see cref="ISstvDecoder.RequestReSync"/>. A single volatile write, safe from any
@@ -1977,11 +1982,23 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // silencing them, and EndOfImage's own reset block already re-clears all five of these fields
         // before the decoder's next pre-lock epoch) -- added for legacy fidelity and so a future
         // pre-lock-adjacent change can't silently observe stale state from before this force-mode call.
+        // Round-6 D0-audit correction: round 1's own fix stopped short -- it reset the three
+        // trackers' internal sample counters WITHOUT the paired origin/cursor fields
+        // (_syncBypassOriginSample/_syncBypassProcessedUpTo) EndOfImage's own matching reset block
+        // always resets alongside them (see that method's own reset list). CommitSyncBypassMatch
+        // computes its line-start anchor as `_syncBypassOriginSample + (peak - midpoint)`, so
+        // resetting the tracker's counter without re-anchoring the origin at the SAME instant leaves
+        // a worse-formed pairing than before the reset, not a cleaner one -- the opposite of this
+        // block's own stated intent. Still inert today for the identical reachability reason (Commit()
+        // on the next line makes _mode non-null immediately), but now genuinely matches EndOfImage's
+        // pairing instead of only half of it.
         _syncBypass1Tracker.Reset();
         _syncBypass1PrimaryHeld = false;
         _syncBypassTracker.Reset();
         _syncBypassNarrowTracker.Reset();
         _syncBypassNarrowPhaseActive = false;
+        _syncBypassProcessedUpTo = TotalSamplesReceived;
+        _syncBypassOriginSample = TotalSamplesReceived;
 
         // Anchor at TotalSamplesReceived, NOT _consumedSamples -- pre-lock, _consumedSamples is a
         // frozen header-search start that TrimBuffers stops protecting once _fixedWindowExhausted is
