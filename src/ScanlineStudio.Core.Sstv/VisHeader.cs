@@ -109,8 +109,11 @@ internal static class VisHeader
     /// formula (see that method's doc comment) — the 300ms leader itself (functional-audit fix, D6
     /// round 3: previously omitted here despite headerStart marking where the leader begins, matching
     /// this file's own NarrowHeaderTotalDurationMs -- an earlier version of this constant silently
-    /// under-covered by exactly that amount) + guard-tone hold + mode-2's own timeout window,
-    /// start-bit training pulse, 24 data bits, plus the same <see cref="RetryMarginMs"/> every other
+    /// under-covered by exactly that amount) + the guard tone's own TX duration (round-9 correction:
+    /// previously mislabeled "guard-tone hold" here -- <c>NarrowFskHeaderDecoder</c>'s own ~50ms
+    /// debounce hold is a different, smaller quantity than this 100ms TX-duration term) + mode-2's own
+    /// timeout window, start-bit training pulse, 24 data bits, plus the same
+    /// <see cref="RetryMarginMs"/> every other
     /// local scan in this file budgets. <c>TryDecodeNarrowModeHeader</c> now reads this constant
     /// directly (functional-audit fix, D6 round 4) rather than hand-transcribing the same arithmetic
     /// a second time, so this and <see cref="MaxSearchCeilingMs"/> can never silently desync again --
