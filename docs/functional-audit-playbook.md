@@ -1741,7 +1741,7 @@ amplification of round 12's own fix, not a flaw in it. Secondary, smaller-window
 but not required: `StartPlaybackAsync`'s own await has the same class of unbounded wait on the
 `ct == None` Tune path; deliberately deferred (see below).
 
-**Chunk 3a round 13 fix applied** (2026-08-21). New `private static readonly TimeSpan
+**Chunk 3a round 13 fix applied** (2026-08-21, commit `1eef3d3`). New `private static readonly TimeSpan
 PlaybackStallTimeout = TimeSpan.FromSeconds(5);` constant plus a `_playbackStallTimeout` instance
 field (threaded through both constructors; the internal test constructor gained a
 `playbackStallTimeoutForTests` parameter, matching the existing budget-injection pattern for
