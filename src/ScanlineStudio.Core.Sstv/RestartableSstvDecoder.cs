@@ -749,7 +749,21 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// <see cref="AnalogFmSstvDecoder"/>. Several terms are mutually exclusive and paired-row modes
     /// are deliberately over-counted; the purpose is a durable upper-bound proof against the
     /// one-hour reserve, not a tight runtime estimate. Absolute-index additions bounded directly by
-    /// already-received data (for example <c>_syncBypassProcessedUpTo + 1</c>) add no forward term.</summary>
+    /// already-received data (for example <c>_syncBypassProcessedUpTo + 1</c>) add no forward term.
+    ///
+    /// Batch 2 chunk 2c round-1 finding: every term here is scaled by
+    /// <see cref="SstvSampleRate.MaximumAutoSlantRate"/> -- the AUTOMATIC Auto-Slant clamp
+    /// (`SlantTracker.ClampAndNormalizeAutoSlantRate`'s own `*1100/1060` ceiling). The MANUAL
+    /// Correct Slant path (<see cref="AnalogFmSstvDecoder.IsManualSlantProjectionSafe"/>) has no
+    /// such clamp by design (see that method's own doc comment) and is guarded independently
+    /// (`projectedSamples &lt; int.MaxValue - consumed`), NOT by this reserve. At most supported
+    /// rates the real headroom above <see cref="RestartThresholds.CriticalThresholdSamples"/> is
+    /// tens of times this reserve, so a manual projection eating into it is not reachable in
+    /// practice -- but at the top of the supported rate range <c>critical == maximumSafeSampleIndex</c>
+    /// exactly (this reserve IS the entire remaining headroom), so a sufficiently pathological
+    /// manual regression result immediately before a 13h-mark push could in principle leave less
+    /// margin than this function's own callers assume. A future change to either guard's clamp
+    /// should re-check this assumption, not just re-run the existing per-rate tests.</summary>
     internal static long ComputeMaximumComposedProjectionSamples(int sampleRate)
     {
         if (!SstvSampleRate.IsSupported(sampleRate))
