@@ -1206,7 +1206,7 @@ sensitive, with an explicit honest note: none of the tests in this file can dete
 FENCES themselves (only the recheck logic they protect); fence correctness rests on the source-level
 Dekker argument, not the suite. All previously-open nits re-confirmed accurate and still nits.
 
-**Chunk 3a round 5 fix applied** (2026-08-20, commit `<pending>`). New `private int _pttKeyEpoch;`
+**Chunk 3a round 5 fix applied** (2026-08-20, commit `cbeff77`). New `private int _pttKeyEpoch;`
 field, incremented via `Interlocked.Increment` immediately after every successful
 `SetPttAsync(true)` (both in `PlayWithPttAsync` and `SetPttLockAsync`). `UnkeyForCleanupAsync`
 snapshots the epoch (`Volatile.Read`) BEFORE its own un-key attempt, and on success only performs
