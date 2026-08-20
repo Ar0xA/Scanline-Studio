@@ -526,7 +526,7 @@ public sealed partial class MiniAudioEngine : IAudioEngine
             // value (see MiniAudioCaptureSession's own constructor doc comment -- drainThreadPriority
             // reaches that constructor with no upstream range validation, e.g. a hand-edited
             // settings file with an out-of-range enum value).
-            Log.CaptureOpenFailed(_logger, device.Id, sampleRate, ex);
+            Log.CaptureSettingsInvalid(_logger, device.Id, sampleRate, ex);
             throw new AudioDeviceUnavailableException($"Invalid capture settings for device '{device.Id}': {ex.Message}", ex);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or DllNotFoundException or EntryPointNotFoundException)
@@ -849,6 +849,14 @@ public sealed partial class MiniAudioEngine : IAudioEngine
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to open capture device '{DeviceId}' at {SampleRate}Hz")]
         public static partial void CaptureOpenFailed(ILogger logger, string deviceId, int sampleRate, Exception ex);
+
+        // Round-4 re-audit nit fix: distinct from CaptureOpenFailed above -- that message says
+        // "Failed to open capture device", which is exactly what the ArgumentOutOfRangeException
+        // catch's own thrown-exception message was corrected to NOT say (the device is fine, a
+        // settings value isn't). Sharing CaptureOpenFailed for both would leave the log line
+        // contradicting the exception message a reader sees moments later.
+        [LoggerMessage(Level = LogLevel.Error, Message = "Invalid capture settings for device '{DeviceId}' at {SampleRate}Hz")]
+        public static partial void CaptureSettingsInvalid(ILogger logger, string deviceId, int sampleRate, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Capture opened: device='{DeviceId}' @ {SampleRate}Hz")]
         public static partial void CaptureOpened(ILogger logger, string deviceId, int sampleRate);
