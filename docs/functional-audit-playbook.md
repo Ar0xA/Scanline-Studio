@@ -501,7 +501,9 @@ round was dispatched after round 8's fix landed. This is a deliberate, explicitl
 to the playbook's own 2-consecutive-clean-round closing rule, not an oversight -- if this file
 cluster is revisited later, start a fresh re-audit rather than assuming the formal gate was met.
 
-**Status**: **Batch 2 IN PROGRESS**, chunk 2a (`RxLineStagingBuffer.cs` + `RxDiskLineStagingBuffer.cs`,
+**Status**: **Batch 2 IN PROGRESS** -- chunk 2a CLOSED (2026-08-20, 3 rounds), chunk 2b
+(`ReplayOriginCalculator.cs` + `SlantTracker.cs`) not yet started, chunk 2c
+(`RestartableSstvDecoder.cs`) not yet started. Chunk 2a (`RxLineStagingBuffer.cs` + `RxDiskLineStagingBuffer.cs`,
 reviewed together per the playbook's own "one shared interface" note), round 1 fixed
 (2026-08-20). Round 1 found 1 real blocker plus several risks, all against
 `yoniq-old/YONIQ-main/sstv.cpp:1615-1644`, `Main.cpp:4956-5013`/`:5234-5270`/`:5415-5423`/
@@ -553,3 +555,38 @@ burn the whole `DrainTimeout` and falsely latch `HasWriteFailed`); no negative-a
 `LineCount` with 0 samples in both implementations (no legacy analogue, unreachable from Phase 5's
 capture hook). All 7 of round 1's queued risks/nits re-confirmed still present, unchanged. Zero
 blockers. Round 3 needed for the 2nd required clean round before this chunk can close.
+
+**Round 3 -- chunk 2a's 2nd clean round. Chunk 2a CLOSED** (2026-08-20). Independently re-derived
+rounds 1-2's whole legacy basis again from scratch (not from their summaries): re-confirmed
+`m_WD`'s single assignment site (`sstv.cpp:594`) and `m_wStgLine`'s monotonic-or-reset write set,
+and additionally traced every RX-path `SetMode` call site (`sstv.cpp:1902`/`:1917`/`:1940`/`:1758`/
+`:2148`) to confirm each is followed by `Start()` (directly or, for `:2148`'s deferred case, on the
+very next demod sample) -- closing the one gap round 2's own check left open. Fresh full 8-item
+sweep of all 3 production files found 2 new nits, both unreachable from any live call site:
+`HasHeadroomForSamples`'s `Count + additionalSamples` addition itself could overflow-wrap to a
+false "true" for a very large argument (distinct from round 1's already-queued `_count`-overflow
+item); the disk implementation's in-flight capacity pre-check is one line more conservative than
+the channel bound (verified correct, not a bug). Independently re-bounded round 2's semaphore-
+permit nit and found it overstated: the drain loop is counter-authoritative
+(`Interlocked.Read(ref _flushed)`, re-checked after every `Wait`), so stale permits can never cause
+a false drain success, and the real cost is a sub-millisecond fast-path spin, not the full 5s
+`DrainTimeout` round 2 estimated -- downgraded from risk to accepted-non-issue. **Fixed** the 2
+recommended-safe items: `IRxLineStagingBuffer.cs`'s `HasHeadroomForSamples` doc now states the
+latch explicitly (was the one place round 1's doc update didn't reach); `RxLineStagingBuffer.
+HasHeadroomForSamples` rewritten overflow-safe (`additionalSamples >= 0 && CapacitySamples - Count
+> additionalSamples`, no addition, so no wrap) -- closes both round 2's negative-argument nit and
+this round's new overflow nit in one provably-equivalent-on-every-reachable-input change. Left
+queued, explicitly NOT fixed (auditor's own judgment call, endorsed): the semaphore-permit
+non-issue (comment-only, not worth touching a concurrency path for a sub-ms spin); the
+zero-length-line nit (unreachable, and any early-return would be invention -- legacy's `m_WD` is
+never 0, so there's no port target). All 7 of round 1's queued risks/nits re-confirmed present,
+still not fixed, still not newly urgent -- carried forward as accepted risk for chunk 2a's closure
+(post-`Dispose` asymmetry between implementations, permanent `HasWriteFailed` latch on disk with no
+diagnostic, `ConsumeAsync`'s finally-drain not bumping flush counters, `Clear()` partial-failure
+desync, `InvalidateSnapshot` bypassing the `_returnSnapshot` test seam, `DrainToCurrentPoint`
+ignoring the test-shortened dispose timeout, `int` sample-count overflow past ~268M samples).
+Scoped filter (`RxLineStagingBufferTests`/`CorrectSlantTests`/`ReplayEngineTests`) 51/51 passing
+after the round-3 fixes, full `ScanlineStudio.Core.Sstv` build clean. **Chunk 2a: 3 rounds, 1 real
+blocker fixed (round 1) + 2 small round-3 hardening fixes, CLOSED under the formal
+2-consecutive-clean-round gate** (rounds 2 and 3 both zero-blocker). Next: chunk 2b
+(`ReplayOriginCalculator.cs` + `SlantTracker.cs`), not yet started.
