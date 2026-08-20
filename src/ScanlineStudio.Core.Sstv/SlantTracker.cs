@@ -48,7 +48,16 @@ internal sealed class SlantTracker
     private readonly int[] _thresholdLinePositions;
     private readonly double _lineDurationMs;
     private readonly double _sampleRate;
-    private readonly int _mult;
+    // Legacy's m_Mult (Main.cpp:3860) is NOT fixed -- InitAutoStop re-derives it from the CURRENT
+    // (possibly just-corrected) line width every time it runs, which happens after every
+    // staging-buffer-gated commit (Main.cpp:5596's SetSampFreq() runs before :5600's InitAutoStop).
+    // Batch 2 chunk 2b round-3 fix: was `readonly`, frozen at construction forever -- the jitter
+    // gate (8*_mult) then silently disagreed with legacy by up to 8 samples after any commit that
+    // crossed a 320-sample line-width boundary, and disagreed with this port's OWN Auto Sync half
+    // (AnalogFmSstvDecoder.cs's own re-derived copy of the same legacy variable), which already
+    // recomputes from the corrected width. Re-derived in Reset() below, the exact place legacy
+    // re-derives it (only reached when hasStagingBuffer, matching InitAutoStop's own reachability).
+    private int _mult;
     private readonly MovingAverage _correctionAverage = new(HistorySize);
 
     // Main.cpp:3994's `SSTVSET.m_SampFreq`/`SSTVSET.m_TW` are BOTH the evolving, already-corrected
@@ -366,7 +375,11 @@ internal sealed class SlantTracker
     /// (`Main.cpp:3801-3810`), called immediately after every correction commits (see
     /// <see cref="TryComputeCorrection"/>) -- ultracode audit finding #9. Deliberately does NOT
     /// touch <see cref="_currentSampleRate"/>/<see cref="_nominalSamplesPerLine"/>: those are the
-    /// evolving corrected rate itself, not per-baseline bookkeeping.</summary>
+    /// evolving corrected rate itself, not per-baseline bookkeeping. DOES re-derive
+    /// <see cref="_mult"/> (`Main.cpp:3860`, batch 2 chunk 2b round-3 fix) -- unlike the rate pair,
+    /// legacy's own `m_Mult` genuinely IS per-baseline bookkeeping, recomputed fresh from the
+    /// CURRENT line width every time `InitAutoStop` runs, which by construction is always after
+    /// this method's caller has already applied whatever correction it's re-baselining for.</summary>
     private void Reset()
     {
         Array.Clear(_history);
@@ -376,6 +389,7 @@ internal sealed class SlantTracker
         _baselinePosition = int.MaxValue;
         _bitMask = 0;
         _correctionAverage.Clear();
+        _mult = Math.Max(1, (int)(_nominalSamplesPerLine / 320.0));
     }
 
     /// <summary><c>NormalSampFreq</c> (`ComLib.cpp:203-207`) -- rounds to the nearest 1/m fraction.</summary>
@@ -426,4 +440,16 @@ internal sealed class SlantTracker
     /// can observe that fit's TRUNCATION rule (toward zero, per legacy's `int GetSqerrPos`) without
     /// it being laundered through the moving average and the NormalSampFreq quantizer.</summary>
     internal int BaselinePositionForTests => _baselinePosition;
+
+    /// <summary>Test-only visibility into <c>m_Mult</c> (`Main.cpp:3860`) -- batch 2 chunk 2b round-3
+    /// fix. Lets a test confirm the jitter-gate multiplier is re-derived from the CURRENT (possibly
+    /// just-corrected) line width on every staging-buffer-gated <see cref="Reset"/>, not frozen at
+    /// its construction-time value.</summary>
+    internal int MultForTests => _mult;
+
+    /// <summary>Test-only visibility into the evolving, corrected samples-per-line
+    /// (legacy's `SSTVSET.m_TW`) -- lets a test compute the expected post-commit
+    /// <see cref="MultForTests"/> value independently rather than hand-deriving the exact corrected
+    /// rate a drift simulation converges to.</summary>
+    internal double NominalSamplesPerLineForTests => _nominalSamplesPerLine;
 }
