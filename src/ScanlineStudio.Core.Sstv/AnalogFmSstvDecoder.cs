@@ -5816,7 +5816,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             }
             else
             {
-                var correctedSampleRate = _slantTracker!.ProcessLine(relative);
+                // Batch 2 chunk 2b round-2 fix: ONE local for legacy's ONE guard. Main.cpp:5597's
+                // `if( (dp->m_StgBuf != NULL) || WaveStg.IsOpen() )` gates BOTH the post-commit
+                // InitAutoStop (:5600, now SlantTracker's `hasStagingBuffer` parameter) AND the
+                // retroactive replay loop (:5603-5612, this port's _pendingReplayRequested below) --
+                // one shared local so the two uses can never disagree.
+                var hasStagingBuffer = _rxLineStagingBuffer is not null;
+
+                var correctedSampleRate = _slantTracker!.ProcessLine(relative, hasStagingBuffer);
                 if (correctedSampleRate is not null)
                 {
                     _effectiveSamplesPerLine = _mode!.LineDurationMs / 1000.0 * correctedSampleRate.Value;
@@ -5834,7 +5841,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                     // enclosing if/else routes isReplay:true to ProcessLineSuppressed instead, a few
                     // lines up) -- so a replay pass's own suppressed re-feed can never reach this line
                     // and request another replay of itself.
-                    if (_rxLineStagingBuffer is not null)
+                    if (hasStagingBuffer)
                     {
                         _pendingReplayRequested = true;
                         // RX buffer subsystem Phase 6d round-2: explicit user decision (2026-08-13) to

@@ -44,7 +44,7 @@ public class SlantTests
         double? lastResult = null;
         for (var line = 0; line < 200; line++)
         {
-            lastResult = tracker.ProcessLine(0) ?? lastResult;
+            lastResult = tracker.ProcessLine(0, hasStagingBuffer: true) ?? lastResult;
         }
 
         Assert.Null(lastResult);
@@ -112,7 +112,7 @@ public class SlantTests
             trueCumulative += trueSamplesPerLine;
             assumedCumulative += assumedSamplesPerLine;
 
-            var result = tracker.ProcessLine((int)(trueCumulative - assumedCumulative));
+            var result = tracker.ProcessLine((int)(trueCumulative - assumedCumulative), hasStagingBuffer: true);
             if (result is not null)
             {
                 lastResult = result;
@@ -152,7 +152,7 @@ public class SlantTests
         var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
 
         const double adoptedRate = SampleRate * 1.02; // a rate the tracker's own convergence never proposed
-        tracker.AdoptCorrectedRate(adoptedRate);
+        tracker.AdoptCorrectedRate(adoptedRate, hasStagingBuffer: true);
 
         var adoptedNominalSamplesPerLine = nominalSamplesPerLine / SampleRate * adoptedRate;
 
@@ -165,7 +165,7 @@ public class SlantTests
         double? firstResult = null;
         for (var line = 1; line <= 8 && firstResult is null; line++)
         {
-            firstResult = tracker.ProcessLine((int)(perLineDrift * line));
+            firstResult = tracker.ProcessLine((int)(perLineDrift * line), hasStagingBuffer: true);
         }
 
         Assert.NotNull(firstResult);
@@ -225,10 +225,10 @@ public class SlantTests
         const int spuriousPosition = 1000; // >> 160
         for (var line = 0; line < 4; line++)
         {
-            tracker.ProcessLine(spuriousPosition);
+            tracker.ProcessLine(spuriousPosition, hasStagingBuffer: true);
         }
 
-        tracker.ProcessLine(spuriousPosition); // 5th line: near-zero delta from the 4th, but a huge one from history[10]'s zero default
+        tracker.ProcessLine(spuriousPosition, hasStagingBuffer: true); // 5th line: near-zero delta from the 4th, but a huge one from history[10]'s zero default
 
         Assert.False(tracker.HasBaselineForTests, "Baseline was set on line 5 -- the jitter gate only checked 4 deltas instead of legacy's 5, missing the spurious jump into history[10]'s zero default.");
     }
@@ -240,14 +240,14 @@ public class SlantTests
         var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
 
         const int spuriousPosition = 1000;
-        tracker.ProcessLine(spuriousPosition); // line 1 -- this is the one reading that must age out
+        tracker.ProcessLine(spuriousPosition, hasStagingBuffer: true); // line 1 -- this is the one reading that must age out
 
         // The 5-delta window (indices 15..10) reaches history[10] via its last delta -- a value fed
         // at line 1 (starting at index 15) shifts one index left per subsequent line, so it only
         // clears index 10 (moves to index 9) once 6 more lines have been fed (lines 2-7, 7 total).
         for (var line = 0; line < 6; line++)
         {
-            tracker.ProcessLine(0); // lines 2-7, all consistent with each other
+            tracker.ProcessLine(0, hasStagingBuffer: true); // lines 2-7, all consistent with each other
         }
 
         Assert.True(tracker.HasBaselineForTests, "Baseline still not set by line 7 -- the spurious line-1 reading should have aged out of the 5-delta window by now.");
@@ -322,7 +322,7 @@ public class SlantTests
 
         for (var line = 0; line < 10; line++)
         {
-            tracker.ProcessLine(0);
+            tracker.ProcessLine(0, hasStagingBuffer: true);
         }
 
         Assert.True(tracker.HasBaselineForTests, "Test setup problem: baseline never established before ResetBaseline was even called.");
@@ -354,7 +354,7 @@ public class SlantTests
 
         foreach (var v in new[] { -10, -8, -6, -4, -1 })
         {
-            tracker.ProcessLine(v); // all deltas (max 10) are well under this tracker's jitter gate (160)
+            tracker.ProcessLine(v, hasStagingBuffer: true); // all deltas (max 10) are well under this tracker's jitter gate (160)
         }
 
         Assert.True(tracker.HasBaselineForTests, "Test setup problem: the jitter gate rejected this sequence, so no baseline was captured.");
@@ -373,7 +373,7 @@ public class SlantTests
 
         foreach (var v in new[] { 0, 1, 2, 3, 7 })
         {
-            tracker.ProcessLine(v);
+            tracker.ProcessLine(v, hasStagingBuffer: true);
         }
 
         Assert.True(tracker.HasBaselineForTests, "Test setup problem: the jitter gate rejected this sequence, so no baseline was captured.");
@@ -399,7 +399,7 @@ public class SlantTests
 
         for (var line = 0; line < 10; line++)
         {
-            tracker.ProcessLine(7);
+            tracker.ProcessLine(7, hasStagingBuffer: true);
         }
 
         Assert.True(tracker.HasBaselineForTests, "Test setup problem: baseline never established before the revert.");
@@ -426,16 +426,69 @@ public class SlantTests
 
         for (var line = 0; line < 10; line++)
         {
-            tracker.ProcessLine(7);
+            tracker.ProcessLine(7, hasStagingBuffer: true);
         }
 
         Assert.True(tracker.HasBaselineForTests, "Test setup problem: baseline never established.");
 
-        tracker.AdoptCorrectedRate(SampleRate * 1.01);
+        tracker.AdoptCorrectedRate(SampleRate * 1.01, hasStagingBuffer: true);
 
         Assert.False(tracker.HasBaselineForTests);
         Assert.Equal(0, tracker.TotalLinesObservedForTests);
         Assert.All(tracker.HistoryForTests, v => Assert.Equal(0, v));
+    }
+
+    [Fact]
+    public void SlantTracker_AutomaticCommit_ResetsBaselineOnlyWhenAStagingBufferExists()
+    {
+        // Batch 2 chunk 2b round-2 fix. Legacy reaches InitAutoStop (Main.cpp:3801-3810 -- the
+        // baseline/history/average/bitmask wipe) after an AUTOMATIC commit only through
+        // UpdateSampFreq's staging-buffer guard: `if( (dp->m_StgBuf != NULL) || WaveStg.IsOpen() )`
+        // (Main.cpp:5597) wraps the InitAutoStop call at :5600, while the commit's own rate write
+        // (Main.cpp:4015-4016) and UpdateSampFreq's bare SetSampFreq() (:5596) both sit OUTSIDE it.
+        // So under RxBufferMode.Off (legacy sys.m_UseRxBuff == 0 -- reachable there too: Main.cpp:11903
+        // only DISABLES the Auto Slant menu item, it never clears KRSA->Checked, and :3968 reads only
+        // Checked) legacy keeps m_ASBgnPos/m_AutoStopAPos/m_AutoStopACnt across every automatic commit.
+        //
+        // Both arms are driven by the IDENTICAL OPEN-LOOP sequence, so the flag is the only variable.
+        // Open-loop for the same reason as
+        // SlantTracker_AdoptCorrectedRate_FirstNaturalCorrectionUsesTheAdoptedBaseline: a closed loop
+        // self-corrects toward the true external drift regardless of internal state and would erase
+        // exactly the difference under test.
+        const double nominalSamplesPerLine = SampleRate * 0.15; // 6615 samples/line at 44100Hz
+        const double perLineDrift = 20.0; // under the jitter gate (8*mult == 160), over _limitsHz[0] (100Hz)
+
+        var withoutBuffer = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+        var withBuffer = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+
+        double? withoutBufferRate = null;
+        double? withBufferRate = null;
+        for (var line = 1; line <= 8; line++)
+        {
+            var position = (int)(perLineDrift * line);
+            withoutBufferRate = withoutBuffer.ProcessLine(position, hasStagingBuffer: false) ?? withoutBufferRate;
+            withBufferRate = withBuffer.ProcessLine(position, hasStagingBuffer: true) ?? withBufferRate;
+        }
+
+        // Positive control: a commit really fired on BOTH arms (otherwise every assertion below is
+        // vacuous), and the RATE half of the commit is NOT gated by the flag -- Main.cpp:4015-4016 is
+        // unconditional, only InitAutoStop is guarded.
+        Assert.NotNull(withoutBufferRate);
+        Assert.Equal(withBufferRate, withoutBufferRate);
+        Assert.Equal(withBuffer.DriftPpm, withoutBuffer.DriftPpm, tolerance: 1e-9);
+        Assert.True(withoutBuffer.DriftPpm > 0.0, "Test setup problem: no correction was adopted, so neither arm discriminates anything.");
+
+        // RxBufferMode.Off: everything InitAutoStop would have wiped survives the commit.
+        Assert.True(withoutBuffer.HasBaselineForTests);
+        Assert.Equal(100, withoutBuffer.BaselinePositionForTests); // GetSqerrPos at the line-5 capture: perLineDrift*5
+        Assert.Equal(8, withoutBuffer.TotalLinesObservedForTests);
+        Assert.Equal(160, withoutBuffer.HistoryForTests[^1]); // perLineDrift*8, the line the commit fired on
+
+        // RxBufferMode.On/Extended: unchanged from before this fix -- InitAutoStop still runs.
+        Assert.False(withBuffer.HasBaselineForTests);
+        Assert.Equal(int.MaxValue, withBuffer.BaselinePositionForTests);
+        Assert.Equal(0, withBuffer.TotalLinesObservedForTests);
+        Assert.All(withBuffer.HistoryForTests, v => Assert.Equal(0, v));
     }
 
     [Fact]
@@ -568,7 +621,7 @@ public class SlantTests
         {
             trueCumulative += trueSamplesPerLine;
             assumedCumulative += assumedSamplesPerLine;
-            lastResult = tracker.ProcessLine((int)(trueCumulative - assumedCumulative));
+            lastResult = tracker.ProcessLine((int)(trueCumulative - assumedCumulative), hasStagingBuffer: true);
         }
 
         Assert.NotNull(lastResult);
@@ -842,7 +895,7 @@ public class SlantTests
         {
             trueCumulative += trueSamplesPerLine;
             assumedCumulative += assumedSamplesPerLine;
-            result = tracker.ProcessLine((int)(trueCumulative - assumedCumulative));
+            result = tracker.ProcessLine((int)(trueCumulative - assumedCumulative), hasStagingBuffer: true);
         }
 
         Assert.NotNull(result); // sanity: a correction actually happened within 300 lines
