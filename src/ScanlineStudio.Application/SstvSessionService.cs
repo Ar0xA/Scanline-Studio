@@ -21,6 +21,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private readonly TimeSpan _cleanupTimeout;
     private readonly TimeSpan _playbackStopWaitBudget;
     private readonly TimeSpan _inFlightKeyedTransmitWait;
+    private readonly TimeSpan _playbackStallTimeout;
     private readonly Action<ReadOnlyMemory<float>> _decoderHandler;
     private readonly Action<ReadOnlyMemory<float>> _waterfallHandler;
     // Ultracode audit finding #34's OnDecoderRestartCriticallyOverdue can now call StopReceivingAsync
@@ -175,13 +176,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         : this(audioEngine, deviceEnumerator, settingsStore, decoder, encoder, macroTextResolver,
                waterfall, receivedImage, radioSession, logger,
                cleanupTimeoutForTests: null, playbackStopWaitBudgetForTests: null,
-               inFlightKeyedTransmitWaitForTests: null)
+               inFlightKeyedTransmitWaitForTests: null, playbackStallTimeoutForTests: null)
     {
     }
 
-    /// <summary>Test-only: lets a test shrink the PTT-safety cleanup budgets (production 5s/5s/3s)
-    /// so the blocker-1/blocker-3 regression tests (Tier A Batch 3 chunk 3a) can actually let a
-    /// budget EXPIRE without a multi-second-per-test suite -- same shape as
+    /// <summary>Test-only: lets a test shrink the PTT-safety cleanup budgets (production 5s/5s/3s/5s)
+    /// so the blocker-1/blocker-3/round-13 regression tests (Tier A Batch 3 chunk 3a) can actually let
+    /// a budget EXPIRE without a multi-second-per-test suite -- same shape as
     /// <c>RxDiskLineStagingBuffer</c>'s own <c>disposeDrainTimeoutForTests</c> precedent.</summary>
     internal SstvSessionService(
         IAudioEngine audioEngine,
@@ -196,11 +197,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         ILogger<SstvSessionService> logger,
         TimeSpan? cleanupTimeoutForTests,
         TimeSpan? playbackStopWaitBudgetForTests,
-        TimeSpan? inFlightKeyedTransmitWaitForTests)
+        TimeSpan? inFlightKeyedTransmitWaitForTests,
+        TimeSpan? playbackStallTimeoutForTests)
     {
         _cleanupTimeout = cleanupTimeoutForTests ?? CleanupTimeout;
         _playbackStopWaitBudget = playbackStopWaitBudgetForTests ?? PlaybackStopWaitBudget;
         _inFlightKeyedTransmitWait = inFlightKeyedTransmitWaitForTests ?? InFlightKeyedTransmitWait;
+        _playbackStallTimeout = playbackStallTimeoutForTests ?? PlaybackStallTimeout;
 
         _audioEngine = audioEngine;
         _deviceEnumerator = deviceEnumerator;
@@ -1016,6 +1019,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // headroom for the rest of teardown rather than guaranteeing a TeardownTimedOut.
     private static readonly TimeSpan InFlightKeyedTransmitWait = TimeSpan.FromSeconds(3);
 
+    // Round-13 finding: EnqueueAllAsync's own "buffer full, wait 10ms, retry" loop (see its own
+    // comment) had no bound at all -- a live-but-wedged playback device (driver stall, device
+    // removed mid-transmission -- the same "wedged output device" class StopPlaybackWithWatchdogAsync
+    // already treats as a real failure mode) left the ring permanently full, `accepted` permanently
+    // 0, and the loop spinning forever WITH PTT STILL KEYED. TuneAsync's real production caller
+    // (RadioStatusViewModel) passes no CancellationToken at all and has no Stop command, so on that
+    // path there was no way to interrupt it short of process exit -- and round 12's own
+    // _transmitInFlight guard means this hang now ALSO permanently blocks every subsequent
+    // Transmit/Tune for the rest of the process, not just the stuck one. This is how long
+    // EnqueueAllAsync waits with zero progress before concluding the device is wedged and aborting
+    // (throwing, which routes through PlayWithPttAsync's own generic catch -> abnormalTermination ->
+    // immediate urgent un-key, the same bounded recovery path every other failure on this method
+    // already uses).
+    private static readonly TimeSpan PlaybackStallTimeout = TimeSpan.FromSeconds(5);
+
     private async Task PlayWithPttAsync(IAsyncEnumerable<float> samples, int sampleRate, CancellationToken ct, bool leaveKeyedAfterCall = false, long? totalSamplesEstimate = null)
     {
         // Round-12 finding: single-flight guard, checked before ANYTHING else -- no RX pause, no
@@ -1714,15 +1732,31 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private async Task EnqueueAllAsync(ReadOnlyMemory<float> chunk, CancellationToken ct)
     {
         var offset = 0;
+
+        // Round-13 finding: null while samples are flowing, set to the moment the FIRST consecutive
+        // zero-accepted attempt happens -- see PlaybackStallTimeout's own doc comment for the failure
+        // this closes. Reset to null on every successful accept, so a healthy device that only
+        // legitimately backpressures briefly (buffer momentarily full, draining normally) never trips
+        // this -- only a stretch of ZERO progress lasting the full timeout does.
+        long? stallStartMs = null;
+
         while (offset < chunk.Length)
         {
             var accepted = _audioEngine.EnqueuePlaybackSamples(chunk[offset..]);
             if (accepted == 0)
             {
+                stallStartMs ??= Environment.TickCount64;
+                if (Environment.TickCount64 - stallStartMs.Value >= _playbackStallTimeout.TotalMilliseconds)
+                {
+                    throw new TimeoutException(
+                        $"Playback device accepted no samples for {_playbackStallTimeout} -- assuming it is wedged.");
+                }
+
                 await Task.Delay(TimeSpan.FromMilliseconds(10), ct).ConfigureAwait(false);
                 continue;
             }
 
+            stallStartMs = null;
             offset += accepted;
         }
     }
