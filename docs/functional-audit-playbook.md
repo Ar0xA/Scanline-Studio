@@ -1301,3 +1301,69 @@ Round 6 found real fixed findings in the leaked-keyed-transmitter class -- round
 chunk 3a's 1st clean round. Round 7 (independent re-verification, continuing the widened full-sweep
 approach -- 5 consecutive rounds have now found something) is the earliest round that can count as
 chunk 3a's 1st clean round.
+
+**Chunk 3a round 7** (2026-08-20, independent re-verification agent, fresh context). A genuinely
+comprehensive, unscoped final sweep of the whole PTT lifecycle -- full state-machine re-derivation
+(every field, every writer, every reader), every method's assumptions re-traced from scratch, hunt
+for 3-way overlaps and combinations rounds 1-6 hadn't considered, cross-check of the 4 fix
+mechanisms' own interactions. **VERDICT: NOT CLEAN -- 2 real findings + 1 nit.** Still zero
+consecutive clean rounds after 6 rounds.
+
+1. **[blocker-class, latent] `SetPttLockAsync(true)` records NOTHING when its own `SetPttAsync` call
+   throws AFTER the rig may have already been physically keyed.** `PlayWithPttAsync` already handles
+   this exact situation correctly (captures `pttKeyedOnRealRig = true` BEFORE the await, erring
+   toward "assume keyed" on failure -- see its own comment: "erring true costs at most one spurious
+   Warning; erring false is the blocker-2 silent swallow"), but `SetPttLockAsync` never adopted the
+   same pattern -- its `_pttLocked = locked` write only happens AFTER a successful await, so a throw
+   leaves every shutdown-backstop flag false. Confirmed reachable at the protocol layer, not
+   theoretical: `RigctldClientProtocol.SendSetCommandAsync` writes the PTT command then READS the
+   reply -- a read timeout/dropped connection after the write throws with the rig keyed;
+   `HamlibRadioProtocol.SetPttAsync` can likewise throw after `RigSetPtt` asserted PTT. Same
+   zero-production-caller latency status as every other `SetPttLockAsync` finding fixed this chunk --
+   fixed anyway per this chunk's own established standard.
+2. **[risk] The `_pttLeftKeyedByCall = pttKeyedOnRealRig` write in `PlayWithPttAsync`'s
+   `leaveKeyedAfterCall` branch was the one remaining unguarded post-`await` write to a keyed-state
+   flag** -- the third instance of the lost-update shape rounds 5/6 already closed at two other sites,
+   just at a different write (not a stale-epoch read, a plain unconditional overwrite that could write
+   `false` when THIS call's own key was skipped, over a CONCURRENT call's genuine `true`). Compound-
+   latent (needs `leaveKeyedAfterTune: true` -- no production caller -- plus two overlapping such
+   calls plus a RigId transition). Writing `false` here was never load-bearing -- the only correct
+   owner of clearing this flag is a confirmed un-key, which the two epoch-guarded sites already
+   handle.
+3. **[nit]** Doc-comment drift: `PlayWithPttAsync`'s own doc comment claimed a cancellation/fault
+   "ALWAYS un-keys PTT and force-clears the lock" -- true of the un-key COMMAND, no longer true of the
+   CLEAR since round 5's epoch guard can deliberately skip it.
+
+Re-derived and confirmed sound (not findings): `_pttLocked = locked`'s own write is correctly
+unguarded (its only `true`-writer is `SetPttLockAsync` itself, serialized by `_pttLockGate`, so no
+concurrent `true` exists to race); `_keyedTransmitCount`/`_pttKeyEpoch` don't need cross-protection
+from each other or from the `_disposed` fence -- each field's own Dekker pair is independently sound
+(traced precisely: the increment side is a full fence, the `_disposed`-fence side is a full fence,
+so at least one side always observes the other, for every pairing); Risk B and round-6's finding-3(b)
+residual are both still correctly classified, neither shifted by anything this round found. Both
+spot-checked round-6 tests confirmed genuinely mutation-sensitive.
+
+**Chunk 3a round 7 fix applied** (2026-08-20, commit `<pending>`). Finding 1: `SetPttLockAsync` now
+captures `rigIsRealAtKeyTime` once, before the key command (the same blocker-2 rule
+`PlayWithPttAsync` already follows), wraps the `SetPttAsync` call in a `try`/`catch (Exception) when
+(rigIsRealAtKeyTime)`, and on that path sets `_pttLeftKeyedByCall = true` + logs a new Critical
+(`PttKeyCommandFailedMayHaveKeyed`) before rethrowing -- `_pttLeftKeyedByCall` is reused as the
+marker (its own doc comment widened to cover this second producer) rather than adding a new field.
+Finding 2: the write now only ever sets `true`, guarded on `pttKeyedOnRealRig` -- never writes
+`false` (that direction stays owned exclusively by the two epoch-guarded confirmed-un-key sites).
+Finding 3 (nit): doc comment corrected to describe the un-key-command-vs-clear distinction
+precisely.
+
+New regression tests `Round7_SetPttLockAsync_KeyCommandThrows_StillRecordsPossiblyKeyedForBackstop`
+(finding 1 -- simulates a `TimeoutException` from the key command itself, confirms the Critical log
+and that `DisposeAsync`'s backstop still fires) and
+`Round7_PlayWithPttAsync_LeaveKeyedWrite_NeverWritesFalseWhenThisCallDidNotKey` (finding 2 --
+sequential, not concurrent: a real `leaveKeyedAfterTune:true` call establishes a genuine keyed state,
+then a SECOND such call with no radio configured must not clear it). Both mutation-verified by
+reverting each fix and confirming the exact predicted failure signature, then restored. All 183
+`ScanlineStudio.Application.Tests` passing, full solution suite (all projects) clean.
+
+Round 7 found real fixed findings in the leaked-keyed-transmitter class -- round 7 does NOT count as
+chunk 3a's 1st clean round. Round 8 (independent re-verification) is the earliest round that can
+count as chunk 3a's 1st clean round. Six consecutive rounds (2-7) have now each found something
+real in this file.

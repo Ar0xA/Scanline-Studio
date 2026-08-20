@@ -683,6 +683,69 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Equal(3, radio.PttCalls.Count(c => !c));
     }
 
+    // ------------------------------------------------------------------ round 7 findings
+
+    [Fact]
+    public async Task Round7_SetPttLockAsync_KeyCommandThrows_StillRecordsPossiblyKeyedForBackstop()
+    {
+        // Round-7 finding: SetPttAsync(true) throwing does not mean the rig wasn't physically keyed --
+        // e.g. RigctldClientProtocol writes the PTT command, then the READ of its reply times out or
+        // the connection drops, with the rig already keyed. Before this fix, SetPttLockAsync recorded
+        // NOTHING on that failure -- _pttLocked never gets set (the throw happens before that write),
+        // so DisposeAsync's four-state check found nothing to do and the process could exit with the
+        // transmitter genuinely keyed, silently.
+        var (service, _, radio, logger) = CreateService();
+        radio.BeforeSetPtt = tx =>
+        {
+            if (tx)
+            {
+                throw new TimeoutException("simulated: PTT command written, reply read timed out");
+            }
+        };
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(true));
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY HAVE BEEN KEYED", StringComparison.Ordinal));
+        Assert.Empty(radio.PttCalls);
+
+        // DisposeAsync's backstop must still fire -- without the fix, nothing records the attempt and
+        // this call issues no un-key at all.
+        radio.BeforeSetPtt = null;
+        await service.DisposeAsync();
+
+        Assert.Equal([false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round7_PlayWithPttAsync_LeaveKeyedWrite_NeverWritesFalseWhenThisCallDidNotKey()
+    {
+        // Round-7 finding: the _pttLeftKeyedByCall write in PlayWithPttAsync's leaveKeyedAfterCall
+        // branch used to write pttKeyedOnRealRig UNCONDITIONALLY, including `false` when THIS call's
+        // own key was skipped (no radio configured at its own key time) -- the same lost-update shape
+        // rounds 5/6 already closed at two other sites, at a third location. A prior call may have
+        // genuinely left the rig keyed; a later call with no radio configured must not silently
+        // un-declare that.
+        var (service, _, radio, _) = CreateService();
+
+        // Establish a genuinely-keyed "left keyed" state from a real prior call.
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1), leaveKeyedAfterTune: true);
+        Assert.Equal([true], radio.PttCalls);
+
+        // A SEPARATE call runs with no radio configured -- its own key is skipped, so it has nothing
+        // of its own to report, and must not clear the flag the prior call set.
+        radio.RigId = "none";
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1), leaveKeyedAfterTune: true);
+
+        // Restore before dispose so the backstop's own un-key can land cleanly (isolating THIS
+        // assertion from blocker 2's own already-covered RigId-flip scenario).
+        radio.RigId = "fake-radio";
+        await service.DisposeAsync();
+
+        // THE property: DisposeAsync must still see the earlier call's genuinely-keyed state and
+        // issue a real backstop un-key.
+        Assert.Equal([true, false], radio.PttCalls);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)

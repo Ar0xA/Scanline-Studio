@@ -53,10 +53,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // errors -- every access goes through Volatile.Read/Interlocked instead, same guarantee.
     private TaskCompletionSource? _keyedTransmitCompletion;
 
-    // The one "physically keyed after the call returned" state _pttLocked does NOT cover:
-    // TuneAsync's leaveKeyedAfterTune leaves PTT keyed without ever setting _pttLocked (SetPttLockAsync's
-    // own doc comment already documents that gap). Tracked so DisposeAsync's shutdown backstop covers
-    // it too -- same failure class as blocker 3, one field to close. Same threading shape as _pttLocked.
+    // Two producers, both "physically keyed after the call returned/failed" states _pttLocked does NOT
+    // cover: (1) TuneAsync's leaveKeyedAfterTune leaves PTT keyed without ever setting _pttLocked
+    // (SetPttLockAsync's own doc comment already documents that gap); (2) round-7 finding:
+    // SetPttLockAsync(true)'s own SetPttAsync call throwing AFTER physically keying the rig --
+    // _pttLocked never gets set in that case either (the throw happens before that write), so this is
+    // the only record of the attempt. Tracked so DisposeAsync's shutdown backstop covers both -- same
+    // failure class as blocker 3, one field to close. Same threading shape as _pttLocked.
     private volatile bool _pttLeftKeyedByCall;
 
     // Tier A Batch 3 chunk 3a round-2 finding: DisposeAsync's backstop only guards
@@ -310,7 +313,37 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // one -- SetPttLockAsync's own unlock-path clears just below had the identical gap.
             var epochAtUnkeyStart = Volatile.Read(ref _pttKeyEpoch);
 
-            await _radioSession.SetPttAsync(locked, ct).ConfigureAwait(false);
+            // Round-7 finding: captured ONCE, before the key command -- the same blocker-2 rule
+            // PlayWithPttAsync already follows (never re-read RigId at catch/failure time, since
+            // RadioController.DisconnectAsync/DisposeAsync can reset it to "none" without un-keying).
+            // Only meaningful for the ENGAGE direction: an unlock failure doesn't need this --
+            // TryUnkeyPttAsync already classifies that failure using the parameter passed to it, not a
+            // fresh RigId read.
+            var rigIsRealAtKeyTime = locked && _radioSession.RigId != "none";
+
+            try
+            {
+                await _radioSession.SetPttAsync(locked, ct).ConfigureAwait(false);
+            }
+            catch (Exception) when (rigIsRealAtKeyTime)
+            {
+                // Round-7 finding: SetPttAsync(true) throwing does not mean the rig wasn't physically
+                // keyed -- matches PlayWithPttAsync's own "erring true costs at most one spurious
+                // Warning; erring false is the blocker-2 silent swallow" reasoning (see its own comment
+                // at the pttKeyedOnRealRig assignment), which SetPttLockAsync never adopted. Without
+                // this, a mid-command failure here (e.g. RigctldClientProtocol writes the PTT command,
+                // then the READ of its reply times out or the connection drops) leaves EVERY
+                // shutdown-backstop flag false -- _pttLocked never gets set (this throw happens before
+                // that write below), and nothing else records the attempt -- so DisposeAsync's
+                // four-state check finds nothing to do and the process can exit with the transmitter
+                // genuinely keyed, silently. _pttLeftKeyedByCall is reused as the marker (see its own
+                // doc comment, widened to cover this second producer) rather than adding a new field,
+                // since its existing meaning ("physically keyed, not tracked by _pttLocked") is exactly
+                // this situation.
+                _pttLeftKeyedByCall = true;
+                Log.PttKeyCommandFailedMayHaveKeyed(_logger);
+                throw;
+            }
 
             if (locked)
             {
@@ -790,10 +823,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// comment for its one caller) or <see cref="SetPttLockAsync"/>'s lock is currently engaged, in
     /// which case the un-key/resume-RX steps are skipped -- <b>but only on a NORMAL (successful)
     /// completion</b>. A cancellation or fault (manual Stop TX, SWR auto-cutoff -- see
-    /// <c>TxControlsPaneViewModel</c>) ALWAYS un-keys PTT and force-clears the lock, even if it was
-    /// engaged: a safety cutoff/manual stop must never be overridable by "stay keyed" state (a real
-    /// defect an audit pass caught and this fix closes -- the lock existing at all must never be able
-    /// to defeat the SWR cutoff's whole reason for existing).
+    /// <c>TxControlsPaneViewModel</c>) ALWAYS un-keys PTT, even if the lock was engaged: a safety
+    /// cutoff/manual stop must never be overridable by "stay keyed" state (a real defect an audit pass
+    /// caught and this fix closes -- the lock existing at all must never be able to defeat the SWR
+    /// cutoff's whole reason for existing). <b>Doc-comment correction (round-7 finding):</b> the un-key
+    /// COMMAND is unconditional, but clearing the lock/state flags it left behind is not, as of round
+    /// 5's epoch guard in <c>UnkeyForCleanupAsync</c> -- if a CONCURRENT, NEWER key command completed
+    /// during this call's own un-key attempt, the clear is deliberately skipped so it doesn't wipe
+    /// that newer call's genuinely-still-keyed state (see <c>_pttKeyEpoch</c>'s own doc comment).
+    /// "Force-clears the lock" was accurate before that fix; it is not unconditional anymore.
     ///
     /// Device resolution and the entry PTT-key now live INSIDE the guarded region (moved in during
     /// the same audit-fix pass) -- previously a device-resolution failure (e.g. no playback device
@@ -1011,12 +1049,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     await UnkeyForCleanupAsync(pttKeyedOnRealRig).ConfigureAwait(false);
                 }
 
-                if (skipUnkeyAndRxResume && leaveKeyedAfterCall)
+                if (skipUnkeyAndRxResume && leaveKeyedAfterCall && pttKeyedOnRealRig)
                 {
                     // PTT is deliberately left physically keyed after this call returns, with no
                     // _pttLocked to record it (SetPttLockAsync's own doc comment already calls this
                     // gap out) -- DisposeAsync's shutdown backstop needs to know about it.
-                    _pttLeftKeyedByCall = pttKeyedOnRealRig;
+                    //
+                    // Round-7 finding: only ever writes `true` here, never `false` -- this line runs
+                    // AFTER StopPlaybackWithWatchdogAsync's own await (up to 5s), the same
+                    // snapshot-then-act-on-stale-state shape rounds 5/6 already closed at the two
+                    // epoch-guarded sites. Writing `false` unconditionally here (the old behavior, when
+                    // pttKeyedOnRealRig happened to be false -- e.g. RigId was "none" at this call's own
+                    // key time) could stomp a CONCURRENT call's genuinely-keyed `true`, set moments
+                    // earlier while this await was in flight. The `false` direction is never load-
+                    // bearing here -- the only correct owner of clearing this flag is a CONFIRMED
+                    // un-key, which the two epoch-guarded sites already handle.
+                    _pttLeftKeyedByCall = true;
                 }
 
                 // Created only HERE, after every potentially-slow step above, so the RX-resume steps
@@ -1651,6 +1699,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Critical, Message = "PTT MAY STILL BE KEYED -- the un-key command failed on a rig this session actually keyed. Check the radio and un-key it manually.")]
         public static partial void PttStillKeyedAfterFailedUnkey(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Critical, Message = "PTT MAY HAVE BEEN KEYED -- the key command failed, but may have physically keyed the rig before failing. Check the radio and un-key it manually if needed.")]
+        public static partial void PttKeyCommandFailedMayHaveKeyed(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Shutdown is waiting for an in-flight keyed transmit to finish un-keying PTT")]
         public static partial void WaitingForKeyedTransmitAtShutdown(ILogger logger);
