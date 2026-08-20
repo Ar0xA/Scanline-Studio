@@ -629,3 +629,51 @@ in `SlantTests.cs`. Scoped filter (`SlantTests`/`CorrectSlantTests`/`CorrectSlan
 Full `tests/ScanlineStudio.Core.Sstv.Tests` suite (run because this fix touches
 `AnalogFmSstvDecoder.cs` directly, not just the 2 chunk files): 1020/1020 passing (1 unrelated
 intentional skip). Round 2 needed for chunk 2b's own 2-consecutive-clean-round gate.
+
+**Round 2 -- NOT clean, 1 new real risk found** (2026-08-20). Independently re-derived both
+round-1 fixes from legacy source (`Main.h:1340-1360`, `Main.cpp:3867-3889,4198,5415-5423,5581-5600`)
+without relying on round-1's citations -- both held, including hand-recomputing the two new
+truncation tests' exact fit values (-1.4 truncating to -1, floor would give -2; 5.8 truncating to 5,
+`Math.Round` would give 6) and independently verifying `PerformReplay`'s `ResetBaseline()` call
+sits after all 3 of its early-exit `return false`s and before both `return true`s. Also did a fresh
+full sweep of `ReplayOriginCalculator.cs` (found nothing wrong -- all 6 `AdjustSyncPos` mode groups
++ default re-verified arm-for-arm against legacy's switch, `ReSyncSSTV`'s fold/argmax/Hilbert term
+all re-confirmed) and `MovingAverage` (re-verified against `CSmooz` exactly). Found 1 NEW real risk
+(not a blocker): `AdoptCorrectedRate`'s `Reset()` on the AUTOMATIC commit path is unconditional, but
+legacy's own `InitAutoStop()` call (`Main.cpp:5600`) is gated on a staging buffer existing
+(`Main.cpp:5597`'s `if( (dp->m_StgBuf != NULL) || WaveStg.IsOpen() )`) -- under `RxBufferMode.Off`
+legacy leaves Auto Slant's baseline/history/average/bitmask intact after every automatic commit
+(`m_ASCurY` keeps growing, the latched bitmask keeps tightening), while this port resets
+unconditionally, re-opening the coarse +-25Hz tier every time. `ultracode` finding #9 (which
+introduced this `Reset()` call originally) cited `InitAutoStop`'s body without its own `:5597`
+guard. 3 more nits queued (not fixed): the round-1 truncation fix has no test pinning the
+truncate-BEFORE-subtract ordering specifically (both new tests feed already-integer history, so a
+revert of the decoder-side ordering fix wouldn't be caught); a test name overstates what it pins
+(doesn't actually test a .5 boundary); `ReplayOriginCalculator.ComputeOrigin`'s `double[]` histogram
+bins vs legacy's `int[]` (harmless in practice, argmax is scale-invariant, but a near-tie could
+theoretically resolve differently). Round 3 needed after the buffer-existence-gate fix lands --
+clean-round counter restarts from there, not from round 2.
+
+**Round 2 fix applied** (2026-08-20). Confirmed legacy's real shape independently: the automatic
+commit's rate write (`Main.cpp:4015-4016`) is genuinely unconditional (nothing resets there), and
+the guard (`Main.cpp:5597`) sits one layer downstream, in `UpdateSampFreq`, wrapping ONLY
+`InitAutoStop` (`:5600`) -- also confirmed the buffer-off path is reachable in real legacy too, not
+a port-only artifact (`Main.cpp:11903`'s `KRSA->Enabled = sys.m_UseRxBuff ? TRUE : FALSE` only
+disables the MENU ITEM, never clears `KRSA->Checked`, and `:3968` reads only `Checked`). Threaded a
+new `hasStagingBuffer` parameter through `ProcessLine`/`ProcessLineCore`/`TryComputeCorrection`/
+`AdoptCorrectedRate` (gating only the `Reset()` call, never the rate write) -- one bool, no default
+value (a defaulted commit-semantics flag was already flagged as a hazard by
+`RestoreRateWithoutReset`'s own doc comment). `ProcessLineSuppressed` hardcodes `true` (structurally
+unreachable there anyway -- `suppressCommit` returns before the flag is read -- and factually
+correct, since a suppressed pass only exists during replay, which only exists when a buffer does).
+`ProcessLineHistoryOnly` needed no change (doesn't call `ProcessLineCore` at all). Decoder call site
+(`AnalogFmSstvDecoder.cs`'s `else` arm around line 5817) hoisted to ONE shared local
+(`hasStagingBuffer = _rxLineStagingBuffer is not null`) feeding both the tracker call and the
+existing replay-request gate, matching legacy's own single `:5597` guard controlling both effects.
+Added 1 new test (`SlantTracker_AutomaticCommit_ResetsBaselineOnlyWhenAStagingBufferExists`, a
+same-input two-tracker positive/negative-control pair -- hand-derived expected values, confirmed
+exact on first run) plus 16 mechanical call-site updates across `SlantTests.cs`. Scoped filter
+(`SlantTests`/`CorrectSlantTests`/`CorrectSlantRequestTests`/`ReplayEngineTests`/`AutoSyncTests`)
+79/79 passing. Full `tests/ScanlineStudio.Core.Sstv.Tests` suite (run because this fix touches
+`AnalogFmSstvDecoder.cs` directly): 1021/1021 passing (1 unrelated intentional skip). Round 3 (the
+restarted 1st clean round) needed next.
