@@ -675,5 +675,38 @@ same-input two-tracker positive/negative-control pair -- hand-derived expected v
 exact on first run) plus 16 mechanical call-site updates across `SlantTests.cs`. Scoped filter
 (`SlantTests`/`CorrectSlantTests`/`CorrectSlantRequestTests`/`ReplayEngineTests`/`AutoSyncTests`)
 79/79 passing. Full `tests/ScanlineStudio.Core.Sstv.Tests` suite (run because this fix touches
-`AnalogFmSstvDecoder.cs` directly): 1021/1021 passing (1 unrelated intentional skip). Round 3 (the
-restarted 1st clean round) needed next.
+`AnalogFmSstvDecoder.cs` directly): 1021/1021 passing (1 unrelated intentional skip).
+
+**Round 3 -- NOT clean, 1 new real risk found; round-2 fix confirmed correct** (2026-08-20).
+Independently re-derived round-2's fix from legacy source (`Main.cpp:4011-4017,3670-3680,5581-5601,
+11903,1863,3968`) without relying on round-2's citations -- confirmed the rate write is genuinely
+unconditional, the guard sits one layer downstream wrapping only `InitAutoStop`, and the buffer-off
+automatic-commit path really is reachable in legacy (`KRSA->Enabled` only disables the menu item,
+never clears `KRSA->Checked`). Independently recomputed the round-2 test's every hand-derived value
+from scratch (mult 20, baseline 100, commit at line 8 with d=-133.33, drift +3024ppm) and got the
+same numbers. Fresh full sweep of `SlantTracker.cs`, `ReplayOriginCalculator.cs`, and the touched
+`AnalogFmSstvDecoder.cs` regions found 1 NEW real risk (not a blocker), missed by all 3 prior
+rounds: `_mult` (legacy's `m_Mult`, `Main.cpp:3860`) was `readonly`, frozen at construction --
+legacy's `InitAutoStop` re-derives it from the CURRENT (possibly just-corrected) line width every
+time it runs, which is exactly the same "only when hasStagingBuffer" reachability round 2 just
+fixed for the rest of `Reset()`'s field set. A frozen `_mult` silently disagreed with legacy's
+jitter-gate boundary (`8*mult`) by up to 8 samples after any commit that crossed a 320-sample
+line-width boundary, and disagreed with this port's OWN separately-maintained Auto Sync copy of the
+same legacy variable (`AnalogFmSstvDecoder.cs`), which already re-derives correctly. **Fixed this
+round** (auditor gave the exact fix directly, applied without a separate fix-request round): dropped
+`readonly` on `_mult`, added its recompute as the last statement of `Reset()` (the exact place
+legacy re-derives it, only reached when `hasStagingBuffer` per round 2's own gate). Added 2 new test
+accessors (`MultForTests`, `NominalSamplesPerLineForTests`) and 1 new test asserting the recompute
+against a fresh formula evaluation (not a hand-derived constant) plus that it actually differs from
+the frozen value -- mutation-verified by temporarily reverting the fix and confirming the test fails
+with the exact predicted before/after values (21 expected, 20 actual), then restored. 3 more nits
+found (not fixed): `AnalogFmSstvDecoder.cs`'s wrap-comment claims a two-sided shape "matches" legacy's
+one-sided `Main.cpp:3889` wrap, directly contradicted by another comment 40 lines up in the same
+file that correctly states it's one-sided -- code is fine, benign either way (`SlantTracker` only
+ever consumes differences), only the comment is wrong; sync-envelope quantization upstream of
+`ReplayOriginCalculator`'s histogram (`RxLineStagingBuffer` stores `double`, legacy folds `short`)
+refines round 2's already-queued bin-type nit -- harmless, argmax is scale-invariant, only a
+near-tie could theoretically resolve differently; the `Math.Max(1, ...)` clamp on `_mult` has no
+legacy counterpart (unreachable for real modes). Scoped filter 80/80 passing. Full `tests/ScanlineStudio.Core.Sstv.Tests` suite: 1022/1022 passing
+(1 unrelated intentional skip). Clean-round counter restarts again from 0 -- round 4 needed as the
+(once more restarted) 1st clean round.

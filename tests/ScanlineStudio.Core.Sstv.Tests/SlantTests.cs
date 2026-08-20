@@ -492,6 +492,60 @@ public class SlantTests
     }
 
     [Fact]
+    public void SlantTracker_Mult_IsReDerivedFromTheCorrectedWidth_OnlyWhenAStagingBufferExists()
+    {
+        // Batch 2 chunk 2b round-3 fix. Legacy's m_Mult (Main.cpp:3860) is recomputed from the
+        // CURRENT line width every time InitAutoStop runs -- which, like the rest of InitAutoStop's
+        // wipe, only happens after an automatic commit when a staging buffer exists
+        // (Main.cpp:5597's guard around :5600). An earlier version of this port froze _mult at its
+        // construction-time value forever, silently disagreeing with legacy (and with this port's
+        // OWN re-derived Auto Sync copy of the same legacy variable) by up to 8 samples on the
+        // jitter gate after any commit that crossed a 320-sample line-width boundary.
+        //
+        // A large-enough per-line drift (150 samples/line, still under the initial gate 8*mult=160)
+        // over 8 lines produces one commit whose corrected width crosses the 6720-sample boundary
+        // (6615 nominal -> mult 20; the correction pushes the width up past 6720 -> mult 21) --
+        // verified by asserting against the tracker's own current nominal width, not a hand-derived
+        // constant, so this doesn't depend on reproducing NormalSampFreq's exact quantization by hand.
+        const double nominalSamplesPerLine = SampleRate * 0.15; // 6615 samples/line at 44100Hz, mult 20
+        const double perLineDrift = 150.0; // under 8*20=160; large enough to cross a 320-sample boundary
+
+        var withoutBuffer = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+        var withBuffer = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
+
+        const int constructionMult = 20; // Math.Max(1, (int)(6615/320.0))
+        Assert.Equal(constructionMult, withoutBuffer.MultForTests);
+        Assert.Equal(constructionMult, withBuffer.MultForTests);
+
+        double? withoutBufferRate = null;
+        double? withBufferRate = null;
+        for (var line = 1; line <= 8; line++)
+        {
+            var position = (int)(perLineDrift * line);
+            withoutBufferRate = withoutBuffer.ProcessLine(position, hasStagingBuffer: false) ?? withoutBufferRate;
+            withBufferRate = withBuffer.ProcessLine(position, hasStagingBuffer: true) ?? withBufferRate;
+        }
+
+        // Positive control: a commit really fired on both arms, and it moved the corrected width
+        // enough to actually cross a mult boundary -- otherwise every assertion below is vacuous.
+        Assert.NotNull(withoutBufferRate);
+        Assert.Equal(withBufferRate, withoutBufferRate); // the rate write itself is never gated
+        Assert.NotEqual(nominalSamplesPerLine, withBuffer.NominalSamplesPerLineForTests);
+
+        // RxBufferMode.Off: legacy never re-derives m_Mult here (InitAutoStop never runs) -- frozen
+        // at its construction value, even though the corrected width moved.
+        Assert.Equal(constructionMult, withoutBuffer.MultForTests);
+
+        // RxBufferMode.On/Extended: legacy DOES re-derive m_Mult here -- must equal a fresh
+        // computation from the tracker's own current (corrected) nominal width, and that must
+        // actually differ from the frozen construction-time value (proving the recompute really
+        // crossed a boundary, not just ran and landed on the same number by coincidence).
+        var expectedMult = Math.Max(1, (int)(withBuffer.NominalSamplesPerLineForTests / 320.0));
+        Assert.Equal(expectedMult, withBuffer.MultForTests);
+        Assert.NotEqual(constructionMult, withBuffer.MultForTests);
+    }
+
+    [Fact]
     public void GetSyncSegmentOffsetMs_Robot36_SyncIsAtLineStart()
     {
         Assert.Equal(0.0, SstvModeRegistry.GetSyncSegmentOffsetMs(SstvModeRegistry.Robot36));
