@@ -82,15 +82,18 @@ public class CorrectSlantRequestTests
         Assert.True(decoder.RxBufferBaseTransmissionLineForTests > 0, "PerformReplay never ran -- _rxBufferBaseTransmissionLine should have moved off 0 (proof positive, same technique ReplayEngineTests' own automatic-trigger tests use).");
 
         // Auditor code-review finding, Phase 8c round 1 (blocker, fixed): a manual commit that only
-        // writes _effectiveSamplesPerLine, without also calling SlantTracker.AdoptCorrectedRate, leaves
+        // writes _effectiveSamplesPerLine, without also syncing the tracker's own rate pair, leaves
         // SlantPpm (public, ISstvDecoder.SlantPpm's own backing read) reporting the PRE-manual rate
         // forever -- and, worse, leaves the tracker's own internal baseline stale for its NEXT
         // automatic commit to silently revert this correction against (see SlantTests.cs's own
         // SlantTracker_AdoptCorrectedRate_FirstNaturalCorrectionUsesTheAdoptedBaseline for that half).
-        // This assertion directly proves the sync happened: SlantPpm must
-        // reflect the SAME corrected rate _effectiveSamplesPerLine now holds, derived independently via
-        // the mode's own LineDurationMs (not by re-reading _effectiveSamplesPerLine's own value back at
-        // itself, which would trivially match even if AdoptCorrectedRate were never called).
+        // Batch 2 chunk 2b round-1 fix: the manual path now calls SlantTracker.RestoreRateWithoutReset
+        // (not AdoptCorrectedRate) so a subsequent revert doesn't also wipe the tracker's baseline/
+        // history -- see RestoreRateWithoutReset's own doc comment. This assertion directly proves the
+        // sync happened: SlantPpm must reflect the SAME corrected rate _effectiveSamplesPerLine now
+        // holds, derived independently via the mode's own LineDurationMs (not by re-reading
+        // _effectiveSamplesPerLine's own value back at itself, which would trivially match even if the
+        // rate sync were never called).
         var committedSampleRate = decoder.EffectiveSamplesPerLineForTests / (mode.LineDurationMs / 1000.0);
         var expectedPpm = (committedSampleRate - declaredSampleRate) * 1_000_000.0 / declaredSampleRate;
         Assert.NotNull(decoder.SlantPpm);
