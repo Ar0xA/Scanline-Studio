@@ -258,6 +258,24 @@ public class MiniAudioCaptureSessionTests
         Assert.IsType<ArgumentOutOfRangeException>(exception);
     }
 
+    // Tier A Batch 1 re-audit round 3: the sibling gap round 2's own fix above left open --
+    // AudioDeviceSettings.CaptureChannelSource is the OTHER settings-fed enum this constructor
+    // takes, reachable through the identical unvalidated JSON round-trip. Left unguarded, an
+    // out-of-range value would silently open the device STEREO and extract Left (ChannelSelect's
+    // own native default), with no exception -- a real, previously-undetectable RX-goes-silently-
+    // dead scenario if the actual signal is only on Right. Non-vacuous: without this guard, this
+    // call reaches the native open for a nonexistent device and throws InvalidOperationException
+    // instead, not ArgumentOutOfRangeException. Hardware-free for the same reason as the sibling
+    // test above -- the validation runs before MiniAudioContext.Acquire()/the native open.
+    [Fact]
+    public void Constructor_GivenOutOfRangeChannelSource_ThrowsBeforeTouchingAnyDevice()
+    {
+        var exception = Record.Exception(() => new MiniAudioCaptureSession(
+            "nonexistent-device-id", sampleRate: 44100, NullLogger.Instance, channelSource: (AudioChannelSource)7));
+
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+    }
+
     // Stereo-capture-source backlog item: proves Left/Right channel selection actually routes
     // distinct content, not just "opens without crashing" -- a stereo source with an audible tone
     // on Left and silence on Right, captured once with AudioChannelSource.Left and once with

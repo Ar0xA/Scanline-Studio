@@ -161,6 +161,32 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     {
         _logger = logger;
         _loggerFactory = loggerFactory;
+
+        // Tier A Batch 1 re-audit round 3 nit fix: without this, a single (non-concurrent)
+        // DisposeAsync caller whose own teardown throws leaves _disposedSignal.TrySetException's
+        // faulted Task permanently unobserved -- the real exception IS still correctly surfaced to
+        // that caller via DisposeAsync's own `throw` (see its own try/catch/finally), so this isn't
+        // a correctness issue, only host-level noise: an unobserved faulted Task fires
+        // TaskScheduler.UnobservedTaskException on finalization, which some hosts treat as fatal
+        // (ThrowUnobservedTaskExceptions) or at least log. Attaching a no-op OnlyOnFaulted
+        // continuation here marks it observed regardless of whether a second concurrent
+        // DisposeAsync caller ever awaits _disposedSignal.Task itself.
+        //
+        // Code-review note: ExecuteSynchronously is requested but currently inert -- _disposedSignal
+        // is constructed with TaskCreationOptions.RunContinuationsAsynchronously (below), which
+        // forces every continuation, including this one, to run on TaskScheduler.Default regardless
+        // of this flag. Kept anyway as a statement of intent (cheapest possible continuation, run
+        // wherever, no marshaling needed) -- if RunContinuationsAsynchronously were ever removed
+        // from _disposedSignal's own construction, this would start inlining on whatever thread
+        // calls TrySetException (potentially the capture drain thread, see that call site's own
+        // context) -- still harmless today, since the body is a single non-throwing property read
+        // with no lock held, but worth knowing if that assumption ever needs re-checking.
+        _ = _disposedSignal.Task.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
         try
         {
             MiniAudioContext.Acquire();
