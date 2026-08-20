@@ -1142,7 +1142,7 @@ noted off-scope: `StopReceivingAsync` can leave `_isReceiving` permanently `true
 `StopCaptureAsync` throws (handlers already detached, `_isReceiving` flip happens after the
 throwing call) -- not a PTT leak, logged here, not chased.
 
-**Chunk 3a round 4 fix applied** (2026-08-20, commit pending). Both real findings fixed:
+**Chunk 3a round 4 fix applied** (2026-08-20, commit `93ef0b5`). Both real findings fixed:
 1. `SetPttLockAsync` gained its own `Interlocked.MemoryBarrier()` immediately after the
    `_pttLocked = locked` write (and after clearing `_pttLeftKeyedByCall`/`_pttUnkeyFailedOnRealRig`
    in the unlock branch), before the `if (locked && _disposed)` recheck -- the missing other half of
