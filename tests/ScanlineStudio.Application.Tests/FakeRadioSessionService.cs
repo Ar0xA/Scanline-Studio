@@ -49,6 +49,7 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     public Task SetPttAsync(bool tx, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        BeforeSetPtt?.Invoke(tx);
         // Mirrors NoneRadioProtocol.SetPttAsync's real always-throws behavior when RigId == "none"
         // (spec/18-path-to-1.0.md Critical item 1, round-1 plan-review's own explicit "add a
         // ThrowOnSetPtt-shaped guard" recommendation) -- without this, the fake couldn't verify the
@@ -63,6 +64,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
         PttCalls.Add(tx);
         return Task.CompletedTask;
     }
+
+    /// <summary>Test-only hook, invoked at the very start of <see cref="SetPttAsync"/> -- BEFORE the
+    /// RigId check below, so a test can mutate <see cref="RigId"/> from inside the call. That is
+    /// exactly how the real blocker-2 race works (Tier A Batch 3 chunk 3a):
+    /// <c>RadioController.DisconnectAsync</c>/<c>DisposeAsync</c> reset <c>_rigId</c> to
+    /// <c>"none"</c> WITHOUT un-keying, so <see cref="RigId"/> can read <c>"none"</c> at the precise
+    /// moment a genuinely-keyed rig's un-key fails.</summary>
+    public Action<bool>? BeforeSetPtt { get; set; }
 
     public IReadOnlyList<FrequencyPreset> Presets { get; set; } = [];
 
