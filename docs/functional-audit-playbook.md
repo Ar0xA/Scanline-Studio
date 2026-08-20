@@ -1271,7 +1271,7 @@ snapshots, `DisposeAsync`'s own multi-step chain (re-reads state after each awai
 reusing stale locals), `wasReceiving` (RX-class only), `_rxPendingResumeAfterUnlock` (still
 lower-severity, hasn't drifted into the PTT class). All previously-open nits re-confirmed accurate.
 
-**Chunk 3a round 6 fix applied** (2026-08-20, commit `<pending>`). Finding 1: `SetPttLockAsync` now
+**Chunk 3a round 6 fix applied** (2026-08-20, commit `ce57521`). Finding 1: `SetPttLockAsync` now
 snapshots the epoch before its own `SetPttAsync` await (same pattern `UnkeyForCleanupAsync` already
 uses) and gates its unlock-path clears (`_pttLeftKeyedByCall`/`_pttUnkeyFailedOnRealRig`) on the
 epoch being unchanged, logging `PttUnkeyRaceLostToNewerKey` otherwise -- exact same mechanism as
