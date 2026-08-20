@@ -501,9 +501,9 @@ round was dispatched after round 8's fix landed. This is a deliberate, explicitl
 to the playbook's own 2-consecutive-clean-round closing rule, not an oversight -- if this file
 cluster is revisited later, start a fresh re-audit rather than assuming the formal gate was met.
 
-**Status**: **Batch 2 IN PROGRESS** -- chunk 2a CLOSED (2026-08-20, 3 rounds), chunk 2b
-(`ReplayOriginCalculator.cs` + `SlantTracker.cs`) not yet started, chunk 2c
-(`RestartableSstvDecoder.cs`) not yet started. Chunk 2a (`RxLineStagingBuffer.cs` + `RxDiskLineStagingBuffer.cs`,
+**Status**: **Batch 2 IN PROGRESS** -- chunk 2a CLOSED (2026-08-20, 3 rounds), chunk 2b CLOSED
+(2026-08-20, 5 rounds), chunk 2c (`RestartableSstvDecoder.cs`) not yet started. Chunk 2a
+(`RxLineStagingBuffer.cs` + `RxDiskLineStagingBuffer.cs`,
 reviewed together per the playbook's own "one shared interface" note), round 1 fixed
 (2026-08-20). Round 1 found 1 real blocker plus several risks, all against
 `yoniq-old/YONIQ-main/sstv.cpp:1615-1644`, `Main.cpp:4956-5013`/`:5234-5270`/`:5415-5423`/
@@ -733,3 +733,34 @@ this port reports ~0; only reachable on that fade scenario, both settle to a con
 transition line, and `SlantTracker` consumes only differences -- judged not a risk. Also re-confirmed
 both already-queued nits (wrap-shape comment, `_mult` clamp asymmetry with `_autoSyncBaseMult`)
 still present, unchanged, none escalated. Round 5 needed for the 2nd required clean round.
+
+**Round 5 -- 2nd consecutive clean round. Chunk 2b CLOSED** (2026-08-20). Independently re-verified
+round 4's own findings from scratch (not trusted): re-confirmed the exact legacy ordering
+(`SetSampFreq` unconditional at `Main.cpp:5596`, `InitAutoStop` -- and its `m_Mult` recompute --
+inside the staging guard at `:5597`/`:5600`, so round 3's fix is genuinely legacy-faithful);
+re-enumerated all 4 `_effectiveSamplesPerLine` writer sites and all 4 matching tracker-rate writer
+sites by grep (not by trusting round 4's count) and confirmed every pair uses an identical formula,
+so stride and tracker rate can never desync; re-derived the round-3 test's 20->21 mult crossing one
+more time from the current code/constants and got the same numbers, including confirming the sign
+matters (a decreasing drift would NOT cross the boundary, only the test's increasing one does).
+Fresh full 8-item sweep of both files and all 4 `AnalogFmSstvDecoder.cs` regions (including
+`PerformReplay`'s `ResetBaseline()` call site, newly in scope this round) found zero new blockers
+and zero new real risks -- only nit-level refinements: the envelope-seed divergence round 4 flagged
+has a second, parallel half round 4 missed (`AnalogFmSstvDecoder.cs`'s own per-line
+`_slantLinePeakPosition = 0` reset, which legacy also has no counterpart for -- deleting only round
+4's cited line would not restore legacy behavior on its own), still judged not a risk (the port's
+value fails the jitter gate conservatively rather than corrupting anything); and a new nit noting
+`ReplayOriginCalculator.ComputeOrigin`'s bin array is `double[]` while the legacy line it cites
+allocates `int[]` (comment-accuracy only, behaviorally inert -- argmax-only, non-negative envelope).
+Both previously-queued nits (wrap-shape comment, `_mult` clamp asymmetry) re-confirmed unchanged,
+neither escalated across 5 rounds. **Final tally for chunk 2b: 5 rounds, 3 real fixes (round 1:
+numeric fidelity + revert-preserves-state; round 2: buffer-existence-gated automatic reset; round
+3: jitter-gate multiplier re-derivation), each restarting the 2-consecutive-clean-round counter,
+then 2 genuinely clean rounds (4-5) to close.** `ReplayOriginCalculator.cs` was fully clean across
+all 5 rounds -- zero findings, ever. 5 nits remain queued, none blocking, none escalated: the
+wrap-shape comment, the `_mult` clamp/`_autoSyncBaseMult` asymmetry, the envelope-seed/peak-reset
+divergence pair, and the histogram bin-type comment. Full `tests/ScanlineStudio.Core.Sstv.Tests`
+suite last confirmed at 1022/1022 (1 unrelated intentional skip) after round 3's fix; no production
+code changed in rounds 4-5 (doc-only rounds).
+
+**Chunk 2c** (`RestartableSstvDecoder.cs`) starts next.
