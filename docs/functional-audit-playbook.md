@@ -501,8 +501,9 @@ round was dispatched after round 8's fix landed. This is a deliberate, explicitl
 to the playbook's own 2-consecutive-clean-round closing rule, not an oversight -- if this file
 cluster is revisited later, start a fresh re-audit rather than assuming the formal gate was met.
 
-**Status**: **Batch 2 IN PROGRESS** -- chunk 2a CLOSED (2026-08-20, 3 rounds), chunk 2b CLOSED
-(2026-08-20, 5 rounds), chunk 2c (`RestartableSstvDecoder.cs`) not yet started. Chunk 2a
+**Status**: **Batch 2 CLOSED** (2026-08-20) -- chunk 2a CLOSED (3 rounds), chunk 2b CLOSED
+(5 rounds), chunk 2c CLOSED (3 rounds). See "Tier A Batch 2 -- CLOSED" below this table's own
+history for the full account. Chunk 2a
 (`RxLineStagingBuffer.cs` + `RxDiskLineStagingBuffer.cs`,
 reviewed together per the playbook's own "one shared interface" note), round 1 fixed
 (2026-08-20). Round 1 found 1 real blocker plus several risks, all against
@@ -814,3 +815,51 @@ undocumented; post-`Dispose()` telemetry getters (`SlantPpm` etc.) return stale 
 rather than throwing, arguably correct for a UI poll timer racing shutdown but undocumented. Round
 1's 3 queued nits re-confirmed still open, unchanged. Round 3 needed for the 2nd required clean
 round.
+
+**Round 3 -- 2nd consecutive clean round. Chunk 2c CLOSED. Tier A Batch 2 (chunks 2a+2b+2c)
+FULLY DONE** (2026-08-20). Independently re-derived the threshold arithmetic at all 3 checked rates
+one more time from the current formula (all 6 values matched the pinned test rows exactly) and
+independently derived the exact crossover point itself (round 2 had stated it approximately) --
+solved `46800r + 3600*(1100/1060)r >= 2^31-1` directly and verified both integer neighbours by
+hand: the exact crossover is **42,495 Hz**, confirming `critical == maximumSafeSampleIndex` for
+every rate at or above it, including 44100 and 48000 -- the two most common real capture rates, not
+an exotic edge case. Re-verified the stale-capture-bug-absence and swap-vs-in-flight-replay claims
+by reading `PushSamplesCore`/`Swap()` fresh. Fresh full 8-item sweep added coverage neither prior
+round had done: verified all 18 `ISstvDecoder` interface members are genuinely implemented (no
+silent no-op); re-derived `CreateInner`'s constructor-forwarding correctness against the actual
+callee signature (all 11 parameters, all defaults matching); confirmed the class doc's own 4-step
+state-machine description maps exactly onto the real code; confirmed the cross-thread concurrency
+contract (synchronous, no buffering, slow-subscriber-blocks-caller) is both correctly documented
+and correctly implemented. Zero new blockers, zero new real risks -- only 2 more trivial nits (one
+diagnostic accessor doesn't lock `_gate` unlike its 8 siblings; a swap increments its restart
+counter after disposing the outgoing decoder, safe only because that dispose is documented as
+unable to throw). **Fixed** the one cheap, now-exactly-verified doc-wording nit round 2 flagged:
+`ComputeMaximumComposedProjectionSamples`'s note said "at the top of the supported rate range" --
+replaced with the precise, independently-derived "at 42,495 Hz and above (including 44,100 and
+48,000)". Scoped filter 46/46 passing. **Final tally for chunk 2c: 3 rounds, 1 real risk fixed
+(round 1, doc-only proof-completeness gap) + 1 wording-precision fix (round 3), 2 clean rounds (2-3)
+to close.** 5 nits remain queued across the chunk, none blocking, none escalated (idle-swap
+pre-lock discard window, "race" wording on zero-concurrency drops, 2 dead defensive branches +
+triple-evaluated pure function, an unlocked test accessor, dispose-ordering-depends-on-Dispose-
+never-throwing).
+
+## Tier A Batch 2 -- CLOSED (2026-08-20)
+
+**13 rounds total across 3 chunks, 7 real fixes, every chunk closed under the formal
+2-consecutive-clean-round gate:**
+- **Chunk 2a** (`RxLineStagingBuffer.cs`+`RxDiskLineStagingBuffer.cs`): 3 rounds, 1 blocker (RAM
+  capacity-rejection latch missing) + 2 hardening fixes.
+- **Chunk 2b** (`ReplayOriginCalculator.cs`+`SlantTracker.cs`): 5 rounds, 3 real fixes (numeric
+  fidelity + revert-state, buffer-existence-gated reset, jitter-gate multiplier re-derivation) --
+  `ReplayOriginCalculator.cs` itself was clean across all 5 rounds. The chunk with this batch's
+  clearest illustration of "review cadence scales with risk, not with wanting to go faster": 3
+  consecutive real findings, each one restarting the clean-round counter, before 2 genuinely clean
+  rounds closed it.
+- **Chunk 2c** (`RestartableSstvDecoder.cs`): 3 rounds, 1 real fix (a proof-completeness doc gap) +
+  1 wording-precision fix.
+
+All commits: `e59cabf`/`29ef022`/`80a5a6b` (2a), `a77fc68`/`7321714`/`7c4e0ff`/`6a66e69`/`73e4e46`
+(2b), `bb0ee82`/`0a665f4`/(this closure) (2c). Full `tests/ScanlineStudio.Core.Sstv.Tests` suite
+last confirmed at 1022/1022 (1 unrelated intentional skip). Next unstarted batch per the approved
+plan: **Batch 3** (PTT/transmit sequencing) -- not started, no action taken, awaiting user
+direction.

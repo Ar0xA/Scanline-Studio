@@ -759,7 +759,8 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// (`projectedSamples &lt; int.MaxValue - consumed`), NOT by this reserve. At most supported
     /// rates the real headroom above <see cref="RestartThresholds.CriticalThresholdSamples"/> is
     /// tens of times this reserve, so a manual projection eating into it is not reachable in
-    /// practice -- but at the top of the supported rate range <c>critical == maximumSafeSampleIndex</c>
+    /// practice -- but at 42,495 Hz and above (including 44,100 and 48,000, the two most common
+    /// real capture rates) <c>critical == maximumSafeSampleIndex</c>
     /// exactly (this reserve IS the entire remaining headroom), so a sufficiently pathological
     /// manual regression result immediately before a 13h-mark push could in principle leave less
     /// margin than this function's own callers assume. A future change to either guard's clamp
