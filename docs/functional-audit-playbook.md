@@ -378,6 +378,41 @@ a related nit found in the same round: that branch's own log call still went thr
 `Log.CaptureOpenFailed` ("Failed to open capture device"), directly contradicting its own corrected
 exception message ("Invalid capture settings") -- added a distinct `CaptureSettingsInvalid` log
 message. Full `ScanlineStudio.Core.Audio.MiniAudio.Tests` 77/77 passing, full solution build clean.
-Commit `8ff1cff`. Re-audit round 5 is next -- past the soft cap with the user's explicit go-ahead,
-matching the D0/D2/D6 precedent of continuing when findings are real (even if narrowing) rather
-than stopping arbitrarily at a round count.
+Commit `8ff1cff`.
+
+Re-audit round 5 (2026-08-20, past the soft cap with the user's explicit go-ahead): NOT clean, 2
+real risks (comment/test only, no production logic bugs) + several nits. (1)
+`MiniAudioCaptureSession.Dispose()`'s own comment falsely claimed a write-lock-held-across-Join
+hazard was "NOT reachable today" -- the reasoning assumed `MiniAudioEngine.CaptureOverrunCount`'s
+`?.` operator was atomic with a concurrent session claim; it isn't (`?.` reads `_captureSession`
+into a temp, then calls on the temp, with no re-check before the call). Real chain, confirmed
+end-to-end: Avalonia's UI thread (`RxImagePaneViewModel`'s 250ms `DispatcherTimer`) polls
+`CaptureOverrunCount` through `ISstvSessionService`, can read a session an instant before
+`ClaimCaptureSessionLocked` claims it for disposal, then block on that session's own `Dispose()`
+write lock for as long as Dispose holds it -- a real UI stall (bounded by `CloseTimeout` ~5s,
+typically near-instant, unbounded if a `SamplesAvailable` subscriber hangs elsewhere), not merely
+the caught-and-recovered `ObjectDisposedException` the existing doc comments described. Not a
+deadlock (Dispose never waits on the poller) and not corruption -- documentation-only fix across
+all 4 affected doc comments (`MiniAudioCaptureSession.Dispose`, `MiniAudioEngine`/`IAudioEngine`/
+`ISstvSessionService`'s own `CaptureOverrunCount`), naming the real victim thread and the real
+bound. Deliberately NOT attempting a timeout-bounded-Join redesign as a byproduct of a comment fix
+-- that needs the same "abandoned thread may still touch the handle after we give up waiting"
+analysis `CloseTimeout`'s own doc comment already works through for the native close specifically,
+a real design task on its own. (2) `MiniAudioCaptureSession`'s own `_lifetimeLock`-based post-dispose
+guard (protecting `HasStopped`/`OverrunCount`) had zero test coverage, unlike both siblings
+(`MiniAudioRing` has a simple pair plus a stress test; `MiniAudioPlaybackSession` has the stress
+test) -- added both, mirroring the exact sibling patterns. Mutation-verified in a notably dramatic
+way: temporarily removing the guard CRASHED the test host process outright (a native P/Invoke call
+against an already-freed handle), not just a failed assertion -- confirms the guard is genuinely
+load-bearing for memory safety, not just a nice-to-have. Also added missing negative/zero coverage
+for `yoniq_audio_ring_create`'s pre-existing `<= 0` guard (a round-5 nit; the guard itself is
+unchanged, pre-existing code). Code-review pass: go, folded in 2 more risks + several nits before
+merging (the correction hadn't propagated to `ISstvSessionService`'s own doc comment, which still
+asserted the class-level "safe to read from any thread" contract was fully upheld; UI-thread
+identity was missing from both corrected comments; "block rather than throw" corrected to
+"block-then-throw" -- additive, not exclusive, since `_disposed` is set inside the same write lock;
+a wrong-reasoning comment on the new stress test claiming its 10s bound "absorbs" the stall, when
+`session.Dispose()` is synchronous on the same thread so any block resolves before the bound is
+ever measured; ring test naming corrected to cover negative values, the more discriminating case,
+not just zero). Full `ScanlineStudio.Core.Audio.MiniAudio.Tests` 83/83 passing, full solution build
+clean. Commit `d542715`. Re-audit round 6 is next.
