@@ -710,3 +710,26 @@ near-tie could theoretically resolve differently; the `Math.Max(1, ...)` clamp o
 legacy counterpart (unreachable for real modes). Scoped filter 80/80 passing. Full `tests/ScanlineStudio.Core.Sstv.Tests` suite: 1022/1022 passing
 (1 unrelated intentional skip). Clean-round counter restarts again from 0 -- round 4 needed as the
 (once more restarted) 1st clean round.
+
+**Round 4 -- clean, 1st of the (re-restarted) 2 required** (2026-08-20). Independently re-derived
+round 3's fix from legacy source: corrected round 3's own summary phrasing (which said `SetSampFreq`
+and `InitAutoStop` run "within the same guarded block" -- actually `SetSampFreq` at `Main.cpp:5596`
+is OUTSIDE the guard, `InitAutoStop` at `:5600` is inside it) but confirmed round 3's underlying
+CONCLUSION was correct regardless (`m_TW` is already corrected by the time `InitAutoStop`'s
+`m_Mult` recompute runs either way) -- and confirmed `SlantTracker.cs`'s own doc comment already
+stated the OUTSIDE/INSIDE split correctly, so only the round-3 prose summary was imprecise, not the
+code or its in-file documentation. Enumerated every `_effectiveSamplesPerLine`/tracker-rate writer
+(4 sites) and confirmed each pairs with a rate write before any `Reset()` can observe it -- no path
+re-derives `_mult` from a stale nominal, including the revert path (verified `_mult` is never
+mutated on a reverted manual correction, since all of `PerformReplay`'s early-exit `return false`s
+precede its `ResetBaseline()` call). Independently re-derived the round-3 test's 20->21 crossing
+from scratch (baseline 750 at line 5, d=-1000 at line 8, corrected nominal 6765, `(int)(6765/320)`)
+and got the identical numbers. Fresh full sweep of both files plus all 3 touched
+`AnalogFmSstvDecoder.cs` regions found 1 new NIT (not a risk, not fixed): the envelope-seed branch
+(`AnalogFmSstvDecoder.cs:5698`) assigns `_slantLinePeakPosition` where legacy's matching branch
+(`Main.cpp:4189-4198`) does not -- legacy only ever writes `m_SyncPos` from its `else if` arm, so on
+a flat/monotone-falling envelope (deep fade, dead air) legacy reports the PREVIOUS line's peak while
+this port reports ~0; only reachable on that fade scenario, both settle to a constant after the
+transition line, and `SlantTracker` consumes only differences -- judged not a risk. Also re-confirmed
+both already-queued nits (wrap-shape comment, `_mult` clamp asymmetry with `_autoSyncBaseMult`)
+still present, unchanged, none escalated. Round 5 needed for the 2nd required clean round.
