@@ -409,6 +409,69 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.DoesNotContain(true, radio.PttCalls);
     }
 
+    // ------------------------------------------------------------------ round 3 findings
+
+    [Fact]
+    public async Task Round3_DisposeAsync_RetriesAnUnkeyThatFailedDuringItsOwnCleanup()
+    {
+        // Round-3 finding: the fourth "keyed at shutdown" state DisposeAsync's pre-round-3 three-state
+        // check missed -- a transmit whose OWN cleanup un-key was attempted and FAILED recorded nothing
+        // before this fix (_pttLocked was already false by then, _pttLeftKeyedByCall is never set for
+        // this path, and _keyedTransmitCompletion is unconditionally cleared by the transmit's own
+        // finally regardless of whether the un-key succeeded) -- so DisposeAsync concluded "nothing to
+        // do" on a rig it had ALREADY logged Critical about ("MAY STILL BE KEYED"). Simulates the
+        // plausible real case: CleanupTimeout expires against a slow-but-healthy backend, and a fresh
+        // attempt at shutdown succeeds.
+        var failNextUnkey = true;
+        var (service, _, radio, logger) = CreateService();
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx && failNextUnkey)
+            {
+                failNextUnkey = false;
+                throw new TimeoutException("simulated slow backend -- the transmit's own cleanup un-key times out");
+            }
+        };
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        // The transmit's OWN cleanup un-key failed and was escalated to Critical -- no successful
+        // un-key has landed yet.
+        Assert.Equal([true], radio.PttCalls);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
+
+        // DisposeAsync must retry rather than conclude there is nothing left to do.
+        await service.DisposeAsync();
+
+        Assert.Equal(PttOnThenOff, radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round3_SetPttLockAsync_Engage_PostDispose_ThrowsAndNeverKeys()
+    {
+        var (service, _, radio, _) = CreateService();
+        await service.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => service.SetPttLockAsync(true));
+
+        Assert.Empty(radio.PttCalls);
+        Assert.False(service.IsPttLocked);
+    }
+
+    [Fact]
+    public async Task Round3_SetPttLockAsync_Unlock_PostDispose_StillWorks()
+    {
+        // The deliberate escape hatch (see SetPttLockAsync's own doc comment): disposal must never
+        // remove the one remaining way to un-key a rig this class already left keyed. Only the ENGAGE
+        // direction is rejected post-disposal.
+        var (service, _, radio, _) = CreateService();
+        await service.DisposeAsync();
+
+        await service.SetPttLockAsync(false);
+
+        Assert.Equal([false], radio.PttCalls);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)

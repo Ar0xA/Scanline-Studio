@@ -68,6 +68,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // threading shape as _pttLocked above.
     private volatile bool _disposed;
 
+    // Round-3 finding: the fourth "physically keyed at shutdown" state DisposeAsync's own three-state
+    // enumeration (see its own comment) does not cover -- a transmit whose cleanup un-key was ATTEMPTED
+    // and FAILED records nothing today: _pttLocked was already false by that point, _pttLeftKeyedByCall
+    // is never set for this path, and _keyedTransmitCompletion is unconditionally cleared by
+    // PlayWithPttAsync's own inner finally regardless of whether the un-key succeeded. Without this, a
+    // rig UnkeyForCleanupAsync already logged Critical ("MAY STILL BE KEYED") is then read by
+    // DisposeAsync as "nothing to do" -- most plausible when the failure was CleanupTimeout (5s)
+    // expiring against a slow-but-healthy backend, where a fresh attempt at shutdown would likely
+    // succeed. Set only for the captured-at-key-time real-rig case, so it can never fire for the benign
+    // RigId=="none" path. Same threading shape as _pttLocked above.
+    private volatile bool _pttUnkeyFailedOnRealRig;
+
     // Hot-path exception rate-limiting (docs/logging-guidelines.md's "Hot-path rule") -- these
     // handlers run on the audio engine's own capture-forwarding path, once per captured chunk;
     // logging every occurrence would turn a logging change into dropped RX samples. First
@@ -254,6 +266,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // _pttLocked -- see _pttLeftKeyedByCall's own doc comment. Placed after SetPttAsync
                 // succeeded, matching _pttLocked's own deliberate only-on-success rule above.
                 _pttLeftKeyedByCall = false;
+            }
+
+            // Round-3 finding: the pre-await disposed check above (line ~246) only catches the CHEAP,
+            // common case. _radioSession.SetPttAsync is a real serial/TCP round-trip -- DisposeAsync can
+            // run its entire backstop (which reads _pttLocked/_keyedTransmitCompletion, neither of which
+            // this call has published yet) while this await is in flight, find nothing to do, and
+            // return. Left uncorrected, this call would then set _pttLocked = true above with nothing
+            // left to ever un-key it. Latent today (SetPttLockAsync has zero production callers -- see
+            // this method's own doc comment), fixed anyway since the fix is cheap and this method is
+            // otherwise fully hardened against the same race everywhere else in this class.
+            if (locked && _disposed)
+            {
+                await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
+                throw new ObjectDisposedException(nameof(SstvSessionService));
             }
 
             Log.PttLockChanged(_logger, locked);
@@ -491,6 +517,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     public async Task StartReceivingAsync(CancellationToken ct = default)
     {
+        // Round-3 finding: without this, PlayWithPttAsync's own "Resume RX" cleanup step could restart
+        // capture (subscribing _decoderHandler/_waterfallHandler to a live engine, calling
+        // _decoder.ResetAgc()) AFTER DisposeAsync had already disposed the waterfall/decoder --
+        // reachable when AwaitInFlightKeyedTransmitAsync's bounded wait expires while a transmit's own
+        // cleanup is still inside its resume-RX step. Every caller of this method already routes
+        // through TryCleanupAsync or its own try/catch, so this degrades to a logged Warning there
+        // rather than propagating unhandled.
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
         if (_isReceiving)
         {
             return;
@@ -735,7 +770,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // pttLockedAtEntry case too: this call didn't key the rig, but the rig IS keyed for
                 // the whole duration of this call either way.
                 keyedCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                Volatile.Write(ref _keyedTransmitCompletion, keyedCompletion);
+
+                // Round-3 finding: Volatile.Write here paired with DisposeAsync's Volatile.Read is NOT
+                // enough to make the publish-then-recheck below actually see each other -- a volatile
+                // write is a release-store and a volatile read is an acquire-load, and that pairing does
+                // not forbid StoreLoad reordering (the classic Dekker's-algorithm gap). On x86-64, .NET
+                // emits both as plain movs, so this call's write and DisposeAsync's _disposed write can
+                // each sit in a per-core store buffer while the OTHER side's read runs first -- this call
+                // reads _disposed as false, DisposeAsync reads this field as null, and neither side sees
+                // the other. Interlocked.Exchange is a full fence, closing that gap. (The pre-existing
+                // Risk B pattern below -- _rxPendingResumeAfterUnlock/_pttLocked -- has the identical
+                // shape and the identical gap; that one's failure mode is a stranded RX pause, not a
+                // leaked keyed transmitter, so it hasn't been given the same treatment here.)
+                Interlocked.Exchange(ref _keyedTransmitCompletion, keyedCompletion);
 
                 // Set BEFORE the await deliberately: a SetPttAsync that throws mid-command can still
                 // have physically keyed the rig, so "keyed" is the only safe assumption for the
@@ -787,6 +834,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // tell which caused it, so it's logged generically at Information, not as a failure.
             abnormalTermination = true;
             Log.PlaybackCancelled(_logger);
+            throw;
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+            // Round-3 nit: without this arm, the disposed-check throw above falls into the generic
+            // `catch (Exception)` below and logs at Error with a full stack trace on every ordinary
+            // close-during-tune -- this is an expected shutdown condition (same category as the
+            // OperationCanceledException arm above), not a failure. The `when (_disposed)` guard keeps
+            // this from also catching a GENUINE ObjectDisposedException thrown by some other dependency
+            // this method calls into (e.g. a disposed audio/radio backend), which should still be
+            // logged as a real failure by the generic catch below.
+            abnormalTermination = true;
+            Log.PlaybackAbortedByDispose(_logger);
             throw;
         }
         catch (Exception ex)
@@ -944,6 +1004,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // IsPttLocked must never report true once that's true.
             _pttLocked = false;
             _pttLeftKeyedByCall = false;
+            _pttUnkeyFailedOnRealRig = false;
             Log.PttReleased(_logger);
             return true;
         }
@@ -955,6 +1016,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // for the captured-at-key-time real-rig case, so it can never fire for the benign
             // fresh-install RigId=="none" path that the Warning-suppression logic exists for.
             Log.PttStillKeyedAfterFailedUnkey(_logger);
+
+            // Round-3 finding: this is the fourth "keyed at shutdown" state -- see the field's own doc
+            // comment for why DisposeAsync's existing three-state check otherwise misses exactly this
+            // case.
+            _pttUnkeyFailedOnRealRig = true;
         }
 
         return false;
@@ -1094,7 +1160,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // other half of the publish-then-recheck race PlayWithPttAsync now performs against this same
         // field (see its own disposed-check right after publishing _keyedTransmitCompletion). Whichever
         // side's write happens first, the other side's read is guaranteed to observe it.
+        //
+        // Round-3 finding: the plain write above is release-store, not a full fence -- see
+        // PlayWithPttAsync's own comment at its Interlocked.Exchange publish for why that pairing alone
+        // does not forbid StoreLoad reordering. This is the other half of that same fence.
         _disposed = true;
+        Interlocked.MemoryBarrier();
 
         // ---- Blocker 3 (Tier A Batch 3 chunk 3a) ----
         // ORDER CHANGED DELIBERATELY: the PTT backstop now runs BEFORE StopReceivingAsync, which used
@@ -1111,18 +1182,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // changes, this backstop silently stops working.
         await AwaitInFlightKeyedTransmitAsync().ConfigureAwait(false);
 
-        // A rig can be physically keyed at shutdown for three distinct reasons, and _pttLocked only
+        // A rig can be physically keyed at shutdown for FOUR distinct reasons, and _pttLocked only
         // covered one of them: an engaged PTT lock (_pttLocked), a TuneAsync(leaveKeyedAfterTune:true)
-        // that deliberately left it keyed (_pttLeftKeyedByCall), and an in-flight transmit whose own
+        // that deliberately left it keyed (_pttLeftKeyedByCall), an in-flight transmit whose own
         // un-key never completed (_keyedTransmitCompletion still published after the bounded wait
-        // above). Any of the three gets the same best-effort, bounded, swallowed un-key -- a failed
-        // shutdown PTT-off must not prevent the rest of teardown from completing, but it is now
-        // logged at Critical (inside UnkeyForCleanupAsync), not swallowed silently.
+        // above), and a completed transmit whose own un-key attempt FAILED (_pttUnkeyFailedOnRealRig --
+        // round-3 finding: _pttLocked is already false by the time this failure is even observed, and
+        // _keyedTransmitCompletion is unconditionally cleared by PlayWithPttAsync's own finally
+        // regardless of whether the un-key succeeded, so without this fourth flag a rig this class
+        // already logged Critical about would be silently walked away from here). All four get the same
+        // best-effort, bounded, swallowed un-key -- a failed shutdown PTT-off must not prevent the rest
+        // of teardown from completing, but it is now logged at Critical (inside UnkeyForCleanupAsync),
+        // not swallowed silently.
         var keyedTransmitStillInFlight = Volatile.Read(ref _keyedTransmitCompletion) is not null;
-        if (_pttLocked || _pttLeftKeyedByCall || keyedTransmitStillInFlight)
+        if (_pttLocked || _pttLeftKeyedByCall || keyedTransmitStillInFlight || _pttUnkeyFailedOnRealRig)
         {
             // pttKeyedOnRealRig: true, and NOT a re-read of RigId (blocker 2's whole point). Every one
-            // of the three states above is only reachable via a SetPttAsync issued against a
+            // of the four states above is only reachable via a SetPttAsync issued against a
             // non-"none" RigId -- SetPttLockAsync only sets _pttLocked AFTER a successful set, the
             // null-object backend always throws, and _pttLeftKeyedByCall/_keyedTransmitCompletion are
             // only published when RigId was real at key time. A failure here is therefore always a
@@ -1392,6 +1468,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Playback cancelled")]
         public static partial void PlaybackCancelled(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Playback aborted -- the session was disposed while this call was still resolving its device")]
+        public static partial void PlaybackAbortedByDispose(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Playback failed")]
         public static partial void PlaybackFailed(ILogger logger, Exception ex);
