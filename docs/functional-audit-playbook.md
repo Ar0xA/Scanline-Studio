@@ -793,3 +793,24 @@ in `ComputeDefaultThresholds` (unreachable given how their operands are already 
 upstream) plus the pure function being evaluated 3x in the public ctor chain (correctness-neutral).
 Scoped filter (`RestartableSstvDecoderTests`/`DecoderSubscriberFailureTests`) 46/46 passing. Round
 2 needed for chunk 2c's own 2-consecutive-clean-round gate.
+
+**Round 2 -- clean, 1st of 2 required** (2026-08-20). Independently re-derived round 1's threshold
+arithmetic by hand at all 3 checked rates (5000/11025/48500Hz) before looking at the test's own
+`InlineData`, matched exactly; confirmed the "reserve is the entire remaining headroom at the top
+rate" claim, and additionally derived the actual crossover point round 1 didn't state --
+`critical == maximumSafeSampleIndex` for every rate >= ~42,495Hz, which includes 44100 and 48000,
+the two most common real capture rates, not just some exotic top-of-range value. Independently
+re-verified the stale-capture-bug-absence and swap-vs-in-flight-replay structural-safety claims by
+reading `PushSamplesCore`/`Swap()` directly. Fresh full sweep of the WHOLE file (including parts
+round 1 didn't focus on: `CreateInner`'s full constructor-forwarding list -- confirmed all 11
+parameters forwarded by name, none dropped; event subscribe/unsubscribe symmetry; the
+`StationIdDecodeEnabled` live-setter's concurrency contract; `Dispose()`'s idempotency) found zero
+new blockers, zero new real risks. 3 new nits (none fixed, none escalated): round 1's doc fix
+undersold its own scope (says "top of the supported rate range," actually engages at ~42.5kHz+,
+covering 44100/48000); the class doc's `_pushActive` guard claim covers "swap" but not "dispose" --
+a forwarded-decode-event handler calling `Dispose()` re-entrantly genuinely can dispose mid-decode,
+unreachable in production (`SstvSessionService` only disposes after `StopReceivingAsync`) but
+undocumented; post-`Dispose()` telemetry getters (`SlantPpm` etc.) return stale last-known values
+rather than throwing, arguably correct for a UI poll timer racing shutdown but undocumented. Round
+1's 3 queued nits re-confirmed still open, unchanged. Round 3 needed for the 2nd required clean
+round.
