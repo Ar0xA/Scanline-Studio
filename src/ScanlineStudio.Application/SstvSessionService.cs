@@ -300,15 +300,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public int BufferedSampleCount => _decoder.BufferedSampleCount;
 
     /// <summary>See <see cref="ISstvSessionService.CaptureOverrunCount"/>. Absorbs the narrow,
-    /// documented race <c>MiniAudioEngine.CaptureOverrunCount</c>'s own doc comment describes (a
-    /// concurrent <see cref="StopReceivingAsync"/> disposing the capture session between that
+    /// documented THROW race <c>MiniAudioEngine.CaptureOverrunCount</c>'s own doc comment describes
+    /// (a concurrent <see cref="StopReceivingAsync"/> disposing the capture session between that
     /// property's field read and its underlying native call) -- auditor-caught: this property is
     /// polled every 250ms by <c>RxImagePaneViewModel</c>'s telemetry timer, an ordinary "user clicks
     /// Stop RX mid-poll" interleaving reachable on every real session, and a <c>DispatcherTimer</c>
     /// tick exception has nowhere safe to land (this port's own global unhandled-exception handler
     /// only logs, it doesn't recover). <c>0</c> is not a fallback value here -- it IS the documented
     /// contract value for "capture isn't running", so this doesn't hide a real failure, it just
-    /// reaches the same answer a clean read would have found a moment later.</summary>
+    /// reaches the same answer a clean read would have found a moment later. <b>Tier A Batch 1
+    /// re-audit round 5/6 correction: this catch does NOT absorb everything the same race can do</b>
+    /// -- see <see cref="ISstvSessionService.CaptureOverrunCount"/>'s own doc comment (which this
+    /// summary's first line already points to) for the BLOCK half of the race this `try`/`catch`
+    /// has no way to catch: the underlying read can stall the calling thread (here, the UI thread)
+    /// for as long as a concurrent capture-session `Dispose()` holds its own write lock, before
+    /// this method's call even reaches the point where it could throw.</summary>
     public int CaptureOverrunCount
     {
         get
