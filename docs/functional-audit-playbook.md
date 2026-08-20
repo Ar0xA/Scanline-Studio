@@ -1778,3 +1778,74 @@ Round 13 re-verified round 12's fixes as sound but found a new real risk (an amp
 12's own fix) -- round 13 does NOT count as chunk 3a's 1st clean round. Round 14 is now the earliest
 round that can count as chunk 3a's 1st clean round. Twelve consecutive rounds (2-13) have now each
 found something real in this file.
+
+**Chunk 3a round 14** (2026-08-21, independent agent, fresh context, agent `afad1729e3b721b71`).
+Re-derived round 13's `EnqueueAllAsync` fix and confirmed it correct on every axis checked (stall
+tracking, `TickCount64` clock choice, propagation through the generic catch, `_transmitInFlight`
+release on the new path). Evaluated round 13's own deferred item (`StartPlaybackAsync`'s smaller-
+window unbounded wait) and found round 13's severity call WRONG: it carries the identical
+leaked-keyed-transmitter exposure AND the identical permanent-lockout amplification, not a smaller
+variant. Continuing a genuinely fresh unscoped sweep of the whole file, found: **(1) [blocker]**
+`_radioSession.SetPttAsync(true, ct)` (the key command itself) has no bound of its own --
+`RigctldClientProtocol` bounds only its initial connect, not the per-command reply read, so a
+half-open CAT connection blocks this forever WHILE THE COMMAND HAS ALREADY PHYSICALLY KEYED THE RIG.
+**(2) [blocker]** `_audioEngine.StartPlaybackAsync`, one step later, same shape, same severity (PTT
+already keyed by this point) -- confirms round 13's deferral was the wrong call. **(3) [risk]**
+structural: three MORE unbounded awaits remain inside the `_transmitInFlight`-guarded region
+(`StopReceivingAsync`, `ResolveDeviceAsync`/device enumeration, `GetTxVolumePercentAsync`/
+`LoadAudioSettingsAsync`) -- these run BEFORE the key command, so NOT the leaked-keyed-transmitter
+class, but still cause the same permanent process-wide lockout via `_transmitInFlight` never
+releasing. **(4) [risk]** `StopPlaybackWithWatchdogAsync`'s own doc comment is factually wrong --
+verified against `MiniAudioEngine.cs` directly: `StopPlaybackAsync` nulls its session field at CLAIM
+time (synchronously, before the actual drain/dispose that can block), so an immediately-following
+transmit does NOT fail loudly against a still-wedged device as the comment claimed -- it opens a
+SECOND native session concurrently instead. **(5)/(6)/(9) [nits]**: the stall-timeout doc comment
+overclaimed its own scope (catches only a fully-wedged device, not a slow trickle); two
+`Task.WhenAny`+uncancelled-`Task.Delay` timer leaks; two XML doc comments misattached to the wrong
+member (`SetPttLockAsync`'s 53-line doc comment was on the `_pttLockGate` field, `PlayWithPttAsync`'s
+was on the `CleanupTimeout` constant). **(7) [risk, deferred]**: `DisposeAsync` housekeeping gaps
+(`_pttLockGate` never disposed -- undocumented until this round, `ISstvDecoderMaintenance`
+subscriptions never unsubscribed, no re-entrancy guard) -- not fixed this round beyond documenting
+the `_pttLockGate` non-dispose as deliberate. **(8)**: re-derived the already-tracked
+`StartReceivingAsync` double-subscription risk from scratch, confirmed still open and still correctly
+characterized as a different (RX corruption, not PTT) class -- no new action.
+
+**Chunk 3a round 14 fixes applied** (2026-08-21). Findings 1/2: both unbounded awaits now wrapped
+with `.WaitAsync(_cleanupTimeout)` (NOT a fresh standalone `CancellationTokenSource`, unlike
+`UnkeyForCleanupAsync`'s own pattern, deliberately -- `Task.WaitAsync(TimeSpan)` preserves a genuine
+caller cancellation of `ct` as `OperationCanceledException` (the benign, Information-logged arm),
+while only an exceeded budget with no cancellation surfaces as `TimeoutException` (the generic catch
+-> Error log -> abnormalTermination -> urgent un-key path) -- matching the exact log-level
+distinction round 13's `EnqueueAllAsync` fix was designed around. The underlying call is left running
+in the background either way, same accepted trade-off as round 13's own fix. Finding 3 (the 3 pre-key
+unbounded awaits): explicitly NOT fixed this round -- genuinely lower severity than findings 1/2 (no
+physical-transmitter exposure, only an availability/lockout bug), a materially different judgment
+than round 13's mistake (which deferred an item that WAS in the safety-critical class). Flagged for a
+future round. Finding 4: doc comment corrected to describe the actual behavior and flag the residual
+concurrent-double-open risk as out of this chunk's scope (belongs in `MiniAudioEngine`, a different
+project). Findings 5/6/9: all fixed (comment tightened; both timer leaks closed with a `using`
+`CancellationTokenSource` cancelled on the winning-branch path; both doc comments moved to their
+correct member, with a short one-line replacement left on the field/constant they'd been squatting
+on -- incidentally also documents finding 7's `_pttLockGate` non-dispose as deliberate). Finding 7
+(unsubscribe/re-entrancy guard): not fixed, logged as a queued nit.
+
+New regression tests: `Round14_PlayWithPttAsync_KeyCommandHangs_TimesOutAndStillUnkeysRatherThanLeavingPttKeyedForever`
+(finding 1) and `Round14_StartPlaybackAsync_Hangs_TimesOutAndStillUnkeysRatherThanLeavingPttKeyedForever`
+(finding 2). Required two new test-infrastructure additions: `FakeRadioSessionService.HangOnCallNumber`
+(hangs one specific 1-based call number forever, distinct from the existing `Gate` which hangs EVERY
+call equally and so cannot let a test observe a LATER cleanup un-key call succeed) and
+`GatedStartPlaybackAudioEngine` (mirrors the existing `GatedStopPlaybackAudioEngine`, but only gates
+its OWN first call -- an abandoned, permanently-parked first call must not later resume and collide
+with a second, deliberately un-gated call a test needs to observe succeeding). Both tests mutation-
+verified: removing each `.WaitAsync(_cleanupTimeout)` in turn and re-running just that test produced
+an outright hang under a 20s external `timeout` bound both times, confirming the exact predicted
+unbounded-wait failure mode. Restored, rebuilt clean, both tests re-confirmed passing, no stray
+test-host processes survived either mutation. All 191 `ScanlineStudio.Application.Tests` passing (189
+pre-existing + 2 new), full solution suite (all projects) clean.
+
+Round 14 fixed 2 new blockers in the leaked-keyed-transmitter class (an amplification/correction of
+round 13's own severity call, the same pattern as round 13 was itself an amplification of round 12's)
+-- round 14 does NOT count as chunk 3a's 1st clean round. Round 15 is now the earliest round that can
+count as chunk 3a's 1st clean round. Thirteen consecutive rounds (2-14) have now each found something
+real in this file -- finding 3 (the 3 remaining pre-key unbounded awaits) is a known, deliberately
+deferred item for round 15 or later to pick up.

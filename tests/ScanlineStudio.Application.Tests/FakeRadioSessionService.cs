@@ -49,6 +49,18 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     public async Task SetPttAsync(bool tx, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        var callNumber = Interlocked.Increment(ref _callCount);
+        if (HangOnCallNumber == callNumber)
+        {
+            // Round-14 test hook: hangs forever, never returning -- unlike Gate (below), this only
+            // affects ONE specific call (1-based, across the whole fake's lifetime), so a test can
+            // target exactly the key command while still observing a LATER cleanup un-key call
+            // succeed normally. Gate cannot express this: it is one shared Task, so hanging it hangs
+            // every call equally, including the cleanup un-key a hung-key-command test needs to prove
+            // still gets through.
+            await _neverCompletes.Task.ConfigureAwait(false);
+        }
+
         if (Gate is not null)
         {
             await Gate.ConfigureAwait(false);
@@ -85,6 +97,15 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// calling thread, the same shape <c>FakeAudioDeviceEnumerator.Gate</c> already provides for device
     /// resolution.</summary>
     public Task? Gate { get; set; }
+
+    /// <summary>Test-only hook (Tier A Batch 3 chunk 3a round 14): 1-based call number of
+    /// <see cref="SetPttAsync"/> that should hang forever instead of completing. See
+    /// <see cref="SetPttAsync"/>'s own comment for why this exists separately from
+    /// <see cref="Gate"/>.</summary>
+    public int? HangOnCallNumber { get; set; }
+
+    private int _callCount;
+    private readonly TaskCompletionSource _neverCompletes = new();
 
     public IReadOnlyList<FrequencyPreset> Presets { get; set; } = [];
 
