@@ -533,3 +533,23 @@ files; `InvalidateSnapshot` bypasses the `_returnSnapshot` test seam `Dispose` u
 sample-count overflow past ~268M staged samples (unreachable today). Round 2 needed before this
 chunk can close (CLAUDE.md §7's 2-consecutive-clean-round bar, non-negotiable for buffer/
 concurrency work).
+
+**Round 2 — chunk 2a's 1st clean round** (2026-08-20). Independently re-derived the monotonicity
+claim from legacy source itself, not from round 1's citations: confirmed via a full-tree `grep -a`
+that `m_WD` has exactly one assignment site in the whole codebase (`sstv.cpp:594`, `SetMode`), and
+additionally checked something round 1 didn't -- whether a mid-run `SetMode` call could break
+monotonicity -- and found every mid-run call site is immediately followed by `Start()` (which
+resets `m_wStgLine` via `Main.cpp:4958`), except one (`sstv.cpp:2148`) that reaches its own
+`Start()` on the very next demod sample, far short of one staged line; monotonicity holds within
+any window between resets. Hand-verified all 3 new/edited tests are genuinely mutation-sensitive
+(each would pass without the latch, by concrete arithmetic on the exact numbers used). Also did a
+fresh full 8-item sweep of both files and found 4 more nits (none blocking, none fixed this round,
+read-only pass): `IRxLineStagingBuffer.cs:108-110`'s `HasHeadroomForSamples` RAM-contract doc still
+describes the pre-fix plain-arithmetic contract, now the one place round 1's latch doc update
+didn't reach; unbounded `SemaphoreSlim` permit accumulation in `RxDiskLineStagingBuffer` (not a
+correctness bug -- the drain loop re-checks after every `Wait` -- but a pathological case could
+burn the whole `DrainTimeout` and falsely latch `HasWriteFailed`); no negative-argument guard on
+`HasHeadroomForSamples` (unreachable from both live call sites); a zero-length line advances
+`LineCount` with 0 samples in both implementations (no legacy analogue, unreachable from Phase 5's
+capture hook). All 7 of round 1's queued risks/nits re-confirmed still present, unchanged. Zero
+blockers. Round 3 needed for the 2nd required clean round before this chunk can close.
