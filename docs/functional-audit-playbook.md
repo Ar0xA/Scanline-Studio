@@ -1343,7 +1343,7 @@ so at least one side always observes the other, for every pairing); Risk B and r
 residual are both still correctly classified, neither shifted by anything this round found. Both
 spot-checked round-6 tests confirmed genuinely mutation-sensitive.
 
-**Chunk 3a round 7 fix applied** (2026-08-20, commit `<pending>`). Finding 1: `SetPttLockAsync` now
+**Chunk 3a round 7 fix applied** (2026-08-20, commit `bdb9b00`). Finding 1: `SetPttLockAsync` now
 captures `rigIsRealAtKeyTime` once, before the key command (the same blocker-2 rule
 `PlayWithPttAsync` already follows), wraps the `SetPttAsync` call in a `try`/`catch (Exception) when
 (rigIsRealAtKeyTime)`, and on that path sets `_pttLeftKeyedByCall = true` + logs a new Critical
