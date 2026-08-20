@@ -67,7 +67,11 @@ internal interface IRxLineStagingBuffer : IDisposable
     /// <see cref="RxLineStagingBuffer.TryAppendLine"/>'s own doc comment for the full RAM-mode
     /// contract (per-line atomicity, no partial line ever staged, silent rejection not an
     /// exception). A disk-backed implementation additionally rejects (returns <see langword="false"/>)
-    /// once <see cref="HasWriteFailed"/> is set, for the same "capture simply stops" reason.</summary>
+    /// once <see cref="HasWriteFailed"/> is set, for the same "capture simply stops" reason.
+    /// Both implementations LATCH: <see cref="RxLineStagingBuffer"/> on its first capacity rejection
+    /// (cleared by <see cref="RxLineStagingBuffer.Clear"/>, matching legacy's <c>m_wStgLine = 0</c>),
+    /// the disk-backed one on write failure (NOT cleared by <c>Clear</c> -- a failed write is not
+    /// repaired by emptying the buffer).</summary>
     bool TryAppendLine(ReadOnlySpan<double> demodulated, ReadOnlySpan<double> syncEnvelope);
 
     /// <summary>The exact staged-sample count spanned by the first <c>min(lineCount, </c>

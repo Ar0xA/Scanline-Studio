@@ -49,6 +49,18 @@ namespace ScanlineStudio.Core.Sstv;
 /// silent (a <see langword="false"/> return, not an exception) -- past capacity, capture simply stops;
 /// the in-progress image and any already-staged samples are unaffected, exactly like legacy.
 ///
+/// <b>Rejection is LATCHED, not re-evaluated per call</b> -- legacy's admission test is monotonic:
+/// `m_WD` is fixed for a whole reception (assigned exactly once in the legacy codebase, `sstv.cpp:594`)
+/// and `m_wStgLine` only increments or resets to 0, so the first line legacy rejects is the last line
+/// it ever stages until a reset (`CopyStgBuf` makes it explicit: `else { break; }`,
+/// `Main.cpp:5247-5249`) -- legacy's staged stream is structurally GAP-FREE. This port's own per-line
+/// width varies (fractional-carry +-1, plus Auto-Slant commits), so a purely per-call check would
+/// reject a wide line and then admit a narrower one past the same slack, punching a hole in a stream
+/// every consumer maps to destination samples through a single linear offset. Once
+/// <see cref="TryAppendLine"/> returns <see langword="false"/> for capacity, every subsequent call
+/// returns <see langword="false"/> too, until <see cref="Clear"/> (legacy's `m_wStgLine = 0`,
+/// `Main.cpp:4958`) re-opens admission.
+///
 /// <b>Element type is <see cref="double"/>, not legacy's <c>short</c></b> -- matching this port's own
 /// existing `_demodulatedFrequencies`/`SyncEnvelopeDetector` output types (the actual values this class
 /// will be fed, once Phase 5 wires capture) rather than legacy's raw 16-bit staging. Two separate,
@@ -81,6 +93,28 @@ internal sealed class RxLineStagingBuffer : IRxLineStagingBuffer
     // accumulates enough lines. Tracking the true per-line boundary explicitly, one entry per
     // successful TryAppendLine call, is the only correct fix -- not a stride assumption.
     private readonly List<int> _lineBoundaries;
+
+    // Legacy's admission test is monotonic-once-full, and this port's is not unless latched.
+    // `((m_wStgLine + 1) * SSTVSET.m_WD) < m_RxBufAllocSize` (`Main.cpp:4999`/`:5242`) uses a FIXED
+    // width -- `m_WD` is assigned exactly once in the entire legacy codebase (`sstv.cpp:594`,
+    // `SetMode`; CorrectSlant's own mid-reception `SetSampFreq()` calls at `Main.cpp:5405`/`:5409`/
+    // `:5412` never touch it) -- against a `m_wStgLine` that only ever increments or resets to 0
+    // (`Main.cpp:4958`, `sstv.cpp:1622`/`:1638`). So legacy's left-hand side never shrinks: the
+    // FIRST line legacy rejects is the LAST line it ever stages until a reset, and `CopyStgBuf`
+    // spells that out with an explicit `else { break; }` (`Main.cpp:5247-5249`) abandoning the whole
+    // drain loop. Legacy's staged stream is therefore structurally GAP-FREE.
+    //
+    // This port's per-line sample count VARIES (`_effectiveSamplesPerLine`, +-1 from the
+    // fractional-carry line-boundary accumulator and shifted outright by every Auto-Slant commit),
+    // so a bare per-call `Count + length >= CapacitySamples` test would reject a WIDE line and then
+    // silently admit a NARROWER one immediately after, past the same slack. That is not a
+    // cosmetic difference: every consumer (`AnalogFmSstvDecoder`'s replay path) maps a local staged
+    // index to a destination sample through ONE linear offset, so a post-gap line would be drawn
+    // from the wrong audio, and `LineCount` would undercount the skipped line. Latching the first
+    // rejection restores legacy's exact monotonic behavior. Not `volatile` (unlike
+    // `RxDiskLineStagingBuffer._hasWriteFailed`, which a background consumer task writes) -- this
+    // RAM implementation is touched only from the decode thread.
+    private bool _capacityReached;
 
     /// <summary>Total number of successfully staged LINES (not samples) -- mirrors legacy's own
     /// <c>dp-&gt;m_wStgLine</c> exactly, tracked directly rather than derived from a stride this port's
@@ -150,8 +184,18 @@ internal sealed class RxLineStagingBuffer : IRxLineStagingBuffer
                 nameof(syncEnvelope));
         }
 
+        // Latched: legacy's admission test can never pass again once it has failed (see
+        // _capacityReached's own doc comment). Checked before the per-call arithmetic, and after the
+        // length-mismatch throw above -- same ordering as RxDiskLineStagingBuffer.TryAppendLine's
+        // own `_hasWriteFailed` guard (`RxDiskLineStagingBuffer.cs:283-286`).
+        if (_capacityReached)
+        {
+            return false;
+        }
+
         if (_demodulated.Count + demodulated.Length >= CapacitySamples)
         {
+            _capacityReached = true;
             return false;
         }
 
@@ -201,12 +245,20 @@ internal sealed class RxLineStagingBuffer : IRxLineStagingBuffer
     /// <summary>Discards all staged samples, resetting <see cref="Count"/> to 0 -- mirrors legacy's
     /// <c>dp-&gt;m_wStgLine = 0</c> at a fresh lock (`Main.cpp:4958`). Does NOT change
     /// <see cref="CapacitySamples"/> (fixed for this instance's lifetime, see that property's own doc
-    /// comment).</summary>
+    /// comment). Also un-latches <see cref="TryAppendLine"/>'s capacity rejection, mirroring how
+    /// legacy's own <c>m_wStgLine = 0</c> re-opens its admission test.</summary>
     public void Clear()
     {
         _demodulated.Clear();
         _syncEnvelope.Clear();
         _lineBoundaries.Clear();
+
+        // Un-latches, matching legacy's `dp->m_wStgLine = 0` (`Main.cpp:4958`, fresh lock): with
+        // m_wStgLine back at 0 legacy's `((m_wStgLine + 1) * m_WD) < m_RxBufAllocSize` passes again
+        // and capture resumes. Deliberately UNLIKE RxDiskLineStagingBuffer.Clear(), which leaves
+        // `_hasWriteFailed` set -- that flag's trigger is a genuine I/O failure that clearing cannot
+        // repair, whereas this one's trigger is a full buffer that Clear() has just emptied.
+        _capacityReached = false;
     }
 
     /// <summary>Always <see langword="false"/> -- this RAM implementation has no background writer
@@ -216,10 +268,17 @@ internal sealed class RxLineStagingBuffer : IRxLineStagingBuffer
     public bool HasWriteFailed => false;
 
     /// <summary>RX buffer subsystem Phase 8. Same strict <c>&lt;</c> boundary
-    /// <see cref="TryAppendLine"/>'s own admission check uses below -- one definition, not two. See
-    /// <see cref="IRxLineStagingBuffer.HasHeadroomForSamples"/>'s own doc comment for the full
-    /// contract.</summary>
-    public bool HasHeadroomForSamples(int additionalSamples) => Count + additionalSamples < CapacitySamples;
+    /// <see cref="TryAppendLine"/>'s own admission check uses below -- one definition, not two --
+    /// AND the same latch: legacy spells `CorrectSlant`'s entry gate
+    /// (`Main.cpp:5268-5270`) with the IDENTICAL expression as its append gate
+    /// (`((m_wStgLine + 1) * m_WD) &gt;= m_RxBufAllocSize`), so in legacy "appends have stopped" and
+    /// "slant correction is refused" are one fact, not two. Without the latch here, this port's own
+    /// varying line width could answer <see langword="true"/> to a narrow probe after a wide line
+    /// already latched capture shut, running a slant search legacy would have refused. Mirrors
+    /// <see cref="RxDiskLineStagingBuffer.HasHeadroomForSamples"/>'s own <c>!_hasWriteFailed</c>
+    /// shape. See <see cref="IRxLineStagingBuffer.HasHeadroomForSamples"/> for the full contract.</summary>
+    public bool HasHeadroomForSamples(int additionalSamples) =>
+        !_capacityReached && Count + additionalSamples < CapacitySamples;
 
     /// <summary>No-op -- this RAM implementation owns no unmanaged resources (no scratch files, no
     /// background writer task) to tear down. See <see cref="IRxLineStagingBuffer"/>'s own doc
