@@ -18,6 +18,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private readonly IMacroTextResolver _macroTextResolver;
     private readonly IRadioSessionService _radioSession;
     private readonly ILogger<SstvSessionService> _logger;
+    private readonly TimeSpan _cleanupTimeout;
+    private readonly TimeSpan _playbackStopWaitBudget;
+    private readonly TimeSpan _inFlightKeyedTransmitWait;
     private readonly Action<ReadOnlyMemory<float>> _decoderHandler;
     private readonly Action<ReadOnlyMemory<float>> _waterfallHandler;
     // Ultracode audit finding #34's OnDecoderRestartCriticallyOverdue can now call StopReceivingAsync
@@ -41,6 +44,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // Same threading shape/reasoning as _pttLocked immediately above.
     private volatile bool _rxPendingResumeAfterUnlock;
 
+    // Blocker 3 (Tier A Batch 3 chunk 3a): tracks "a PlayWithPttAsync call has PTT keyed RIGHT NOW,
+    // mid-transmit" so DisposeAsync can WAIT for that call's own un-key instead of racing it. A plain
+    // bool can't be awaited, so this is a TaskCompletionSource: non-null exactly between the point
+    // PlayWithPttAsync keys (or inherits an already-keyed) PTT and the point its finally has finished
+    // its un-key attempt. Deliberately NOT `volatile` (unlike _pttLocked/_isReceiving above):
+    // Interlocked.CompareExchange on a volatile field is CS0420, and this project treats warnings as
+    // errors -- every access goes through Volatile.Read/Interlocked instead, same guarantee.
+    private TaskCompletionSource? _keyedTransmitCompletion;
+
+    // The one "physically keyed after the call returned" state _pttLocked does NOT cover:
+    // TuneAsync's leaveKeyedAfterTune leaves PTT keyed without ever setting _pttLocked (SetPttLockAsync's
+    // own doc comment already documents that gap). Tracked so DisposeAsync's shutdown backstop covers
+    // it too -- same failure class as blocker 3, one field to close. Same threading shape as _pttLocked.
+    private volatile bool _pttLeftKeyedByCall;
+
     // Hot-path exception rate-limiting (docs/logging-guidelines.md's "Hot-path rule") -- these
     // handlers run on the audio engine's own capture-forwarding path, once per captured chunk;
     // logging every occurrence would turn a logging change into dropped RX samples. First
@@ -61,7 +79,36 @@ public sealed partial class SstvSessionService : ISstvSessionService
         IReceivedImageBuffer receivedImage,
         IRadioSessionService radioSession,
         ILogger<SstvSessionService> logger)
+        : this(audioEngine, deviceEnumerator, settingsStore, decoder, encoder, macroTextResolver,
+               waterfall, receivedImage, radioSession, logger,
+               cleanupTimeoutForTests: null, playbackStopWaitBudgetForTests: null,
+               inFlightKeyedTransmitWaitForTests: null)
     {
+    }
+
+    /// <summary>Test-only: lets a test shrink the PTT-safety cleanup budgets (production 5s/5s/3s)
+    /// so the blocker-1/blocker-3 regression tests (Tier A Batch 3 chunk 3a) can actually let a
+    /// budget EXPIRE without a multi-second-per-test suite -- same shape as
+    /// <c>RxDiskLineStagingBuffer</c>'s own <c>disposeDrainTimeoutForTests</c> precedent.</summary>
+    internal SstvSessionService(
+        IAudioEngine audioEngine,
+        IAudioDeviceEnumerator deviceEnumerator,
+        ISettingsStore settingsStore,
+        ISstvDecoder decoder,
+        ISstvEncoder encoder,
+        IMacroTextResolver macroTextResolver,
+        IWaterfallSource waterfall,
+        IReceivedImageBuffer receivedImage,
+        IRadioSessionService radioSession,
+        ILogger<SstvSessionService> logger,
+        TimeSpan? cleanupTimeoutForTests,
+        TimeSpan? playbackStopWaitBudgetForTests,
+        TimeSpan? inFlightKeyedTransmitWaitForTests)
+    {
+        _cleanupTimeout = cleanupTimeoutForTests ?? CleanupTimeout;
+        _playbackStopWaitBudget = playbackStopWaitBudgetForTests ?? PlaybackStopWaitBudget;
+        _inFlightKeyedTransmitWait = inFlightKeyedTransmitWaitForTests ?? InFlightKeyedTransmitWait;
+
         _audioEngine = audioEngine;
         _deviceEnumerator = deviceEnumerator;
         _settingsStore = settingsStore;
@@ -183,6 +230,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
         {
             await _radioSession.SetPttAsync(locked, ct).ConfigureAwait(false);
             _pttLocked = locked;
+            if (!locked)
+            {
+                // A CONFIRMED un-key invalidates every "still keyed" belief this class holds, not just
+                // _pttLocked -- see _pttLeftKeyedByCall's own doc comment. Placed after SetPttAsync
+                // succeeded, matching _pttLocked's own deliberate only-on-success rule above.
+                _pttLeftKeyedByCall = false;
+            }
+
             Log.PttLockChanged(_logger, locked);
 
             if (!locked && _rxPendingResumeAfterUnlock)
@@ -591,6 +646,24 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// shape's <c>try</c>/<c>finally</c> didn't start until after those calls.</summary>
     private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
 
+    // Blocker 1 (Tier A Batch 3 chunk 3a). IAudioEngine.StopPlaybackAsync takes no CancellationToken
+    // -- it cannot be cancelled, only stopped waiting on -- and the real MiniAudioEngine can take
+    // ~10.2s worst case on a wedged output device (MiniAudioEngine.DrainTimeout 5s +
+    // MiniAudioPlaybackSession.CloseTimeout 5s + DrainTailMargin 200ms). Sharing ONE 5s deadline
+    // across StopPlayback-then-un-key therefore meant the un-key's token was already cancelled by the
+    // time it ran, and both real protocol backends honor the token at their lock-acquire gate
+    // (HamlibRadioProtocol.cs, RigctldClientProtocol.cs) -- so PTT-off was never even attempted on the
+    // exact hardware failure where it matters most. This is how long we WAIT before moving on to the
+    // un-key; generous enough that a healthy drain (ring ~0.37s + 200ms tail margin) always finishes
+    // inside it, so normal transmissions are bit-for-bit unaffected.
+    private static readonly TimeSpan PlaybackStopWaitBudget = TimeSpan.FromSeconds(5);
+
+    // Blocker 3: how long DisposeAsync waits for an in-flight keyed transmit's OWN cleanup before
+    // force-un-keying itself. Sized against ScanlineStudio.Host/Program.cs's 10s total host-teardown
+    // bound: this (3s) + the backstop un-key's own CleanupTimeout (5s) = 8s worst case, leaving
+    // headroom for the rest of teardown rather than guaranteeing a TeardownTimedOut.
+    private static readonly TimeSpan InFlightKeyedTransmitWait = TimeSpan.FromSeconds(3);
+
     private async Task PlayWithPttAsync(IAsyncEnumerable<float> samples, int sampleRate, CancellationToken ct, bool leaveKeyedAfterCall = false, long? totalSamplesEstimate = null)
     {
         var wasReceiving = _isReceiving;
@@ -607,24 +680,55 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
 
         var abnormalTermination = false;
+
+        // Blocker 2 (Tier A Batch 3 chunk 3a): captured ONCE, at key time -- NEVER re-read at
+        // catch/cleanup time. RadioController.DisconnectAsync/DisposeAsync both reset _rigId to
+        // "none" WITHOUT ever un-keying PTT themselves, so a rig this call genuinely keyed can read
+        // "none" by the moment the cleanup un-key fails. The old catch-time re-read then classified a
+        // physically keyed transmitter as the benign "no radio, nothing to unkey" case and swallowed
+        // it.
+        var pttKeyedOnRealRig = false;
+
+        // Blocker 3: this call's own handle into _keyedTransmitCompletion. Local as well as field so
+        // the finally can clear the field ONLY if it still points at this call's own instance.
+        TaskCompletionSource? keyedCompletion = null;
+
         try
         {
             var device = await ResolveDeviceAsync(forCapture: false, ct).ConfigureAwait(false);
             var gain = (await GetTxVolumePercentAsync(ct).ConfigureAwait(false)) / 100f;
             var audioSettings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
 
-            if (!_pttLocked)
+            // Guarded on RigId ("none" = the null-object "no radio" backend, spec/18-path-to-1.0.md
+            // Critical item 1), not Capabilities -- see IRadioController.RigId's own doc comment for
+            // why a live-capability check would be unsafe here (real backends connect lazily, so
+            // Capabilities reads None during a real window even with a genuine PTT-capable rig
+            // configured). Read into a local exactly once: the old code's "RigId is stable so there's
+            // no was-available-at-entry-gone-by-cleanup scenario" claim was FALSE (see
+            // pttKeyedOnRealRig above), and this is the single read that claim is now replaced by.
+            var pttLockedAtEntry = _pttLocked;
+            var rigIsRealAtKeyTime = _radioSession.RigId != "none";
+
+            if (rigIsRealAtKeyTime)
             {
-                // Guarded on RigId ("none" = the null-object "no radio" backend, spec/18-path-to-
-                // 1.0.md Critical item 1), not Capabilities -- see IRadioController.RigId's own doc
-                // comment for why a live-capability check would be unsafe here (real backends
-                // connect lazily, so Capabilities reads None during a real window even with a
-                // genuine PTT-capable rig configured). This is the only guarded SetPttAsync call in
-                // this method -- the cleanup un-key below is deliberately NOT guarded, it's already
-                // wrapped in TryCleanupAsync so a throw there is already non-fatal, and RigId is
-                // stable so there's no "was available at entry, gone by cleanup" scenario to protect
-                // against either.
-                if (_radioSession.RigId != "none")
+                // Published BEFORE the key command goes out and cleared only once this method's own
+                // finally has finished its un-key attempt, so DisposeAsync can never tear
+                // IRadioSessionService down out from under an in-flight un-key. Published in the
+                // pttLockedAtEntry case too: this call didn't key the rig, but the rig IS keyed for
+                // the whole duration of this call either way.
+                keyedCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                Volatile.Write(ref _keyedTransmitCompletion, keyedCompletion);
+
+                // Set BEFORE the await deliberately: a SetPttAsync that throws mid-command can still
+                // have physically keyed the rig, so "keyed" is the only safe assumption for the
+                // cleanup un-key's own failure reporting. Erring true costs at most one spurious
+                // Warning; erring false is the blocker-2 silent swallow.
+                pttKeyedOnRealRig = true;
+            }
+
+            if (!pttLockedAtEntry)
+            {
+                if (rigIsRealAtKeyTime)
                 {
                     await _radioSession.SetPttAsync(true, ct).ConfigureAwait(false);
                     Log.PttKeyed(_logger);
@@ -657,97 +761,237 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         finally
         {
-            // Cleanup must never be defeated by the very cancellation (Stop TX / SWR auto-cutoff,
-            // spec/14-roadmap.md's Piece 6) that triggered it -- reusing the possibly-cancelled `ct`
-            // here (the original shape) left the rig keyed indefinitely and RX capture permanently
-            // stopped, since SetPttAsync/StartReceivingAsync both wait on an already-cancelled token
-            // before ever sending anything. A fresh, non-linked, bounded-timeout token instead:
-            // uncancellable-in-practice for Hamlib's native calls, but still gives up eventually if a
-            // wedged rigctld TCP read would otherwise hang this cleanup forever. StopPlaybackAsync
-            // moved in here too (previously inside the try, so it was skipped entirely on
-            // cancellation, leaving the output stream open with buffered audio still draining). Each
-            // step is independently guarded so one failure can never mask the original exception or
-            // prevent a sibling cleanup step from running.
-            using var cleanupCts = new CancellationTokenSource(CleanupTimeout);
-            await TryCleanupAsync("StopPlayback", () => _audioEngine.StopPlaybackAsync()).ConfigureAwait(false);
-
-            // Only a NORMAL completion honors "stay keyed" (leaveKeyedAfterCall/lock) -- see this
-            // method's own doc comment for why an abnormal termination always overrides both.
-            var skipUnkeyAndRxResume = !abnormalTermination && (leaveKeyedAfterCall || _pttLocked);
-            if (!skipUnkeyAndRxResume)
+            try
             {
-                if (await TryUnkeyPttAsync(cleanupCts.Token).ConfigureAwait(false))
+                // Risk B (Tier A Batch 3 chunk 3a): _pttLocked read ONCE for this whole decision.
+                // The old code read it at the skip computation and AGAIN at the deferred-resume
+                // branch below; a SetPttLockAsync(false) landing between the two made those two reads
+                // disagree, taking the "leaveKeyedAfterCall residual" branch on a call that had
+                // actually paused RX -- RX stranded stopped forever with nothing left to resume it.
+                var pttLockedAtCleanup = _pttLocked;
+
+                // Only a NORMAL completion honors "stay keyed" (leaveKeyedAfterCall/lock) -- see this
+                // method's own doc comment for why an abnormal termination always overrides both.
+                var skipUnkeyAndRxResume = !abnormalTermination && (leaveKeyedAfterCall || pttLockedAtCleanup);
+                var unkeyAlreadyAttempted = false;
+
+                // ---- Blocker 1, urgent half ----
+                // An abnormal termination IS the safety path (manual Stop TX / SWR auto-cutoff): the
+                // operator wants the transmitter off NOW and there is no audio tail worth preserving
+                // (the image is aborted either way). Un-key BEFORE StopPlayback so a wedged output
+                // device can't delay it at all. skipUnkeyAndRxResume is false by construction whenever
+                // abnormalTermination is true, so this can never fire on a "stay keyed" path.
+                if (abnormalTermination)
                 {
-                    // Force-release: whether or not a lock was engaged, PTT is now confirmed
-                    // physically off -- IsPttLocked must never report true once that's true.
-                    _pttLocked = false;
-                    Log.PttReleased(_logger);
+                    await UnkeyForCleanupAsync(pttKeyedOnRealRig).ConfigureAwait(false);
+                    unkeyAlreadyAttempted = true;
                 }
 
-                // Auditor-caught (round 2): a PRIOR locked call may have already stopped capture and
-                // set _rxPendingResumeAfterUnlock (see the deferred-lock branch below) before THIS
-                // call force-unkeyed on an abnormal termination -- if so, THIS call's own
-                // `wasReceiving` is false (capture was already stopped by that earlier call), so the
-                // `if (wasReceiving)` block below would never see it, leaving RX stopped forever with
-                // IsPttLocked already reporting false (so the natural SetPttLockAsync(false) trigger
-                // that would otherwise consume it may never come). Guarded on `!wasReceiving` so this
-                // never double-fires alongside that block's own resume for THIS call.
-                if (!wasReceiving && _rxPendingResumeAfterUnlock)
-                {
-                    _rxPendingResumeAfterUnlock = false;
-                    await TryCleanupAsync("Resume RX (stranded lock pending-resume)", () => StartReceivingAsync(cleanupCts.Token)).ConfigureAwait(false);
-                    RaiseCapturePausedForTransmitChanged(false);
-                }
-            }
+                // ---- Blocker 1, budget half ----
+                // On a NORMAL completion the un-key still runs AFTER the drain -- dropping PTT while
+                // the miniaudio ring / PulseAudio server queue still hold audio would truncate the
+                // tail of every successful transmission, exactly what MiniAudioEngine.DrainTailMargin
+                // exists to prevent. What changed is that the drain can no longer STARVE the un-key:
+                // it gets a bounded wait of its own, and the un-key gets its own fresh
+                // CancellationTokenSource inside UnkeyForCleanupAsync.
+                await StopPlaybackWithWatchdogAsync().ConfigureAwait(false);
 
-            if (wasReceiving)
-            {
+                if (!skipUnkeyAndRxResume && !unkeyAlreadyAttempted)
+                {
+                    await UnkeyForCleanupAsync(pttKeyedOnRealRig).ConfigureAwait(false);
+                }
+
+                if (skipUnkeyAndRxResume && leaveKeyedAfterCall)
+                {
+                    // PTT is deliberately left physically keyed after this call returns, with no
+                    // _pttLocked to record it (SetPttLockAsync's own doc comment already calls this
+                    // gap out) -- DisposeAsync's shutdown backstop needs to know about it.
+                    _pttLeftKeyedByCall = pttKeyedOnRealRig;
+                }
+
+                // Created only HERE, after every potentially-slow step above, so the RX-resume steps
+                // get a full independent budget rather than whatever StopPlayback/un-key left over --
+                // the same starvation bug blocker 1 is about, one step further down the chain. At most
+                // one StartReceivingAsync call runs per invocation (the three branches below are
+                // mutually exclusive on wasReceiving/skipUnkeyAndRxResume), so one source is enough.
+                using var rxResumeCts = new CancellationTokenSource(_cleanupTimeout);
+
                 if (!skipUnkeyAndRxResume)
                 {
-                    await TryCleanupAsync("Resume RX", () => StartReceivingAsync(cleanupCts.Token)).ConfigureAwait(false);
-                    // User-reported gap (2026-08-18): fires once the resume attempt has finished,
-                    // success or failure -- TryCleanupAsync's own best-effort/swallowed-failure
-                    // contract means _isReceiving may still be false here on a real failure, but
-                    // this event is specifically "no longer paused FOR THIS transmission," not a
-                    // restatement of IsReceiving itself (see this event's own doc comment).
-                    RaiseCapturePausedForTransmitChanged(false);
+                    // Auditor-caught (round 2): a PRIOR locked call may have already stopped capture
+                    // and set _rxPendingResumeAfterUnlock before THIS call force-unkeyed on an
+                    // abnormal termination -- if so, THIS call's own `wasReceiving` is false, so the
+                    // `if (wasReceiving)` block below would never see it, leaving RX stopped forever
+                    // with IsPttLocked already reporting false. Guarded on `!wasReceiving` so this
+                    // never double-fires alongside that block's own resume for THIS call.
+                    if (!wasReceiving && _rxPendingResumeAfterUnlock)
+                    {
+                        _rxPendingResumeAfterUnlock = false;
+                        await TryCleanupAsync("Resume RX (stranded lock pending-resume)", () => StartReceivingAsync(rxResumeCts.Token)).ConfigureAwait(false);
+                        RaiseCapturePausedForTransmitChanged(false);
+                    }
                 }
-                else if (!abnormalTermination && _pttLocked)
+
+                if (wasReceiving)
                 {
-                    // Specifically the lock case, not leaveKeyedAfterCall -- a lock can stay engaged
-                    // indefinitely with no automatic next step, unlike a Tune-into-satellite-pass
-                    // workflow where the very next action is expected to key PTT again anyway. RX
-                    // must resume once SetPttLockAsync(false) eventually un-keys, not be silently
-                    // forgotten -- consumed there. CapturePausedForTransmitChanged deliberately stays
-                    // `true` until that deferred resume actually happens (raised there instead).
-                    _rxPendingResumeAfterUnlock = true;
+                    if (!skipUnkeyAndRxResume)
+                    {
+                        await TryCleanupAsync("Resume RX", () => StartReceivingAsync(rxResumeCts.Token)).ConfigureAwait(false);
+                        // User-reported gap (2026-08-18): fires once the resume attempt has finished,
+                        // success or failure -- this event is "no longer paused FOR THIS transmission,"
+                        // not a restatement of IsReceiving itself (see the event's own doc comment).
+                        RaiseCapturePausedForTransmitChanged(false);
+                    }
+                    else if (!abnormalTermination && pttLockedAtCleanup)
+                    {
+                        // Specifically the lock case, not leaveKeyedAfterCall -- a lock can stay
+                        // engaged indefinitely with no automatic next step. RX must resume once
+                        // SetPttLockAsync(false) eventually un-keys, not be silently forgotten.
+                        _rxPendingResumeAfterUnlock = true;
+
+                        // Risk B, publish-then-recheck. A SetPttLockAsync(false) that completed
+                        // between the snapshot above and this write already ran its own deferred-resume
+                        // check against a still-false flag, so nothing would ever consume what we just
+                        // set -- RX stranded stopped forever. Re-reading _pttLocked AFTER publishing
+                        // closes that window: whichever side observes the other's write does the
+                        // resume. Both sides test the flag before consuming it, so the only residual
+                        // interleaving is a duplicate resume, which is harmless -- StartReceivingAsync
+                        // early-returns when already receiving, and a second
+                        // CapturePausedForTransmitChanged(false) is idempotent for every subscriber.
+                        if (!_pttLocked && _rxPendingResumeAfterUnlock)
+                        {
+                            _rxPendingResumeAfterUnlock = false;
+                            await TryCleanupAsync("Resume RX (unlock raced cleanup)", () => StartReceivingAsync(rxResumeCts.Token)).ConfigureAwait(false);
+                            RaiseCapturePausedForTransmitChanged(false);
+                        }
+                    }
+                    else
+                    {
+                        // Auditor-caught (round 1): the residual case -- leaveKeyedAfterCall=true and
+                        // NOT locked (TuneAsync's own unwired "stay keyed" option). RX intentionally
+                        // stays stopped (nobody's job to resume it), but THIS transmission's own pause
+                        // window is over either way, so the event must not stay stuck `true` forever
+                        // with no `false` ever coming (a real latent bug: harmless today since no
+                        // production caller sets leaveKeyedAfterCall=true, but would permanently
+                        // freeze the Receiving indicator dimmed the moment one did).
+                        RaiseCapturePausedForTransmitChanged(false);
+                    }
                 }
-                else
+            }
+            finally
+            {
+                // Blocker 3: signalled no matter how the cleanup above ended (including a throw from
+                // a subscriber or a cleanup step) -- a DisposeAsync waiting on this must never be left
+                // hanging until its own timeout by an unrelated failure. CompareExchange, not a plain
+                // null write: only clear the field if it still points at THIS call's instance, so a
+                // (pathological) overlapping PlayWithPttAsync can't have its own registration erased.
+                if (keyedCompletion is not null)
                 {
-                    // Auditor-caught (round 1): the residual case -- leaveKeyedAfterCall=true and NOT
-                    // locked (TuneAsync's own unwired "stay keyed" option). RX intentionally stays
-                    // stopped here (pre-existing, unchanged behavior -- nobody's job to resume it),
-                    // but THIS transmission's own pause window is over either way, so the event must
-                    // not stay stuck `true` forever with no `false` ever coming (a real latent bug:
-                    // harmless today since no production caller sets leaveKeyedAfterCall=true, but
-                    // would permanently freeze the Receiving indicator dimmed the moment one did).
-                    RaiseCapturePausedForTransmitChanged(false);
+                    Interlocked.CompareExchange(ref _keyedTransmitCompletion, null, keyedCompletion);
+                    keyedCompletion.TrySetResult();
                 }
             }
         }
     }
 
-    /// <summary>The cleanup un-key call is deliberately unconditional (see PlayWithPttAsync's own
-    /// doc comment for why it's never guarded on RigId, unlike the entry key) -- but with RigId ==
-    /// "none" that means it throws on every single default-config transmit, since the null-object
-    /// backend always throws from SetPttAsync. Code-review finding on spec/18-path-to-1.0.md
-    /// Critical item 1: routing that through the generic TryCleanupAsync would log a Warning with a
-    /// stack trace on every transmit for the most common configuration (fresh install, no radio
-    /// set up yet), directly undercutting that Warning's own stated purpose (flagging a genuinely
-    /// stuck-keyed rig). Re-checks RigId at catch time, not before the call, so a rig that
-    /// disconnects mid-cleanup still gets the real Warning -- only a "none" backend at the moment of
-    /// failure is treated as the expected, benign case.</summary>
-    private async Task<bool> TryUnkeyPttAsync(CancellationToken ct)
+    /// <summary>The un-key half of <see cref="PlayWithPttAsync"/>'s cleanup, extracted so blocker 1's
+    /// two call sites (the abnormal-termination early un-key and the normal-completion post-drain one)
+    /// share one implementation -- and so each gets its OWN fresh <see cref="CancellationTokenSource"/>.
+    /// That is blocker 1's actual fix: the un-key's deadline must never be the leftover of an earlier
+    /// cleanup step's spend.</summary>
+    private async Task<bool> UnkeyForCleanupAsync(bool pttKeyedOnRealRig)
+    {
+        using var unkeyCts = new CancellationTokenSource(_cleanupTimeout);
+        if (await TryUnkeyPttAsync(pttKeyedOnRealRig, unkeyCts.Token).ConfigureAwait(false))
+        {
+            // Force-release: whether or not a lock was engaged, PTT is now confirmed physically off --
+            // IsPttLocked must never report true once that's true.
+            _pttLocked = false;
+            _pttLeftKeyedByCall = false;
+            Log.PttReleased(_logger);
+            return true;
+        }
+
+        if (pttKeyedOnRealRig)
+        {
+            // Risk A (partial fix, Tier A Batch 3 chunk 3a): a Warning is too quiet for "a real
+            // transmitter this call keyed may still be on the air." Escalated to Critical, and only
+            // for the captured-at-key-time real-rig case, so it can never fire for the benign
+            // fresh-install RigId=="none" path that the Warning-suppression logic exists for.
+            Log.PttStillKeyedAfterFailedUnkey(_logger);
+        }
+
+        return false;
+    }
+
+    /// <summary>Blocker 1's other half. <see cref="IAudioEngine.StopPlaybackAsync"/> takes no
+    /// <see cref="CancellationToken"/> -- it cannot be cancelled, only stopped waiting on. The real
+    /// <c>MiniAudioEngine</c> can take ~10.2s worst case on a wedged output device, which is how the
+    /// shared-deadline version of this cleanup consumed the entire PTT-off budget before the un-key
+    /// was ever attempted. This waits at most <see cref="_playbackStopWaitBudget"/> and then returns,
+    /// letting the stop finish in the background -- it is still the same single call (so the engine's
+    /// own session teardown is never skipped) and its eventual outcome is still observed and logged
+    /// (so it can never surface as an unobserved task exception).
+    ///
+    /// <b>Known consequence, accepted:</b> on the timeout path this method can return while a
+    /// playback stop is still in flight. An immediately following transmit against the same wedged
+    /// device fails loudly (a throwing failure on an already-broken device, not a silent one) --
+    /// strictly better than the stuck-keyed rig this trade buys.</summary>
+    private async Task StopPlaybackWithWatchdogAsync()
+    {
+        Task stopTask;
+        try
+        {
+            stopTask = _audioEngine.StopPlaybackAsync();
+        }
+        catch (Exception ex)
+        {
+            // A synchronous throw (e.g. ObjectDisposedException) never produces a Task at all.
+            Log.CleanupStepFailed(_logger, "StopPlayback", ex);
+            return;
+        }
+
+        var completed = await Task.WhenAny(stopTask, Task.Delay(_playbackStopWaitBudget)).ConfigureAwait(false);
+        if (completed == stopTask)
+        {
+            try
+            {
+                await stopTask.ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Same best-effort contract as TryCleanupAsync -- see its own doc comment.
+                Log.CleanupStepFailed(_logger, "StopPlayback", ex);
+            }
+
+            return;
+        }
+
+        Log.PlaybackStopWatchdogFired(_logger, _playbackStopWaitBudget);
+        _ = stopTask.ContinueWith(
+            t => Log.CleanupStepFailed(_logger, "StopPlayback (finished after watchdog)", t.Exception!),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    /// <summary>The cleanup un-key call is deliberately unconditional (see PlayWithPttAsync's own doc
+    /// comment) -- but with RigId == "none" that means it throws on every single default-config
+    /// transmit, since the null-object backend always throws from SetPttAsync. Routing that through
+    /// the generic TryCleanupAsync would log a Warning with a stack trace on every transmit for the
+    /// most common configuration (fresh install, no radio set up yet), undercutting that Warning's own
+    /// purpose (flagging a genuinely stuck-keyed rig).
+    ///
+    /// <b>Blocker 2 fix (Tier A Batch 3 chunk 3a) -- this used to re-check
+    /// <see cref="IRadioSessionService.RigId"/> AT CATCH TIME, which was unsound.</b>
+    /// <c>RadioController.DisconnectAsync</c>/<c>DisposeAsync</c> both reset <c>_rigId</c> to
+    /// <c>"none"</c> WITHOUT un-keying PTT, so the sequence [rig genuinely keyed by this transmit] ->
+    /// [controller disconnects/disposes mid-cleanup] -> [SetPttAsync(false) throws "No radio
+    /// connected"] -> [RigId now reads "none"] reported a physically keyed transmitter as the benign
+    /// "nothing to unkey" case and swallowed it. <paramref name="pttKeyedOnRealRig"/> is captured
+    /// ONCE, at the moment PTT was keyed, and is the only input to that decision now -- RigId is never
+    /// re-read here.</summary>
+    private async Task<bool> TryUnkeyPttAsync(bool pttKeyedOnRealRig, CancellationToken ct)
     {
         try
         {
@@ -756,13 +1000,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
-            if (_radioSession.RigId == "none")
+            if (pttKeyedOnRealRig)
             {
-                Log.PttUnkeySkippedNoRadio(_logger);
+                Log.CleanupStepFailed(_logger, "PTT off", ex);
             }
             else
             {
-                Log.CleanupStepFailed(_logger, "PTT off", ex);
+                Log.PttUnkeySkippedNoRadio(_logger);
             }
 
             return false;
@@ -809,20 +1053,41 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     public async ValueTask DisposeAsync()
     {
-        await StopReceivingAsync().ConfigureAwait(false);
+        // ---- Blocker 3 (Tier A Batch 3 chunk 3a) ----
+        // ORDER CHANGED DELIBERATELY: the PTT backstop now runs BEFORE StopReceivingAsync, which used
+        // to be this method's first line. StopReceivingAsync ends in MiniAudioCaptureSession.Dispose's
+        // own drain-thread join, which has NO timeout at all if a SamplesCaptured subscriber never
+        // returns -- so a wedged drain thread hung shutdown before the PTT-off backstop was ever
+        // reached, and the process exited (Program.cs's own ~10s host-teardown bound) with the
+        // transmitter still keyed. Un-keying is the one step that must not queue behind anything else.
+        //
+        // This whole method's correctness also depends on DI teardown order: Program.cs resolves
+        // IRadioSessionService before ISstvSessionService, so RadioController/RadioSessionService are
+        // constructed first, registered as disposables first, and therefore disposed LAST --
+        // IRadioSessionService is still live for everything below. If that resolution order ever
+        // changes, this backstop silently stops working.
+        await AwaitInFlightKeyedTransmitAsync().ConfigureAwait(false);
 
-        // Audit-fix: app shutdown must never leave a locked rig keyed indefinitely just because
-        // nothing called SetPttLockAsync(false) first -- best-effort, bounded, and swallowed (like
-        // PlayWithPttAsync's own cleanup steps) since a failed shutdown-time PTT-off must not prevent
-        // the rest of teardown from completing.
-        if (_pttLocked)
+        // A rig can be physically keyed at shutdown for three distinct reasons, and _pttLocked only
+        // covered one of them: an engaged PTT lock (_pttLocked), a TuneAsync(leaveKeyedAfterTune:true)
+        // that deliberately left it keyed (_pttLeftKeyedByCall), and an in-flight transmit whose own
+        // un-key never completed (_keyedTransmitCompletion still published after the bounded wait
+        // above). Any of the three gets the same best-effort, bounded, swallowed un-key -- a failed
+        // shutdown PTT-off must not prevent the rest of teardown from completing, but it is now
+        // logged at Critical (inside UnkeyForCleanupAsync), not swallowed silently.
+        var keyedTransmitStillInFlight = Volatile.Read(ref _keyedTransmitCompletion) is not null;
+        if (_pttLocked || _pttLeftKeyedByCall || keyedTransmitStillInFlight)
         {
-            using var cleanupCts = new CancellationTokenSource(CleanupTimeout);
-            if (await TryCleanupAsync("PTT off (shutdown)", () => _radioSession.SetPttAsync(false, cleanupCts.Token)).ConfigureAwait(false))
-            {
-                _pttLocked = false;
-            }
+            // pttKeyedOnRealRig: true, and NOT a re-read of RigId (blocker 2's whole point). Every one
+            // of the three states above is only reachable via a SetPttAsync issued against a
+            // non-"none" RigId -- SetPttLockAsync only sets _pttLocked AFTER a successful set, the
+            // null-object backend always throws, and _pttLeftKeyedByCall/_keyedTransmitCompletion are
+            // only published when RigId was real at key time. A failure here is therefore always a
+            // genuinely stuck-keyed rig, never the benign no-radio case.
+            await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
         }
+
+        await StopReceivingAsync().ConfigureAwait(false);
 
         if (Waterfall is IDisposable disposableWaterfall)
         {
@@ -833,11 +1098,34 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // IDisposable itself (RestartableSstvDecoder implements it, but ISstvDecoder deliberately
         // doesn't extend it -- avoids widening that interface's surface for one production
         // implementation's own resource-cleanup need), same duck-typed pattern as the Waterfall check
-        // above. Placed AFTER StopReceivingAsync() (already the first line of this method) so no
-        // in-flight PushSamples call can race the decoder's own disposal.
+        // above. Still placed AFTER StopReceivingAsync so no in-flight PushSamples call can race the
+        // decoder's own disposal.
         if (_decoder is IDisposable disposableDecoder)
         {
             disposableDecoder.Dispose();
+        }
+    }
+
+    /// <summary>Blocker 3's wait. <c>TxControlsPaneViewModel.Dispose()</c> cancels an in-flight
+    /// transmit's token WITHOUT awaiting the transmit task, so on window-close-during-TX the
+    /// transmit's own <c>finally</c>/un-key can still be running while DI teardown proceeds. Bounded
+    /// (see <see cref="_inFlightKeyedTransmitWait"/>'s sizing against Program.cs's own host-teardown
+    /// bound) and never throws: whether the wait succeeds or times out, DisposeAsync's own backstop
+    /// un-key runs next either way, and a redundant un-key is documented-harmless on every shipped
+    /// backend (see SetPttLockAsync's own doc comment).</summary>
+    private async Task AwaitInFlightKeyedTransmitAsync()
+    {
+        var pending = Volatile.Read(ref _keyedTransmitCompletion);
+        if (pending is null)
+        {
+            return;
+        }
+
+        Log.WaitingForKeyedTransmitAtShutdown(_logger);
+        var completed = await Task.WhenAny(pending.Task, Task.Delay(_inFlightKeyedTransmitWait)).ConfigureAwait(false);
+        if (completed != pending.Task)
+        {
+            Log.KeyedTransmitCleanupWaitTimedOut(_logger, _inFlightKeyedTransmitWait);
         }
     }
 
@@ -1067,6 +1355,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Cleanup step '{StepName}' failed")]
         public static partial void CleanupStepFailed(ILogger logger, string stepName, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "StopPlayback did not finish within {Budget}; continuing to the PTT un-key without waiting (the stop is still running in the background)")]
+        public static partial void PlaybackStopWatchdogFired(ILogger logger, TimeSpan budget);
+
+        [LoggerMessage(Level = LogLevel.Critical, Message = "PTT MAY STILL BE KEYED -- the un-key command failed on a rig this session actually keyed. Check the radio and un-key it manually.")]
+        public static partial void PttStillKeyedAfterFailedUnkey(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Shutdown is waiting for an in-flight keyed transmit to finish un-keying PTT")]
+        public static partial void WaitingForKeyedTransmitAtShutdown(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "In-flight keyed transmit did not finish its own PTT un-key within {Budget}; forcing an un-key from shutdown")]
+        public static partial void KeyedTransmitCleanupWaitTimedOut(ILogger logger, TimeSpan budget);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "No {Kind} audio device configured")]
         public static partial void NoDeviceConfigured(ILogger logger, string kind);
