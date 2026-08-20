@@ -310,6 +310,28 @@ audit's own gate (a stated decision, not silence). Verification: scoped `MiniAud
 full `ScanlineStudio.Core.Audio.MiniAudio.Tests` 73/73 passing (PipeWire IS available in this
 sandbox -- the reentrant-dispose tests genuinely ran, not skipped), full solution build clean.
 Commits `dbf4b43` (deadlock fix + overflow guard), `e0594dd` (CI-coverage-risk documentation).
-Re-audit round 2 is next -- Tier A needs 2 consecutive clean rounds from this re-audit's own round
-1 forward (a real bug was just found, so the count restarts at zero here, independent of the
-original 4-round closure above).
+Re-audit round 2 (2026-08-20): NOT clean, 2 real risks (no blockers). `MiniAudioCaptureSession`'s
+constructor `try`/`catch` ended at the native device open, but two statements after it (thread
+creation, priority set, `Start()`) could still throw with the device already live -- orphaning a
+running device plus a permanent `MiniAudioContext` reference, since the object never escapes the
+constructor on that path. Fixed with `Enum.IsDefined` pre-validation of `drainThreadPriority`
+before the native open at all (root cause: `AudioDeviceSettings.CaptureThreadPriority` round-trips
+through JSON with no `JsonStringEnumConverter`, so STJ's default numeric enum handling doesn't
+range-validate a hand-edited settings file's out-of-range value) plus widening the catch to mirror
+`Dispose()`'s own bounded-close-thread pattern (`CloseTimeout`) for any other failure mode
+(`OutOfMemoryException` from `Start()`). Also: round 1's own native overflow guard
+(`yoniq_audio_ring_create`) had zero test coverage -- added a `MiniAudioRingTests` case using a
+capacity whose byte product genuinely wraps mod 2^32 (`0x40000100` frames, not `int.MaxValue`,
+which would pass with or without the guard and be vacuous). Both fixes mutation-verified (native
+guard: temporarily disabled, test correctly failed with no exception, restored; constructor fix:
+covered by a new hardware-free `[Fact]` since the validation runs before any device is touched).
+Single code-review pass (mechanical, mirrors `Dispose()`'s own already-reviewed pattern) per
+CLAUDE.md §7's carve-out: go, 2 more small risks + 2 nits found -- 3 addressed in the same commit
+(`_stopping = true` as a future-code-hazard guard in the new catch, a timed-out-close log message
+for a previously-zero-observability path, a distinct `MiniAudioEngine.OpenCaptureSession` catch for
+`ArgumentOutOfRangeException` so it surfaces as "invalid settings" instead of a misleading "device
+unavailable" message), 1 left as an accepted documented tradeoff (a catch-in-catch OOM exposure
+matching `Dispose()`'s own identical existing exposure -- no better pattern available). Full
+`ScanlineStudio.Core.Audio.MiniAudio.Tests` 75/75 passing, full solution build clean. Commit
+`2af5e59`. Re-audit round 3 is next -- streak still at zero (round 2 also found real issues), one
+round before the soft cap.
