@@ -46,9 +46,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// <c>SstvSessionService.PlayWithPttAsync</c>'s cleanup path passing a fresh token from one that
     /// (incorrectly) reuses the possibly-cancelled transmit token -- see
     /// <c>SstvSessionServiceTests.TransmitAsync_TokenCancelledMidTransmit_StillUnkeysPttAndRestartsCapture</c>.</summary>
-    public Task SetPttAsync(bool tx, CancellationToken ct = default)
+    public async Task SetPttAsync(bool tx, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        if (Gate is not null)
+        {
+            await Gate.ConfigureAwait(false);
+        }
+
         BeforeSetPtt?.Invoke(tx);
         // Mirrors NoneRadioProtocol.SetPttAsync's real always-throws behavior when RigId == "none"
         // (spec/18-path-to-1.0.md Critical item 1, round-1 plan-review's own explicit "add a
@@ -62,7 +67,6 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
         }
 
         PttCalls.Add(tx);
-        return Task.CompletedTask;
     }
 
     /// <summary>Test-only hook, invoked at the very start of <see cref="SetPttAsync"/> -- BEFORE the
@@ -72,6 +76,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// <c>"none"</c> WITHOUT un-keying, so <see cref="RigId"/> can read <c>"none"</c> at the precise
     /// moment a genuinely-keyed rig's un-key fails.</summary>
     public Action<bool>? BeforeSetPtt { get; set; }
+
+    /// <summary>Test-only hook (Tier A Batch 3 chunk 3a round 8): when set, <see cref="SetPttAsync"/>
+    /// genuinely `await`s this before doing anything else -- unlike <see cref="BeforeSetPtt"/> (a
+    /// synchronous callback that can't yield control back to the caller), this lets a test park a real
+    /// in-flight <c>SetPttLockAsync</c>/<c>PlayWithPttAsync</c> call mid-command without blocking the
+    /// calling thread, the same shape <c>FakeAudioDeviceEnumerator.Gate</c> already provides for device
+    /// resolution.</summary>
+    public Task? Gate { get; set; }
 
     public IReadOnlyList<FrequencyPreset> Presets { get; set; } = [];
 
