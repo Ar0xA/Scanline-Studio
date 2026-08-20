@@ -1810,7 +1810,7 @@ the `_pttLockGate` non-dispose as deliberate. **(8)**: re-derived the already-tr
 `StartReceivingAsync` double-subscription risk from scratch, confirmed still open and still correctly
 characterized as a different (RX corruption, not PTT) class -- no new action.
 
-**Chunk 3a round 14 fixes applied** (2026-08-21). Findings 1/2: both unbounded awaits now wrapped
+**Chunk 3a round 14 fixes applied** (2026-08-21, commit `ec95ab0`). Findings 1/2: both unbounded awaits now wrapped
 with `.WaitAsync(_cleanupTimeout)` (NOT a fresh standalone `CancellationTokenSource`, unlike
 `UnkeyForCleanupAsync`'s own pattern, deliberately -- `Task.WaitAsync(TimeSpan)` preserves a genuine
 caller cancellation of `ct` as `OperationCanceledException` (the benign, Information-logged arm),
