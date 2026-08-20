@@ -451,4 +451,22 @@ corrected happens-before comment over-corrected its own read-site count in the o
 from the original error; a real native-lifetime-decision read mischaracterized as "diagnostics"; an
 ambiguous cross-reference between `CaptureOverrunCount`/`PlaybackUnderrunCount`). Full
 `ScanlineStudio.Core.Audio.MiniAudio.Tests` 83/83 passing, full solution build clean. Commit
-`32ddec8`. Re-audit round 7 is next.
+`32ddec8`.
+
+Re-audit round 7 (2026-08-20): CLEAN -- the first of the 2 required consecutive clean rounds. Fresh
+full independent re-derivation, zero blockers, zero risks. Re-verified every round 1-6 fix from
+scratch, not taken on trust -- including round 6's JACK backend fix, confirmed correct directly
+against the pinned `miniaudio.h` (`ma_device_id.jack` is a plain, unconditional `int`; both native
+consumers `ma_context_get_device_info__jack`/`ma_device_init__jack` accept only `jack == 0`;
+`ma_context_enumerate_devices__jack` always yields a zeroed id; so the `"%d"`/`atoi` round-trip
+lands on the sole accepted value in every reachable case) and its corrected happens-before comment.
+7 nits found, all comment-precision or accepted-coverage-gap, none behavioral -- queued, not fixed,
+matching this project's own established precedent for clean rounds. Worth naming one specifically:
+round 6's own corrected happens-before comment still slightly over-quantified its own claim (says
+every production read happens "after Dispose() has returned to its caller", which is false for one
+of the two reads it names -- that read happens inside Dispose, before it returns, but is
+behaviorally inert since it's same-thread and sequential under the same write lock) -- a smaller
+instance of the same "comment drift" class this whole re-audit chain keeps finding, though this
+particular instance doesn't mislead anyone into a wrong conclusion. Test-integrity check passed
+across all 8 paired files, including hand-re-checking mutation-sensitivity for the round 2/3/4
+guards. Round 8 -- the second required clean confirmation -- is next; if clean, Batch 1 closes.
