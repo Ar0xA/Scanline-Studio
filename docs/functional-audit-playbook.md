@@ -1507,3 +1507,61 @@ Round 9 found a real fixed finding in the leaked-keyed-transmitter class -- roun
 as chunk 3a's 1st clean round. Round 10 (independent re-verification) is the earliest round that can
 count as chunk 3a's 1st clean round. Eight consecutive rounds (2-9) have now each found something
 real in this file.
+
+**Chunk 3a round 10** (2026-08-20, independent re-verification agent, fresh context). Re-verified
+round 9's fix from scratch (fence correctness confirmed, mutual exclusion with the existing recovery
+block confirmed, not a 5th lost-update/3rd Dekker's-gap instance), then rebuilt the
+`SetPttLockAsync`/`PlayWithPttAsync` symmetry table one more time -- **now 18/18, genuinely
+exhausted, no keyed-transmitter leak constructible against current code.** **VERDICT: NOT CLEAN --
+1 real risk finding + 1 nit, but for the first time in this chunk, the new finding is OUTSIDE the
+leaked-keyed-transmitter failure class** that dominated rounds 1-9. Still zero consecutive clean
+rounds after 9 rounds.
+
+1. **[risk] `_pttLockGate` held across an unbounded RX resume, stranding the PTT lock/unlock escape
+   hatch itself.** `SetPttLockAsync`'s deferred-RX-resume-after-unlock step ran under the caller's
+   own `ct` (default `CancellationToken.None`, unbounded) instead of a fresh CTS -- unlike
+   `PlayWithPttAsync`'s own equivalent, which always uses a fresh `rxResumeCts`. A wedged capture
+   device (device enumeration, settings I/O, or `StartCaptureAsync` itself hanging) could park this
+   call inside `_pttLockGate` indefinitely -- and since `_pttLockGate` serializes EVERY
+   `SetPttLockAsync` call, that includes a future emergency unlock, stranding the one API this whole
+   method exists to keep working. Confirmed NOT the leaked-keyed-transmitter class: the resume only
+   runs on `!locked`, after the un-key already succeeded, so the rig is provably off whenever this
+   runs; `DisposeAsync` and `PlayWithPttAsync`'s own un-key never touch this gate, so both safety
+   backstops still work regardless. This finding directly resolves the already-tracked "unlock's RX
+   resume uses caller's ct" nit -- same line, same fix, not a separate change.
+2. **[nit]** Round 9's own fix has no dedicated regression test -- correctly so (the window has no
+   `await` between the publish and the recheck, so no test hook can land there), but the round-9
+   playbook entry/commit already recorded this rationale explicitly; this round's audit confirms
+   that disposition is still the right one, not silence.
+
+Confirmed sound (not findings): `TryUnkeyPttAsync`/`UnkeyForCleanupAsync`/`StopPlaybackWithWatchdogAsync`/
+`AwaitInFlightKeyedTransmitAsync`/`DisposeAsync`'s full sequence/`StartReceivingAsync`/
+`StopReceivingAsync` all re-derived clean; the 4 fix mechanisms (`_disposed`+fences, `_pttKeyEpoch`,
+`_keyedTransmitCompletion`+`_keyedTransmitCount`) interact correctly as a whole system; round 9's own
+new code (`ObjectDisposedException.ThrowIf`) writes no tracked field and can't participate in the
+lost-update/Dekker's-gap/overlap-erosion bug classes; the round-9-modified test
+(`Round8_DisposeAsync_WaitsForAnInFlightSetPttLockAsyncsOwnCompletion`, now using an immediate
+`IsCompleted` check) is deterministic in BOTH directions -- traced precisely why zero-delay can't
+false-read `true` even with the fix present (nothing signals the wait until the gate is released).
+
+**Chunk 3a round 10 fix applied** (2026-08-20, commit `<pending>`). `SetPttLockAsync`'s
+deferred-RX-resume step now uses a fresh `CancellationTokenSource(_cleanupTimeout)`, matching
+`PlayWithPttAsync`'s own `rxResumeCts` pattern exactly. Required updating
+`FakeAudioDeviceEnumerator.RefreshAsync`'s test infra to actually respect its `ct` parameter (via
+`Task.WaitAsync(ct)`, not a plain `await`) so a test can prove the bound takes effect -- previously
+the fake ignored cancellation entirely. New regression test
+`Round10_SetPttLockAsync_Unlock_RxResumeBounded_DoesNotStrandTheLockGate`: engages the lock during a
+transmit (deferring the RX resume), wedges device enumeration permanently, and confirms the unlock
+still completes within the bounded budget AND that a subsequent lock call isn't stuck behind the
+stranded resume. Mutation-verified by reverting to the caller's `ct` -- the test **hung** (not just
+failed an assertion) exactly as predicted, the strongest possible confirmation of a genuine
+unbounded-wait bug, then restored. All 186 `ScanlineStudio.Application.Tests` passing, full solution
+suite (all projects) clean.
+
+Round 10 found a real fixed finding, but for the first time in this chunk it was OUTSIDE the
+leaked-keyed-transmitter failure class -- the `SetPttLockAsync`/`PlayWithPttAsync` symmetry
+comparison that dominated rounds 3-9 is now genuinely exhausted. Round 10 does NOT count as chunk
+3a's 1st clean round (a real fix still landed this round). Round 11 (independent re-verification) is
+the earliest round that can count as chunk 3a's 1st clean round. Nine consecutive rounds (2-10) have
+now each found something real in this file -- but round 10's own verdict is the first explicit signal
+that the CORE safety property (no leaked keyed transmitter) may have actually converged.
