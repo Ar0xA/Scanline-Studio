@@ -849,6 +849,53 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.False(service.IsPttLocked);
     }
 
+    // ------------------------------------------------------------------ round 10 findings
+
+    [Fact]
+    public async Task Round10_SetPttLockAsync_Unlock_RxResumeBounded_DoesNotStrandTheLockGate()
+    {
+        // Round-10 finding: the RX resume after an unlock was bounded on the CALLER's ct, not a
+        // fresh CTS -- unlike PlayWithPttAsync's own equivalent, which always uses a fresh
+        // rxResumeCts. A wedged capture device (device enumeration, settings I/O, or
+        // _audioEngine.StartCaptureAsync itself hanging) could park this call inside _pttLockGate
+        // indefinitely -- stranding the PTT lock/unlock escape hatch itself: every other
+        // SetPttLockAsync call, including a future emergency unlock, blocks on the SAME gate. Not
+        // the leaked-keyed-transmitter class (the rig is already confirmed un-keyed by the time this
+        // runs), but a real availability bug in the one API this whole method exists to keep working.
+        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
+            OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025])],
+        };
+        var (service, _, radio, logger) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(200), deviceEnumerator: deviceEnumerator);
+
+        await service.StartReceivingAsync();
+        await service.SetPttLockAsync(true);
+        await service.TransmitAsync(TestMode, TestImage);
+        // The lock was engaged during the transmit, so its cleanup deferred the RX resume instead of
+        // running it -- _rxPendingResumeAfterUnlock is now true, and the unlock below triggers it.
+
+        // Wedge device enumeration permanently (never released) for the deferred resume the unlock
+        // is about to trigger.
+        deviceEnumerator.Gate = new TaskCompletionSource().Task;
+
+        var stopwatch = Stopwatch.StartNew();
+        await service.SetPttLockAsync(false);
+        stopwatch.Stop();
+
+        // Bounded by _cleanupTimeout (200ms here), not hanging forever on the caller's own
+        // (unbounded, CancellationToken.None) ct.
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"unlock must not hang on a wedged RX resume; took {stopwatch.Elapsed}");
+        Assert.Contains(logger.Entries, e => e.Message.Contains("Resume RX (after unlock)", StringComparison.Ordinal));
+
+        // THE property: _pttLockGate must have been released promptly -- a SUBSEQUENT lock call must
+        // not be stuck behind the stranded resume.
+        var lockStopwatch = Stopwatch.StartNew();
+        await service.SetPttLockAsync(true);
+        lockStopwatch.Stop();
+        Assert.True(lockStopwatch.Elapsed < TimeSpan.FromSeconds(1), $"the lock gate must not still be held by the earlier stranded resume; took {lockStopwatch.Elapsed}");
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)

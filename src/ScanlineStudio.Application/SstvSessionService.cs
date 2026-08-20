@@ -477,7 +477,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     _rxPendingResumeAfterUnlock = false;
                     try
                     {
-                        await StartReceivingAsync(ct).ConfigureAwait(false);
+                        // Round-10 finding: bounded on a FRESH CancellationTokenSource, not the
+                        // caller's own `ct` -- matching PlayWithPttAsync's own `rxResumeCts` pattern
+                        // (see its own comment). Without this, a wedged capture device (device
+                        // enumeration, settings I/O, or _audioEngine.StartCaptureAsync itself hanging)
+                        // parks this call inside `_pttLockGate` indefinitely -- stranding the PTT
+                        // lock/unlock escape hatch itself, since every other SetPttLockAsync call
+                        // (including a future emergency unlock) blocks on the SAME gate. Not the
+                        // leaked-keyed-transmitter class (the rig is already confirmed un-keyed by the
+                        // time this runs -- see this block's own `!locked` guard), but a real
+                        // availability bug in the one API this whole method exists to keep working.
+                        using var rxResumeCts = new CancellationTokenSource(_cleanupTimeout);
+                        await StartReceivingAsync(rxResumeCts.Token).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {

@@ -19,7 +19,10 @@ internal sealed class FakeAudioDeviceEnumerator : IAudioDeviceEnumerator
     {
         if (Gate is not null)
         {
-            await Gate.ConfigureAwait(false);
+            // Round-10: respects `ct` (via Task.WaitAsync, not a plain await) so a test can prove a
+            // caller-supplied bounded token actually unblocks a wedged device-enumeration wait --
+            // exactly the property SetPttLockAsync's own RX-resume fix depends on.
+            await Gate.WaitAsync(ct).ConfigureAwait(false);
         }
     }
 }
