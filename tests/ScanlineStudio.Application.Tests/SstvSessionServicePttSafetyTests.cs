@@ -553,6 +553,44 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
     }
 
+    // ------------------------------------------------------------------ round 5 findings
+
+    [Fact]
+    public async Task Round5_UnkeyForCleanupAsync_LostUpdateRace_DoesNotWipeAConcurrentNewerKey()
+    {
+        // Round-5 finding (full-file sweep, not just re-verifying round 4): UnkeyForCleanupAsync's
+        // post-success clears (_pttLocked/_pttLeftKeyedByCall/_pttUnkeyFailedOnRealRig = false) ran
+        // unconditionally on the continuation AFTER the un-key succeeded -- but a CONCURRENT, NEWER key
+        // command (SetPttLockAsync(true) here) can complete in that same window and record its own
+        // "still keyed" state, which the stale continuation would then wipe out from under it:
+        // transmitter genuinely re-keyed, every shutdown-backstop flag reading false, DisposeAsync's
+        // four-state check finding nothing to do. Deterministic trigger, same shape as
+        // Blocker1_AbnormalTermination_...: ThrowOnStartPlaybackAudioEngine forces the tune's
+        // abnormal-termination cleanup (and its urgent un-key) without any real-time race.
+        var relock = false;
+        var (service, _, radio, _) = CreateService(wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner));
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx && !relock)
+            {
+                relock = true;
+                // BeforeSetPtt is a synchronous Action<bool> firing from inside the tune's own un-key
+                // command -- there is no async alternative here. SetPttLockAsync never blocks on
+                // anything this un-key call holds, so this completes immediately rather than genuinely
+                // blocking, landing squarely inside the epoch-race window this test targets.
+#pragma warning disable xUnit1031
+                service.SetPttLockAsync(true).GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+            }
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1)));
+
+        // THE property: the concurrent SetPttLockAsync(true) call's own "still keyed" state must
+        // survive the stale un-key continuation from the tune's own abnormal-termination cleanup.
+        Assert.True(service.IsPttLocked, "a concurrent newer key must not be wiped by a stale un-key continuation");
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)

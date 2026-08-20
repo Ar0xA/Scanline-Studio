@@ -1171,3 +1171,59 @@ suite (all projects) clean.
 Round 4 was clean of new blockers but found 1 real risk that was fixed -- round 4 does NOT count as
 chunk 3a's 1st clean round either. Round 5 (independent re-verification of round 4's fix) is now the
 earliest round that can count as chunk 3a's 1st clean round.
+
+**Chunk 3a round 5** (2026-08-20, independent re-verification agent, fresh context). Given the
+whack-a-mole pattern across rounds 2-4 (each fix introduced/left a new instance of the same
+unfenced-Dekker's-pattern gap), this round's prompt was deliberately WIDENED to a comprehensive
+sweep of every cross-field publish-then-recheck pattern in the whole file, not just a re-check of
+round 4's specific fix. **VERDICT: NOT CLEAN -- 2 new risk-level findings.**
+
+The sweep enumerated 6 such patterns total. 2 are correctly fenced (`_keyedTransmitCompletion`↔
+`_disposed` in `PlayWithPttAsync`/`DisposeAsync`; `_pttLocked`↔`_disposed` in
+`SetPttLockAsync`/`DisposeAsync`) -- confirmed `DisposeAsync`'s single `Interlocked.MemoryBarrier()`
+correctly serves BOTH pairs (a full fence orders its preceding store against every subsequent load
+on that thread, not one designated load -- no second fence needed). 2 are deliberately unfenced,
+consistent with the file's own stated policy (Risk B; a no-recheck-needed acquire/release chain for
+the shutdown flags). **2 are new:**
+1. **Lost-update race in `UnkeyForCleanupAsync`**: its post-success state clears
+   (`_pttLocked`/`_pttLeftKeyedByCall`/`_pttUnkeyFailedOnRealRig` = `false`) ran unconditionally on
+   the continuation AFTER the un-key succeeded -- but a CONCURRENT, NEWER key command
+   (`SetPttLockAsync(true)` or another transmit) can complete in that exact window and record its
+   own "still keyed" state, which the stale continuation then wipes out from under it: transmitter
+   genuinely re-keyed, every shutdown-backstop flag reads false, `DisposeAsync`'s four-state check
+   finds nothing to do. Leaked-keyed-transmitter class. Same latency status as rounds 3/4's findings
+   (`SetPttLockAsync` has zero production callers today) -- fixed anyway per this chunk's own
+   established standard for that situation.
+2. **`StartReceivingAsync`'s `_isReceiving` check-then-act can double-subscribe capture handlers
+   under concurrency**, which falsifies the "harmless duplicate resume" justification the Risk B
+   comment relies on to defend leaving that pattern unfenced. NOT leaked-keyed-transmitter class
+   (failure mode is corrupted RX decode from double-subscription, a real but different bug) -- out
+   of this chunk's failure class, so the underlying concurrency gap itself is queued, not fixed;
+   only the now-inaccurate justification comment needed correcting.
+
+Test mutation-sensitivity re-confirmed for all 3 round-4 tests (traced, not run) -- all genuinely
+sensitive, with an explicit honest note: none of the tests in this file can detect removal of the
+FENCES themselves (only the recheck logic they protect); fence correctness rests on the source-level
+Dekker argument, not the suite. All previously-open nits re-confirmed accurate and still nits.
+
+**Chunk 3a round 5 fix applied** (2026-08-20, commit `<pending>`). New `private int _pttKeyEpoch;`
+field, incremented via `Interlocked.Increment` immediately after every successful
+`SetPttAsync(true)` (both in `PlayWithPttAsync` and `SetPttLockAsync`). `UnkeyForCleanupAsync`
+snapshots the epoch (`Volatile.Read`) BEFORE its own un-key attempt, and on success only performs
+the state clears if the epoch is unchanged -- if it moved, a newer key command's state is left
+standing instead (new Debug-level log `PttUnkeyRaceLostToNewerKey` marks the skip for
+observability). Also corrected the Risk B comment to state the double-subscription gap explicitly
+and stop claiming the duplicate-resume interleaving is unconditionally harmless.
+
+New regression test `Round5_UnkeyForCleanupAsync_LostUpdateRace_DoesNotWipeAConcurrentNewerKey`:
+uses the established `ThrowOnStartPlaybackAudioEngine` deterministic trigger (no real-time race) to
+force a tune's abnormal-termination cleanup, and drives a concurrent `SetPttLockAsync(true)` call
+from inside `FakeRadioSessionService.BeforeSetPtt` -- landing exactly in the epoch-snapshot-to-
+recheck window. Mutation-verified by temporarily reverting to the unconditional clears -- failed
+with the exact predicted signature ("a concurrent newer key must not be wiped"), then restored. All
+179 `ScanlineStudio.Application.Tests` passing, full solution suite (all projects) clean.
+
+Round 5 found 1 real fixed finding in the leaked-keyed-transmitter class -- round 5 does NOT count
+as chunk 3a's 1st clean round. Round 6 (independent re-verification of round 5's fix, ideally
+continuing the widened full-sweep approach given 4 consecutive rounds have now found something) is
+the earliest round that can count as chunk 3a's 1st clean round.
