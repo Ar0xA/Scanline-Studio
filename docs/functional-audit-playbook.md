@@ -357,6 +357,27 @@ matching an already-accepted pattern shape (the new test asserts exception type 
 `ParamName`, consistent with its round-2 sibling; a UI-coerces-to-Mono/engine-throws asymmetry, the
 same shape as the already-accepted `drainThreadPriority` case). Full
 `ScanlineStudio.Core.Audio.MiniAudio.Tests` 76/76 passing, full solution build clean. Commit
-`d706ed7`. Re-audit round 4 is next -- AT the soft cap (rounds 1, 2, and 3 have each found a real
-issue; round 4 can still be auto-dispatched since it's within the cap, but a round 5 would need the
-user's go-ahead first).
+`d706ed7`.
+
+Re-audit round 4 (2026-08-20, the soft cap): NOT clean, but production code itself came back
+genuinely clean this round. Fresh full independent re-derivation found nothing new in any
+production file -- all three prior fixes (DisposeAsync deadlock, constructor leak, channelSource
+validation) re-verified correct from scratch, and the auditor explicitly noted it gave the cluster
+"a genuinely fair shot at being clean" rather than manufacturing a finding. The one real finding was
+narrower than the previous three: `MiniAudioEngine.OpenCaptureSession`'s `ArgumentOutOfRangeException`
+catch (added in round 2's own code review) had zero test coverage anywhere in the repo -- its two
+sibling guards from that same fix pass each got a dedicated test, this one didn't, and deleting it
+would be silent (it derives from `ArgumentException`, so removal falls through to the generic
+message with nothing failing). Auditor's own honest framing: "a reasonable reviewer could grade
+this a nit -- it changes a message, not an output." Per the playbook, stopped here and checked in
+with the user rather than auto-dispatching a round 5 -- user chose to fix it and continue past the
+cap. Fixed: a hardware-free engine-level regression test mirroring the pattern of its two session-
+level siblings, mutation-verified (temporarily removed the catch branch, confirmed the test failed
+with the generic "device unavailable" message instead of "invalid settings", restored). Also fixed
+a related nit found in the same round: that branch's own log call still went through
+`Log.CaptureOpenFailed` ("Failed to open capture device"), directly contradicting its own corrected
+exception message ("Invalid capture settings") -- added a distinct `CaptureSettingsInvalid` log
+message. Full `ScanlineStudio.Core.Audio.MiniAudio.Tests` 77/77 passing, full solution build clean.
+Commit `8ff1cff`. Re-audit round 5 is next -- past the soft cap with the user's explicit go-ahead,
+matching the D0/D2/D6 precedent of continuing when findings are real (even if narrowing) rather
+than stopping arbitrarily at a round count.
