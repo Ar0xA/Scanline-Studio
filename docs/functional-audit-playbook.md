@@ -415,4 +415,40 @@ a wrong-reasoning comment on the new stress test claiming its 10s bound "absorbs
 `session.Dispose()` is synchronous on the same thread so any block resolves before the bound is
 ever measured; ring test naming corrected to cover negative values, the more discriminating case,
 not just zero). Full `ScanlineStudio.Core.Audio.MiniAudio.Tests` 83/83 passing, full solution build
-clean. Commit `d542715`. Re-audit round 6 is next.
+clean. Commit `d542715`.
+
+Re-audit round 6 (2026-08-20): NOT clean, 2 real risks + 3 nits. (1) `string_to_device_id` (the
+reverse of `device_id_to_string`, used by every `yoniq_audio_get_native_formats`/
+`capture_session_open`/`playback_session_open` call) was missing a case for `ma_backend_jack` --
+the exact same bug shape as an already-fixed `coreaudio` gap in the same function, whose own
+comment already warns "enumeration alone would have looked fine, masking this": `ma_backend_jack`
+IS one of the three backends this shim's own `backends[]` array requests, and
+`device_id_to_string` already handles jack correctly going the OTHER direction (`snprintf(buf,
+buf_size, "%d", id->jack)`) -- but on a host where PulseAudio and ALSA context-init both fail while
+JACK succeeds, enumeration would work fine (masking the bug) while every single session-open/
+format-probe call failed unconditionally with a generic "device unavailable" error for a device
+that's actually fine. Fixed by adding `case ma_backend_jack: out_id->jack = atoi(device_id); return
+0;`, parsing the id back the same way it was rendered. Verified against the pinned `miniaudio.h`
+(not assumed): `ma_device_id.jack` is a plain `int`; `ma_context_enumerate_devices__jack` always
+hands back a zeroed id (`jack == 0`); both native consumers (`ma_context_get_device_info__jack`,
+`ma_device_init__jack`) accept only `jack == 0` -- so the round-trip lands on the sole accepted
+value in every reachable case. (2) A comment gave a WRONG happens-before rationale for
+`TimedOutDuringClose`: claimed `_drainThread.Join()` supplies its memory-ordering guarantee. It
+doesn't -- `Join()` orders the disposing thread against the DRAIN thread specifically, unrelated to
+`TimedOutDuringClose`'s own write (which happens on whichever thread executes `Dispose()`'s body,
+sometimes the drain thread itself via the self-dispose path, where `Join()` is deliberately
+SKIPPED). Code correctness was never in question, only the comment's own reasoning -- corrected to
+state the real mechanism: written once under the write lock, with every production read ordered
+either by same-thread execution (self-dispose path) or by `await Task.Run(session.Dispose)`'s own
+task-completion semantics (the pool-thread path), not by `Join()`. Checked in with the user again
+at this point given the length of this re-audit chain (6 consecutive rounds finding something real)
+-- user chose to continue rather than stop. Also fixed 3 nits from the same round: extended round
+5's block-vs-throw documentation to the analogous playback-side gap (`EnqueuePlaybackSamples`,
+lower severity -- no UI poller on that side) and to `SstvSessionService`'s own `CaptureOverrunCount`
+implementation comment, which hadn't picked up round 5's correction; dropped a stale in-file line
+citation for a symbolic reference. Code-review pass: go, a few more precision nits folded in (the
+corrected happens-before comment over-corrected its own read-site count in the opposite direction
+from the original error; a real native-lifetime-decision read mischaracterized as "diagnostics"; an
+ambiguous cross-reference between `CaptureOverrunCount`/`PlaybackUnderrunCount`). Full
+`ScanlineStudio.Core.Audio.MiniAudio.Tests` 83/83 passing, full solution build clean. Commit
+`32ddec8`. Re-audit round 7 is next.
