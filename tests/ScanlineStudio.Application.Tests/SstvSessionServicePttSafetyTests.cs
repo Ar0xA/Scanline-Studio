@@ -649,9 +649,16 @@ public sealed class SstvSessionServicePttSafetyTests
         // publish silently drop the OLDER call's _keyedTransmitCompletion registration. If the newer
         // call finishes first, the field goes null while the OLDER call is STILL genuinely keyed --
         // blinding DisposeAsync's old nullness-based "is anything still in flight" check.
-        // _keyedTransmitCount (this fix) survives the overwrite. Deterministic throughout: no gate, no
-        // real-time race -- entirely nested synchronous calls via BeforeSetPtt, same technique as
-        // round 5's own test.
+        // _keyedTransmitCount (this fix) survives the overwrite.
+        //
+        // Round-12 update: this exact overlap (two live PlayWithPttAsync calls) is now IMPOSSIBLE --
+        // _transmitInFlight (round-12's own single-flight guard, see its own comment) rejects a
+        // second concurrent call outright, before it touches anything. This test now verifies THAT
+        // property directly: the "newer" call throws immediately from the guard, never even reaching
+        // a key command, and the reference-count mechanism this test originally targeted is simply
+        // never exercised for THIS pair of call sites anymore -- a stronger guarantee than surviving
+        // the overwrite. (The mechanism itself remains relevant for SetPttLockAsync, which is not
+        // covered by the single-flight guard -- see the round-8/round-12 SetPttLockAsync tests.)
         var stage = 0;
         var (service, _, radio, _) = CreateService(wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner));
         radio.BeforeSetPtt = tx =>
@@ -661,21 +668,10 @@ public sealed class SstvSessionServicePttSafetyTests
                 stage = 2;
 #pragma warning disable xUnit1031
                 // The NEWER call: overlaps the OLDER one (which is still executing this very un-key
-                // command), runs entirely to completion on its own -- overwriting, then clearing, the
-                // shared _keyedTransmitCompletion registration.
-                try
-                {
-                    service.TuneAsync(1750, TimeSpan.FromMilliseconds(1)).GetAwaiter().GetResult();
-                }
-                catch (InvalidOperationException)
-                {
-                    // Expected -- ThrowOnStartPlaybackAudioEngine's deterministic failure.
-                }
+                // command) -- now rejected outright by the single-flight guard.
+                var ex = Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1))).GetAwaiter().GetResult();
+                Assert.Equal("A transmit or tune is already in progress.", ex.Message);
 
-                // At this exact point: the newer call has cleared the shared registration to null, but
-                // the OLDER call (still executing THIS un-key command) is still genuinely keyed.
-                // DisposeAsync must still recognize that via the reference count, not the now-null
-                // field.
                 service.DisposeAsync().AsTask().GetAwaiter().GetResult();
 #pragma warning restore xUnit1031
             }
@@ -684,14 +680,13 @@ public sealed class SstvSessionServicePttSafetyTests
         stage = 1;
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1)));
 
-        // THE property: DisposeAsync's own backstop un-key attempt (triggered mid-race, while the
-        // registration was blind) must have actually fired -- 2 keys (older, newer) + 3 un-key
-        // attempts (newer's own, DisposeAsync's backstop, older's own) = 5 total PTT commands. Without
-        // the fix, DisposeAsync's backstop is skipped entirely (nothing it can see is "in flight"),
-        // leaving only 4.
-        Assert.Equal(5, radio.PttCalls.Count);
-        Assert.Equal(2, radio.PttCalls.Count(c => c));
-        Assert.Equal(3, radio.PttCalls.Count(c => !c));
+        // THE property: the newer call never keyed or un-keyed anything (rejected before touching PTT
+        // at all) -- 1 key (older) + 2 un-key attempts (DisposeAsync's backstop, fired while reentrant
+        // and unable to observe the older call's own in-flight completion, then the older call's own
+        // recovery) = 3 total PTT commands, not 5.
+        Assert.Equal(3, radio.PttCalls.Count);
+        Assert.Equal(1, radio.PttCalls.Count(c => c));
+        Assert.Equal(2, radio.PttCalls.Count(c => !c));
     }
 
     // ------------------------------------------------------------------ round 7 findings
@@ -705,6 +700,11 @@ public sealed class SstvSessionServicePttSafetyTests
         // NOTHING on that failure -- _pttLocked never gets set (the throw happens before that write),
         // so DisposeAsync's four-state check found nothing to do and the process could exit with the
         // transmitter genuinely keyed, silently.
+        //
+        // Round-12 update: the catch now ALSO attempts an immediate GUARDED recovery un-key (see its
+        // own comment) whenever _keyedTransmitCount == 1 -- true here, since this is the only call
+        // with a registration -- so the un-key now happens immediately, not just eventually via
+        // DisposeAsync's backstop.
         var (service, _, radio, logger) = CreateService();
         radio.BeforeSetPtt = tx =>
         {
@@ -717,10 +717,13 @@ public sealed class SstvSessionServicePttSafetyTests
         await Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(true));
 
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY HAVE BEEN KEYED", StringComparison.Ordinal));
-        Assert.Empty(radio.PttCalls);
 
-        // DisposeAsync's backstop must still fire -- without the fix, nothing records the attempt and
-        // this call issues no un-key at all.
+        // THE property: the guarded recovery already un-keyed the rig, immediately, inside the catch.
+        Assert.Equal([false], radio.PttCalls);
+
+        // DisposeAsync's backstop must find nothing left to do -- the recovery already handled it, so
+        // no second un-key attempt.
+        logger.Entries.Clear();
         radio.BeforeSetPtt = null;
         await service.DisposeAsync();
 
@@ -887,9 +890,10 @@ public sealed class SstvSessionServicePttSafetyTests
         await service.SetPttLockAsync(false).WaitAsync(TimeSpan.FromSeconds(5));
         stopwatch.Stop();
 
-        // Bounded by _cleanupTimeout (200ms here), not hanging forever on the caller's own
-        // (unbounded, CancellationToken.None) ct.
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"unlock must not hang on a wedged RX resume; took {stopwatch.Elapsed}");
+        // Round-12 nit: tightened to 1s (the configured budget is 200ms) -- the WaitAsync(5s) above
+        // already guarantees this can't exceed 5s, so a 5s bound here would be dead weight with no
+        // independent diagnostic value of its own.
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1), $"unlock must not hang on a wedged RX resume; took {stopwatch.Elapsed}");
         Assert.Contains(logger.Entries, e => e.Message.Contains("Resume RX (after unlock)", StringComparison.Ordinal));
 
         // THE property: _pttLockGate must have been released promptly -- a SUBSEQUENT lock call must
@@ -898,6 +902,76 @@ public sealed class SstvSessionServicePttSafetyTests
         await service.SetPttLockAsync(true).WaitAsync(TimeSpan.FromSeconds(5));
         lockStopwatch.Stop();
         Assert.True(lockStopwatch.Elapsed < TimeSpan.FromSeconds(1), $"the lock gate must not still be held by the earlier stranded resume; took {lockStopwatch.Elapsed}");
+    }
+
+    // ------------------------------------------------------------------ round 12 findings
+
+    [Fact]
+    public async Task Round12_PlayWithPttAsync_RejectsOverlappingCall_BeforeTouchingPttOrPlayback()
+    {
+        // Round-12 finding: a second overlapping PlayWithPttAsync call used to silently re-key and
+        // tear down the FIRST call's own live playback session (its own StartPlaybackAsync throws
+        // "already started", caught generically, and the resulting cleanup un-keys + disposes the
+        // FIRST call's playback mid-frame). The single-flight guard (_transmitInFlight) now rejects
+        // the second call outright, before it touches PTT or playback at all.
+        var (service, _, radio, _) = CreateService();
+        radio.BeforeSetPtt = tx =>
+        {
+            if (tx)
+            {
+                // A second call attempted while the first is already past the guard and mid-key --
+                // must be rejected immediately.
+#pragma warning disable xUnit1031
+                var ex = Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage)).GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+                Assert.Equal("A transmit or tune is already in progress.", ex.Message);
+            }
+        };
+
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+
+        // THE property: only ONE key + ONE un-key -- the rejected second call never touched PTT.
+        Assert.Equal([true, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round12_SetPttLockAsync_KeyCommandThrows_RecoverySkippedWhenAnotherTransmitIsRegistered()
+    {
+        // Round-12 finding: the guarded recovery un-key (added this round) only fires when
+        // _keyedTransmitCount == 1 -- if a genuine, concurrent PlayWithPttAsync transmission is ALSO
+        // registered at that exact moment, the recovery must be skipped rather than un-keying
+        // underneath that other call. This is the residual the guard is specifically designed to
+        // preserve -- see the catch block's own comment.
+        var stage = 0;
+        var (service, _, radio, logger) = CreateService();
+        radio.BeforeSetPtt = tx =>
+        {
+            if (tx && stage == 1)
+            {
+                stage = 2;
+                // A concurrent SetPttLockAsync(true) call, whose OWN key command throws, lands while
+                // the outer TuneAsync call (below) is still mid-key -- its own registration still
+                // counted, since PttCalls.Add for it hasn't even run yet at this point.
+                radio.BeforeSetPtt = innerTx =>
+                {
+                    if (innerTx)
+                    {
+                        throw new TimeoutException("simulated key failure");
+                    }
+                };
+#pragma warning disable xUnit1031
+                Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(true)).GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+
+                // THE property, checked HERE while both registrations still coexist: the concurrent
+                // key failure must NOT have attempted a recovery un-key.
+                Assert.Empty(radio.PttCalls);
+                Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY HAVE BEEN KEYED", StringComparison.Ordinal));
+            }
+        };
+
+        stage = 1;
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
     }
 
     // ------------------------------------------------------------------ helpers
