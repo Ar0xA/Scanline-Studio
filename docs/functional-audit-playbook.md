@@ -333,5 +333,30 @@ for a previously-zero-observability path, a distinct `MiniAudioEngine.OpenCaptur
 unavailable" message), 1 left as an accepted documented tradeoff (a catch-in-catch OOM exposure
 matching `Dispose()`'s own identical existing exposure -- no better pattern available). Full
 `ScanlineStudio.Core.Audio.MiniAudio.Tests` 75/75 passing, full solution build clean. Commit
-`2af5e59`. Re-audit round 3 is next -- streak still at zero (round 2 also found real issues), one
-round before the soft cap.
+`2af5e59`.
+
+Re-audit round 3 (2026-08-20): NOT clean, 1 real risk (a sibling gap to round 2's own fix), 2 nits.
+`channelSource` is the OTHER settings-fed enum in `MiniAudioCaptureSession`'s constructor, and had
+the exact same unvalidated-JSON-round-trip root cause round 2 fixed for `drainThreadPriority` --
+but unlike that case, this one fails SILENTLY rather than loudly: an out-of-range value opens the
+device stereo and extracts Left (the native shim's own `ChannelSelect` default, `channel_select ==
+2 ? 1 : 0`), so RX would go silently dead if the real signal is on Right, with no exception and no
+log. Fixed with the identical `Enum.IsDefined` guard, same placement, before any native resource is
+touched -- confirmed `AudioDeviceSettings` now has zero unguarded enums (its only other fields are
+`bool`/numeric). Also fixed a nit: `DisposeAsync`'s `TrySetException` created a faulted `Task` that
+goes permanently unobserved in the common single-caller case (the real exception still correctly
+reaches that caller via `DisposeAsync`'s own `throw` -- this was host-level noise only,
+`TaskScheduler.UnobservedTaskException` on finalization, not a correctness bug) -- fixed by
+attaching a no-op `OnlyOnFaulted` continuation in the constructor. Both mutation-verified (the
+`channelSource` guard: temporarily disabled, the new test correctly failed with
+`InvalidOperationException` instead of `ArgumentOutOfRangeException`, restored). Single code-review
+pass (mechanical, mirrors round 2's own already-reviewed pattern) per CLAUDE.md §7's carve-out: go,
+3 nits -- one folded in (a comment clarifying why `ExecuteSynchronously` is currently inert, for
+when `_disposedSignal`'s own `RunContinuationsAsynchronously` construction might change), two left
+matching an already-accepted pattern shape (the new test asserts exception type only, not
+`ParamName`, consistent with its round-2 sibling; a UI-coerces-to-Mono/engine-throws asymmetry, the
+same shape as the already-accepted `drainThreadPriority` case). Full
+`ScanlineStudio.Core.Audio.MiniAudio.Tests` 76/76 passing, full solution build clean. Commit
+`d706ed7`. Re-audit round 4 is next -- AT the soft cap (rounds 1, 2, and 3 have each found a real
+issue; round 4 can still be auto-dispatched since it's within the cap, but a round 5 would need the
+user's go-ahead first).
