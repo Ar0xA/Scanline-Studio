@@ -920,3 +920,83 @@ own pre-guard path. Everything else in the audited regions (the `finally` block'
 exception-safety up to the un-key call, `abnormalTermination` coverage on every exit path, the
 concurrent-double-transmit interleavings) verified clean -- confirmed no other path leaks. Fix
 proposal requested next.
+
+**Chunk 3a round 1 fix applied** (2026-08-20). All 3 blockers confirmed against current source by
+the fix-proposal agent before any code changed (including re-deriving `MiniAudioEngine`'s real
+~10.2s worst-case `StopPlaybackAsync` duration, `RadioController.DisconnectAsync`/`DisposeAsync`'s
+real `_rigId="none"` reset, and `TxControlsPaneViewModel.Dispose()`'s real fire-and-forget cancel).
+Found a 4th instance of the same failure class not in round 1's original report: `DisposeAsync` ran
+`StopReceivingAsync` FIRST, which ends in a drain-thread `Join()` with NO timeout at all if a
+`SamplesCaptured` subscriber never returns -- so a wedged drain thread could hang shutdown before
+the PTT backstop was ever reached. Fixed alongside the other 3 (free, in-scope, same file).
+
+**Fix summary** (full reasoning/diffs in commit message, not restated here):
+1. **Blocker 1**: `PlayWithPttAsync`'s un-key now runs FIRST on abnormal termination (no audio tail
+   worth preserving on a cutoff -- "off now" is the entire point), and gets a fresh, independent
+   `CancellationTokenSource` for both call sites so a slow/wedged `StopPlayback` can never starve
+   its budget. `StopPlayback` itself gets a bounded watchdog (`Task.WhenAny` against
+   `_playbackStopWaitBudget`) instead of an unbounded await, since `IAudioEngine.StopPlaybackAsync`
+   takes no cancellation token at all -- on a healthy drain, order and behavior are bit-for-bit
+   unchanged (drain-then-unkey, preserving `MiniAudioEngine.DrainTailMargin`'s own reason for
+   existing).
+2. **Blocker 2**: `TryUnkeyPttAsync` no longer re-reads `RigId` at catch time -- a `pttKeyedOnRealRig`
+   flag captured ONCE, at the moment PTT was actually keyed, is now the only input to "was this a
+   real stuck-keyed rig or the benign no-radio case," closing the window where a mid-cleanup
+   `RadioController` disconnect/dispose could report a physically keyed transmitter as "nothing to
+   unkey."
+3. **Blocker 3**: a new `TaskCompletionSource? _keyedTransmitCompletion` field, published before
+   every real key command and cleared only once that call's own cleanup finishes, lets
+   `DisposeAsync` WAIT (bounded, `_inFlightKeyedTransmitWait`) for an in-flight transmit's own
+   un-key before proceeding, then force-un-keys itself if that wait times out. A new
+   `_pttLeftKeyedByCall` flag closes the `TuneAsync(leaveKeyedAfterTune: true)` gap
+   (`_pttLocked` never covered it). `DisposeAsync`'s own step order changed: PTT backstop now runs
+   BEFORE `StopReceivingAsync` (closing the 4th finding above).
+4. Also fixed: a failed un-key now logs `Critical` (was `Warning`), gated on the captured real-rig
+   flag so the fresh-install no-radio path stays quiet; `_pttLocked` is now read exactly once per
+   cleanup decision (was twice, at two different points, opening a window where a racing
+   `SetPttLockAsync(false)` could strand RX stopped forever) plus a publish-then-recheck pattern
+   closing the other half of that same race a first fix attempt would have missed.
+   Deliberately NOT fixed this round (queued): un-key retry (costs real budget against a
+   ~10s host-teardown ceiling, needs its own scoped timeout re-derivation); a user-visible
+   escalation UI for a still-possibly-keyed rig (cross-layer, needs a VM + localized string).
+
+**New test infrastructure**: an `internal` constructor overload (public ctor delegates to it,
+matching `RxDiskLineStagingBuffer`'s own `disposeDrainTimeoutForTests` precedent) lets tests shrink
+the 5s/5s/3s production budgets so they can actually EXPIRE without a multi-second-per-test suite --
+required a new `ScanlineStudio.Application/AssemblyInfo.cs` (`InternalsVisibleTo`
+`ScanlineStudio.Application.Tests`, this project's first). `FakeRadioSessionService` gained a
+`BeforeSetPtt` hook so a test can mutate `RigId` from inside a `SetPttAsync` call, reproducing the
+exact blocker-2 race. New file `SstvSessionServicePttSafetyTests.cs`, 12 tests: 3 for blocker 1
+(includes a negative test proving the drain-then-unkey order survives on a healthy path), 2 for
+blocker 2 (plus a negative test proving the fresh-install no-radio path stays quiet), 4 for blocker 3
+(includes the DisposeAsync-order fix and the `leaveKeyedAfterTune` gap), 1 for risk B, and 1
+verifying the real DI container resolves the public constructor, not the internal test-only one (a
+stated-but-unverified assumption in the fix proposal -- confirmed for real, not assumed). One test's
+own final assertion was found and fixed during verification (asserted a cancellation exception that
+could no longer fire once the fix made cleanup faster) -- a test-authoring bug, not a production one.
+Blocker 2's regression test mutation-verified by temporarily reverting the fix and confirming it
+fails with the exact predicted signature (a benign "unkey skipped" log instead of the Critical
+escalation), then restored.
+
+All 78 pre-existing `SstvSessionServiceTests` still pass unmodified -- hand-traced 4 of the highest-
+risk ones (`SwrCutoffStyleCancellation_ForceUnkeysAndClearsLock_EvenWhileLocked`,
+`TuneAsync_LeaveKeyedAfterTuneTrue_...`, `SetPttLockAsync_False_AlwaysAttemptsUnkey_...`,
+`DisposeAsync_WhilePttLocked_...`) step-by-step through the rewritten code before running anything,
+to catch a logic error the test suite itself might not surface. Full `ScanlineStudio.Application.Tests`
+171/171 passing, full solution build clean.
+
+**One of the 12 new tests was itself flaky, caught by a full-solution run** (not the isolated
+scoped run, which passed): `Blocker1_AbnormalTermination_...` originally raced a 10ms
+`CancellationToken` against `GenerateTone`'s own CPU-bound sample-generation speed (the same
+technique the pre-existing `TuneAsync_TokenCancelledMidTone_...` regression test uses). On a fast/
+idle machine, 240,000 samples of sine synthesis can finish well under 10ms, so cancellation never
+fired before the tone completed NORMALLY -- confirmed by running the isolated test 5x standalone
+(no other test load), which hung for its full 5s timeout every time, versus passing reliably as
+part of a larger, more heavily-loaded batch run. Fixed by replacing the timing race with a
+deterministic trigger: a new `ThrowOnStartPlaybackAudioEngine` test decorator that throws from
+`StartPlaybackAsync` (reached after PTT is keyed, before any sample is ever generated) -- no
+machine-speed dependency at all. Re-ran 5x standalone after the fix, all passed. A test-authoring
+bug caught by exactly the kind of rigor this fix's own severity demanded, not a production issue.
+
+Full solution test run (build + all test projects) confirmed clean after this fix, including the
+corrected flaky test.
