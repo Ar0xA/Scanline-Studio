@@ -242,7 +242,9 @@ Also flagged: `FakeRadioTransport.cs`/`FakeAudioEngine.cs` live oddly in
 playbook's own vacuous-fake rubric applies to them directly, batch with
 whichever production file's rounds touch them.
 
-**Status**: **Batch 1 done** (2026-08-18), 4 rounds. Round 1 found 4 real
+**Status**: **Batch 1 done** (2026-08-18), 4 rounds; **RE-AUDITED 2026-08-19/20, 8 more rounds, 8
+more real findings fixed, DONE by explicit user decision (not the formal 2-clean-round gate) -- see
+"Batch 1 re-audit -- DONE" below this table's own history for the full account.** Round 1 found 4 real
 findings (2 blocking: `MiniAudioRing`/`MiniAudioPlaybackSession.Write`/`Read`
 silently returning -1 for a zero-length span instead of 0, breaking their own
 documented contract; `MiniAudioEngine.OnCaptureSamplesAvailable`'s single bare
@@ -469,4 +471,32 @@ behaviorally inert since it's same-thread and sequential under the same write lo
 instance of the same "comment drift" class this whole re-audit chain keeps finding, though this
 particular instance doesn't mislead anyone into a wrong conclusion. Test-integrity check passed
 across all 8 paired files, including hand-re-checking mutation-sensitivity for the round 2/3/4
-guards. Round 8 -- the second required clean confirmation -- is next; if clean, Batch 1 closes.
+guards.
+
+Re-audit round 8 (2026-08-20, the second attempted clean confirmation): NOT clean, 1 real risk
+(documentation-only, no functional bug), resets the streak. `yoniq_audio.h`'s own doc comment for
+`yoniq_audio_playback_session_underrun_count` said it returns a count of padded FRAMES -- wrong; the
+implementation (`yoniq_audio.c`'s own field comment, and every C# doc) counts padded CALLBACKS, once
+per callback regardless of how many frames it padded. A native-side consumer computing "seconds of
+audio dropped" from this count would be wrong by roughly the period size. The capture-side header's
+own "mirrors ... exactly" cross-reference compounded it -- self-contradictory against its own
+correct preceding sentence about the same pair. Fixed: corrected the header comment to match the
+implementation; added a discriminating assertion to the existing 2-second continuous-underrun test
+(a per-frame counter would read ~88,200 over that window; a per-callback counter reads nowhere close
+-- 20,000 as a generous, order-of-magnitude-separated bound). Mutation-verified: temporarily changed
+the native increment to per-frame, confirmed the new assertion failed at 89,208 -- matching the
+frame-count prediction almost exactly -- then restored. Full
+`ScanlineStudio.Core.Audio.MiniAudio.Tests` 83/83 passing, full solution build clean. Commit
+`647df48`.
+
+**Batch 1 re-audit -- DONE (2026-08-20), by explicit user decision, not the formal 2-clean-round
+gate.** 8 rounds, 8 real findings fixed (deadlock, native overflow guard, 2 settings-validation
+gaps, false-reachability comment + missing tests, missing JACK backend case, wrong happens-before
+comment, wrong ABI-header comment) plus one already-closed CI-coverage-risk documented as an
+accepted position. Every fix mutation-verified where testable. The user was checked in with 3
+times over the course of this re-audit (rounds 4, 6, 8) and chose to continue each time except the
+last, where round 8's finding was judged narrow enough -- and the chain long enough -- to fix and
+stop rather than chase the formal gate. Round 7 was clean; round 8 broke that streak; no further
+round was dispatched after round 8's fix landed. This is a deliberate, explicitly recorded exception
+to the playbook's own 2-consecutive-clean-round closing rule, not an oversight -- if this file
+cluster is revisited later, start a fresh re-audit rather than assuming the formal gate was met.
