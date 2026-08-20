@@ -500,3 +500,36 @@ stop rather than chase the formal gate. Round 7 was clean; round 8 broke that st
 round was dispatched after round 8's fix landed. This is a deliberate, explicitly recorded exception
 to the playbook's own 2-consecutive-clean-round closing rule, not an oversight -- if this file
 cluster is revisited later, start a fresh re-audit rather than assuming the formal gate was met.
+
+**Status**: **Batch 2 IN PROGRESS**, chunk 2a (`RxLineStagingBuffer.cs` + `RxDiskLineStagingBuffer.cs`,
+reviewed together per the playbook's own "one shared interface" note), round 1 fixed
+(2026-08-20). Round 1 found 1 real blocker plus several risks, all against
+`yoniq-old/YONIQ-main/sstv.cpp:1615-1644`, `Main.cpp:4956-5013`/`:5234-5270`/`:5415-5423`/
+`:5491-5537`, confirmed directly (not from in-file comments): legacy's `m_WD` is assigned exactly
+once (`sstv.cpp:594`, `SetMode`) and never touched by `CorrectSlant`'s own mid-reception
+`SetSampFreq()` calls, so legacy's per-line admission test
+(`((m_wStgLine+1)*m_WD) < m_RxBufAllocSize`, `Main.cpp:4999`/`:5242`) is monotonic -- once it fails
+it fails for every later line until a reset (`CopyStgBuf`'s own `else { break; }`,
+`Main.cpp:5247-5249`), so legacy's staged stream is structurally gap-free. This port's own
+`RxLineStagingBuffer.TryAppendLine` re-evaluated the check per call, so a wide line's rejection
+could be followed by a narrower line's silent admission past the same slack -- the exact
+local-vs-absolute/off-by-one bug class this project has hit 3 times before (D3+D8+D9). **Fixed**:
+added a `_capacityReached` latch (set on first rejection, cleared by `Clear()` matching legacy's
+`m_wStgLine = 0`), applied the same latch to `HasHeadroomForSamples` (legacy's `CorrectSlant` entry
+gate at `Main.cpp:5268-5270` uses the identical expression, so "appends stopped" and "slant
+correction refused" must be one fact, not two), corrected the class doc comment's admission-test
+paragraph, and added a latch clause to `IRxLineStagingBuffer.TryAppendLine`'s shared contract doc.
+Also replaced the one existing test that asserted the wrong (pre-fix) contract by name
+(`TryAppendLine_AfterRejection_..._FurtherFittingAppendsStillWork` -> two new tests asserting the
+latch and its `Clear()` reset) and added one more for the `HasHeadroomForSamples` latch. Scoped
+filter (`RxLineStagingBufferTests`/`CorrectSlantTests`/`ReplayEngineTests`) 51/51 passing, full
+`ScanlineStudio.Core.Sstv` build clean. Queued risks/nits for a later round (not yet fixed): RAM
+and disk implementations still disagree on post-`Dispose` behavior (interface silent on which is
+normative); disk mode latches `HasWriteFailed` permanently on a transient write stall with no
+diagnostic surface; `ConsumeAsync`'s outer `finally` drain doesn't bump the flush counters (latent,
+only reachable post-`Dispose` today); a `Clear()` partial-failure desync between the two disk
+files; `InvalidateSnapshot` bypasses the `_returnSnapshot` test seam `Dispose` uses;
+`DrainToCurrentPoint` ignores the test-shortened dispose-drain timeout on the `Clear()` path; `int`
+sample-count overflow past ~268M staged samples (unreachable today). Round 2 needed before this
+chunk can close (CLAUDE.md §7's 2-consecutive-clean-round bar, non-negotiable for buffer/
+concurrency work).
