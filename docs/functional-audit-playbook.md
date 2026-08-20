@@ -1404,7 +1404,7 @@ shape itself (filter correctness, exception identity preservation, no double-fir
 can't mis-catch anything else); round 7's finding-2 write integrates correctly downstream against all
 3 readers. Both round-7 tests confirmed genuinely mutation-sensitive.
 
-**Chunk 3a round 8 fix applied** (2026-08-20, commit `<pending>`). Finding 1: the catch block now
+**Chunk 3a round 8 fix applied** (2026-08-20, commit `0d8c409`). Finding 1: the catch block now
 bumps `_pttKeyEpoch` before setting `_pttLeftKeyedByCall = true` -- `_pttKeyEpoch`'s own doc comment
 widened to state the invariant is "every key command that succeeded OR may have physically keyed the
 rig before throwing," not just "every successful" one. Finding 2: `SetPttLockAsync` restructured
