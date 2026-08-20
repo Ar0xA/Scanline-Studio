@@ -763,4 +763,33 @@ divergence pair, and the histogram bin-type comment. Full `tests/ScanlineStudio.
 suite last confirmed at 1022/1022 (1 unrelated intentional skip) after round 3's fix; no production
 code changed in rounds 4-5 (doc-only rounds).
 
-**Chunk 2c** (`RestartableSstvDecoder.cs`) starts next.
+**Chunk 2c (`RestartableSstvDecoder.cs`, 845 lines, whole file) round 1 fixed** (2026-08-20). This
+class already received substantial scrutiny during the earlier, separate `AnalogFmSstvDecoder.cs`
+functional-audit sweep's D2 chunk (dispose guard, transactional `Swap()`, maintenance-event-loss
+fix, all already in the current code) -- round 1 was scoped to chunk 2c's own lens (RX
+buffer/replay arithmetic: overflow safety, swap/threshold arithmetic, local-vs-absolute index
+math) instead of re-litigating D2's settled findings. No legacy counterpart exists for this class
+(a pure port-side engineering decision -- legacy is a single long-lived object, unbounded reception
+time apparently wasn't a legacy concern) -- judged on internal-invariant correctness, not parity.
+**No blocker.** Hand-verified the threshold arithmetic (`ComputeDefaultThresholds`) at 3 sample
+rates against independently recomputed values, all exact; confirmed the classic stale-capture bug
+is absent (`current = _inner` re-read AFTER `Swap()`, so a swap-triggering chunk correctly reaches
+the FRESH decoder's zeroed counter); confirmed swap-vs-in-flight-replay safety is structural (a
+replay can never be on the stack when `Swap()` disposes the outgoing staging buffer, since both are
+serialized through the same `_pushActive`/`_gate` pair). Found 1 real risk (proof-completeness gap,
+not a live bug): `ComputeMaximumComposedProjectionSamples`'s reserve is scaled by the AUTOMATIC
+Auto-Slant clamp only: the MANUAL Correct Slant path has no such clamp by design and is guarded
+independently, not by this reserve -- unreachable in practice at most rates (tens-of-times
+headroom) but at the top of the supported rate range `critical == maximumSafeSampleIndex` exactly,
+so the reserve IS the entire remaining headroom there. **Fixed**: added a doc-comment note on
+`ComputeMaximumComposedProjectionSamples` recording the assumption explicitly, so a future clamp
+change on either guard gets flagged rather than silently invalidating the other's proof. Doc-only,
+zero behavior change. 3 more nits queued (not fixed): an idle swap can still drop up to ~1.3s of
+pre-lock raw samples if a header started inside that window and hasn't committed yet (undocumented
+consequence of the discard-and-reconstruct design, negligible in practice); `RequestReSync`/
+`RequestCorrectSlant`/`ForceMode`'s doc comments frame a dropped deferred command as a
+"race" when it also happens with zero concurrency (comment wording only); 2 dead defensive branches
+in `ComputeDefaultThresholds` (unreachable given how their operands are already constrained
+upstream) plus the pure function being evaluated 3x in the public ctor chain (correctness-neutral).
+Scoped filter (`RestartableSstvDecoderTests`/`DecoderSubscriberFailureTests`) 46/46 passing. Round
+2 needed for chunk 2c's own 2-consecutive-clean-round gate.
