@@ -1367,3 +1367,75 @@ Round 7 found real fixed findings in the leaked-keyed-transmitter class -- round
 chunk 3a's 1st clean round. Round 8 (independent re-verification) is the earliest round that can
 count as chunk 3a's 1st clean round. Six consecutive rounds (2-7) have now each found something
 real in this file.
+
+**Chunk 3a round 8** (2026-08-20, independent re-verification agent, fresh context). Same rigor as
+round 7: a systematic side-by-side comparison of `SetPttLockAsync` vs. `PlayWithPttAsync`'s full
+hardening shape (given the recurring pattern "`SetPttLockAsync` missing something `PlayWithPttAsync`
+already has, one spot at a time"), re-verification of round 7's specific fix, a fresh full
+writer/reader re-derivation, and a brief check of UI-side assumptions. **VERDICT: NOT CLEAN -- 2
+real findings (both blocker-class, both latent) + 4 nits.** Still zero consecutive clean rounds
+after 7 rounds.
+
+1. **[blocker-class, latent] Round 7's own new write was ITSELF a fourth instance of the lost-update
+   shape** -- the catch block's `_pttLeftKeyedByCall = true` (a key command that threw after possibly
+   physically keying the rig) never bumped `_pttKeyEpoch`, so a CONCURRENT `UnkeyForCleanupAsync` call
+   whose own epoch snapshot predates this write could still wipe it moments later, believing nothing
+   new happened -- silently reintroducing the exact leaked-keyed-transmitter outcome round 7 itself
+   just closed. Confirmed the two code paths genuinely overlap (`PlayWithPttAsync`'s cleanup un-key is
+   not serialized under `_pttLockGate`). Fixed by bumping the epoch before the flag write, matching
+   round 6's own established ordering rule.
+2. **[blocker-class, latent] `SetPttLockAsync`'s key command was invisible to `DisposeAsync`'s bounded
+   shutdown WAIT** -- the systematic side-by-side comparison's main finding: `PlayWithPttAsync`
+   publishes `_keyedTransmitCompletion`/`_keyedTransmitCount` BEFORE its key command specifically so
+   "DisposeAsync can never tear IRadioSessionService down out from under an in-flight un-key" (its own
+   comment) -- `SetPttLockAsync` never adopted this. Consequence: `DisposeAsync` could run to
+   completion, dispose `IRadioSessionService`, and only THEN would `SetPttLockAsync`'s own post-await
+   disposal-race recovery (rounds 3/4's fix) get a chance to run -- against a radio session that no
+   longer exists. Same root cause covers an even worse variant: if `SetPttAsync` never returns at all
+   (a real UI caller passing `CancellationToken.None`), `SetPttLockAsync` records NOTHING, ever. Fixed
+   by mirroring `PlayWithPttAsync`'s exact mechanism: publish before the key command, clear in an
+   outermost `finally` that wraps the whole method (restructured into a nested try/finally to make
+   this correct now that both `_pttLockGate.Release()` and the new TCS cleanup need to run
+   unconditionally).
+
+Re-derived and confirmed sound (not findings): round 7's `catch (Exception) when (rigIsRealAtKeyTime)`
+shape itself (filter correctness, exception identity preservation, no double-fire with the
+`if (locked && _disposed)` block, the `try` block containing only the one awaited call so the filter
+can't mis-catch anything else); round 7's finding-2 write integrates correctly downstream against all
+3 readers. Both round-7 tests confirmed genuinely mutation-sensitive.
+
+**Chunk 3a round 8 fix applied** (2026-08-20, commit `<pending>`). Finding 1: the catch block now
+bumps `_pttKeyEpoch` before setting `_pttLeftKeyedByCall = true` -- `_pttKeyEpoch`'s own doc comment
+widened to state the invariant is "every key command that succeeded OR may have physically keyed the
+rig before throwing," not just "every successful" one. Finding 2: `SetPttLockAsync` restructured
+with a nested try/finally -- publishes a TCS + increments `_keyedTransmitCount` before the key
+command (guarded on `rigIsRealAtKeyTime`, matching `PlayWithPttAsync`'s own shape exactly), clears/
+`TrySetResult`s in the new outermost `finally` (CompareExchange-guarded, same pattern as
+`PlayWithPttAsync`'s own inner finally). Re-indented the whole method for the added nesting level.
+
+One pre-existing round-4 test's expectations needed updating as a direct, correct CONSEQUENCE of
+finding 2's fix (not a regression): `Round4_SetPttLockAsync_DisposeRacesTheSetPttAsyncAwait_...`
+nests `DisposeAsync` synchronously inside the SAME call's own key command -- now that the key command
+is visible to `DisposeAsync`'s wait, that reentrant nesting makes the wait genuinely engage (and
+always time out, since nothing can complete until the synchronous callback itself returns), so
+`DisposeAsync`'s own backstop now ALSO fires an extra (redundant, documented-harmless) un-key before
+the original call's own key even returns -- exactly the existing "whether the wait succeeds or times
+out, DisposeAsync's own backstop un-key runs next either way" contract already established for
+`PlayWithPttAsync`. `PttCalls` expectation updated from `[true, false]` to `[false, true, false]`
+with an explanatory comment; the property under test (throws `ObjectDisposedException`, ends
+correctly un-locked) is unchanged.
+
+New regression tests: `Round8_SetPttLockAsync_KeyCommandThrows_EpochBump_SurvivesConcurrentUnkeyersStaleClear`
+(finding 1, same nested-BeforeSetPtt technique as prior rounds) and
+`Round8_DisposeAsync_WaitsForAnInFlightSetPttLockAsyncsOwnCompletion` (finding 2 -- required adding a
+genuine async `Gate` hook to `FakeRadioSessionService`, mirroring `FakeAudioDeviceEnumerator.Gate`,
+since the existing synchronous `BeforeSetPtt` hook can't create a real in-flight window without
+reentrant nesting; mirrors the existing `Blocker3_DisposeAsync_WaitsForAnInFlightKeyedTransmitsOwnUnkey`
+test's shape for `TuneAsync`, applied to `SetPttLockAsync`). Both mutation-verified by reverting each
+fix and confirming the exact predicted failure signature, then restored. All 185
+`ScanlineStudio.Application.Tests` passing, full solution suite (all projects) clean.
+
+Round 8 found real fixed findings in the leaked-keyed-transmitter class -- round 8 does NOT count as
+chunk 3a's 1st clean round. Round 9 (independent re-verification) is the earliest round that can
+count as chunk 3a's 1st clean round. Seven consecutive rounds (2-8) have now each found something
+real in this file.
