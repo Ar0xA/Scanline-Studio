@@ -44,7 +44,7 @@ public class SlantTests
         double? lastResult = null;
         for (var line = 0; line < 200; line++)
         {
-            lastResult = tracker.ProcessLine(0.0) ?? lastResult;
+            lastResult = tracker.ProcessLine(0) ?? lastResult;
         }
 
         Assert.Null(lastResult);
@@ -65,7 +65,7 @@ public class SlantTests
         // that these EXACT fed values (not just "something non-default") landed in history in order.
         for (var line = 0; line < 10; line++)
         {
-            tracker.ProcessLineHistoryOnly(line + 1.0);
+            tracker.ProcessLineHistoryOnly(line + 1);
         }
 
         // (a) Baseline capture is part of the gated fit/correction branch -- must never fire, even
@@ -78,7 +78,7 @@ public class SlantTests
         // happened at all").
         Assert.Equal(10, tracker.TotalLinesObservedForTests);
         var history = tracker.HistoryForTests;
-        Assert.Equal(Enumerable.Range(1, 10).Select(v => (double)v), history[^10..]);
+        Assert.Equal(Enumerable.Range(1, 10), history[^10..]);
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public class SlantTests
             trueCumulative += trueSamplesPerLine;
             assumedCumulative += assumedSamplesPerLine;
 
-            var result = tracker.ProcessLine(trueCumulative - assumedCumulative);
+            var result = tracker.ProcessLine((int)(trueCumulative - assumedCumulative));
             if (result is not null)
             {
                 lastResult = result;
@@ -165,7 +165,7 @@ public class SlantTests
         double? firstResult = null;
         for (var line = 1; line <= 8 && firstResult is null; line++)
         {
-            firstResult = tracker.ProcessLine(perLineDrift * line);
+            firstResult = tracker.ProcessLine((int)(perLineDrift * line));
         }
 
         Assert.NotNull(firstResult);
@@ -222,7 +222,7 @@ public class SlantTests
         const double nominalSamplesPerLine = SampleRate * 0.15; // mult = (int)(6615/320) = 20, threshold = 8*20 = 160
         var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
 
-        const double spuriousPosition = 1000.0; // >> 160
+        const int spuriousPosition = 1000; // >> 160
         for (var line = 0; line < 4; line++)
         {
             tracker.ProcessLine(spuriousPosition);
@@ -239,7 +239,7 @@ public class SlantTests
         const double nominalSamplesPerLine = SampleRate * 0.15;
         var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine, thresholdLinePositions: [64, 128, 160, 220]);
 
-        const double spuriousPosition = 1000.0;
+        const int spuriousPosition = 1000;
         tracker.ProcessLine(spuriousPosition); // line 1 -- this is the one reading that must age out
 
         // The 5-delta window (indices 15..10) reaches history[10] via its last delta -- a value fed
@@ -247,7 +247,7 @@ public class SlantTests
         // clears index 10 (moves to index 9) once 6 more lines have been fed (lines 2-7, 7 total).
         for (var line = 0; line < 6; line++)
         {
-            tracker.ProcessLine(0.0); // lines 2-7, all consistent with each other
+            tracker.ProcessLine(0); // lines 2-7, all consistent with each other
         }
 
         Assert.True(tracker.HasBaselineForTests, "Baseline still not set by line 7 -- the spurious line-1 reading should have aged out of the 5-delta window by now.");
@@ -274,7 +274,7 @@ public class SlantTests
         {
             trueCumulative += trueSamplesPerLine;
             assumedCumulative += nominalSamplesPerLine;
-            tracker.ProcessLineSuppressed(trueCumulative - assumedCumulative);
+            tracker.ProcessLineSuppressed((int)(trueCumulative - assumedCumulative));
         }
 
         Assert.Equal(300, tracker.TotalLinesObservedForTests);
@@ -306,7 +306,7 @@ public class SlantTests
 
         for (var line = 0; line < 10; line++)
         {
-            tracker.ProcessLineSuppressed(0.0);
+            tracker.ProcessLineSuppressed(0);
         }
 
         Assert.True(tracker.HasBaselineForTests);
@@ -322,7 +322,7 @@ public class SlantTests
 
         for (var line = 0; line < 10; line++)
         {
-            tracker.ProcessLine(0.0);
+            tracker.ProcessLine(0);
         }
 
         Assert.True(tracker.HasBaselineForTests, "Test setup problem: baseline never established before ResetBaseline was even called.");
@@ -332,7 +332,110 @@ public class SlantTests
 
         Assert.False(tracker.HasBaselineForTests);
         Assert.Equal(0, tracker.TotalLinesObservedForTests);
-        Assert.All(tracker.HistoryForTests, v => Assert.Equal(0.0, v));
+        Assert.All(tracker.HistoryForTests, v => Assert.Equal(0, v));
+    }
+
+    [Fact]
+    public void SlantTracker_GetSqerrPos_TruncatesTowardZero_NotFloorAndNotRounded()
+    {
+        // Main.h:1342 declares `int __fastcall GetSqerrPos(int n)`; Main.cpp:3878-3880 computes
+        // `double l0` and does `return l0;` -- a C truncation TOWARD ZERO. For a negative fit that
+        // is materially different from floor (which .NET's Math.Floor / a naive (int)Math.Floor
+        // port would give) and from Math.Round's banker's rounding.
+        //
+        // The 5 fed values below are chosen so the exact least-squares value at i=0 is -1.4:
+        //   history (oldest..newest) = -10, -8, -6, -4, -1, so l_i = h[15-i] gives
+        //   l0=-1, l1=-4, l2=-6, l3=-8, l4=-10; L=-29, T=10, TT=30, TL=-80;
+        //   l0 = (L*TT - T*TL)/(5*TT - T*T) = (-870 + 800)/50 = -1.4
+        // Truncation toward zero -> -1. Floor -> -2. Math.Round(-1.4) -> -1 (indistinguishable
+        // here), so the discriminating pair this test pins is trunc-vs-floor; the banker's-rounding
+        // half is pinned by the sibling test below at a .5 boundary.
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine: SampleRate * 0.15, thresholdLinePositions: [64, 128, 160, 220]);
+
+        foreach (var v in new[] { -10, -8, -6, -4, -1 })
+        {
+            tracker.ProcessLine(v); // all deltas (max 10) are well under this tracker's jitter gate (160)
+        }
+
+        Assert.True(tracker.HasBaselineForTests, "Test setup problem: the jitter gate rejected this sequence, so no baseline was captured.");
+        Assert.Equal(-1, tracker.BaselinePositionForTests);
+    }
+
+    [Fact]
+    public void SlantTracker_GetSqerrPos_DoesNotBankersRoundAHalfBoundary()
+    {
+        // l0 = (L*30 - 10*TL)/50 with fed values 0, 1, 2, 3, 6:
+        //   l0=6, l1=3, l2=2, l3=1, l4=0; L=12, TL = 0*6+1*3+2*2+3*1+4*0 = 10
+        //   l0 = (12*30 - 10*10)/50 = (360-100)/50 = 5.2  -> trunc 5
+        // and with 0, 1, 2, 3, 7: L=13, TL=10 -> (390-100)/50 = 5.8 -> trunc 5, NOT 6.
+        // Math.Round would give 6 for the second case; legacy gives 5.
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine: SampleRate * 0.15, thresholdLinePositions: [64, 128, 160, 220]);
+
+        foreach (var v in new[] { 0, 1, 2, 3, 7 })
+        {
+            tracker.ProcessLine(v);
+        }
+
+        Assert.True(tracker.HasBaselineForTests, "Test setup problem: the jitter gate rejected this sequence, so no baseline was captured.");
+        Assert.Equal(5, tracker.BaselinePositionForTests);
+    }
+
+    [Fact]
+    public void SlantTracker_RestoreRateWithoutReset_PreservesBaselineAndHistory_UnlikeAdoptCorrectedRate()
+    {
+        // Legacy's manual Correct Slant REVERT arm (Main.cpp:5420-5423) is a bare
+        // `SSTVSET.m_SampFreq = StartSamp; SSTVSET.SetSampFreq();` -- it never calls InitAutoStop
+        // (Main.cpp:3801-3810), which is reachable only through the SUCCESS arm's
+        // RedrawSampFreq -> UpdateSampFreq chain (Main.cpp:5418 -> 5585 -> 5600). So Auto Slant's
+        // baseline, 16-entry history, moving average and bitmask all survive a reverted manual
+        // correction in legacy, and tracking continues uninterrupted rather than restarting from
+        // zero (5 lines to re-establish a baseline, +3 more before a correction is even eligible).
+        //
+        // A constant non-zero position (7) is used deliberately: with an all-zero history a
+        // preserved history and a Reset()-cleared one are indistinguishable, so the assertion below
+        // would pass vacuously. 7 also never commits (fittedPosition == baselinePosition -> d == 0),
+        // so nothing but the method under test can touch the state between setup and assertion.
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine: SampleRate * 0.15, thresholdLinePositions: [64, 128, 160, 220]);
+
+        for (var line = 0; line < 10; line++)
+        {
+            tracker.ProcessLine(7);
+        }
+
+        Assert.True(tracker.HasBaselineForTests, "Test setup problem: baseline never established before the revert.");
+        var historyBefore = tracker.HistoryForTests;
+        var baselineBefore = tracker.BaselinePositionForTests;
+
+        tracker.RestoreRateWithoutReset(SampleRate * 1.01); // forward manual commit
+        tracker.RestoreRateWithoutReset(SampleRate);        // the revert: back to the pre-manual rate
+
+        Assert.True(tracker.HasBaselineForTests, "A reverted manual correction wiped the Auto Slant baseline -- legacy's revert arm (Main.cpp:5420-5423) never calls InitAutoStop.");
+        Assert.Equal(10, tracker.TotalLinesObservedForTests);
+        Assert.Equal(baselineBefore, tracker.BaselinePositionForTests);
+        Assert.Equal(historyBefore, tracker.HistoryForTests);
+        Assert.Equal(0.0, tracker.DriftPpm); // rate pair really did go back
+    }
+
+    [Fact]
+    public void SlantTracker_AdoptCorrectedRate_StillResets_TheAutomaticCommitPathIsUnchanged()
+    {
+        // Negative control for the sibling test above: the AUTOMATIC path keeps legacy's
+        // InitAutoStop-after-commit behaviour (ultracode audit finding #9), so the two methods must
+        // remain observably different, not accidentally the same one under two names.
+        var tracker = new SlantTracker(SampleRate, nominalSamplesPerLine: SampleRate * 0.15, thresholdLinePositions: [64, 128, 160, 220]);
+
+        for (var line = 0; line < 10; line++)
+        {
+            tracker.ProcessLine(7);
+        }
+
+        Assert.True(tracker.HasBaselineForTests, "Test setup problem: baseline never established.");
+
+        tracker.AdoptCorrectedRate(SampleRate * 1.01);
+
+        Assert.False(tracker.HasBaselineForTests);
+        Assert.Equal(0, tracker.TotalLinesObservedForTests);
+        Assert.All(tracker.HistoryForTests, v => Assert.Equal(0, v));
     }
 
     [Fact]
@@ -465,7 +568,7 @@ public class SlantTests
         {
             trueCumulative += trueSamplesPerLine;
             assumedCumulative += assumedSamplesPerLine;
-            lastResult = tracker.ProcessLine(trueCumulative - assumedCumulative);
+            lastResult = tracker.ProcessLine((int)(trueCumulative - assumedCumulative));
         }
 
         Assert.NotNull(lastResult);
@@ -739,7 +842,7 @@ public class SlantTests
         {
             trueCumulative += trueSamplesPerLine;
             assumedCumulative += assumedSamplesPerLine;
-            result = tracker.ProcessLine(trueCumulative - assumedCumulative);
+            result = tracker.ProcessLine((int)(trueCumulative - assumedCumulative));
         }
 
         Assert.NotNull(result); // sanity: a correction actually happened within 300 lines

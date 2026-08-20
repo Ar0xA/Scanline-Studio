@@ -5718,7 +5718,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // wrapped to the representation closest to zero (Main.cpp:5877-5883-style centering) --
         // mirrors legacy's own m_AutoStopPos wraparound, needed so a peak that lands just before
         // vs. just after the line boundary isn't reported as a huge spurious jump.
-        var relative = _slantLinePeakPosition - _syncSegmentOffsetSamples;
+        // Legacy computes this quantity entirely in `int` (Main.h:1350's `int m_AutoStopPos`), with
+        // truncation at three separate assignments, all C-style toward zero (what a C# `(int)` cast
+        // does): the within-line peak is truncated on assignment into `int m_SyncPos`
+        // (Main.cpp:4198, `m_SyncPos = ps;` from a double `ps`), the sync offset is truncated
+        // BEFORE the subtraction (Main.cpp:3887, `- int(SSTVSET.m_OFP)`), and the wrapped result is
+        // truncated again on assignment back into the same int (Main.cpp:3889). Truncating only the
+        // final difference is NOT equivalent -- trunc(a) - trunc(b) and trunc(a - b) differ by 1
+        // whenever both have fractional parts (e.g. 10 - 3.7 -> 7 vs 6). Everything downstream in
+        // SlantTracker (the 16-entry history, GetSqerrPos, the 8*mult jitter gate, m_ASBgnPos) is
+        // integer-typed in legacy and calibrated in whole samples.
+        var relative = (int)_slantLinePeakPosition - (int)_syncSegmentOffsetSamples;
 
         // Manual ReSync's capture point (legacy's m_SyncRPos = m_SyncPos at its own line-boundary
         // point, Main.cpp:4193-4194) -- MUST stay here, before the two-flag suppression block
@@ -5728,14 +5738,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // that block would silently overwrite the null and make the suppression dead code.
         _lastLineSyncPeakPosition = _slantLinePeakPosition;
 
-        var half = _effectiveSamplesPerLine / 2.0;
+        // `int h = SSTVSET.m_TW/2;` (Main.cpp:3888) -- truncated threshold, and the wrap result is
+        // truncated back into the int (Main.cpp:3889). Same shape as WrapSyncOffset above.
+        var half = (int)(_effectiveSamplesPerLine / 2.0);
         if (relative > half)
         {
-            relative -= _effectiveSamplesPerLine;
+            relative = (int)(relative - _effectiveSamplesPerLine);
         }
         else if (relative < -half)
         {
-            relative += _effectiveSamplesPerLine;
+            relative = (int)(relative + _effectiveSamplesPerLine);
         }
 
         // ultracode audit finding #10: capture the OLD samples-per-line before a correction below
@@ -6717,7 +6729,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // SetSampFreq()-equivalent writes). Non-null for every mode this method can ever commit for
         // (the entry gate above already rejects AVT, the only mode InitializeSlant leaves this null
         // for) -- the `?.` is defensive, not an expected-null path.
-        _slantTracker?.AdoptCorrectedRate(candidateSampleRate);
+        //
+        // Batch 2 chunk 2b round-1 fix: RestoreRateWithoutReset, NOT AdoptCorrectedRate. In legacy
+        // the manual path's InitAutoStop is reached only through the success arm's RedrawSampFreq ->
+        // UpdateSampFreq (Main.cpp:5418 -> 5585 -> 5600); resetting here instead would fire it
+        // BEFORE TryCorrectSlantAndApply has even learned whether PerformReplay will bail, making
+        // the reset unrecoverable on the revert path. PerformReplay's own ResetBaseline() call
+        // supplies legacy's InitAutoStop at exactly legacy's position -- after all of its early-exit
+        // `return false`s, before every `return true`.
+        _slantTracker?.RestoreRateWithoutReset(candidateSampleRate);
 
         return true;
     }
@@ -6741,12 +6761,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// still be re-audited against <see cref="PerformReplay"/>'s full mutation set, including
     /// <c>_lastLineSyncPeakPosition</c>/<c>_suppressNextSlantProcessLine</c>/the tracker's baseline/the
     /// Auto-Sync observation history, none of which are snapshotted here, whenever that boundary
-    /// changes). <see cref="SlantTracker.AdoptCorrectedRate"/>'s revert restores the
-    /// rate pair only, not the baseline/history its own <c>Reset()</c> already cleared on the forward
-    /// call -- that reset is unrecoverable and NOT rolled back, a documented, accepted,
-    /// degradation-only gap vs. legacy (whose own revert arm is a bare <c>SetSampFreq()</c>, no
-    /// <c>InitAutoStop</c> call, so legacy's baseline genuinely does survive a revert -- round-2
-    /// plan-review, verified against <c>Main.cpp:5420-5423</c>). The two
+    /// changes). <see cref="SlantTracker.RestoreRateWithoutReset"/> restores the rate pair, and — as
+    /// of the Batch 2 chunk 2b round-1 fix — the forward commit no longer resets the tracker either
+    /// (see <see cref="TryCorrectSlant"/>'s own call site), so the baseline/history/average/bitmask
+    /// genuinely survive a reverted manual correction, matching legacy's own revert arm (a bare
+    /// <c>SetSampFreq()</c>, no <c>InitAutoStop</c> call -- verified against
+    /// <c>Main.cpp:5420-5423</c>). The success-arm reset now comes solely from
+    /// <see cref="PerformReplay"/>'s own <see cref="SlantTracker.ResetBaseline"/> call, matching
+    /// legacy's <c>InitAutoStop</c>-inside-<c>UpdateSampFreq</c> placement (<c>Main.cpp:5600</c>).
+    /// The two
     /// <c>*SafetyCheckCountForTests</c> diagnostic counters are deliberately excluded from the
     /// snapshot: they count how many times a check ran, not correction state, and must keep
     /// incrementing regardless of outcome.</summary>
@@ -6784,7 +6807,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _autoSyncDiff = preCommitAutoSyncDiff;
 
         var preCommitSampleRate = preCommitEffectiveSamplesPerLine / (_mode!.LineDurationMs / 1000.0);
-        _slantTracker?.AdoptCorrectedRate(preCommitSampleRate);
+        _slantTracker?.RestoreRateWithoutReset(preCommitSampleRate);
 
         return false;
     }

@@ -588,5 +588,44 @@ ignoring the test-shortened dispose timeout, `int` sample-count overflow past ~2
 Scoped filter (`RxLineStagingBufferTests`/`CorrectSlantTests`/`ReplayEngineTests`) 51/51 passing
 after the round-3 fixes, full `ScanlineStudio.Core.Sstv` build clean. **Chunk 2a: 3 rounds, 1 real
 blocker fixed (round 1) + 2 small round-3 hardening fixes, CLOSED under the formal
-2-consecutive-clean-round gate** (rounds 2 and 3 both zero-blocker). Next: chunk 2b
-(`ReplayOriginCalculator.cs` + `SlantTracker.cs`), not yet started.
+2-consecutive-clean-round gate** (rounds 2 and 3 both zero-blocker).
+
+**Chunk 2b (`ReplayOriginCalculator.cs` + `SlantTracker.cs`) round 1 fixed** (2026-08-20). Both
+files already carried dense audit history from earlier RX buffer subsystem phases (Phase 6a/6b/6c/
+8c plan-review and code-review, an "ultracode audit" that found findings #7 and #9) -- round 1
+treated that as settled context and did a genuinely fresh pass, re-verifying the still-true claims
+against current code and legacy source rather than re-litigating them. `ReplayOriginCalculator`
+(`AdjustSyncPos`/`ReSyncSSTV` ports) came back fully clean -- all 43 `SstvModeRegistry` mode
+definitions checked branch-for-branch against legacy's switch, truncation order and the two-step
+`ReSyncSSTV` fold/argmax bound both confirmed correct, and confirmed the port did NOT conflate
+`ReSyncSSTV` with its near-twin `SyncSSTV` (a different bound, different Scottie wrap, no
+mode-offset table -- a real risk for two similarly-shaped legacy functions). `SlantTracker` found 2
+real risk findings (no blocker): (1) a numeric-fidelity gap -- legacy's position history/fit is
+entirely `int`-typed (`Main.h:1351`'s `m_AutoStopAPos[16]`, `GetSqerrPos`'s own `int
+__fastcall GetSqerrPos(int)` truncating its `double`-computed result on return), while this port's
+`_history`/`GetSqerrPos` were `double`, feeding a genuinely fractional value in and returning an
+untruncated one out -- a type-level divergence that can flip the `maxDelta < 8*_mult` jitter gate's
+own boolean outcome, not just shift a magnitude, so a documented tolerance wasn't the right
+instrument; (2) `AdoptCorrectedRate` unconditionally `Reset()`s, including on the manual
+Correct-Slant REVERT path (`AnalogFmSstvDecoder.TryCorrectSlantAndApply`) -- legacy's own revert
+arm (`Main.cpp:5420-5423`) is a bare `SetSampFreq()` with no `InitAutoStop` call, so Auto Slant's
+baseline/history/average/bitmask genuinely survive a reverted manual correction in legacy, while
+this port wiped them, forcing Auto Slant to restart from zero after every reverted manual attempt.
+**Fixed both**: quantized `_history` to `int[]`, `GetSqerrPos` to `int`-truncating, and pushed the
+truncation back to its correct legacy position (`AnalogFmSstvDecoder.cs`'s own `relative`
+computation, BEFORE the subtraction -- `trunc(a)-trunc(b) != trunc(a-b)` whenever both have
+fractional parts, verified against `Main.cpp:3887`-`:3889`'s own three separate truncation points);
+split `AdoptCorrectedRate` into a new `RestoreRateWithoutReset` (rate pair only, no `Reset()`) used
+by BOTH the manual forward-commit and revert call sites, while `PerformReplay`'s own existing
+`ResetBaseline()` call supplies legacy's `InitAutoStop`-inside-`UpdateSampFreq` placement exactly
+(verified: sits after every one of `PerformReplay`'s pre-mutation early-exit `return false`s and
+before every `return true`, so the automatic/success-path reset still fires at the right point,
+while a revert genuinely preserves tracker state now). Added 4 new tests (2 pinning the truncation
+rule specifically -- toward-zero, not floor, not banker's-rounding, at a deliberately chosen .5
+boundary; 2 proving `RestoreRateWithoutReset` preserves state where `AdoptCorrectedRate` still
+resets it, a positive/negative control pair) plus 12 mechanical `double`->`int` call-site updates
+in `SlantTests.cs`. Scoped filter (`SlantTests`/`CorrectSlantTests`/`CorrectSlantRequestTests`/
+`ReplayEngineTests`/`AutoSyncTests`) 78/78 passing, full `ScanlineStudio.Core.Sstv` build clean.
+Full `tests/ScanlineStudio.Core.Sstv.Tests` suite (run because this fix touches
+`AnalogFmSstvDecoder.cs` directly, not just the 2 chunk files): 1020/1020 passing (1 unrelated
+intentional skip). Round 2 needed for chunk 2b's own 2-consecutive-clean-round gate.
