@@ -879,8 +879,12 @@ public sealed class SstvSessionServicePttSafetyTests
         // is about to trigger.
         deviceEnumerator.Gate = new TaskCompletionSource().Task;
 
+        // Round-11 nit: wrapped in WaitAsync(TimeSpan), not just timed with a Stopwatch -- reverting
+        // the fix parks this call forever (the caller's own ct is CancellationToken.None), so an
+        // un-guarded await would hang the whole test run until the runner's own global timeout
+        // instead of failing this one test loudly and immediately.
         var stopwatch = Stopwatch.StartNew();
-        await service.SetPttLockAsync(false);
+        await service.SetPttLockAsync(false).WaitAsync(TimeSpan.FromSeconds(5));
         stopwatch.Stop();
 
         // Bounded by _cleanupTimeout (200ms here), not hanging forever on the caller's own
@@ -889,9 +893,9 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Contains(logger.Entries, e => e.Message.Contains("Resume RX (after unlock)", StringComparison.Ordinal));
 
         // THE property: _pttLockGate must have been released promptly -- a SUBSEQUENT lock call must
-        // not be stuck behind the stranded resume.
+        // not be stuck behind the stranded resume. Same WaitAsync guard, same reasoning.
         var lockStopwatch = Stopwatch.StartNew();
-        await service.SetPttLockAsync(true);
+        await service.SetPttLockAsync(true).WaitAsync(TimeSpan.FromSeconds(5));
         lockStopwatch.Stop();
         Assert.True(lockStopwatch.Elapsed < TimeSpan.FromSeconds(1), $"the lock gate must not still be held by the earlier stranded resume; took {lockStopwatch.Elapsed}");
     }

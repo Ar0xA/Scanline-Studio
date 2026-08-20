@@ -293,7 +293,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// fully would need a single shared gate across <see cref="PlayWithPttAsync"/> AND this method,
     /// which would also make an emergency unlock wait behind an in-flight transmission's own gate
     /// hold -- a worse safety property than the current race for what unlock is meant to be (an
-    /// escape hatch). Revisit if/when a real caller actually needs this closed.</summary>
+    /// escape hatch). Revisit if/when a real caller actually needs this closed.
+    ///
+    /// <b>Round-11 finding, same accepted-race family, second producer</b>: a failed ENGAGE attempt
+    /// (this method's own key command throwing after possibly physically keying the rig -- see the
+    /// round-7/round-11 catch block below) deliberately does NOT attempt an immediate recovery
+    /// un-key, for the identical reason -- doing so could drop a concurrent, genuinely on-air
+    /// <see cref="PlayWithPttAsync"/> transmission's carrier out from under it. The failure is still
+    /// recorded (for <see cref="DisposeAsync"/>'s shutdown backstop and a Critical log), just not
+    /// auto-recovered immediately. Same latency status, same "revisit when a real caller needs this
+    /// closed" disposition.</summary>
     private readonly SemaphoreSlim _pttLockGate = new(1, 1);
 
     public async Task SetPttLockAsync(bool locked, CancellationToken ct = default)
@@ -395,6 +404,26 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     Interlocked.Increment(ref _pttKeyEpoch);
                     _pttLeftKeyedByCall = true;
                     Log.PttKeyCommandFailedMayHaveKeyed(_logger);
+
+                    // Round-11 finding, deliberately NOT auto-fixed here (documented, not silently
+                    // left implicit -- same standard as the "Known, accepted race" this method's own
+                    // doc comment already carries): unlike PlayWithPttAsync's finally, this catch does
+                    // NOT attempt an immediate recovery un-key -- the failure is only ever recorded
+                    // (above) for DisposeAsync's shutdown backstop and the operator's own Critical log
+                    // to act on, which can be a long time (hours) if nothing else touches PTT in the
+                    // meantime. That gap is real. It is not closed here because the obvious fix --
+                    // calling UnkeyForCleanupAsync right in this catch -- would introduce a NEW
+                    // instance of the exact race this class's own doc comment already accepts for the
+                    // unlock direction: a concurrent, genuinely on-air PlayWithPttAsync transmission
+                    // could have this call's own recovery un-key drop its carrier mid-frame, since
+                    // _pttKeyEpoch's guard protects the FLAG CLEARS other calls perform, not the
+                    // un-key COMMAND itself -- there is no shared gate between this method and
+                    // PlayWithPttAsync's own key/un-key, by the same deliberate design choice
+                    // documented at this class's own SemaphoreSlim field. Closing this fully needs the
+                    // same shared-gate redesign that comment already defers "until a real caller
+                    // actually needs this closed" -- SetPttLockAsync has zero production callers
+                    // today, same latency status as every other finding fixed in this chunk, but this
+                    // one's fix is not a safe one-liner the way those were.
                     throw;
                 }
 
@@ -1208,8 +1237,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         // transmitter, so it's out of this chunk's failure class); if BOTH resume paths
                         // land inside that gap's own multi-await window, the early-return doesn't hold
                         // and this "harmless" claim doesn't either. Still an accepted trade for the same
-                        // stated reason above (recoverable, not this chunk's failure class) -- not
-                        // upgraded to "always harmless."
+                        // stated reason above (out of this chunk's failure class) -- not upgraded to
+                        // "always harmless." Round-11 correction: that gap is NOT user-recoverable by
+                        // toggling RX, contrary to what an earlier version of this comment implied --
+                        // StopReceivingAsync's `-=` removes only ONE copy of each duplicated handler, so
+                        // the extra subscription survives a Stop RX / Start RX cycle and keeps doubling
+                        // every captured chunk into the decoder for the rest of the process's life.
                         if (!_pttLocked && _rxPendingResumeAfterUnlock)
                         {
                             _rxPendingResumeAfterUnlock = false;
