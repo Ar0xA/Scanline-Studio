@@ -1723,3 +1723,58 @@ Round 12 both changed an existing disposition AND found a new, differently-class
 round 12 does NOT count as chunk 3a's 1st clean round. Round 13 (independent re-verification) is the
 earliest round that can count as chunk 3a's 1st clean round. Eleven consecutive rounds (2-12) have
 now each found something real in this file.
+
+**Chunk 3a round 13** (2026-08-21, independent re-verification agent, fresh context, task
+`a2a49050f31937155`). Re-derived round 12's two fixes from current source and confirmed both
+CORRECT on every axis checked: the guarded recovery's `_keyedTransmitCount == 1` read timing, its
+non-interaction with the epoch mechanism, the single-flight guard's acquire/release balance across
+every exit path (including the re-indented ~300-line body, verified brace-by-brace), and
+`DisposeAsync`'s interaction with both. Continuing the fresh sweep, found ONE new real risk, a
+THIRD distinct failure class beyond "leaked PTT" and "transmission destroyed": `EnqueueAllAsync`'s
+own "buffer full, wait 10ms, retry" loop has no bound -- a wedged playback device
+(`EnqueuePlaybackSamples` persistently returning 0) stalls the sample-pump loop forever. This is
+NOT a new instance of the leaked-keyed-transmitter class by itself (PTT stays keyed only as long as
+the stall lasts, same as any other slow step) -- but round 12's own `_transmitInFlight` single-flight
+guard turns it into something worse: since nothing throws, the guard is never released, so a single
+wedged device permanently locks out every future transmit/tune for the life of the process. An
+amplification of round 12's own fix, not a flaw in it. Secondary, smaller-window instance flagged
+but not required: `StartPlaybackAsync`'s own await has the same class of unbounded wait on the
+`ct == None` Tune path; deliberately deferred (see below).
+
+**Chunk 3a round 13 fix applied** (2026-08-21). New `private static readonly TimeSpan
+PlaybackStallTimeout = TimeSpan.FromSeconds(5);` constant plus a `_playbackStallTimeout` instance
+field (threaded through both constructors; the internal test constructor gained a
+`playbackStallTimeoutForTests` parameter, matching the existing budget-injection pattern for
+`cleanupTimeout`/`playbackStopWaitBudget`/`inFlightKeyedTransmitWait`). `EnqueueAllAsync` now tracks
+elapsed stall time via `Environment.TickCount64` (chosen to avoid a new `System.Diagnostics` using)
+across consecutive zero-accepted retries, resetting on any real progress, and throws
+`TimeoutException` once the stall exceeds `_playbackStallTimeout`. This routes through
+`PlayWithPttAsync`'s existing generic `catch (Exception)` -> `abnormalTermination = true` -> urgent
+un-key BEFORE `StopPlayback` path -- already-bounded, already-tested machinery from earlier rounds,
+so no new cleanup logic was needed, only a way to stop waiting. **Deliberately deferred, not fixed
+this round:** `StartPlaybackAsync`'s own smaller-window unbounded wait on the same Tune path --
+given this round's already-substantial scope, judged safe to defer since it doesn't carry the same
+"permanent process-wide lockout" severity as the `EnqueueAllAsync` case (a device wedged during
+`StartPlaybackAsync` still eventually surfaces as an ordinary unbounded-await risk, not amplified by
+the single-flight guard into total lockout the way a wedge in the pump loop is). Flag for a future
+round.
+
+New regression test: `Round13_EnqueueAllAsync_WedgedPlaybackDevice_TimesOutRatherThanStallingForever`,
+using a new `WedgedPlaybackAudioEngine` test decorator (`EnqueuePlaybackSamples` always returns 0)
+matching the file's existing `ThrowOnStartPlaybackAudioEngine`/`GatedStopPlaybackAudioEngine`
+decorator pattern. Asserts: `TransmitAsync` throws `TimeoutException` mentioning "wedged"; PTT went
+on then urgently back off (`[true, false]`, never left keyed by the stall); the failure logs at
+Error; and a second `TransmitAsync` call afterward reaches the same wedge again (proving
+`_transmitInFlight` was genuinely released, not left stuck by the aborted call). Mutation-verified
+by commenting out the timeout throw (constant-boolean conditionals trigger CS0162/CS1718 under this
+project's warnings-as-errors build, per the established mutation-testing technique) -- the mutated
+test **hung outright** (bounded by a 20s external `timeout` wrapper) rather than failing an
+assertion, confirming the exact predicted unbounded-stall failure mode. Restored, rebuilt clean,
+re-ran the test to confirm it passes again, confirmed no stray test-host processes survived. All 189
+`ScanlineStudio.Application.Tests` passing (188 pre-existing + 1 new), full solution suite (all
+projects) clean.
+
+Round 13 re-verified round 12's fixes as sound but found a new real risk (an amplification of round
+12's own fix) -- round 13 does NOT count as chunk 3a's 1st clean round. Round 14 is now the earliest
+round that can count as chunk 3a's 1st clean round. Twelve consecutive rounds (2-13) have now each
+found something real in this file.

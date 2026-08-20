@@ -32,7 +32,8 @@ public sealed class SstvSessionServicePttSafetyTests
             TimeSpan? cleanupTimeout = null,
             TimeSpan? playbackStopWaitBudget = null,
             TimeSpan? inFlightKeyedTransmitWait = null,
-            FakeAudioDeviceEnumerator? deviceEnumerator = null)
+            FakeAudioDeviceEnumerator? deviceEnumerator = null,
+            TimeSpan? playbackStallTimeout = null)
     {
         var inner = new FakeAudioEngine();
         var engine = wrapEngine?.Invoke(inner) ?? inner;
@@ -59,7 +60,8 @@ public sealed class SstvSessionServicePttSafetyTests
             new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), radio, logger,
             cleanupTimeoutForTests: cleanupTimeout ?? TimeSpan.FromMilliseconds(300),
             playbackStopWaitBudgetForTests: playbackStopWaitBudget ?? TimeSpan.FromMilliseconds(200),
-            inFlightKeyedTransmitWaitForTests: inFlightKeyedTransmitWait ?? TimeSpan.FromMilliseconds(500));
+            inFlightKeyedTransmitWaitForTests: inFlightKeyedTransmitWait ?? TimeSpan.FromMilliseconds(500),
+            playbackStallTimeoutForTests: playbackStallTimeout ?? TimeSpan.FromMilliseconds(200));
 
         return (service, engine, radio, logger);
     }
@@ -974,6 +976,36 @@ public sealed class SstvSessionServicePttSafetyTests
         await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
     }
 
+    // ------------------------------------------------------------------ round 13 findings
+
+    [Fact]
+    public async Task Round13_EnqueueAllAsync_WedgedPlaybackDevice_TimesOutRatherThanStallingForever()
+    {
+        // Round-13 finding: EnqueueAllAsync's "buffer full, wait 10ms, retry" loop had no bound -- a
+        // wedged playback device (EnqueuePlaybackSamples always returning 0) stalled TransmitAsync
+        // forever WHILE PTT stayed keyed, and (amplified by round 12's own single-flight guard) that
+        // stall permanently locked out every future transmit/tune for the process, since nothing could
+        // ever clear _transmitInFlight. The stall timeout now throws TimeoutException, which routes
+        // through PlayWithPttAsync's generic catch -> abnormalTermination -> urgent un-key BEFORE
+        // StopPlayback, so a wedged device can no longer delay getting the transmitter off the air.
+        var (service, _, radio, logger) = CreateService(
+            wrapEngine: inner => new WedgedPlaybackAudioEngine(inner),
+            playbackStallTimeout: TimeSpan.FromMilliseconds(50));
+
+        var ex = await Assert.ThrowsAsync<TimeoutException>(() => service.TransmitAsync(TestMode, TestImage));
+        Assert.Contains("wedged", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // THE property: PTT went on, then urgently back off -- never left keyed by the stall.
+        Assert.Equal(PttOnThenOff, radio.PttCalls);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("Playback failed", StringComparison.OrdinalIgnoreCase));
+
+        // Single-flight guard must have been released too -- a second transmit after the wedge is
+        // cleared (fresh service call would still hit the same wedged fake, but this proves
+        // _transmitInFlight itself was reset rather than permanently stuck from the aborted call).
+        await Assert.ThrowsAsync<TimeoutException>(() => service.TransmitAsync(TestMode, TestImage));
+        Assert.Equal([true, false, true, false], radio.PttCalls);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
@@ -1057,6 +1089,39 @@ public sealed class SstvSessionServicePttSafetyTests
         public Task StopPlaybackAsync() => inner.StopPlaybackAsync();
 
         public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) => inner.EnqueuePlaybackSamples(samples);
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    /// <summary>Simulates a wedged playback device -- EnqueuePlaybackSamples always reports 0 samples
+    /// accepted, forever. Used to prove EnqueueAllAsync's stall timeout actually bounds the wait
+    /// instead of spinning on Task.Delay indefinitely.</summary>
+    private sealed class WedgedPlaybackAudioEngine(IAudioEngine inner) : IAudioEngine
+    {
+        public int CaptureOverrunCount => inner.CaptureOverrunCount;
+
+        public event Action<ReadOnlyMemory<float>>? SamplesCaptured
+        {
+            add => inner.SamplesCaptured += value;
+            remove => inner.SamplesCaptured -= value;
+        }
+
+        public Task StartCaptureAsync(
+            AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+            int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+            CancellationToken ct = default) =>
+            inner.StartCaptureAsync(device, sampleRate, drainThreadPriority, periodSizeInFrames, periods, channelSource, ct);
+
+        public Task StopCaptureAsync() => inner.StopCaptureAsync();
+
+        public Task StartPlaybackAsync(
+            AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+            bool stereoTx = false, CancellationToken ct = default) =>
+            inner.StartPlaybackAsync(device, sampleRate, periodSizeInFrames, periods, stereoTx, ct);
+
+        public Task StopPlaybackAsync() => inner.StopPlaybackAsync();
+
+        public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) => 0;
 
         public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
