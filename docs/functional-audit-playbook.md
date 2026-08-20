@@ -879,4 +879,44 @@ into 3, following Batch 2's precedent:
 - **Chunk 3c**: `RigctldClientProtocol.cs` + `HamlibRadioProtocol.cs` (the two CAT backend
   protocol implementations).
 
-**Status**: chunk 3a round 1 dispatched, not yet returned. 3b/3c not yet started.
+**Status**: chunk 3a round 1 returned -- 3 real blockers found, fix-request in progress. 3b/3c not
+yet started.
+
+**Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
+never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
+and judges purely on internal-invariant correctness/exception-safety/concurrency, with the single
+top-priority failure mode named explicitly in the delegation: does every path guarantee the
+transmitter gets un-keyed? Answer: **no, not on 3 reachable paths.**
+
+1. **[blocker]** The 5s `cleanupCts` cleanup budget starts before `StopPlayback` runs, and the real
+   `MiniAudioEngine.StopPlaybackAsync` backend can take up to ~10s worst case (`DrainTimeout` 5s +
+   `CloseTimeout` 5s + a 200ms tail margin) -- so on a stuck/unplugged output device, `cleanupCts`
+   is ALREADY CANCELLED by the time `TryUnkeyPttAsync` runs, and both real CAT protocols honor the
+   token at their lock-acquire gate. PTT-off is never sent to the rig at all; the failure is caught,
+   logged Warning, and nothing retries. This reproduces the exact hazard the bounded-timeout
+   pattern exists to prevent, with a different token.
+2. **[blocker]** `TryUnkeyPttAsync`'s `RigId == "none"` catch-time check treats a genuinely stuck-
+   keyed rig as benign whenever `RadioController.DisconnectAsync`/`DisposeAsync` runs between the
+   key and the cleanup un-key attempt (both set `_rigId = "none"` without ever un-keying PTT
+   themselves) -- a physically keyed transmitter gets logged as "no radio to un-key" and silently
+   swallowed. The file's own doc comment claims a mid-cleanup disconnect "still gets the real
+   Warning" -- true only for the poll-loop backoff window, false for an explicit
+   disconnect/dispose.
+3. **[blocker]** `DisposeAsync`'s shutdown backstop is gated on `_pttLocked` only -- nothing tracks
+   "a `PlayWithPttAsync` currently has PTT keyed," and `DisposeAsync` neither cancels nor awaits an
+   in-flight transmit. A concrete reachable sequence on window-close during TX: the UI's
+   `TxControlsPaneViewModel.Dispose()` cancels the transmit token WITHOUT awaiting it, DI singleton
+   teardown proceeds, `RadioController` disposes (triggering finding #2's silent-swallow) while the
+   transmit's own `finally`/un-key is still in flight, and the process can exit within its 10s
+   teardown bound with the transmitter still keyed and nothing logged as wrong.
+
+Also found: a failed un-key has no retry/escalation/user-visible state (only a log line, given the
+blast radius of a keyed transmitter); `_pttLocked` is read twice for one branch decision with a
+narrow window where a racing `SetPttLockAsync(false)` can strand RX stopped forever (not a PTT
+leak); the shutdown un-key doesn't take the PTT-lock gate and an already-cancelled `ct` makes
+`SetPttLockAsync(false)`'s "emergency escape hatch" throw without attempting an un-key. Nit:
+`StopReceivingAsync` detaches handlers before awaiting the stop call, sitting on `PlayWithPttAsync`'s
+own pre-guard path. Everything else in the audited regions (the `finally` block's own
+exception-safety up to the un-key call, `abnormalTermination` coverage on every exit path, the
+concurrent-double-transmit interleavings) verified clean -- confirmed no other path leaks. Fix
+proposal requested next.
