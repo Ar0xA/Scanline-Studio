@@ -815,14 +815,21 @@ public sealed class SstvSessionServicePttSafetyTests
         radio.Gate = gate.Task;
 
         var setLock = service.SetPttLockAsync(true);
+        Assert.False(setLock.IsCompleted, "the key command should still be parked at the gate");
+
         var dispose = service.DisposeAsync().AsTask();
 
-        // Everything before the gate (_pttLockGate.WaitAsync, the disposed check, the epoch/RigId
-        // reads) is synchronous and fast -- by the time this elapses, setLock is genuinely parked
-        // awaiting the gate, not still working its way there. The key command is still outstanding --
-        // DisposeAsync must not have returned while that is true.
-        await Task.Delay(150);
-        Assert.False(setLock.IsCompleted, "the key command should still be parked at the gate");
+        // Round-9 nit: no Task.Delay here -- a wall-clock wait was a race that could false-pass on a
+        // loaded runner (the earlier version of this test only distinguished fixed-vs-broken by
+        // timing). This check needs none: in THIS exact scenario, nothing DisposeAsync does after
+        // AwaitInFlightKeyedTransmitAsync ever awaits an incomplete Task (StopReceivingAsync
+        // early-returns, not receiving; the fake waterfall/decoder dispose synchronously) -- so
+        // WITHOUT the fix, AwaitInFlightKeyedTransmitAsync itself sees nothing published, returns
+        // synchronously, and the entire DisposeAsync call completes synchronously, making `dispose`
+        // already IsCompleted==true the instant this line runs -- deterministically, not a race. WITH
+        // the fix, Task.WhenAny(pending.Task, Task.Delay(...)) genuinely has nothing complete yet, so
+        // the async state machine must actually suspend and `dispose` reads IsCompleted==false here,
+        // just as deterministically.
         Assert.False(dispose.IsCompleted, "DisposeAsync returned while an in-flight SetPttLockAsync call still had a key command outstanding");
 
         gate.SetResult();

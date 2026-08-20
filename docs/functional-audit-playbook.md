@@ -1439,3 +1439,71 @@ Round 8 found real fixed findings in the leaked-keyed-transmitter class -- round
 chunk 3a's 1st clean round. Round 9 (independent re-verification) is the earliest round that can
 count as chunk 3a's 1st clean round. Seven consecutive rounds (2-8) have now each found something
 real in this file.
+
+**Chunk 3a round 9** (2026-08-20, independent re-verification agent, fresh context). Primary task:
+independently verify round 8's own claim that `SetPttLockAsync` "mirrors `PlayWithPttAsync`'s exact
+mechanism" -- a full 18-row, technique-by-technique symmetry table built from current source (not
+prior narrative). **VERDICT: NOT CLEAN -- 1 real risk finding + 3 nits.** Still zero consecutive
+clean rounds after 8 rounds.
+
+The symmetry table found round 8's claim **mostly** true (16 of 18 rows match, and every asymmetry
+except one was traced and confirmed deliberate/justified -- e.g. the pre-await `_disposed` guard
+being engage-only is correct because unlock must stay an escape hatch; the epoch-bump-on-failure
+asymmetry is correct because `PlayWithPttAsync`'s failed key falls into its own immediate
+`abnormalTermination` un-key, leaving nothing for a concurrent un-keyer to wipe). **One row was a
+real gap**:
+
+1. **[risk] `SetPttLockAsync` had no publish-then-recheck before its key command -- `PlayWithPttAsync`
+   does.** `PlayWithPttAsync` publishes its shutdown-wait registration and IMMEDIATELY rechecks
+   `_disposed` before ever issuing its key command (preventing the key from being issued at all once
+   disposal has started); `SetPttLockAsync` published the registration (round 8's fix) but went
+   straight to the key command, with its only `_disposed` recheck AFTER the rig was already keyed (the
+   existing round-3/4 recovery block). Consequence: DisposeAsync could read the registration as empty,
+   find nothing to do, and return -- then `SetPttLockAsync` publishes and keys anyway, self-detects via
+   the existing recovery, but that recovery then races `IRadioSessionService`'s own concurrent DI
+   teardown. Window is instruction-scale (no `await` between the publish and the key command), and
+   self-detecting/loud rather than silent -- hence risk, not blocker -- but a real, closable gap that
+   qualifies round 8's "exact mechanism" claim: the publish/clear/refcount machinery was mirrored: the
+   *prevention* step was not.
+
+Also 3 nits: the unlock direction never registers with the shutdown-wait mechanism at all (traced as
+benign -- whenever an unlock is meaningful, some other flag is already true, so `DisposeAsync`'s
+backstop still fires); the round-8 `Round8_DisposeAsync_WaitsForAnInFlightSetPttLockAsyncsOwnCompletion`
+test's mutation-sensitivity rested on a `Task.Delay`-based timing assertion that could theoretically
+false-pass on a heavily loaded runner; the new `FakeRadioSessionService.Gate` infrastructure had a
+stale doc comment on `BeforeSetPtt` plus two latent (not currently triggered) test-infra footguns for
+future tests (`Gate` applies to every `SetPttAsync` call including un-keys; `PttCalls` is a
+non-thread-safe `List<bool>`).
+
+Re-verified round 8's own two fixes from scratch: the epoch bump precedes the flag write correctly;
+the nested try/finally's cleanup guarantees hold in every traced case (gate release can't throw
+reachably; the `ObjectDisposedException` recovery path still signals the TCS correctly; a call that
+never published skips the clear cleanly; `_pttLockGate`'s own serialization is unchanged by the
+restructure). No new instance of any prior bug class (Dekker's gap / lost-update / overlap-erosion)
+found in round 8's own new code.
+
+**Chunk 3a round 9 fix applied** (2026-08-20, commit `<pending>`). Finding 1: `SetPttLockAsync` now
+rechecks `_disposed` (via `ObjectDisposedException.ThrowIf`) immediately after publishing the
+registration, before the key command -- 3 lines, strictly additive, matching `PlayWithPttAsync`'s
+own already-tested pattern exactly. No dedicated regression test for the exact instruction-scale
+window: unlike every prior round's finding, this window has no natural async boundary a test hook
+can land on (the publish and the new recheck are two adjacent synchronous statements with no
+`await` between them) -- constructing one would require adding a production-code-only test seam
+between two adjacent lines, which this project avoids. Judged low-risk to leave untested given the
+fix is a straightforward guard mirroring an already-covered pattern (matching round 6's own
+precedent for its similarly-narrow, accepted residual). Also fixed nit 2 (test-quality): rewrote
+`Round8_DisposeAsync_WaitsForAnInFlightSetPttLockAsyncsOwnCompletion` to drop the `Task.Delay`
+entirely -- in this exact test scenario, without the fix `DisposeAsync` completes fully
+synchronously (nothing it does after the empty-registration check ever awaits an incomplete Task),
+so checking `IsCompleted` immediately is deterministic, not a race; re-verified this catches the
+original finding-2 mutation just as reliably (confirmed via a fresh mutation pass). Also fixed nit
+3a (the `BeforeSetPtt` doc-comment drift). Nits 1 and 3b/3c left queued, not fixed (benign/
+speculative-for-future-tests respectively).
+
+Full `ScanlineStudio.Application.Tests` 185/185 passing (no new test added; existing round-8 test
+strengthened in place), full solution suite (all projects) clean.
+
+Round 9 found a real fixed finding in the leaked-keyed-transmitter class -- round 9 does NOT count
+as chunk 3a's 1st clean round. Round 10 (independent re-verification) is the earliest round that can
+count as chunk 3a's 1st clean round. Eight consecutive rounds (2-9) have now each found something
+real in this file.

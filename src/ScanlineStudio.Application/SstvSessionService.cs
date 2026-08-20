@@ -348,6 +348,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     keyedCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     Interlocked.Exchange(ref _keyedTransmitCompletion, keyedCompletion);
                     Interlocked.Increment(ref _keyedTransmitCount);
+
+                    // Round-9 finding: PlayWithPttAsync rechecks _disposed IMMEDIATELY after this same
+                    // publish, before ITS key command (see its own comment) -- SetPttLockAsync published
+                    // the registration but never adopted the matching recheck, so it could still issue a
+                    // key command after DisposeAsync had already read this registration as empty, found
+                    // nothing to do, and returned. The window is instruction-scale (this publish and the
+                    // key command below have no await between them), and this call still self-detects and
+                    // recovers via the existing `if (locked && _disposed)` block further down if the key
+                    // itself succeeds -- but that recovery then races IRadioSessionService's own DI
+                    // teardown, which is exactly the class of failure this whole chunk exists to close.
+                    // Closing it HERE, before the command is ever issued, is strictly better than relying
+                    // on the recovery alone. No `locked &&` needed here (unlike the recovery block
+                    // further down) -- this is already inside `if (rigIsRealAtKeyTime)`, which is itself
+                    // `locked && ...`.
+                    ObjectDisposedException.ThrowIf(_disposed, this);
                 }
 
                 try
