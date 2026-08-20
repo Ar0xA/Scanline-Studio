@@ -491,15 +491,28 @@ public sealed partial class MiniAudioEngine : IAudioEngine
                 device.Id, sampleRate, sessionLogger, drainThreadPriority: drainThreadPriority,
                 periodSizeInFrames: periodSizeInFrames, periods: periods, channelSource: channelSource);
         }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            // Code-review fix (Tier A Batch 1 re-audit round 2/3): caught separately from, and
+            // BEFORE, the general ArgumentException branch below -- ArgumentOutOfRangeException
+            // derives from it, so without this it would fall through and surface as "Failed to open
+            // capture device", which is misleading: the device is fine, this is a bad SETTINGS
+            // value (see MiniAudioCaptureSession's own constructor doc comment -- drainThreadPriority
+            // reaches that constructor with no upstream range validation, e.g. a hand-edited
+            // settings file with an out-of-range enum value).
+            Log.CaptureOpenFailed(_logger, device.Id, sampleRate, ex);
+            throw new AudioDeviceUnavailableException($"Invalid capture settings for device '{device.Id}': {ex.Message}", ex);
+        }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or DllNotFoundException or EntryPointNotFoundException)
         {
             // Every real failure mode MiniAudioCaptureSession's constructor can throw, confirmed by
             // reading it: InvalidOperationException (native open failure, or MiniAudioContext
             // context-init failure), ArgumentException (device id too long for the native shim's
-            // fixed buffer -- NativeAudio.EncodeFixedString), DllNotFoundException/
-            // EntryPointNotFoundException (native shim missing/mismatched). Anything outside this
-            // set is left untranslated -- deliberately not treated as "device unavailable" when it
-            // might be a genuine, unrelated bug.
+            // fixed buffer -- NativeAudio.EncodeFixedString; ArgumentOutOfRangeException, a subtype,
+            // is caught separately above), DllNotFoundException/EntryPointNotFoundException (native
+            // shim missing/mismatched). Anything outside this set is left untranslated --
+            // deliberately not treated as "device unavailable" when it might be a genuine, unrelated
+            // bug.
             Log.CaptureOpenFailed(_logger, device.Id, sampleRate, ex);
             throw new AudioDeviceUnavailableException($"Failed to open capture device '{device.Id}' at {sampleRate}Hz.", ex);
         }

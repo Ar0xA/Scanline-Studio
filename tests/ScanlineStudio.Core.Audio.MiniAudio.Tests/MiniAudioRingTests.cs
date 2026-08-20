@@ -302,4 +302,22 @@ public class MiniAudioRingTests
             Assert.True(readerThread.Join(TimeSpan.FromSeconds(5)), "Reader thread did not observe Dispose within the expected bound.");
         }
     }
+
+    // Tier A Batch 1 re-audit round 2/3: yoniq_audio_ring_create's own overflow guard
+    // (native/yoniq_audio.c) was added with no paired test -- this closes that gap. Round-2 finding,
+    // followed exactly: capacityFrames must be a value whose byte product (capacityFrames *
+    // channels * sizeof(float)) actually WRAPS mod 2^32 to something small, not just anything large
+    // -- int.MaxValue would throw with OR without the guard (0x7FFFFFFF * 4 wraps to 0xFFFFFFFC,
+    // still > 0x7FFFFFFF, so ma_rb_init_ex's own downstream guard rejects it regardless), which
+    // would make a test using it pass vacuously. 0x40000100 frames * 1 channel * 4 bytes =
+    // 0x1_00000400, which wraps to 0x00000400 (1024 bytes -- a silent 256-frame ring) without this
+    // guard; WITH it, the 64-bit pre-check (0x40000100 * 4 = 0x1_00000400, comfortably >
+    // 0x7FFFFFFF) correctly rejects it before that wrap can ever happen.
+    [Fact]
+    public void Constructor_CapacityWhoseByteProductWrapsMod2To32_ThrowsInsteadOfSilentlyUndersizing()
+    {
+        var exception = Record.Exception(() => new MiniAudioRing(capacityFrames: 0x40000100, channels: 1));
+
+        Assert.IsType<InvalidOperationException>(exception);
+    }
 }
