@@ -278,7 +278,7 @@ internal sealed class RxLineStagingBuffer : IRxLineStagingBuffer
     /// <see cref="RxDiskLineStagingBuffer.HasHeadroomForSamples"/>'s own <c>!_hasWriteFailed</c>
     /// shape. See <see cref="IRxLineStagingBuffer.HasHeadroomForSamples"/> for the full contract.</summary>
     public bool HasHeadroomForSamples(int additionalSamples) =>
-        !_capacityReached && Count + additionalSamples < CapacitySamples;
+        !_capacityReached && additionalSamples >= 0 && CapacitySamples - Count > additionalSamples;
 
     /// <summary>No-op -- this RAM implementation owns no unmanaged resources (no scratch files, no
     /// background writer task) to tear down. See <see cref="IRxLineStagingBuffer"/>'s own doc

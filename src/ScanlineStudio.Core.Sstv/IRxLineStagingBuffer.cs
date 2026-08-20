@@ -105,9 +105,14 @@ internal interface IRxLineStagingBuffer : IDisposable
     /// SAMPLES, matching how legacy's own two checks are both really about samples despite being
     /// spelled as lines-times-width in the source.
     ///
-    /// <see cref="RxLineStagingBuffer"/> (RAM): <c>Count + additionalSamples &lt; CapacitySamples</c>
-    /// -- the same strict <c>&lt;</c> boundary <see cref="TryAppendLine"/>'s own admission check
-    /// already uses, one definition, not two. A disk-backed implementation has no real capacity
+    /// <see cref="RxLineStagingBuffer"/> (RAM): <c>!latched &amp;&amp; Count + additionalSamples &lt;
+    /// CapacitySamples</c> -- the same strict <c>&lt;</c> boundary <see cref="TryAppendLine"/>'s own
+    /// admission check already uses, one definition, not two, AND the same latch: once
+    /// <see cref="TryAppendLine"/> has rejected one line for capacity, this returns
+    /// <see langword="false"/> too, even for a probe that would arithmetically still fit -- legacy
+    /// spells `CorrectSlant`'s entry gate (`Main.cpp:5268-5270`) with the IDENTICAL expression as
+    /// its append gate (`Main.cpp:4999`/`:5242`), so "appends have stopped" and "slant correction is
+    /// refused" are one fact in legacy, not two. A disk-backed implementation has no real capacity
     /// notion (Phase 7's own design) -- always <see langword="true"/> unless <see cref="HasWriteFailed"/>
     /// is already set, matching legacy's own real behavior: `m_StgBuf == NULL` (disk mode) skips the
     /// capacity check entirely at both of `CorrectSlant`'s call sites.</summary>
