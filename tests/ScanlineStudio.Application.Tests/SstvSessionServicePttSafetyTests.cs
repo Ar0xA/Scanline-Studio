@@ -1006,6 +1006,63 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Equal([true, false, true, false], radio.PttCalls);
     }
 
+    // ------------------------------------------------------------------ round 14 findings
+
+    [Fact]
+    public async Task Round14_PlayWithPttAsync_KeyCommandHangs_TimesOutAndStillUnkeysRatherThanLeavingPttKeyedForever()
+    {
+        // Round-14 finding 1: SetPttAsync(true, ct) had no bound of its own -- RigctldClientProtocol
+        // bounds only its initial connect, not the per-command reply read, so a half-open CAT
+        // connection can block this forever WHILE THE COMMAND HAS ALREADY REACHED THE WIRE AND
+        // PHYSICALLY KEYED THE RIG. HangOnCallNumber:1 hangs only the key command (call #1) --
+        // the cleanup un-key (call #2) must still get through and succeed, proving the fix's whole
+        // point: a hung key command no longer prevents the un-key from ever being attempted.
+        var (service, _, radio, logger) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(50));
+        radio.HangOnCallNumber = 1;
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.TransmitAsync(TestMode, TestImage));
+
+        // THE property: the cleanup un-key (call #2) got through and succeeded -- never blocked by
+        // the still-pending, abandoned key command. (Call #1 itself never reaches PttCalls.Add --
+        // it is still parked on _neverCompletes when the test ends, same accepted trade-off as
+        // EnqueueAllAsync's own round-13 stall fix.)
+        Assert.Equal([false], radio.PttCalls);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("Playback failed", StringComparison.OrdinalIgnoreCase));
+
+        // _transmitInFlight must have been released too -- a subsequent, non-hanging transmit must
+        // succeed cleanly rather than being rejected as "already in progress."
+        radio.HangOnCallNumber = null;
+        await service.TransmitAsync(TestMode, TestImage);
+        Assert.Equal([false, true, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round14_StartPlaybackAsync_Hangs_TimesOutAndStillUnkeysRatherThanLeavingPttKeyedForever()
+    {
+        // Round-14 finding 2: same unbounded-await shape as finding 1, one step later -- PTT is
+        // already keyed by the time StartPlaybackAsync runs, so an indefinite native device-open
+        // hang here is exactly as much a leaked-keyed-transmitter exposure as the key command
+        // itself, not a smaller-window variant of it (this was round 13's own mistaken severity
+        // call, corrected here).
+        var neverCompletes = new TaskCompletionSource();
+        var (service, _, radio, logger) = CreateService(
+            wrapEngine: inner => new GatedStartPlaybackAudioEngine(inner, neverCompletes.Task),
+            cleanupTimeout: TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.TransmitAsync(TestMode, TestImage));
+
+        // THE property: PTT went on, then urgently back off -- never left keyed by the hang.
+        Assert.Equal(PttOnThenOff, radio.PttCalls);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("Playback failed", StringComparison.OrdinalIgnoreCase));
+
+        // _transmitInFlight must have been released too -- a subsequent, non-hanging transmit (the
+        // gate only ever affects the FIRST StartPlaybackAsync call, so the abandoned first call stays
+        // parked on `neverCompletes` forever rather than resolving and colliding with this one) must
+        // succeed cleanly rather than being rejected as "already in progress."
+        await service.TransmitAsync(TestMode, TestImage);
+        Assert.Equal([true, false, true, false], radio.PttCalls);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
@@ -1051,6 +1108,54 @@ public sealed class SstvSessionServicePttSafetyTests
             await gate.ConfigureAwait(false);
             await inner.StopPlaybackAsync().ConfigureAwait(false);
         }
+
+        public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) => inner.EnqueuePlaybackSamples(samples);
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    /// <summary>Round-14 finding 2: the mirror-image of <see cref="GatedStopPlaybackAudioEngine"/> --
+    /// parks <see cref="StartPlaybackAsync"/> on a caller-controlled gate instead of
+    /// <see cref="StopPlaybackAsync"/>. Stands in for MiniAudioPlaybackSession's own synchronous
+    /// native device open blocking indefinitely (round 14's own comment on the fix's call site), with
+    /// PTT already keyed by the time this runs.</summary>
+    private sealed class GatedStartPlaybackAudioEngine(IAudioEngine inner, Task gate) : IAudioEngine
+    {
+        private int _callCount;
+
+        public int CaptureOverrunCount => inner.CaptureOverrunCount;
+
+        public event Action<ReadOnlyMemory<float>>? SamplesCaptured
+        {
+            add => inner.SamplesCaptured += value;
+            remove => inner.SamplesCaptured -= value;
+        }
+
+        public Task StartCaptureAsync(
+            AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+            int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+            CancellationToken ct = default) =>
+            inner.StartCaptureAsync(device, sampleRate, drainThreadPriority, periodSizeInFrames, periods, channelSource, ct);
+
+        public Task StopCaptureAsync() => inner.StopCaptureAsync();
+
+        public async Task StartPlaybackAsync(
+            AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+            bool stereoTx = false, CancellationToken ct = default)
+        {
+            // Only the FIRST call is gated -- if `gate` never completes, that call's own continuation
+            // stays permanently abandoned/parked here rather than eventually resuming and colliding
+            // (FakeAudioEngine's "already started" guard) with a LATER, deliberately un-gated call a
+            // test needs to observe succeeding (e.g. proving _transmitInFlight was released).
+            if (Interlocked.Increment(ref _callCount) == 1)
+            {
+                await gate.ConfigureAwait(false);
+            }
+
+            await inner.StartPlaybackAsync(device, sampleRate, periodSizeInFrames, periods, stereoTx, ct).ConfigureAwait(false);
+        }
+
+        public Task StopPlaybackAsync() => inner.StopPlaybackAsync();
 
         public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) => inner.EnqueuePlaybackSamples(samples);
 

@@ -276,6 +276,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     public bool IsPttLocked => _pttLocked;
 
+    /// <summary>Serializes <see cref="SetPttLockAsync"/> so two overlapping calls can never interleave
+    /// (a real TOCTOU an earlier check-then-act version had) -- see that method's own doc comment for
+    /// the full reasoning. Round-14 nit: deliberately never disposed by <see cref="DisposeAsync"/>,
+    /// matching this class's post-dispose contract of reaching the idempotency/disposed check on a
+    /// still-usable primitive rather than throwing from the primitive itself.</summary>
+    private readonly SemaphoreSlim _pttLockGate = new(1, 1);
+
     /// <summary>Manual-keying diagnostic aid (e.g. a "PTT lock" button) -- keys PTT immediately and
     /// holds it keyed independent of any <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> call,
     /// until unlocked. Operates directly on the PTT line only -- unlike <see cref="PlayWithPttAsync"/>,
@@ -329,8 +336,6 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// argument) and closes what would otherwise be an hours-long recorded-but-not-recovered window
     /// in the common (non-concurrent) case, which is the overwhelmingly likely one for this
     /// unwired manual diagnostic aid.</summary>
-    private readonly SemaphoreSlim _pttLockGate = new(1, 1);
-
     public async Task SetPttLockAsync(bool locked, CancellationToken ct = default)
     {
         await _pttLockGate.WaitAsync(ct).ConfigureAwait(false);
@@ -978,27 +983,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
         Log.TxVolumeSet(_logger, percent);
     }
 
-    /// <summary>Shared PTT-guarantee shape for both <see cref="TransmitAsync"/> and <see cref="TuneAsync"/>:
-    /// pauses capture (resumed afterward only if RX was already running), keys PTT, plays
-    /// <paramref name="samples"/>, then un-keys PTT in a <c>finally</c> no matter how playback ends --
-    /// unless <paramref name="leaveKeyedAfterCall"/> is set (see <see cref="TuneAsync"/>'s own doc
-    /// comment for its one caller) or <see cref="SetPttLockAsync"/>'s lock is currently engaged, in
-    /// which case the un-key/resume-RX steps are skipped -- <b>but only on a NORMAL (successful)
-    /// completion</b>. A cancellation or fault (manual Stop TX, SWR auto-cutoff -- see
-    /// <c>TxControlsPaneViewModel</c>) ALWAYS un-keys PTT, even if the lock was engaged: a safety
-    /// cutoff/manual stop must never be overridable by "stay keyed" state (a real defect an audit pass
-    /// caught and this fix closes -- the lock existing at all must never be able to defeat the SWR
-    /// cutoff's whole reason for existing). <b>Doc-comment correction (round-7 finding):</b> the un-key
-    /// COMMAND is unconditional, but clearing the lock/state flags it left behind is not, as of round
-    /// 5's epoch guard in <c>UnkeyForCleanupAsync</c> -- if a CONCURRENT, NEWER key command completed
-    /// during this call's own un-key attempt, the clear is deliberately skipped so it doesn't wipe
-    /// that newer call's genuinely-still-keyed state (see <c>_pttKeyEpoch</c>'s own doc comment).
-    /// "Force-clears the lock" was accurate before that fix; it is not unconditional anymore.
-    ///
-    /// Device resolution and the entry PTT-key now live INSIDE the guarded region (moved in during
-    /// the same audit-fix pass) -- previously a device-resolution failure (e.g. no playback device
-    /// configured) after RX had already been paused above left RX stopped forever, since the old
-    /// shape's <c>try</c>/<c>finally</c> didn't start until after those calls.</summary>
+    /// <summary>Shared bounded-step budget reused across this class's various cleanup/safety-critical
+    /// awaits (un-key, RX-resume-after-unlock, the round-14 key-command/StartPlaybackAsync bounds) --
+    /// see each call site's own comment for why that particular step needs one.</summary>
     private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
 
     // Blocker 1 (Tier A Batch 3 chunk 3a). IAudioEngine.StopPlaybackAsync takes no CancellationToken
@@ -1020,10 +1007,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private static readonly TimeSpan InFlightKeyedTransmitWait = TimeSpan.FromSeconds(3);
 
     // Round-13 finding: EnqueueAllAsync's own "buffer full, wait 10ms, retry" loop (see its own
-    // comment) had no bound at all -- a live-but-wedged playback device (driver stall, device
+    // comment) had no bound at all -- a fully-wedged playback device (driver stall, device
     // removed mid-transmission -- the same "wedged output device" class StopPlaybackWithWatchdogAsync
     // already treats as a real failure mode) left the ring permanently full, `accepted` permanently
-    // 0, and the loop spinning forever WITH PTT STILL KEYED. TuneAsync's real production caller
+    // 0, and the loop spinning forever WITH PTT STILL KEYED. Round-14 nit: this only catches a device
+    // that accepts literally ZERO samples per attempt -- a device accepting a nonzero trickle far
+    // below real-time (a severe rate mismatch or a slow virtual/loopback sink) resets the stall timer
+    // on every partial accept and is not caught by this budget at all. Accepted as out of this fix's
+    // stated scope; a whole-transmission bound derived from totalSamplesEstimate would be the fix for
+    // that broader case, not attempted here. TuneAsync's real production caller
     // (RadioStatusViewModel) passes no CancellationToken at all and has no Stop command, so on that
     // path there was no way to interrupt it short of process exit -- and round 12's own
     // _transmitInFlight guard means this hang now ALSO permanently blocks every subsequent
@@ -1034,6 +1026,27 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // already uses).
     private static readonly TimeSpan PlaybackStallTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>Shared PTT-guarantee shape for both <see cref="TransmitAsync"/> and <see cref="TuneAsync"/>:
+    /// pauses capture (resumed afterward only if RX was already running), keys PTT, plays
+    /// <paramref name="samples"/>, then un-keys PTT in a <c>finally</c> no matter how playback ends --
+    /// unless <paramref name="leaveKeyedAfterCall"/> is set (see <see cref="TuneAsync"/>'s own doc
+    /// comment for its one caller) or <see cref="SetPttLockAsync"/>'s lock is currently engaged, in
+    /// which case the un-key/resume-RX steps are skipped -- <b>but only on a NORMAL (successful)
+    /// completion</b>. A cancellation or fault (manual Stop TX, SWR auto-cutoff -- see
+    /// <c>TxControlsPaneViewModel</c>) ALWAYS un-keys PTT, even if the lock was engaged: a safety
+    /// cutoff/manual stop must never be overridable by "stay keyed" state (a real defect an audit pass
+    /// caught and this fix closes -- the lock existing at all must never be able to defeat the SWR
+    /// cutoff's whole reason for existing). <b>Doc-comment correction (round-7 finding):</b> the un-key
+    /// COMMAND is unconditional, but clearing the lock/state flags it left behind is not, as of round
+    /// 5's epoch guard in <c>UnkeyForCleanupAsync</c> -- if a CONCURRENT, NEWER key command completed
+    /// during this call's own un-key attempt, the clear is deliberately skipped so it doesn't wipe
+    /// that newer call's genuinely-still-keyed state (see <c>_pttKeyEpoch</c>'s own doc comment).
+    /// "Force-clears the lock" was accurate before that fix; it is not unconditional anymore.
+    ///
+    /// Device resolution and the entry PTT-key now live INSIDE the guarded region (moved in during
+    /// the same audit-fix pass) -- previously a device-resolution failure (e.g. no playback device
+    /// configured) after RX had already been paused above left RX stopped forever, since the old
+    /// shape's <c>try</c>/<c>finally</c> didn't start until after those calls.</summary>
     private async Task PlayWithPttAsync(IAsyncEnumerable<float> samples, int sampleRate, CancellationToken ct, bool leaveKeyedAfterCall = false, long? totalSamplesEstimate = null)
     {
         // Round-12 finding: single-flight guard, checked before ANYTHING else -- no RX pause, no
@@ -1148,7 +1161,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 {
                     if (rigIsRealAtKeyTime)
                     {
-                        await _radioSession.SetPttAsync(true, ct).ConfigureAwait(false);
+                        // Round-14 finding 1: this await had no bound of its own.
+                        // RigctldClientProtocol bounds only its initial connect (_connectTimeout) --
+                        // the per-command reply read has none -- so a half-open CAT connection (peer
+                        // power-cycled, VPN drop) can block this forever WHILE THE PTT COMMAND HAS
+                        // ALREADY REACHED THE WIRE AND PHYSICALLY KEYED THE RIG. Bounded with
+                        // WaitAsync rather than a fresh CancellationTokenSource (contrast
+                        // UnkeyForCleanupAsync's own pattern, a pure cleanup step with no caller-
+                        // cancellation distinction to preserve): a genuine cancellation of `ct` still
+                        // completes the awaited task with OperationCanceledException (the benign arm
+                        // below), while exceeding the budget with no cancellation surfaces as
+                        // TimeoutException instead, correctly routing through the generic catch below
+                        // -> abnormalTermination -> urgent un-key-before-StopPlayback. The underlying
+                        // call is left running in the background either way -- same trade-off
+                        // EnqueueAllAsync's own round-13 stall fix accepts.
+                        await _radioSession.SetPttAsync(true, ct).WaitAsync(_cleanupTimeout).ConfigureAwait(false);
                         // Round-5 finding: see _pttKeyEpoch's own doc comment.
                         Interlocked.Increment(ref _pttKeyEpoch);
                         Log.PttKeyed(_logger);
@@ -1159,9 +1186,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     }
                 }
 
+                // Round-14 finding 2: same unbounded-await shape as finding 1, one step later --
+                // PTT is already keyed (or was already locked keyed at entry) by this point, so an
+                // indefinite native device-open hang here is exactly as much a leaked-keyed-
+                // transmitter exposure as finding 1's key command itself, not a smaller-window
+                // variant of it. Same WaitAsync treatment, same reasoning.
                 await _audioEngine.StartPlaybackAsync(
                     device, sampleRate, audioSettings.PeriodSizeInFrames, audioSettings.Periods,
-                    audioSettings.StereoTxEnabled, ct).ConfigureAwait(false);
+                    audioSettings.StereoTxEnabled, ct).WaitAsync(_cleanupTimeout).ConfigureAwait(false);
                 await PumpToPlaybackAsync(samples, gain, sampleRate, totalSamplesEstimate, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -1434,9 +1466,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// (so it can never surface as an unobserved task exception).
     ///
     /// <b>Known consequence, accepted:</b> on the timeout path this method can return while a
-    /// playback stop is still in flight. An immediately following transmit against the same wedged
-    /// device fails loudly (a throwing failure on an already-broken device, not a silent one) --
-    /// strictly better than the stuck-keyed rig this trade buys.</summary>
+    /// playback stop is still in flight. Round-14 correction: an immediately following transmit does
+    /// NOT fail loudly against the still-wedged device -- MiniAudioEngine's own StopPlaybackAsync
+    /// un-publishes (nulls) its session field at CLAIM time, synchronously, before the drain/dispose
+    /// that can actually block even starts, so <see cref="IAudioEngine.StartPlaybackAsync"/> sees no
+    /// session and proceeds to open a SECOND native session against the same wedged device rather
+    /// than throwing "already started". That second open is itself now bounded by finding 2's
+    /// WaitAsync fix (see the call site in <see cref="PlayWithPttAsync"/>), so it can no longer hang
+    /// forever -- but two concurrent native opens against one wedged device is still an
+    /// undocumented-behavior risk this class does not otherwise attempt to prevent. Out of this
+    /// chunk's scope (the fix, if any, belongs in <c>MiniAudioEngine</c>, not here) -- flagged, not
+    /// fixed.</summary>
     private async Task StopPlaybackWithWatchdogAsync()
     {
         Task stopTask;
@@ -1451,9 +1491,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
             return;
         }
 
-        var completed = await Task.WhenAny(stopTask, Task.Delay(_playbackStopWaitBudget)).ConfigureAwait(false);
+        // Round-14 nit: an uncancelled Task.Delay stays queued to the timer wheel until its own full
+        // duration elapses even after WhenAny returns on the OTHER branch -- a small, bounded leak per
+        // call (once per transmission), closed by cancelling it on the stopTask-wins path below.
+        using var watchdogCts = new CancellationTokenSource();
+        var completed = await Task.WhenAny(stopTask, Task.Delay(_playbackStopWaitBudget, watchdogCts.Token)).ConfigureAwait(false);
         if (completed == stopTask)
         {
+            watchdogCts.Cancel();
             try
             {
                 await stopTask.ConfigureAwait(false);
@@ -1653,8 +1698,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
 
         Log.WaitingForKeyedTransmitAtShutdown(_logger);
-        var completed = await Task.WhenAny(pending.Task, Task.Delay(_inFlightKeyedTransmitWait)).ConfigureAwait(false);
-        if (completed != pending.Task)
+        // Round-14 nit: same uncancelled-Task.Delay leak as StopPlaybackWithWatchdogAsync's own --
+        // this runs once per DisposeAsync, so bounded, but closed the same way for consistency.
+        using var waitCts = new CancellationTokenSource();
+        var completed = await Task.WhenAny(pending.Task, Task.Delay(_inFlightKeyedTransmitWait, waitCts.Token)).ConfigureAwait(false);
+        if (completed == pending.Task)
+        {
+            waitCts.Cancel();
+        }
+        else
         {
             Log.KeyedTransmitCleanupWaitTimedOut(_logger, _inFlightKeyedTransmitWait);
         }
