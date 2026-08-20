@@ -74,6 +74,20 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
         ThreadPriority? drainThreadPriority = null, int periodSizeInFrames = 0, int periods = 0,
         AudioChannelSource channelSource = AudioChannelSource.Mono)
     {
+        // Functional-audit fix (Tier A Batch 1 re-audit round 2): validated BEFORE the native
+        // device even opens, not just to avoid the leak below -- AudioDeviceSettings.CaptureThreadPriority
+        // round-trips through System.Text.Json with no JsonStringEnumConverter registered
+        // (AudioSettingsJsonContext.cs), and STJ's default numeric enum (de)serialization does NOT
+        // range-validate, so a hand-edited settings file with an out-of-range value (e.g. 42) would
+        // otherwise reach `_drainThread.Priority = priority` below as a real, silently-accepted
+        // out-of-range ThreadPriority. Failing here, before MiniAudioContext.Acquire()/the native
+        // open, is strictly better than the widened catch below: it never opens a device just to
+        // immediately close it.
+        if (drainThreadPriority is { } requestedPriority && !Enum.IsDefined(requestedPriority))
+        {
+            throw new ArgumentOutOfRangeException(nameof(drainThreadPriority), requestedPriority, "Not a defined ThreadPriority value.");
+        }
+
         _logger = logger;
 
         // Opus-review fix: this session never held its own reference to the native context --
@@ -106,16 +120,71 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
             throw;
         }
 
-        _drainThread = new Thread(DrainLoop)
+        // Functional-audit fix (Tier A Batch 1 re-audit round 2): this try/catch used to end at the
+        // native open above -- but the device is ALREADY LIVE at that point (its real-time callback
+        // is running and writing into its ring), and nothing yet drains it. If thread construction
+        // or Start() below throws (the drainThreadPriority range case is now pre-validated above,
+        // but Thread's own constructor/Start() can still throw OutOfMemoryException), this object
+        // never escapes the constructor, so nothing could ever close the still-open device or
+        // release this session's own MiniAudioContext reference -- a permanent leak of both,
+        // invisible to the caller since MiniAudioEngine.OpenCaptureSession's own catch filter
+        // already translates the resulting exception into a clean AudioDeviceUnavailableException.
+        // Mirrors Dispose's own bounded-close-thread pattern (CloseTimeout) rather than closing
+        // inline here, for the same reason: a P/Invoke close can hang (see CloseTimeout's own doc
+        // comment) and this constructor must not risk hanging on that same bug. No drain-thread
+        // Join needed here, unlike Dispose -- the drain thread never started.
+        try
         {
-            IsBackground = true,
-            Name = "MiniAudioCaptureDrain",
-        };
-        if (drainThreadPriority is { } priority)
-        {
-            _drainThread.Priority = priority;
+            _drainThread = new Thread(DrainLoop)
+            {
+                IsBackground = true,
+                Name = "MiniAudioCaptureDrain",
+            };
+            if (drainThreadPriority is { } priority)
+            {
+                _drainThread.Priority = priority;
+            }
+
+            _drainThread.Start();
         }
-        _drainThread.Start();
+        catch
+        {
+            // Code-review fix: set BEFORE anything else in this catch, purely as a future-code
+            // hazard guard -- a no-op today (DrainLoop never started reading _handle on this path,
+            // since the try above never reached Start() successfully), but if a future edit ever
+            // added a statement after _drainThread.Start() above, this stops DrainLoop's own native
+            // read racing the close below from becoming a real use-after-free. DrainLoop already
+            // treats _stopping as its own authoritative exit signal (see that method's own comment).
+            _stopping = true;
+
+            var handle = _handle;
+            var closeThread = new Thread(() => NativeAudio.yoniq_audio_capture_session_close(handle))
+            {
+                IsBackground = true,
+                Name = "MiniAudioCaptureClose",
+            };
+            closeThread.Start();
+
+            // Only release our context reference on a clean close -- same reasoning as
+            // TimedOutDuringClose's own doc comment on Dispose: releasing after a timeout would let
+            // a future MiniAudioContext teardown race a close thread that might still be inside the
+            // native shim. A timed-out close here leaks the context reference (same accepted
+            // tradeoff Dispose already makes), not the whole handle.
+            if (closeThread.Join(CloseTimeout))
+            {
+                MiniAudioContext.Release();
+            }
+            else
+            {
+                // Code-review fix: this path used to have zero observability -- TimedOutDuringClose
+                // (Dispose's own equivalent signal) is never set here, and the object never escapes
+                // the constructor for a caller to read it even if it were. This is the only place
+                // that can ever report it.
+                Log.CaptureCloseTimedOutDuringConstruction(_logger);
+            }
+
+            throw;
+        }
     }
 
     /// <summary>Fires on this instance's own normal-priority drain thread -- never the real-time
@@ -434,5 +503,8 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
 
         [LoggerMessage(Level = LogLevel.Error, Message = "A SamplesAvailable subscriber has now thrown {Count} times on the capture drain thread")]
         public static partial void SubscriberThrewRepeated(ILogger logger, int count);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Capture session's native close (during a failed construction) timed out -- the device may have been unplugged; its MiniAudioContext reference was deliberately not released")]
+        public static partial void CaptureCloseTimedOutDuringConstruction(ILogger logger);
     }
 }
