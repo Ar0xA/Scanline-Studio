@@ -88,6 +88,22 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
             throw new ArgumentOutOfRangeException(nameof(drainThreadPriority), requestedPriority, "Not a defined ThreadPriority value.");
         }
 
+        // Tier A Batch 1 re-audit round 3 fix: same root cause as the drainThreadPriority check
+        // above, applied to the OTHER settings-fed enum this constructor takes --
+        // AudioDeviceSettings.CaptureChannelSource round-trips through the identical
+        // JsonStringEnumConverter-less System.Text.Json path (AudioSettingsJsonContext.cs), so a
+        // hand-edited/corrupt settings value reaches here unvalidated too. Left unguarded, an
+        // out-of-range value would silently fall into the `channelSource == Mono ? 1 : 2` ternary's
+        // else branch below -- opening the device STEREO and extracting Left (ChannelSelect's own
+        // native default, yoniq_audio.c's `channel_select == 2 ? 1 : 0`), with no exception and no
+        // log. If the real signal is only on Right, RX would go silently dead; on a strictly
+        // mono-only device, the stereo open could instead fail and surface as a misleading "device
+        // unavailable" rather than the real "invalid settings" cause.
+        if (!Enum.IsDefined(channelSource))
+        {
+            throw new ArgumentOutOfRangeException(nameof(channelSource), channelSource, "Not a defined AudioChannelSource value.");
+        }
+
         _logger = logger;
 
         // Opus-review fix: this session never held its own reference to the native context --
