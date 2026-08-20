@@ -442,21 +442,45 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
         // caught in the sibling classes). A ReaderWriterLockSlim left for the GC to finalize is a
         // harmless, tiny cost.
         //
-        // Round-1 functional-audit note: this write lock is held across the (self-join-guarded)
-        // _drainThread.Join() below, which has no timeout -- if any OTHER member that takes the
-        // read lock (HasStopped, OverrunCount) were called on a session that's mid-dispose from a
-        // thread other than the drain thread itself, that call would block on this write lock for
-        // as long as the join takes, and if IT were somehow called from the same logical caller
-        // waiting on this Dispose, that's a two-way deadlock. NOT reachable today: the only
-        // production caller, MiniAudioEngine.ClaimCaptureSessionLocked, nulls its own
-        // `_captureSession` field BEFORE calling Dispose, so CaptureOverrunCount's
-        // `_captureSession?.OverrunCount ?? 0` short-circuits to 0 without ever touching this
-        // session's lock. That safety is held together by ordering in a DIFFERENT file, not
-        // anything in this one -- if a future engine property read a claimed-but-not-yet-disposed
-        // session, or a future caller held a direct reference to this session past the point the
-        // engine disposes it, this becomes live. Worth a timeout-bounded join here if that ever
-        // changes; not fixed now since it isn't reachable yet and CloseTimeout's own bounded-thread
-        // pattern below would need to extend to the join too, not just the native close.
+        // Round-1 functional-audit note, CORRECTED by Tier A Batch 1 re-audit round 5: this write
+        // lock is held across the (self-join-guarded) _drainThread.Join() below, which has no
+        // timeout, PLUS the bounded-but-real closeThread.Join(CloseTimeout) further down -- if any
+        // OTHER member that takes the read lock (HasStopped, OverrunCount) were called on a session
+        // that's mid-dispose from a thread other than the drain thread itself, that call blocks on
+        // this write lock for as long as both joins take.
+        //
+        // Round-1's own "NOT reachable today" claim was WRONG, not just stale: it assumed
+        // `MiniAudioEngine.CaptureOverrunCount`'s `_captureSession?.OverrunCount ?? 0` is atomic
+        // with respect to a concurrent claim -- it isn't. `?.` lowers to a single read of
+        // `_captureSession` into a temp, THEN the property call on that temp; it does not
+        // re-check null immediately before the call. A poller -- concretely, in this port's own
+        // real call graph, Avalonia's UI thread via RxImagePaneViewModel's 250ms DispatcherTimer,
+        // through ScanlineStudio.Application's own ISstvSessionService.CaptureOverrunCount pass-
+        // through (see IAudioEngine.CaptureOverrunCount's own doc comment for the full chain) --
+        // can read a non-null `_captureSession`, have `ClaimCaptureSessionLocked` (a different file,
+        // a different thread) null the field and start Dispose() an instant later, and then still
+        // call `.OverrunCount` on the (now claimed-for-disposal) instance it already read --
+        // blocking THE UI THREAD on this write lock for the whole Dispose. `HasStopped`'s own
+        // getter has the identical read-lock shape, but is only reachable this way as a hypothetical
+        // future engine pass-through -- no such pass-through exists in this port today (confirmed:
+        // nothing in MiniAudioEngine reads `session.HasStopped`), so it isn't a second live
+        // production path, just the same class of gap if one were ever added.
+        //
+        // Not a deadlock (Dispose itself never waits on the poller, only the reverse) and not
+        // corruption -- bounded by CloseTimeout (~5s), typically near-instant (see :502-503 below
+        // for why the common case is fast), then ALSO throws ObjectDisposedException once unblocked
+        // (_disposed is set inside this same write lock, so a reader that just blocked here always
+        // observes it true on waking) -- block-then-throw, not block-instead-of-throw. In the
+        // documented pathological case where a SamplesAvailable subscriber itself hangs (see that
+        // event's own doc comment for the mechanism -- a different hazard from the self-join guard
+        // just below, which is about a subscriber calling BACK IN to this same Dispose, not merely
+        // never returning), the stall is unbounded, since _drainThread.Join() then never returns
+        // either. Accepted rather than fixed here: a timeout-bounded _drainThread.Join() would need
+        // the exact same "abandoned thread may still touch _handle after we give up waiting"
+        // analysis CloseTimeout's own doc comment already works through for the native close
+        // specifically -- extending that reasoning to the drain loop's own native read call is a
+        // real design task, not a one-line change, and is deliberately not attempted as a byproduct
+        // of correcting this comment.
         _lifetimeLock.EnterWriteLock();
         try
         {

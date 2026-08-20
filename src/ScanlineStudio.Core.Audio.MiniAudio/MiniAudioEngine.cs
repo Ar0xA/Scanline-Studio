@@ -219,7 +219,18 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     /// <see cref="StopCaptureAsync"/> disposing the session between this property's field read and
     /// the underlying native call can still surface the session's own
     /// <see cref="ObjectDisposedException"/>, since this is a diagnostic-only member and
-    /// deliberately does not take <see cref="_captureLock"/> either.</summary>
+    /// deliberately does not take <see cref="_captureLock"/> either. Tier A Batch 1 re-audit round 5
+    /// addition: the SAME race can ALSO make a caller (e.g. a timer poll -- concretely, in this
+    /// port's own real call graph, Avalonia's UI thread, see
+    /// <see cref="IAudioEngine.CaptureOverrunCount"/>'s own doc comment for the full chain) BLOCK
+    /// before it throws, not instead of throwing -- <c>?.</c> reads <see cref="_captureSession"/>
+    /// into a temp before the property call, so a concurrent claim-and-dispose landing in that
+    /// window means the property call proceeds against a session that's mid-<c>Dispose()</c>, which
+    /// holds its own write lock across an unbounded drain-thread join plus a bounded (~5s, typically
+    /// near-instant) native-close join before the read finally proceeds and observes the
+    /// now-<c>true</c> disposed flag -- a UI-thread stall, not just a caught exception (see
+    /// <see cref="MiniAudioCaptureSession.Dispose"/>'s own doc comment for the full reasoning and
+    /// why it's an accepted, not fixed, tradeoff).</summary>
     public int CaptureOverrunCount => _captureSession?.OverrunCount ?? 0;
 
     /// <summary>Piece Band-1 (pre-Phase-2 audit): the most recent exception thrown by a
