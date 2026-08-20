@@ -1565,3 +1565,76 @@ comparison that dominated rounds 3-9 is now genuinely exhausted. Round 10 does N
 the earliest round that can count as chunk 3a's 1st clean round. Nine consecutive rounds (2-10) have
 now each found something real in this file -- but round 10's own verdict is the first explicit signal
 that the CORE safety property (no leaked keyed transmitter) may have actually converged.
+
+**Chunk 3a round 11** (2026-08-21, independent re-verification agent, fresh context). A completely
+fresh, ground-up sweep of the whole PTT lifecycle -- not scoped to the now-exhausted
+`SetPttLockAsync`/`PlayWithPttAsync` symmetry comparison, and not scoped to any single prior round's
+bug pattern. **VERDICT: NOT CLEAN -- 1 real risk (back in the leaked-keyed-transmitter class,
+proving that comparison's exhaustion doesn't mean the whole failure class is exhausted) + 3 nits.**
+Still zero consecutive clean rounds after 10 rounds.
+
+1. **[risk] `SetPttLockAsync`'s key-command-failure catch (round 7's fix) records "may be keyed" but
+   never attempts a recovery un-key -- `PlayWithPttAsync` always does.** Consequence: the failure is
+   recorded for `DisposeAsync`'s eventual shutdown backstop and a Critical log, but the rig can sit
+   physically keyed for the ENTIRE remaining process lifetime (hours) unless something else happens
+   to touch PTT first. **Deliberately NOT auto-fixed this round** -- the auditor's own analysis (and
+   independent re-confirmation) found that adding an immediate recovery un-key here would introduce
+   a NEW instance of this exact method's own pre-existing, explicitly "Known, accepted race": a
+   concurrent, genuinely on-air `PlayWithPttAsync` transmission could have its carrier dropped
+   mid-frame by this call's own recovery un-key, since `_pttKeyEpoch`'s guard protects the FLAG
+   CLEARS other calls perform, not the un-key COMMAND itself -- there is no shared gate between
+   `SetPttLockAsync` and `PlayWithPttAsync`'s own key/un-key, by the same deliberate design choice
+   already documented on `_pttLockGate` itself (closing it fully needs a shared-gate redesign that
+   would also make an emergency unlock wait behind an in-flight transmission's own gate hold -- a
+   worse safety property for what unlock is meant to be, an escape hatch). Same zero-production-
+   caller latency status as every other `SetPttLockAsync` finding fixed this chunk, but this is the
+   first one whose "obvious" fix is not actually safe -- a genuine, considered engineering tradeoff,
+   not corner-cutting. Documented explicitly in both the class-level `_pttLockGate` doc comment (a
+   new "second producer" paragraph) and the catch block itself, matching this method's own existing
+   precedent for how it records accepted-but-unfixed races rather than leaving them silently
+   implicit. Revisit if/when a real caller actually needs this closed -- same disposition as the
+   sibling race.
+2. **[nit, severity correction to an existing comment, not new code]** The `StartReceivingAsync`
+   double-subscription gap (already tracked, out-of-class) is NOT recoverable by toggling RX,
+   contrary to what an earlier comment implied -- `StopReceivingAsync`'s `-=` removes only one copy
+   of each duplicated handler, so the extra subscription survives a Stop RX/Start RX cycle and keeps
+   doubling every captured chunk into the decoder for the rest of the process's life. Comment
+   corrected; the out-of-class judgment itself still holds (RX corruption, not leaked PTT).
+3. **[nit]** `StopReceivingAsync` leaves `_isReceiving == true` with handlers already detached if
+   `StopCaptureAsync` throws -- correct today only because `MiniAudioEngine.StopCaptureAsync` doesn't
+   realistically throw; an `IAudioEngine`-contract fragility, not a live bug. Not fixed.
+4. **[nit]** `RaiseCapturePausedForTransmitChanged` is invoked while `_pttLockGate` is held -- the
+   residual sibling of round 10's own finding (round 10 bounded the async step inside the gate; an
+   arbitrary synchronous subscriber callback is still inside it with no timeout possible). Harmless
+   today (the sole production subscriber does a non-blocking `Dispatcher.UIThread.Post`). Not fixed.
+
+Also fixed a test-quality issue surfaced this round: the round-10 regression test's mutation
+manifests as a HANG, not a clean failure (no timeout guard), so a future regression would wedge the
+whole test run rather than failing loudly. Wrapped both bounded awaits in `.WaitAsync(TimeSpan)`;
+re-verified via a fresh mutation pass that it now fails in ~5s with a clean `TimeoutException`
+instead of hanging.
+
+Re-verified round 10's fix from scratch as correct (CTS scoping, `ct` usage split between the outer
+gate/key-command and the RX-resume step, `FakeAudioDeviceEnumerator`'s new cancellation behavior
+doesn't disturb the one other test using that hook). Re-derived every known nit from current source
+(not rubber-stamped) -- all still accurately classified. Re-checked `DisposeAsync`'s full teardown
+budget arithmetic: still 8s worst case (3s wait + 5s backstop) against `Program.cs`'s 10s bound;
+nothing added across rounds 5-10 introduced a new sequential wait on that path. Disproved two
+candidate findings during the sweep (a `StopReceivingAsync`/drain-thread self-join deadlock that
+turned out not to be one; a real backend assumption that checked out against actual source).
+
+**Chunk 3a round 11 fix applied** (2026-08-21, commit `<pending>`). Finding 1: documented as an
+explicit, considered accepted risk (not code-fixed) -- new prose in `_pttLockGate`'s own doc comment
+and the round-7/11 catch block, both cross-referencing the existing sibling race. Findings 2: comment
+corrected. Findings 3-4: logged, not fixed (nits). Test-quality issue: `WaitAsync(TimeSpan)` guards
+added to the round-10 test. No new production-code regression tests this round (finding 1 is a
+documentation decision, not a code change with new behavior to cover). Full
+`ScanlineStudio.Application.Tests` 186/186 passing, full solution suite (all projects) clean.
+
+Round 11 found and disposed of one real risk (documented as accepted, matching this method's own
+established precedent for genuinely intractable-without-a-larger-redesign races) plus fixed 2 lower-
+severity items. Round 11 does NOT count as chunk 3a's 1st clean round -- a real (if
+documentation-resolved) finding still landed. Round 12 (independent re-verification, confirming the
+finding-1 disposition holds and continuing the fresh full-lifecycle sweep) is the earliest round that
+can count as chunk 3a's 1st clean round. Ten consecutive rounds (2-11) have now each found something
+real in this file.
