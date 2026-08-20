@@ -1681,7 +1681,7 @@ synchronous drain-thread call does not self-join (the capture session has an exp
 `_pttLocked` backstop; gate acquire/release balance across every throw path in `SetPttLockAsync` is
 correct. `DisposeAsync`'s full teardown budget re-confirmed unaffected by anything since round 5.
 
-**Chunk 3a round 12 fix applied** (2026-08-21, commit `<pending>`). Finding-1 disposition change:
+**Chunk 3a round 12 fix applied** (2026-08-21, commit `eb4f0a4`). Finding-1 disposition change:
 `SetPttLockAsync`'s catch now attempts the recovery un-key when `Volatile.Read(ref
 _keyedTransmitCount) == 1`, matching `UnkeyForCleanupAsync`'s epoch-based clears (unchanged,
 correctly still suppressed if a genuinely newer key raced it). Both the class-level `_pttLockGate`
