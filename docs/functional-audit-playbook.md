@@ -860,6 +860,23 @@ never-throwing).
 
 All commits: `e59cabf`/`29ef022`/`80a5a6b` (2a), `a77fc68`/`7321714`/`7c4e0ff`/`6a66e69`/`73e4e46`
 (2b), `bb0ee82`/`0a665f4`/(this closure) (2c). Full `tests/ScanlineStudio.Core.Sstv.Tests` suite
-last confirmed at 1022/1022 (1 unrelated intentional skip). Next unstarted batch per the approved
-plan: **Batch 3** (PTT/transmit sequencing) -- not started, no action taken, awaiting user
-direction.
+last confirmed at 1022/1022 (1 unrelated intentional skip).
+
+## Tier A Batch 3 -- IN PROGRESS, started 2026-08-20
+
+PTT/transmit sequencing (real-world harm class -- a leaked keyed transmitter, not just bad
+output). ~2663 lines across 5 files (`SstvSessionService.cs` 1098, `RadioController.cs` 405,
+`TcpTransport.cs` 150, `RigctldClientProtocol.cs` 477, `HamlibRadioProtocol.cs` 533) -- chunked
+into 3, following Batch 2's precedent:
+- **Chunk 3a**: `SstvSessionService.cs`'s PTT lifecycle (the table's own explicit pointer:
+  `TryUnkeyPttAsync`/`TryCleanupAsync` exception paths) -- `SetPttLockAsync`, `StartReceivingAsync`/
+  `StopReceivingAsync`/`TransmitAsync`/`TuneAsync`, `PlayWithPttAsync`/`TryUnkeyPttAsync`/
+  `TryCleanupAsync`/`DisposeAsync`. Already carries dense audit history in its own comments
+  ("Auditor-caught round 1/2", `spec/18-path-to-1.0.md` Critical item 1) from an earlier,
+  DIFFERENT audit track -- treat as settled context, not open findings; this chunk's own lens is
+  chunk-3-specific (PTT-unkey guarantee under every exception path), not a re-litigation.
+- **Chunk 3b**: `RadioController.cs` + `TcpTransport.cs` (review together).
+- **Chunk 3c**: `RigctldClientProtocol.cs` + `HamlibRadioProtocol.cs` (the two CAT backend
+  protocol implementations).
+
+**Status**: chunk 3a round 1 dispatched, not yet returned. 3b/3c not yet started.
