@@ -1638,3 +1638,88 @@ documentation-resolved) finding still landed. Round 12 (independent re-verificat
 finding-1 disposition holds and continuing the fresh full-lifecycle sweep) is the earliest round that
 can count as chunk 3a's 1st clean round. Ten consecutive rounds (2-11) have now each found something
 real in this file.
+
+**Chunk 3a round 12** (2026-08-21, independent re-verification agent, fresh context). Asked
+specifically to verify round 11's accepted-risk disposition AND to consider whether a safer
+conditional fix exists (using `_keyedTransmitCount`) rather than accepting the round-11 framing at
+face value. **VERDICT: NOT CLEAN -- round 11's disposition should CHANGE (a genuinely safe guarded
+fix exists) + 1 NEW real risk finding (the first in this chunk that is NOT about a leaked keyed
+transmitter -- it's about an unrelated live transmission getting destroyed) + 1 test nit.** Still
+zero consecutive clean rounds after 11 rounds.
+
+1. **[disposition change] Round 11's "deliberately not fixed" reasoning was wrong on two counts.**
+   First, `PlayWithPttAsync`'s own finally ALREADY accepts the identical harm today, unguarded, on a
+   MORE reachable path (two overlapping `PlayWithPttAsync` calls) -- so a recovery here isn't a new
+   risk class, just a second place accepting the same one. Second, and more useful: a genuinely SAFE
+   guarded recovery is available. `_keyedTransmitCount` was already incremented for this call at the
+   publish just above the catch, so it reads exactly 1 if and only if nothing else currently holds a
+   registration. Checking `== 1` (not `== 0`, which would be dead code -- this call's own increment
+   already happened) before attempting the recovery makes the skip path byte-for-byte identical to
+   round 11's behavior (zero regression on the concurrent case), while the recovery path is strictly
+   safe when nothing else is registered. **Fixed**, not just documented -- see below.
+2. **[risk, NEW] Tune-during-Transmit un-keys the in-flight transmission and tears down its playback
+   session.** The first finding in this chunk NOT about a leaked keyed transmitter -- PTT correctly
+   ends up OFF, but a genuinely in-flight, correctly-behaving transmission gets silently killed by an
+   unrelated second call. Confirmed production-reachable: `RadioStatusViewModel`'s Tune command has
+   no `CanExecute` gate, so clicking Tune during a `TransmitAsync` re-keys, `StartPlaybackAsync`
+   throws "already started" against the FIRST call's own live session (verified against the real
+   `MiniAudioEngine`), the generic catch classifies `abnormalTermination`, and the finally's urgent
+   un-key fires immediately -- dropping the FIRST call's carrier mid-frame -- followed by disposing
+   its playback session out from under it. Round 6 examined this exact interleaving but only checked
+   for *leak* potential, never the *premature-un-key* direction. **Fixed** with a single-flight guard.
+3. **[nit, severity note]** `StopReceivingAsync`'s throw-leaves-`_isReceiving`-stuck-true issue
+   (already tracked as a nit) was re-flagged as worth upgrading: the failure is invisible --
+   `StartReceivingAsync` silently early-returns forever afterward, with no error surfaced anywhere.
+   **Fixed** (cheap, one `finally`).
+4. **[test nit]** The round-10 test's `.WaitAsync(5s)` wrapper made one of its own assertions
+   (`stopwatch.Elapsed < 5s`) permanently unable to fail. **Fixed** (tightened to the actual budget).
+
+Re-derived and confirmed clean (not findings): the `OperationCanceledException`-caught-by-round-7's-
+filter behavior is the CORRECT conservative choice, not a bug; `OnDecoderRestartCriticallyOverdue`'s
+synchronous drain-thread call does not self-join (the capture session has an explicit guard);
+`SetPttLockAsync`'s unlock direction never publishing a registration is covered by `DisposeAsync`'s
+`_pttLocked` backstop; gate acquire/release balance across every throw path in `SetPttLockAsync` is
+correct. `DisposeAsync`'s full teardown budget re-confirmed unaffected by anything since round 5.
+
+**Chunk 3a round 12 fix applied** (2026-08-21, commit `<pending>`). Finding-1 disposition change:
+`SetPttLockAsync`'s catch now attempts the recovery un-key when `Volatile.Read(ref
+_keyedTransmitCount) == 1`, matching `UnkeyForCleanupAsync`'s epoch-based clears (unchanged,
+correctly still suppressed if a genuinely newer key raced it). Both the class-level `_pttLockGate`
+doc comment and the catch block's own comment rewritten to describe the corrected reasoning.
+Finding 2: new `private int _transmitInFlight;` field, `Interlocked.CompareExchange`-gated at
+`PlayWithPttAsync`'s very entry (before RX pause, device resolution, or PTT is ever touched) --
+rejects a second overlapping call with a clear `InvalidOperationException` instead of letting it
+silently interfere; released unconditionally in a new outermost `finally` wrapping the entire
+existing method body (required re-indenting the whole ~300-line method, same mechanical approach as
+round 8's `SetPttLockAsync` restructure). Deliberately a SEPARATE field from `_keyedTransmitCount`
+(that one is also incremented by `SetPttLockAsync`, a different narrower concern, and isn't
+incremented at all when `RigId == "none"` -- the no-radio case still needs this same playback-session
+exclusivity). Finding 3: `StopReceivingAsync`'s `_isReceiving = false` moved into a `finally` around
+the `StopCaptureAsync` call. Finding 4: test assertion tightened.
+
+Two PRE-EXISTING tests needed updating as direct, correct consequences of the finding-1/finding-2
+fixes (not regressions): `Round6_DisposeAsync_OverlappingTransmits_...` previously relied on
+constructing genuine `PlayWithPttAsync`-vs-`PlayWithPttAsync` overlap, which finding 2 makes
+impossible -- rewritten to verify the overlap is now rejected outright instead of surviving an
+overwrite. `Round7_SetPttLockAsync_KeyCommandThrows_...` previously asserted no un-key happened
+until `DisposeAsync`'s eventual backstop -- now the guarded recovery fires immediately, so updated
+to assert that and confirm `DisposeAsync`'s own backstop then finds nothing left to do.
+
+New regression tests: `Round12_PlayWithPttAsync_RejectsOverlappingCall_BeforeTouchingPttOrPlayback`
+(finding 2, direct) and `Round12_SetPttLockAsync_KeyCommandThrows_RecoverySkippedWhenAnotherTransmitIsRegistered`
+(finding 1's SAFETY property -- confirms the guard correctly SKIPS recovery when a genuine
+concurrent registration exists, not just that it fires when alone). Both findings' fixes
+mutation-verified: finding 1 by reverting to no-recovery-at-all and confirming the exact predicted
+failure signature; finding 2 by disabling the guard and observing the mutated test spin into
+unbounded recursion (the test's own nested-call design has no depth limit once nothing rejects the
+second call) -- a qualitatively stronger confirmation than a clean assertion failure, though messier
+to run (the process had to be force-stopped rather than completing). No dedicated test added for
+finding 3 (`StopReceivingAsync`) -- would need new decorator infrastructure for a
+`StopCaptureAsync`-throws scenario that doesn't exist yet; judged low-risk to skip given the fix's
+own simplicity (a one-line `finally` reordering) and this round's already-large scope. All 188
+`ScanlineStudio.Application.Tests` passing, full solution suite (all projects) clean.
+
+Round 12 both changed an existing disposition AND found a new, differently-classed real risk --
+round 12 does NOT count as chunk 3a's 1st clean round. Round 13 (independent re-verification) is the
+earliest round that can count as chunk 3a's 1st clean round. Eleven consecutive rounds (2-12) have
+now each found something real in this file.
