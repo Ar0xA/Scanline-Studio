@@ -266,9 +266,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // _pttLocked -- see _pttLeftKeyedByCall's own doc comment. Placed after SetPttAsync
                 // succeeded, matching _pttLocked's own deliberate only-on-success rule above.
                 _pttLeftKeyedByCall = false;
+
+                // Round-4 finding: this confirmed un-key invalidates _pttUnkeyFailedOnRealRig too, not
+                // just _pttLeftKeyedByCall -- without this, a PRIOR transmit's failed cleanup un-key
+                // (which set this flag and already logged Critical about it) survives a later, genuinely
+                // successful unlock through this escape hatch. DisposeAsync then still fires a spurious
+                // backstop un-key on a rig that is demonstrably off, and if THAT attempt fails for any
+                // unrelated reason (e.g. the radio is already disconnected at shutdown), it emits a false
+                // "PTT MAY STILL BE KEYED" Critical -- undermining the one signal this whole chunk exists
+                // to keep trustworthy.
+                _pttUnkeyFailedOnRealRig = false;
             }
 
-            // Round-3 finding: the pre-await disposed check above (line ~246) only catches the CHEAP,
+            // Round-3 finding: the pre-await disposed check above (line ~256) only catches the CHEAP,
             // common case. _radioSession.SetPttAsync is a real serial/TCP round-trip -- DisposeAsync can
             // run its entire backstop (which reads _pttLocked/_keyedTransmitCompletion, neither of which
             // this call has published yet) while this await is in flight, find nothing to do, and
@@ -276,10 +286,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // left to ever un-key it. Latent today (SetPttLockAsync has zero production callers -- see
             // this method's own doc comment), fixed anyway since the fix is cheap and this method is
             // otherwise fully hardened against the same race everywhere else in this class.
+            //
+            // Round-4 finding: the plain `_pttLocked = locked;` write above and the `_disposed` read
+            // just below are release-store/acquire-load -- the SAME StoreLoad-reordering gap
+            // PlayWithPttAsync's Interlocked.Exchange publish closes (see its own comment). DisposeAsync
+            // already carries the matching half (Interlocked.MemoryBarrier right after its own
+            // `_disposed = true` write); this fence is the other half. `_pttLocked` is `volatile`, so
+            // Interlocked.Exchange on it is CS0420 -- a standalone full fence after the plain write is
+            // the equivalent. Unlike Risk B further down (whose failure mode is a stranded RX pause,
+            // not a leaked keyed transmitter -- see that comment for the criterion), this pattern's
+            // failure mode IS a leaked keyed transmitter, so by this file's own stated rule it needs
+            // the fence Risk B deliberately goes without.
+            Interlocked.MemoryBarrier();
+
             if (locked && _disposed)
             {
                 await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
-                throw new ObjectDisposedException(nameof(SstvSessionService));
+                throw new ObjectDisposedException(GetType().FullName);
             }
 
             Log.PttLockChanged(_logger, locked);
@@ -805,7 +828,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // independent of this call, and pttLockedAtEntry covers exactly that -- keeps the
                     // cleanup un-key's Critical-vs-Debug classification honest in the finally below.
                     pttKeyedOnRealRig = pttLockedAtEntry;
-                    throw new ObjectDisposedException(nameof(SstvSessionService));
+                    // Round-4 nit: GetType().FullName, not nameof(SstvSessionService), to match the
+                    // ObjectName ObjectDisposedException.ThrowIf(_disposed, this) produces elsewhere in
+                    // this class -- both throw sites should report the same object identity.
+                    throw new ObjectDisposedException(GetType().FullName);
                 }
             }
 
@@ -841,10 +867,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // Round-3 nit: without this arm, the disposed-check throw above falls into the generic
             // `catch (Exception)` below and logs at Error with a full stack trace on every ordinary
             // close-during-tune -- this is an expected shutdown condition (same category as the
-            // OperationCanceledException arm above), not a failure. The `when (_disposed)` guard keeps
-            // this from also catching a GENUINE ObjectDisposedException thrown by some other dependency
-            // this method calls into (e.g. a disposed audio/radio backend), which should still be
-            // logged as a real failure by the generic catch below.
+            // OperationCanceledException arm above), not a failure. The `when (_disposed)` guard only
+            // narrows this to "we are already mid-DisposeAsync" -- it does NOT distinguish OUR disposed-
+            // check throw from a genuine ObjectDisposedException some other dependency happens to throw
+            // during that same shutdown window (e.g. a disposed audio/radio backend); both are equally
+            // expected once _disposed is true, so both are logged at Information here. A GENUINE
+            // ObjectDisposedException reached OUTSIDE of shutdown (_disposed still false) still falls
+            // through to the generic catch below and logs as a real Error-level failure.
             abnormalTermination = true;
             Log.PlaybackAbortedByDispose(_logger);
             throw;
@@ -949,11 +978,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         // between the snapshot above and this write already ran its own deferred-resume
                         // check against a still-false flag, so nothing would ever consume what we just
                         // set -- RX stranded stopped forever. Re-reading _pttLocked AFTER publishing
-                        // closes that window: whichever side observes the other's write does the
-                        // resume. Both sides test the flag before consuming it, so the only residual
-                        // interleaving is a duplicate resume, which is harmless -- StartReceivingAsync
-                        // early-returns when already receiving, and a second
-                        // CapturePausedForTransmitChanged(false) is idempotent for every subscriber.
+                        // NARROWS that window (does not fully close it -- round-4 finding: this is a
+                        // plain volatile write/read pair, the same StoreLoad-reordering gap the
+                        // Interlocked.Exchange publish in PlayWithPttAsync closes for the PTT-keyed case;
+                        // see that comment for the mechanism). Left un-fenced here deliberately: this
+                        // pattern's failure mode is a stranded RX pause, not a leaked keyed transmitter
+                        // -- a real but lower-severity bug than what the fenced pattern protects against,
+                        // and one a user can recover from by toggling RX again. Both sides test the flag
+                        // before consuming it, so the residual interleaving beyond the narrowed window is
+                        // a duplicate resume, which is harmless -- StartReceivingAsync early-returns when
+                        // already receiving, and a second CapturePausedForTransmitChanged(false) is
+                        // idempotent for every subscriber.
                         if (!_pttLocked && _rxPendingResumeAfterUnlock)
                         {
                             _rxPendingResumeAfterUnlock = false;

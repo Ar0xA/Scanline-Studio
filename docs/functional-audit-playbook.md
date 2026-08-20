@@ -1036,3 +1036,138 @@ was thrown"/`ObjectDisposedException` expected), then restored. Full `ScanlineSt
 
 Round 2 found a real blocker -- **not** a clean round. Round 3 (independent re-verification of this
 fix) required next before chunk 3a can start counting toward the 2-consecutive-clean-round gate.
+
+**Chunk 3a round 3** (2026-08-20, independent re-verification agent, fresh context). **VERDICT: no
+new blockers** -- round 2's fix independently re-derived and confirmed to genuinely close the hole
+it claims to close, for every interleaving reachable through normal .NET scheduling. Found 4 real
+risks (still the same failure class, none rising to blocker) plus re-confirmed round 2's 4 already-
+queued nits are still accurate:
+1. **Memory-model gap**: the publish-then-recheck between `PlayWithPttAsync` and `DisposeAsync` used
+   plain `Volatile.Write`/`Volatile.Read` -- release-store/acquire-load, which does NOT forbid
+   StoreLoad reordering (a Dekker's-algorithm-shaped gap). Real on x86-64, where .NET emits both as
+   plain `mov`s; incidentally safe on ARM64 (`stlr`/`ldar` is sequentially consistent). Window is
+   store-buffer-drain scale (tens of ns) vs. round 2's pre-fix window (full device enumeration +
+   settings I/O) -- a ~6-order-of-magnitude reduction, not a reopened blocker. The pre-existing Risk
+   B pattern (`_rxPendingResumeAfterUnlock`/`_pttLocked`) has the identical shape/gap -- round 2
+   inherited it rather than introducing something new; that copy's failure mode is a stranded RX
+   pause, not a leaked keyed transmitter, so it wasn't given the same treatment.
+2. **A 4th "keyed at shutdown" state `DisposeAsync` doesn't cover**: a transmit whose own cleanup
+   un-key was attempted and FAILED records nothing today (`_pttLocked` already false by then,
+   `_pttLeftKeyedByCall` never set for this path, `_keyedTransmitCompletion` unconditionally cleared
+   regardless of the un-key's outcome) -- so a rig already logged Critical about ("MAY STILL BE
+   KEYED") is read by `DisposeAsync`'s existing three-state check as "nothing to do." Most valuable
+   when the failure was `CleanupTimeout` (5s) expiring against a slow-but-healthy backend, where a
+   fresh attempt at shutdown would likely succeed.
+3. **`PlayWithPttAsync`'s cleanup can restart RX after `DisposeAsync` has disposed the
+   decoder/waterfall**: if `AwaitInFlightKeyedTransmitAsync`'s bound expires while a transmit's own
+   cleanup is inside `TryCleanupAsync("Resume RX", ...)`, `DisposeAsync` proceeds, disposes the
+   decoder/waterfall, then the parked `StartReceivingAsync` completes -- subscribing capture
+   handlers to a live engine and calling `ResetAgc()` on a disposed decoder. Pre-existing since
+   round 1's `DisposeAsync` reorder; round 2's new throw made the dispose-race path deterministic
+   rather than incidental.
+4. **`SetPttLockAsync`'s disposal gate checks only before the `SetPttAsync` await, never after** --
+   that await is a real serial/TCP round-trip, so `DisposeAsync` can run start-to-finish inside it
+   and miss the engage (reads `_pttLocked` while still false, `_keyedTransmitCompletion` null).
+   **Latent only**: grep-confirmed zero production callers of `SetPttLockAsync` (matches the
+   method's own doc comment).
+No new bug from the `ObjectDisposedException` throw itself -- traced fully clean (correct
+`abnormalTermination` classification, `keyedCompletion` still cleared/completed so a concurrent
+`DisposeAsync` wait can't hang). One nit: the new throw path logs at Error with a full stack trace
+on every ordinary close-during-tune -- should be Information, same treatment as the existing
+`OperationCanceledException` arm. Test mutation-sensitivity spot-checked (traced, not run) for
+`Round2_...NeverKeysAfterDisposeReturns` and 2 round-1 tests -- all genuinely sensitive. One nit:
+`SetPttLockAsync`'s disposal gate had zero test coverage in either direction.
+
+**Chunk 3a round 3 fix applied** (2026-08-20, commit `fd6441c`). All 4 risks fixed (judged worth
+fixing now despite "risk" not "blocker" severity: finding 1 undermines the correctness of round 2's
+own core safety mechanism, the others are cheap one-liners to the same file already under review):
+1. `Interlocked.Exchange` (publish side) + `Interlocked.MemoryBarrier` (dispose side) replace the
+   plain volatile write/read -- a genuine full fence, closing the Dekker's gap.
+2. New `volatile bool _pttUnkeyFailedOnRealRig` field, set in `UnkeyForCleanupAsync` alongside the
+   existing Critical log, cleared on every confirmed un-key; added to `DisposeAsync`'s condition
+   (now checks 4 states, not 3) so a previously-failed un-key gets retried at shutdown instead of
+   silently walked away from.
+3. `ObjectDisposedException.ThrowIf(_disposed, this)` added to the top of `StartReceivingAsync` --
+   every caller already routes through `TryCleanupAsync`/its own try/catch, so this degrades to a
+   logged Warning rather than propagating unhandled.
+4. `SetPttLockAsync` gained a post-await recheck: if disposal raced the `SetPttAsync` round-trip and
+   won, the call now un-keys its own just-engaged lock and throws, rather than leaving `_pttLocked`
+   true with nothing left to ever clear it.
+Also fixed the log-severity nit: a new `catch (ObjectDisposedException) when (_disposed)` arm (before
+the generic `catch (Exception)`) logs `PlaybackAbortedByDispose` at Information, matching the
+existing `OperationCanceledException` treatment -- guarded on `_disposed` so a GENUINE
+`ObjectDisposedException` from some other dependency still logs as a real failure via the generic
+catch. The 3 remaining previously-known nits (early-throw log-severity misclassification, stale
+`_rxPendingResumeAfterUnlock`, non-idempotent `DisposeAsync`, unlinked shutdown-wait timer) remain
+queued, not fixed this round -- none in the leaked-keyed-transmitter class.
+
+New regression tests: `Round3_DisposeAsync_RetriesAnUnkeyThatFailedDuringItsOwnCleanup` (finding 2 --
+simulates a `TimeoutException` on the transmit's own cleanup un-key, then confirms `DisposeAsync`
+retries and succeeds), `Round3_SetPttLockAsync_Engage_PostDispose_ThrowsAndNeverKeys` and
+`Round3_SetPttLockAsync_Unlock_PostDispose_StillWorks` (closing the round-3-flagged test-coverage gap
+on `SetPttLockAsync`'s engage/unlock disposal asymmetry). Finding 2's test mutation-verified by
+temporarily reverting `DisposeAsync`'s 4-state condition back to 3 -- failed with the exact predicted
+signature (`[True]` instead of `[True, False]`), then restored. All 175 `ScanlineStudio.Application.Tests`
+passing, full solution suite (all projects) clean.
+
+Round 3 was clean of new BLOCKERS but found real risks that were fixed -- per this project's own
+established convention (see chunk 2b), a fix restarts the clean-round count. Round 4 (independent
+re-verification of round 3's fix) is the earliest round that can count as chunk 3a's 1st clean round.
+
+**Chunk 3a round 4** (2026-08-20, independent re-verification agent, fresh context). **VERDICT:
+clean of new blockers, but 1 new real risk** -- so this does NOT count as chunk 3a's 1st clean
+round either. All 4 of round 3's fixes independently re-derived and confirmed correct on their own
+terms (including a full trace of the `Interlocked.Exchange`/`Interlocked.MemoryBarrier` fence pair,
+confirmed a genuine sufficient Dekker fence, and confirmed every `StartReceivingAsync` call site
+handles the new `ObjectDisposedException`). But round 3's own finding-4 fix (the `SetPttLockAsync`
+post-await recheck) introduced a new instance of the SAME memory-model gap finding 1 had just
+closed elsewhere: the recheck's `_pttLocked = locked` write and `_disposed` read were plain
+volatile, not fenced -- by the file's own stated criterion (a pattern gets a fence specifically
+because its failure mode is a leaked keyed transmitter, not the lower-severity stranded-RX-pause
+class), this pattern qualified and should have gotten one. Also found the round-3 fix for finding 2
+(`_pttUnkeyFailedOnRealRig`) wasn't cleared by `SetPttLockAsync`'s successful-unlock branch, despite
+that branch's own comment claiming it clears "every" still-keyed belief -- a stale flag from an
+earlier failed transmit cleanup would survive a genuinely successful unlock and cause `DisposeAsync`
+to fire a spurious backstop un-key, risking a **false Critical** ("PTT MAY STILL BE KEYED") on a rig
+that is demonstrably off. Plus nits: the Risk B comment's "closes that window" claim directly
+contradicted finding 1's own comment on the exact same gap (fixed only in the fenced copy, not the
+deliberately-unfenced Risk B original); two `ObjectDisposedException` throw sites used different
+`ObjectName` values (`nameof(SstvSessionService)` vs. `ThrowIf`'s `this`-derived
+`GetType().FullName`); the round-3 test for finding 4 (`Round3_SetPttLockAsync_Engage_
+PostDispose_ThrowsAndNeverKeys`) disposed BEFORE calling `SetPttLockAsync`, so it only exercised the
+cheap pre-await guard and stayed green even with the post-await recheck deleted entirely --
+genuinely mutation-insensitive to the fix it was meant to cover; `StartReceivingAsync`'s new
+disposed guard had zero test coverage. One pre-existing, out-of-class internal-invariant issue
+noted off-scope: `StopReceivingAsync` can leave `_isReceiving` permanently `true` if
+`StopCaptureAsync` throws (handlers already detached, `_isReceiving` flip happens after the
+throwing call) -- not a PTT leak, logged here, not chased.
+
+**Chunk 3a round 4 fix applied** (2026-08-20, commit pending). Both real findings fixed:
+1. `SetPttLockAsync` gained its own `Interlocked.MemoryBarrier()` immediately after the
+   `_pttLocked = locked` write (and after clearing `_pttLeftKeyedByCall`/`_pttUnkeyFailedOnRealRig`
+   in the unlock branch), before the `if (locked && _disposed)` recheck -- the missing other half of
+   the fence `DisposeAsync` already carries.
+2. `_pttUnkeyFailedOnRealRig = false;` added to `SetPttLockAsync`'s `if (!locked)` block, alongside
+   the existing `_pttLeftKeyedByCall = false;` -- a confirmed un-key now genuinely invalidates every
+   still-keyed belief, matching that block's own comment.
+Also fixed the 3 nits: Risk B's comment corrected to "narrows, does not close" with a pointer to the
+now-fenced pattern's own comment for the mechanism and an explicit statement of the fencing
+criterion; both manual `throw new ObjectDisposedException(...)` sites switched from
+`nameof(SstvSessionService)` to `GetType().FullName` to match `ThrowIf`'s `ObjectName`; the
+`when (_disposed)` catch-guard comment tightened to state precisely what it does and does not
+distinguish.
+
+New/fixed regression tests: `Round4_SetPttLockAsync_DisposeRacesTheSetPttAsyncAwait_
+ThrowsAndUnkeysRatherThanLeavingLockedTrue` (drives `DisposeAsync` from inside the `SetPttAsync`
+round-trip itself via `FakeRadioSessionService.BeforeSetPtt`, the actual race the post-await recheck
+exists to close -- replaces the round-3 test's mutation-insensitive coverage), `Round4_
+StartReceivingAsync_PostDispose_Throws` (closes the finding-3 coverage gap), `Round4_
+SetPttLockAsync_SuccessfulUnlock_ClearsStaleUnkeyFailedFlag_NoSpuriousBackstop` (closes the clearing
+gap). Both new fixes mutation-verified by temporarily reverting each and confirming the exact
+predicted failure signature (a spurious extra un-key call, and "No exception was thrown"
+respectively), then restored. All 178 `ScanlineStudio.Application.Tests` passing, full solution
+suite (all projects) clean.
+
+Round 4 was clean of new blockers but found 1 real risk that was fixed -- round 4 does NOT count as
+chunk 3a's 1st clean round either. Round 5 (independent re-verification of round 4's fix) is now the
+earliest round that can count as chunk 3a's 1st clean round.
