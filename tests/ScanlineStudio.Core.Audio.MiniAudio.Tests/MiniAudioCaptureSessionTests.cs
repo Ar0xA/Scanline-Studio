@@ -239,6 +239,25 @@ public class MiniAudioCaptureSessionTests
         }
     }
 
+    // Tier A Batch 1 re-audit round 2/3: an out-of-range drainThreadPriority (reachable via
+    // AudioDeviceSettings.CaptureThreadPriority round-tripping through System.Text.Json with no
+    // JsonStringEnumConverter registered -- STJ's default numeric enum (de)serialization does not
+    // range-validate) used to reach _drainThread.Priority = priority AFTER the native device had
+    // already opened, so a failure there orphaned a live, undrained capture device plus a permanent
+    // MiniAudioContext reference -- nothing could ever close either, since the object never escaped
+    // the constructor. Fixed by validating before the native open at all. Hardware-free ([Fact], not
+    // [RequiresPipeWireFact]): the validation is the very first statement in the constructor, before
+    // MiniAudioContext.Acquire() or anything device-related, so no real audio device is ever
+    // touched regardless of whether one exists in this environment.
+    [Fact]
+    public void Constructor_GivenOutOfRangeDrainThreadPriority_ThrowsBeforeTouchingAnyDevice()
+    {
+        var exception = Record.Exception(() => new MiniAudioCaptureSession(
+            "nonexistent-device-id", sampleRate: 44100, NullLogger.Instance, drainThreadPriority: (ThreadPriority)42));
+
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+    }
+
     // Stereo-capture-source backlog item: proves Left/Right channel selection actually routes
     // distinct content, not just "opens without crashing" -- a stereo source with an audible tone
     // on Left and silence on Right, captured once with AudioChannelSource.Left and once with
