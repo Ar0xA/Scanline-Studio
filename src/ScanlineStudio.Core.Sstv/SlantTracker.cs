@@ -98,7 +98,15 @@ internal sealed class SlantTracker
     /// mode's sync segment is expected to start (already wrapped to the representation closest to
     /// zero — see <c>AnalogFmSstvDecoder</c>). Returns a corrected samples-per-line value once a
     /// drift correction commits, else null.</summary>
-    public double? ProcessLine(int relativePositionSamples) => ProcessLineCore(relativePositionSamples, suppressCommit: false);
+    /// <param name="hasStagingBuffer">Legacy's <c>UpdateSampFreq</c> guard,
+    /// <c>if( (dp-&gt;m_StgBuf != NULL) || WaveStg.IsOpen() )</c> (`Main.cpp:5597`) -- the caller's
+    /// <c>_rxLineStagingBuffer is not null</c>. Gates ONLY the post-commit
+    /// <see cref="Reset"/> (legacy's <c>InitAutoStop()</c>, `Main.cpp:5600`, INSIDE that guard), never
+    /// the rate write (`Main.cpp:4015-4016`, and `:5596`'s bare <c>SetSampFreq()</c>, both OUTSIDE it).
+    /// Deliberately has NO default value: a defaulted commit-semantics flag is exactly the silent
+    /// mis-pass hazard <see cref="RestoreRateWithoutReset"/>'s own doc comment warns about.</param>
+    public double? ProcessLine(int relativePositionSamples, bool hasStagingBuffer)
+        => ProcessLineCore(relativePositionSamples, suppressCommit: false, hasStagingBuffer);
 
     /// <summary>RX buffer subsystem Phase 6b -- the third code path round-1 plan-review found missing:
     /// legacy's own suppressed-replay re-feed (`Main.cpp:3989-4017`, `m_ASDis=1` bracketed) runs the
@@ -115,9 +123,17 @@ internal sealed class SlantTracker
     /// deliberately: nothing should ever act on this quantity during a suppressed pass, and exposing it
     /// would invite a future caller to "notice" and apply it, exactly what legacy's own `m_ASDis`
     /// exists to prevent.</summary>
-    public void ProcessLineSuppressed(int relativePositionSamples) => ProcessLineCore(relativePositionSamples, suppressCommit: true);
+    public void ProcessLineSuppressed(int relativePositionSamples)
+        // `hasStagingBuffer: true` is both structurally unreachable AND factually correct here, so it
+        // stays correct either way: unreachable because TryComputeCorrection returns at its own
+        // `if (suppressCommit)` before the flag is ever read (legacy's `!m_ASDis` gate,
+        // Main.cpp:4011); factually correct because a suppressed pass only exists during replay, which
+        // only exists when a staging buffer does (PerformReplay's own `_rxLineStagingBuffer is null`
+        // bail). Passed as `true` rather than `false` so it survives a future restructuring of that
+        // early return without silently changing behaviour.
+        => ProcessLineCore(relativePositionSamples, suppressCommit: true, hasStagingBuffer: true);
 
-    private double? ProcessLineCore(int relativePositionSamples, bool suppressCommit)
+    private double? ProcessLineCore(int relativePositionSamples, bool suppressCommit, bool hasStagingBuffer)
     {
         // Main.cpp:3964-3966: unconditional history shift + push, every call. `int[]` matches
         // legacy's `int m_AutoStopAPos[16]` (Main.h:1351) -- the caller has already applied
@@ -156,7 +172,7 @@ internal sealed class SlantTracker
                 }
                 else if (_linesSinceBaseline >= 3)
                 {
-                    result = TryComputeCorrection(fittedPosition, suppressCommit);
+                    result = TryComputeCorrection(fittedPosition, suppressCommit, hasStagingBuffer);
                 }
             }
         }
@@ -221,7 +237,7 @@ internal sealed class SlantTracker
     /// latching below (`:4006-4010`) is NOT gated by it (matches legacy -- those bits latch during a
     /// suppressed replay pass too) -- only the trailing `_currentSampleRate`/`_nominalSamplesPerLine`
     /// write and <see cref="Reset"/> call are skipped when <see langword="true"/>.</summary>
-    private double? TryComputeCorrection(int fittedPosition, bool suppressCommit)
+    private double? TryComputeCorrection(int fittedPosition, bool suppressCommit, bool hasStagingBuffer)
     {
         var d = (_baselinePosition - fittedPosition) * _currentSampleRate / _nominalSamplesPerLine / _linesSinceBaseline;
         var candidateSampleRate = _correctionAverage.Add(_currentSampleRate - d);
@@ -277,41 +293,46 @@ internal sealed class SlantTracker
             return correctedRate;
         }
 
-        // Main.cpp:5586's SSTVSET.SetSampFreq() recomputing m_TW from the just-corrected m_SampFreq,
-        // called immediately after every commit (RedrawSampFreq/UpdateSampFreq) -- keeps the next
-        // correction's drift formula self-consistent instead of dividing by a stale denominator.
-        // ultracode audit finding #9: legacy's UpdateSampFreq also calls InitAutoStop
-        // (Main.cpp:3801-3810) immediately after every commit, fully reinitializing baseline/
-        // history/average/bitmask before the next correction is computed -- both together, factored
-        // into AdoptCorrectedRate below so this call site and RX buffer subsystem Phase 8's own
-        // manual-commit call site (AnalogFmSstvDecoder.TryCorrectSlant) can never drift apart on
-        // which fields a "the rate is now X" commit actually updates.
-        AdoptCorrectedRate(correctedRate);
+        // Main.cpp:5596's SSTVSET.SetSampFreq() recomputing m_TW from the just-corrected m_SampFreq,
+        // reached after every commit via m_ReqSampChg -> RedrawSampFreq -> UpdateSampFreq -- keeps the
+        // next correction's drift formula self-consistent instead of dividing by a stale denominator.
+        // The paired InitAutoStop wipe (Main.cpp:5600) is NOT unconditional -- see AdoptCorrectedRate,
+        // which owns that split so this call site and any future commit call site can never disagree
+        // about which fields a "the rate is now X" commit actually updates.
+        AdoptCorrectedRate(correctedRate, hasStagingBuffer);
 
         return correctedRate;
     }
 
-    /// <summary>RX buffer subsystem Phase 8c: lets an EXTERNAL commit (the one-shot Correct Slant
-    /// search, <see cref="AnalogFmSstvDecoder.TryCorrectSlant"/>) adopt its own corrected rate into
-    /// this tracker's evolving state, exactly as if this class's own <see cref="TryComputeCorrection"/>
-    /// had committed it. Without this, a manual correction would only ever update
-    /// <c>_effectiveSamplesPerLine</c> (the live decode stride) while this tracker's own
-    /// <see cref="_currentSampleRate"/>/<see cref="_nominalSamplesPerLine"/> stayed at their PRE-manual
-    /// values -- the next automatic Auto-Slant commit would then compute its drift delta against that
-    /// stale baseline and silently revert the manual correction (auditor code-review finding, Phase
-    /// 8c round 1: legacy's own `Main.cpp:3994-3997` Auto-Slant drift math reads
-    /// <c>SSTVSET.m_SampFreq</c>/<c>m_TW</c> -- the SAME variables <c>CorrectSlant</c>'s own
-    /// <c>SetSampFreq()</c> call writes, so in legacy a manual correction is genuinely visible to and
-    /// compounded by the automatic tracker; this port's two separate state holders -- this class's own
-    /// fields, and <c>AnalogFmSstvDecoder._effectiveSamplesPerLine</c> -- must be kept in sync at every
-    /// commit, manual or automatic, not just the automatic ones). Also fixes <see cref="DriftPpm"/>
-    /// (and therefore <c>ISstvDecoder.SlantPpm</c>) never reflecting a manual-only correction, matching
-    /// legacy's own <c>DrawSlantInfo</c> (`Main.cpp:5537`), which reads the same shared
-    /// <c>m_SampFreq</c> regardless of which mechanism last corrected it.</summary>
-    internal void AdoptCorrectedRate(double correctedSampleRate)
+    /// <summary>Applies a corrected rate as this class's own <see cref="TryComputeCorrection"/> would
+    /// on the AUTOMATIC commit path. Also fixes <see cref="DriftPpm"/> (and therefore
+    /// <c>ISstvDecoder.SlantPpm</c>) reflecting whatever last corrected the rate, matching legacy's
+    /// own <c>DrawSlantInfo</c> (`Main.cpp:5537`), which reads the same shared <c>m_SampFreq</c>
+    /// regardless of which mechanism last corrected it. The manual Correct Slant path (both its
+    /// forward commit and its revert) uses <see cref="RestoreRateWithoutReset"/> instead -- see that
+    /// method's own doc comment for why the two must not share a code path.</summary>
+    /// <param name="hasStagingBuffer">See <see cref="ProcessLine"/>'s own doc comment for the full
+    /// legacy citation. Gates only <see cref="Reset"/> -- <see cref="SetRatePair"/> is unconditional
+    /// in legacy (`Main.cpp:4015-4016`/`:5596`) and stays unconditional here.</param>
+    internal void AdoptCorrectedRate(double correctedSampleRate, bool hasStagingBuffer)
     {
         SetRatePair(correctedSampleRate);
-        Reset();
+
+        // Batch 2 chunk 2b round-2 fix: legacy's post-commit InitAutoStop (Main.cpp:3801-3810) is
+        // reached ONLY through UpdateSampFreq's staging-buffer guard
+        // (`if( (dp->m_StgBuf != NULL) || WaveStg.IsOpen() )`, Main.cpp:5597 wrapping the :5600 call).
+        // With no staging buffer (this port's RxBufferMode.Off; legacy's sys.m_UseRxBuff == 0, still
+        // reachable there -- Main.cpp:11903 only DISABLES the Auto Slant menu item, it never clears
+        // KRSA->Checked, and :3968 reads only Checked) legacy keeps m_ASBgnPos / m_AutoStopAPos /
+        // m_AutoStopACnt / m_ASAvg / m_ASBitMask across every automatic commit: m_ASCurY keeps growing
+        // so the drift term shrinks as 1/m_ASCurY, and the latched tier bits keep the coarse m_ASLmt[0]
+        // (+/-25Hz * SampFreq/11025) permanently disabled -- corrections tighten monotonically instead
+        // of restarting from an unlatched bitmask and an 8-line re-arm (5 lines to refill the fit
+        // window + 3 more before _linesSinceBaseline >= 3 is satisfied again).
+        if (hasStagingBuffer)
+        {
+            Reset();
+        }
     }
 
     /// <summary>Legacy's bare <c>SSTVSET.m_SampFreq = ...; SSTVSET.SetSampFreq();</c> with NO
