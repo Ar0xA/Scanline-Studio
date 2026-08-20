@@ -131,25 +131,64 @@ public class RxLineStagingBufferTests
     }
 
     [Fact]
-    public void TryAppendLine_AfterRejection_InProgressStagedDataIsUnaffected_AndFurtherFittingAppendsStillWork()
+    public void TryAppendLine_AfterRejection_IsLatched_EvenForALineThatWouldStillFit()
     {
         const int sampleRate = 1000; // CapacitySamples = 282,700
         var buffer = new RxLineStagingBuffer(sampleRate);
         var almostFull = new double[buffer.CapacitySamples - 2];
-        buffer.TryAppendLine(almostFull, almostFull);
+        Assert.True(buffer.TryAppendLine(almostFull, almostFull));
 
-        buffer.TryAppendLine([1.0, 2.0], [3.0, 4.0]); // rejected, per the test above
+        Assert.False(buffer.TryAppendLine([1.0, 2.0], [3.0, 4.0])); // 2 samples: lands ON the cap, rejected
 
-        // The exactly-1-sample-remaining line still fits (lands at CapacitySamples-1, the real
-        // reachable maximum) and must still succeed after a prior rejection -- capture doesn't "jam"
-        // once a too-big line is rejected, matching legacy's own per-call (not per-buffer-lifetime)
-        // admission test.
-        var accepted = buffer.TryAppendLine([99.0], [98.0]);
+        // Legacy's admission test is monotonic -- fixed m_WD (sstv.cpp:594) against a never-decreasing
+        // m_wStgLine (Main.cpp:4958/sstv.cpp:1622,1638) -- so the first rejected line is the last line
+        // legacy ever stages until a reset (CopyStgBuf's own `else { break; }`, Main.cpp:5247-5249).
+        // This 1-sample line would arithmetically still fit (CapacitySamples-1 is the reachable
+        // maximum); it must be rejected anyway, or the staged stream gains a gap the decoder's single
+        // linear local-to-absolute offset cannot express.
+        Assert.False(buffer.TryAppendLine([99.0], [98.0]));
 
-        Assert.True(accepted);
-        Assert.Equal(buffer.CapacitySamples - 1, buffer.Count);
-        Assert.Equal(99.0, buffer.DemodulatedAt(buffer.CapacitySamples - 2));
-        Assert.Equal(98.0, buffer.SyncEnvelopeAt(buffer.CapacitySamples - 2));
+        // Already-staged data is untouched by either rejection.
+        Assert.Equal(buffer.CapacitySamples - 2, buffer.Count);
+        Assert.Equal(1, buffer.LineCount);
+    }
+
+    [Fact]
+    public void TryAppendLine_CapacityLatch_IsClearedByClear_LikeLegacyStgLineReset()
+    {
+        const int sampleRate = 1000;
+        var buffer = new RxLineStagingBuffer(sampleRate);
+        var almostFull = new double[buffer.CapacitySamples - 2];
+        Assert.True(buffer.TryAppendLine(almostFull, almostFull));
+        Assert.False(buffer.TryAppendLine([1.0, 2.0], [3.0, 4.0]));
+        Assert.False(buffer.TryAppendLine([99.0], [98.0])); // latched
+
+        buffer.Clear(); // legacy's `dp->m_wStgLine = 0` at a fresh lock, Main.cpp:4958
+
+        Assert.True(buffer.TryAppendLine([99.0], [98.0]));
+        Assert.Equal(1, buffer.Count);
+        Assert.Equal(1, buffer.LineCount);
+        Assert.Equal(99.0, buffer.DemodulatedAt(0));
+    }
+
+    [Fact]
+    public void HasHeadroomForSamples_AfterCapacityLatch_IsFalseEvenForASmallerProbe()
+    {
+        const int sampleRate = 1000;
+        var buffer = new RxLineStagingBuffer(sampleRate);
+        var almostFull = new double[buffer.CapacitySamples - 3];
+        Assert.True(buffer.TryAppendLine(almostFull, almostFull));
+        Assert.True(buffer.HasHeadroomForSamples(1));
+
+        Assert.False(buffer.TryAppendLine([1.0, 2.0, 3.0], [1.0, 2.0, 3.0])); // lands ON the cap
+
+        // Legacy's CorrectSlant entry gate (Main.cpp:5268-5270) is the SAME expression as its append
+        // gate, so once appends stop, slant correction is refused too -- not re-derived from a
+        // narrower probe.
+        Assert.False(buffer.HasHeadroomForSamples(1));
+
+        buffer.Clear();
+        Assert.True(buffer.HasHeadroomForSamples(1));
     }
 
     [Fact]
