@@ -482,6 +482,19 @@ public sealed class SstvSessionServicePttSafetyTests
         // post-await recheck this test targets is deleted entirely (round 4 caught this as a
         // mutation-INSENSITIVE test). This drives DisposeAsync from INSIDE the SetPttAsync(true)
         // round-trip itself -- the actual race the post-await recheck exists to close.
+        //
+        // Round-8 update: SetPttLockAsync now publishes _keyedTransmitCompletion/_keyedTransmitCount
+        // BEFORE this key command too (round-8's own fix, mirroring PlayWithPttAsync's blocker-3
+        // mechanism) -- so the nested DisposeAsync call below now genuinely sees "something in flight"
+        // and bounded-waits (_inFlightKeyedTransmitWait, 500ms here) before giving up and running its
+        // own backstop un-key regardless, EXACTLY the documented "whether the wait succeeds or times
+        // out, DisposeAsync's own backstop un-key runs next either way, and a redundant un-key is
+        // documented-harmless" contract AwaitInFlightKeyedTransmitAsync's own doc comment already
+        // states for PlayWithPttAsync -- this reentrant nesting can never let the wait succeed (nothing
+        // will complete until this synchronous callback itself returns), so it always times out. That
+        // extra backstop attempt is why PttCalls now has THREE entries, not two: DisposeAsync's own
+        // premature backstop un-key (issued before this call's OWN key command has even returned),
+        // then the key succeeding, then this call's own post-await recovery un-key.
         var (service, _, radio, _) = CreateService();
         radio.BeforeSetPtt = tx =>
         {
@@ -489,8 +502,8 @@ public sealed class SstvSessionServicePttSafetyTests
             {
                 // BeforeSetPtt is a synchronous Action<bool> (it fires from inside SetPttAsync, before
                 // any await completes), so there is no async alternative here. DisposeAsync never takes
-                // _pttLockGate and has nothing gated to wait on in this test (no in-flight transmit, not
-                // receiving), so this completes immediately rather than genuinely blocking.
+                // _pttLockGate, so this doesn't deadlock -- it bounded-waits on the in-flight
+                // registration (see above) and then proceeds regardless.
 #pragma warning disable xUnit1031
                 service.DisposeAsync().AsTask().GetAwaiter().GetResult();
 #pragma warning restore xUnit1031
@@ -499,11 +512,9 @@ public sealed class SstvSessionServicePttSafetyTests
 
         await Assert.ThrowsAsync<ObjectDisposedException>(() => service.SetPttLockAsync(true));
 
-        // The engage succeeded against the backend (PttCalls got the "true"), DisposeAsync's backstop
-        // ran and saw nothing yet (this call hadn't set _pttLocked yet), and the post-await recheck
-        // must have un-keyed this call's own engage rather than leaving it physically keyed with
-        // _pttLocked reporting true.
-        Assert.Equal(PttOnThenOff, radio.PttCalls);
+        // DisposeAsync's own premature backstop un-key, then this call's own key succeeding, then this
+        // call's own post-await recovery un-key -- three PTT commands, ending un-keyed either way.
+        Assert.Equal([false, true, false], radio.PttCalls);
         Assert.False(service.IsPttLocked);
     }
 
@@ -744,6 +755,91 @@ public sealed class SstvSessionServicePttSafetyTests
         // THE property: DisposeAsync must still see the earlier call's genuinely-keyed state and
         // issue a real backstop un-key.
         Assert.Equal([true, false], radio.PttCalls);
+    }
+
+    // ------------------------------------------------------------------ round 8 findings
+
+    [Fact]
+    public async Task Round8_SetPttLockAsync_KeyCommandThrows_EpochBump_SurvivesConcurrentUnkeyersStaleClear()
+    {
+        // Round-8 finding: round 7's own catch-block write (_pttLeftKeyedByCall = true, on a key
+        // command that threw after possibly keying the rig) was ITSELF the lost-update shape rounds
+        // 5-7 already closed at three other sites -- it never bumped _pttKeyEpoch, so a CONCURRENT
+        // UnkeyForCleanupAsync call whose own epoch snapshot predates this write could still wipe it
+        // moments later, believing nothing new happened.
+        var stage = 0;
+        var (service, _, radio, _) = CreateService(wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner));
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx && stage == 1)
+            {
+                stage = 2;
+                // A concurrent SetPttLockAsync(true) call, whose OWN key command throws after possibly
+                // keying the rig, lands entirely within THIS un-key's own SetPttAsync(false)
+                // round-trip -- reassigning the hook first so the nested call's own key attempt throws
+                // deterministically, without recursing back into this branch.
+                radio.BeforeSetPtt = innerTx =>
+                {
+                    if (innerTx)
+                    {
+                        throw new TimeoutException("simulated: PTT command written, reply read timed out");
+                    }
+                };
+#pragma warning disable xUnit1031
+                Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(true)).GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+            }
+        };
+
+        stage = 1;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1)));
+
+        // THE property: DisposeAsync must still see the concurrent call's "may have keyed" state and
+        // issue a real backstop un-key.
+        await service.DisposeAsync();
+        Assert.Equal([true, false, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round8_DisposeAsync_WaitsForAnInFlightSetPttLockAsyncsOwnCompletion()
+    {
+        // Round-8 finding: SetPttLockAsync's own key command was invisible to DisposeAsync's bounded
+        // shutdown WAIT -- unlike PlayWithPttAsync (blocker 3), it never published
+        // _keyedTransmitCompletion/_keyedTransmitCount before the key command, so DisposeAsync could
+        // run straight through, disposing IRadioSessionService, before this call's own post-await
+        // disposal-race recovery ever got a chance to run -- against a radio session that no longer
+        // exists. Uses FakeRadioSessionService's new Gate (a genuine async park, unlike the
+        // synchronous BeforeSetPtt hook other tests use) so the in-flight window is real, not nested.
+        var gate = new TaskCompletionSource();
+        var (service, _, radio, _) = CreateService(inFlightKeyedTransmitWait: TimeSpan.FromSeconds(30));
+        radio.Gate = gate.Task;
+
+        var setLock = service.SetPttLockAsync(true);
+        var dispose = service.DisposeAsync().AsTask();
+
+        // Everything before the gate (_pttLockGate.WaitAsync, the disposed check, the epoch/RigId
+        // reads) is synchronous and fast -- by the time this elapses, setLock is genuinely parked
+        // awaiting the gate, not still working its way there. The key command is still outstanding --
+        // DisposeAsync must not have returned while that is true.
+        await Task.Delay(150);
+        Assert.False(setLock.IsCompleted, "the key command should still be parked at the gate");
+        Assert.False(dispose.IsCompleted, "DisposeAsync returned while an in-flight SetPttLockAsync call still had a key command outstanding");
+
+        gate.SetResult();
+
+        // The key command, released from the gate, now genuinely completes -- but _disposed is
+        // already true by this point (DisposeAsync sets it as its own very first line), so
+        // SetPttLockAsync's own post-await disposal-race recovery (round-3/4's fix) fires: it un-keys
+        // what it just keyed, then throws ObjectDisposedException. This is round 8's whole point --
+        // DisposeAsync's wait let this call's own recovery run BEFORE DisposeAsync itself tore
+        // anything down, rather than racing past it blind.
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => setLock);
+        await dispose;
+
+        // Key, then this call's own recovery un-key -- DisposeAsync's own backstop must find nothing
+        // left to do (no third entry) since the recovery already handled it.
+        Assert.Equal([true, false], radio.PttCalls);
+        Assert.False(service.IsPttLocked);
     }
 
     // ------------------------------------------------------------------ helpers

@@ -90,12 +90,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // complete and set its own state in that same window, and the un-key's stale continuation would
     // then wipe that newer call's "still keyed" state out from under it: transmitter genuinely re-keyed,
     // every shutdown-backstop flag reads false, DisposeAsync's four-state check finds nothing to do.
-    // Incremented via Interlocked.Increment immediately after every SUCCESSFUL SetPttAsync(true) call
-    // (never on the false/unkey direction) -- every un-key/unlock cleanup path snapshots this before its
-    // own un-key attempt and only performs its clears if nothing re-keyed in the meantime. Not
-    // `volatile`, matching _keyedTransmitCompletion's own reasoning above: Interlocked.Increment on a
-    // volatile field is CS0420, so this is read via Volatile.Read/Interlocked instead everywhere it's
-    // touched.
+    // Incremented via Interlocked.Increment immediately after every SetPttAsync(true) call that either
+    // SUCCEEDED or may have physically keyed the rig before throwing (round-8 finding: SetPttLockAsync's
+    // own key-command-failure catch bumps this too, for the identical reason -- a failed-but-possibly-
+    // keyed attempt is just as much a "new key" as a confirmed one, and skipping the bump there was
+    // itself a fourth instance of this same lost-update shape). Never on the false/unkey direction --
+    // every un-key/unlock cleanup path snapshots this before its own un-key attempt and only performs
+    // its clears if nothing re-keyed in the meantime. Not `volatile`, matching _keyedTransmitCompletion's
+    // own reasoning above: Interlocked.Increment on a volatile field is CS0420, so this is read via
+    // Volatile.Read/Interlocked instead everywhere it's touched.
     //
     // <b>Round-6 finding, honestly documented rather than silently left implicit (matching Risk B's own
     // precedent below): this NARROWS the lost-update window to instruction-scale, it does not fully
@@ -296,152 +299,203 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public async Task SetPttLockAsync(bool locked, CancellationToken ct = default)
     {
         await _pttLockGate.WaitAsync(ct).ConfigureAwait(false);
+
+        // Round-8 finding: this call's own handle into _keyedTransmitCompletion -- local as well as
+        // field so the outermost finally below can clear the field ONLY if it still points at this
+        // call's own instance (same CompareExchange pattern as PlayWithPttAsync's own blocker-3
+        // mechanism, which this method never adopted). Without this, a key command in flight here was
+        // invisible to BOTH DisposeAsync's bounded shutdown WAIT (AwaitInFlightKeyedTransmitAsync reads
+        // this same field) and its four-state backstop check (_keyedTransmitCount) -- DisposeAsync could
+        // run to completion, dispose IRadioSessionService, and only THEN would this call's own
+        // post-await disposal-race recovery (the `if (locked && _disposed)` block below) get a chance to
+        // run -- against a radio session that no longer exists. Publishing this BEFORE the key command
+        // makes DisposeAsync's wait actually block for this call, which keeps IRadioSessionService alive
+        // long enough for this method's own recovery un-key to have something to talk to.
+        TaskCompletionSource? keyedCompletion = null;
+
         try
         {
-            // Round-2 fix: only the ENGAGE direction is rejected post-disposal -- an unlock must stay a
-            // valid escape hatch for a rig this class already left keyed (matches _pttLocked's own
-            // failed-unlock-stays-true reasoning below; disposal must never remove the one remaining
-            // way to un-key a rig that is still physically keyed).
-            if (locked)
-            {
-                ObjectDisposedException.ThrowIf(_disposed, this);
-            }
-
-            // Round-6 finding: snapshotted BEFORE the SetPttAsync await below, not after -- see
-            // _pttKeyEpoch's own doc comment for the lost-update race this closes. Same fix shape
-            // UnkeyForCleanupAsync already uses; round 5 fixed only that twin location and missed this
-            // one -- SetPttLockAsync's own unlock-path clears just below had the identical gap.
-            var epochAtUnkeyStart = Volatile.Read(ref _pttKeyEpoch);
-
-            // Round-7 finding: captured ONCE, before the key command -- the same blocker-2 rule
-            // PlayWithPttAsync already follows (never re-read RigId at catch/failure time, since
-            // RadioController.DisconnectAsync/DisposeAsync can reset it to "none" without un-keying).
-            // Only meaningful for the ENGAGE direction: an unlock failure doesn't need this --
-            // TryUnkeyPttAsync already classifies that failure using the parameter passed to it, not a
-            // fresh RigId read.
-            var rigIsRealAtKeyTime = locked && _radioSession.RigId != "none";
-
             try
             {
-                await _radioSession.SetPttAsync(locked, ct).ConfigureAwait(false);
-            }
-            catch (Exception) when (rigIsRealAtKeyTime)
-            {
-                // Round-7 finding: SetPttAsync(true) throwing does not mean the rig wasn't physically
-                // keyed -- matches PlayWithPttAsync's own "erring true costs at most one spurious
-                // Warning; erring false is the blocker-2 silent swallow" reasoning (see its own comment
-                // at the pttKeyedOnRealRig assignment), which SetPttLockAsync never adopted. Without
-                // this, a mid-command failure here (e.g. RigctldClientProtocol writes the PTT command,
-                // then the READ of its reply times out or the connection drops) leaves EVERY
-                // shutdown-backstop flag false -- _pttLocked never gets set (this throw happens before
-                // that write below), and nothing else records the attempt -- so DisposeAsync's
-                // four-state check finds nothing to do and the process can exit with the transmitter
-                // genuinely keyed, silently. _pttLeftKeyedByCall is reused as the marker (see its own
-                // doc comment, widened to cover this second producer) rather than adding a new field,
-                // since its existing meaning ("physically keyed, not tracked by _pttLocked") is exactly
-                // this situation.
-                _pttLeftKeyedByCall = true;
-                Log.PttKeyCommandFailedMayHaveKeyed(_logger);
-                throw;
-            }
-
-            if (locked)
-            {
-                // Round-5 finding: a NEW successful key -- see _pttKeyEpoch's own doc comment for why
-                // this must be recorded before any concurrent UnkeyForCleanupAsync/SetPttLockAsync(false)
-                // call can mistake this for the un-key it's in the middle of and wipe this call's "still
-                // keyed" state out. Round-6 finding: moved to run BEFORE `_pttLocked = locked;` below
-                // (was after) -- the old order let a concurrent un-key observe _pttLocked already true
-                // but the epoch not yet bumped, narrowly missing this call's own publish. Incrementing
-                // first closes that ordering gap.
-                Interlocked.Increment(ref _pttKeyEpoch);
-            }
-
-            _pttLocked = locked;
-
-            if (!locked)
-            {
-                // Round-6 finding: if the epoch moved while the await above was in flight, a
-                // CONCURRENT, NEWER key command (another SetPttLockAsync(true) or a PlayWithPttAsync
-                // key) completed and already recorded its own "still keyed" state -- clearing the flags
-                // below would wipe that out from under it, the identical lost-update shape round 5 fixed
-                // in UnkeyForCleanupAsync. This call's own SetPttAsync(false) still genuinely succeeded
-                // against the backend either way.
-                if (Volatile.Read(ref _pttKeyEpoch) == epochAtUnkeyStart)
+                // Round-2 fix: only the ENGAGE direction is rejected post-disposal -- an unlock must
+                // stay a valid escape hatch for a rig this class already left keyed (matches
+                // _pttLocked's own failed-unlock-stays-true reasoning below; disposal must never remove
+                // the one remaining way to un-key a rig that is still physically keyed).
+                if (locked)
                 {
-                    // A CONFIRMED un-key invalidates every "still keyed" belief this class holds, not
-                    // just _pttLocked -- see _pttLeftKeyedByCall's own doc comment. Placed after
-                    // SetPttAsync succeeded, matching _pttLocked's own deliberate only-on-success rule.
-                    _pttLeftKeyedByCall = false;
-
-                    // Round-4 finding: this confirmed un-key invalidates _pttUnkeyFailedOnRealRig too,
-                    // not just _pttLeftKeyedByCall -- without this, a PRIOR transmit's failed cleanup
-                    // un-key (which set this flag and already logged Critical about it) survives a
-                    // later, genuinely successful unlock through this escape hatch. DisposeAsync then
-                    // still fires a spurious backstop un-key on a rig that is demonstrably off, and if
-                    // THAT attempt fails for any unrelated reason (e.g. the radio is already
-                    // disconnected at shutdown), it emits a false "PTT MAY STILL BE KEYED" Critical --
-                    // undermining the one signal this whole chunk exists to keep trustworthy.
-                    _pttUnkeyFailedOnRealRig = false;
+                    ObjectDisposedException.ThrowIf(_disposed, this);
                 }
-                else
+
+                // Round-6 finding: snapshotted BEFORE the SetPttAsync await below, not after -- see
+                // _pttKeyEpoch's own doc comment for the lost-update race this closes. Same fix shape
+                // UnkeyForCleanupAsync already uses; round 5 fixed only that twin location and missed
+                // this one -- SetPttLockAsync's own unlock-path clears just below had the identical gap.
+                var epochAtUnkeyStart = Volatile.Read(ref _pttKeyEpoch);
+
+                // Round-7 finding: captured ONCE, before the key command -- the same blocker-2 rule
+                // PlayWithPttAsync already follows (never re-read RigId at catch/failure time, since
+                // RadioController.DisconnectAsync/DisposeAsync can reset it to "none" without un-keying).
+                // Only meaningful for the ENGAGE direction: an unlock failure doesn't need this --
+                // TryUnkeyPttAsync already classifies that failure using the parameter passed to it, not
+                // a fresh RigId read.
+                var rigIsRealAtKeyTime = locked && _radioSession.RigId != "none";
+
+                if (rigIsRealAtKeyTime)
                 {
-                    Log.PttUnkeyRaceLostToNewerKey(_logger);
+                    // Round-8 finding: published BEFORE the key command, same shape/reasoning as
+                    // PlayWithPttAsync's own publish (see its own comment) -- so DisposeAsync can never
+                    // tear IRadioSessionService down out from under this call's own in-flight key/un-key.
+                    keyedCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Interlocked.Exchange(ref _keyedTransmitCompletion, keyedCompletion);
+                    Interlocked.Increment(ref _keyedTransmitCount);
                 }
-            }
 
-            // Round-3 finding: the pre-await disposed check above (line ~256) only catches the CHEAP,
-            // common case. _radioSession.SetPttAsync is a real serial/TCP round-trip -- DisposeAsync can
-            // run its entire backstop (which reads _pttLocked/_keyedTransmitCompletion, neither of which
-            // this call has published yet) while this await is in flight, find nothing to do, and
-            // return. Left uncorrected, this call would then set _pttLocked = true above with nothing
-            // left to ever un-key it. Latent today (SetPttLockAsync has zero production callers -- see
-            // this method's own doc comment), fixed anyway since the fix is cheap and this method is
-            // otherwise fully hardened against the same race everywhere else in this class.
-            //
-            // Round-4 finding: the plain `_pttLocked = locked;` write above and the `_disposed` read
-            // just below are release-store/acquire-load -- the SAME StoreLoad-reordering gap
-            // PlayWithPttAsync's Interlocked.Exchange publish closes (see its own comment). DisposeAsync
-            // already carries the matching half (Interlocked.MemoryBarrier right after its own
-            // `_disposed = true` write); this fence is the other half. `_pttLocked` is `volatile`, so
-            // Interlocked.Exchange on it is CS0420 -- a standalone full fence after the plain write is
-            // the equivalent. Unlike Risk B further down (whose failure mode is a stranded RX pause,
-            // not a leaked keyed transmitter -- see that comment for the criterion), this pattern's
-            // failure mode IS a leaked keyed transmitter, so by this file's own stated rule it needs
-            // the fence Risk B deliberately goes without.
-            Interlocked.MemoryBarrier();
-
-            if (locked && _disposed)
-            {
-                await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
-                throw new ObjectDisposedException(GetType().FullName);
-            }
-
-            Log.PttLockChanged(_logger, locked);
-
-            if (!locked && _rxPendingResumeAfterUnlock)
-            {
-                _rxPendingResumeAfterUnlock = false;
                 try
                 {
-                    await StartReceivingAsync(ct).ConfigureAwait(false);
+                    await _radioSession.SetPttAsync(locked, ct).ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                catch (Exception) when (rigIsRealAtKeyTime)
                 {
-                    Log.CleanupStepFailed(_logger, "Resume RX (after unlock)", ex);
+                    // Round-7 finding: SetPttAsync(true) throwing does not mean the rig wasn't physically
+                    // keyed -- matches PlayWithPttAsync's own "erring true costs at most one spurious
+                    // Warning; erring false is the blocker-2 silent swallow" reasoning (see its own comment
+                    // at the pttKeyedOnRealRig assignment), which SetPttLockAsync never adopted. Without
+                    // this, a mid-command failure here (e.g. RigctldClientProtocol writes the PTT command,
+                    // then the READ of its reply times out or the connection drops) leaves EVERY
+                    // shutdown-backstop flag false -- _pttLocked never gets set (this throw happens before
+                    // that write below), and nothing else records the attempt -- so DisposeAsync's
+                    // four-state check finds nothing to do and the process can exit with the transmitter
+                    // genuinely keyed, silently. _pttLeftKeyedByCall is reused as the marker (see its own
+                    // doc comment, widened to cover this second producer) rather than adding a new field,
+                    // since its existing meaning ("physically keyed, not tracked by _pttLocked") is exactly
+                    // this situation.
+                    //
+                    // Round-8 finding: this write is ITSELF exactly the lost-update shape rounds 5-7 already
+                    // closed at three other sites -- without bumping the epoch here too, a concurrent
+                    // UnkeyForCleanupAsync call whose own epoch snapshot predates this write can still wipe
+                    // it moments later, believing nothing new happened. Bumping errs conservative (a
+                    // concurrent un-keyer just skips its clears and logs PttUnkeyRaceLostToNewerKey instead
+                    // of wiping this call's state) -- same "erring true costs at most one spurious Warning"
+                    // rule this file already applies everywhere else.
+                    Interlocked.Increment(ref _pttKeyEpoch);
+                    _pttLeftKeyedByCall = true;
+                    Log.PttKeyCommandFailedMayHaveKeyed(_logger);
+                    throw;
                 }
-                finally
+
+                if (locked)
                 {
-                    // User-reported gap (2026-08-18): the deferred half of PlayWithPttAsync's own
-                    // pause -- see CapturePausedForTransmitChanged's own doc comment for why this
-                    // fires here too, not just at PlayWithPttAsync's own immediate-resume point.
-                    RaiseCapturePausedForTransmitChanged(false);
+                    // Round-5 finding: a NEW successful key -- see _pttKeyEpoch's own doc comment for why
+                    // this must be recorded before any concurrent UnkeyForCleanupAsync/SetPttLockAsync(false)
+                    // call can mistake this for the un-key it's in the middle of and wipe this call's "still
+                    // keyed" state out. Round-6 finding: moved to run BEFORE `_pttLocked = locked;` below
+                    // (was after) -- the old order let a concurrent un-key observe _pttLocked already true
+                    // but the epoch not yet bumped, narrowly missing this call's own publish. Incrementing
+                    // first closes that ordering gap.
+                    Interlocked.Increment(ref _pttKeyEpoch);
                 }
+
+                _pttLocked = locked;
+
+                if (!locked)
+                {
+                    // Round-6 finding: if the epoch moved while the await above was in flight, a
+                    // CONCURRENT, NEWER key command (another SetPttLockAsync(true) or a PlayWithPttAsync
+                    // key) completed and already recorded its own "still keyed" state -- clearing the flags
+                    // below would wipe that out from under it, the identical lost-update shape round 5 fixed
+                    // in UnkeyForCleanupAsync. This call's own SetPttAsync(false) still genuinely succeeded
+                    // against the backend either way.
+                    if (Volatile.Read(ref _pttKeyEpoch) == epochAtUnkeyStart)
+                    {
+                        // A CONFIRMED un-key invalidates every "still keyed" belief this class holds, not
+                        // just _pttLocked -- see _pttLeftKeyedByCall's own doc comment. Placed after
+                        // SetPttAsync succeeded, matching _pttLocked's own deliberate only-on-success rule.
+                        _pttLeftKeyedByCall = false;
+
+                        // Round-4 finding: this confirmed un-key invalidates _pttUnkeyFailedOnRealRig too,
+                        // not just _pttLeftKeyedByCall -- without this, a PRIOR transmit's failed cleanup
+                        // un-key (which set this flag and already logged Critical about it) survives a
+                        // later, genuinely successful unlock through this escape hatch. DisposeAsync then
+                        // still fires a spurious backstop un-key on a rig that is demonstrably off, and if
+                        // THAT attempt fails for any unrelated reason (e.g. the radio is already
+                        // disconnected at shutdown), it emits a false "PTT MAY STILL BE KEYED" Critical --
+                        // undermining the one signal this whole chunk exists to keep trustworthy.
+                        _pttUnkeyFailedOnRealRig = false;
+                    }
+                    else
+                    {
+                        Log.PttUnkeyRaceLostToNewerKey(_logger);
+                    }
+                }
+
+                // Round-3 finding: the pre-await disposed check above (line ~256) only catches the CHEAP,
+                // common case. _radioSession.SetPttAsync is a real serial/TCP round-trip -- DisposeAsync can
+                // run its entire backstop (which reads _pttLocked/_keyedTransmitCompletion, neither of which
+                // this call has published yet) while this await is in flight, find nothing to do, and
+                // return. Left uncorrected, this call would then set _pttLocked = true above with nothing
+                // left to ever un-key it. Latent today (SetPttLockAsync has zero production callers -- see
+                // this method's own doc comment), fixed anyway since the fix is cheap and this method is
+                // otherwise fully hardened against the same race everywhere else in this class.
+                //
+                // Round-4 finding: the plain `_pttLocked = locked;` write above and the `_disposed` read
+                // just below are release-store/acquire-load -- the SAME StoreLoad-reordering gap
+                // PlayWithPttAsync's Interlocked.Exchange publish closes (see its own comment). DisposeAsync
+                // already carries the matching half (Interlocked.MemoryBarrier right after its own
+                // `_disposed = true` write); this fence is the other half. `_pttLocked` is `volatile`, so
+                // Interlocked.Exchange on it is CS0420 -- a standalone full fence after the plain write is
+                // the equivalent. Unlike Risk B further down (whose failure mode is a stranded RX pause,
+                // not a leaked keyed transmitter -- see that comment for the criterion), this pattern's
+                // failure mode IS a leaked keyed transmitter, so by this file's own stated rule it needs
+                // the fence Risk B deliberately goes without.
+                Interlocked.MemoryBarrier();
+
+                if (locked && _disposed)
+                {
+                    await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
+                    throw new ObjectDisposedException(GetType().FullName);
+                }
+
+                Log.PttLockChanged(_logger, locked);
+
+                if (!locked && _rxPendingResumeAfterUnlock)
+                {
+                    _rxPendingResumeAfterUnlock = false;
+                    try
+                    {
+                        await StartReceivingAsync(ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.CleanupStepFailed(_logger, "Resume RX (after unlock)", ex);
+                    }
+                    finally
+                    {
+                        // User-reported gap (2026-08-18): the deferred half of PlayWithPttAsync's own
+                        // pause -- see CapturePausedForTransmitChanged's own doc comment for why this
+                        // fires here too, not just at PlayWithPttAsync's own immediate-resume point.
+                        RaiseCapturePausedForTransmitChanged(false);
+                    }
+                }
+            }
+            finally
+            {
+                _pttLockGate.Release();
             }
         }
         finally
         {
-            _pttLockGate.Release();
+            // Round-8 finding: signalled no matter how the above ended (success, un-key failure, a
+            // throw from the disposal-race recovery, RX-resume failure) -- a DisposeAsync waiting on
+            // this must never be left hanging until its own timeout by an unrelated failure. Same
+            // CompareExchange pattern as PlayWithPttAsync's own inner finally (see its own comment):
+            // only clear the field if it still points at THIS call's instance, so an overlapping
+            // PlayWithPttAsync/SetPttLockAsync call can't have its own registration erased.
+            if (keyedCompletion is not null)
+            {
+                Interlocked.CompareExchange(ref _keyedTransmitCompletion, null, keyedCompletion);
+                Interlocked.Decrement(ref _keyedTransmitCount);
+                keyedCompletion.TrySetResult();
+            }
         }
     }
 
