@@ -472,6 +472,87 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Equal([false], radio.PttCalls);
     }
 
+    // ------------------------------------------------------------------ round 4 findings
+
+    [Fact]
+    public async Task Round4_SetPttLockAsync_DisposeRacesTheSetPttAsyncAwait_ThrowsAndUnkeysRatherThanLeavingLockedTrue()
+    {
+        // Round-4 finding: the round-3 test above (Engage_PostDispose_ThrowsAndNeverKeys) disposes
+        // FIRST, so it only exercises the CHEAP pre-await guard -- it stays green even if the
+        // post-await recheck this test targets is deleted entirely (round 4 caught this as a
+        // mutation-INSENSITIVE test). This drives DisposeAsync from INSIDE the SetPttAsync(true)
+        // round-trip itself -- the actual race the post-await recheck exists to close.
+        var (service, _, radio, _) = CreateService();
+        radio.BeforeSetPtt = tx =>
+        {
+            if (tx)
+            {
+                // BeforeSetPtt is a synchronous Action<bool> (it fires from inside SetPttAsync, before
+                // any await completes), so there is no async alternative here. DisposeAsync never takes
+                // _pttLockGate and has nothing gated to wait on in this test (no in-flight transmit, not
+                // receiving), so this completes immediately rather than genuinely blocking.
+#pragma warning disable xUnit1031
+                service.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+            }
+        };
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => service.SetPttLockAsync(true));
+
+        // The engage succeeded against the backend (PttCalls got the "true"), DisposeAsync's backstop
+        // ran and saw nothing yet (this call hadn't set _pttLocked yet), and the post-await recheck
+        // must have un-keyed this call's own engage rather than leaving it physically keyed with
+        // _pttLocked reporting true.
+        Assert.Equal(PttOnThenOff, radio.PttCalls);
+        Assert.False(service.IsPttLocked);
+    }
+
+    [Fact]
+    public async Task Round4_StartReceivingAsync_PostDispose_Throws()
+    {
+        var (service, _, _, _) = CreateService();
+        await service.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => service.StartReceivingAsync());
+    }
+
+    [Fact]
+    public async Task Round4_SetPttLockAsync_SuccessfulUnlock_ClearsStaleUnkeyFailedFlag_NoSpuriousBackstop()
+    {
+        // Round-4 finding: a prior transmit's FAILED cleanup un-key sets _pttUnkeyFailedOnRealRig and
+        // logs Critical -- but SetPttLockAsync's successful-unlock branch didn't clear it, so a rig
+        // the operator just genuinely un-keyed via the lock escape hatch still triggered a spurious
+        // backstop un-key attempt at DisposeAsync -- and would emit a false Critical if THAT attempt
+        // happened to fail too, undermining the one signal this whole chunk exists to keep trustworthy.
+        var failNextUnkey = true;
+        var (service, _, radio, logger) = CreateService();
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx && failNextUnkey)
+            {
+                failNextUnkey = false;
+                throw new TimeoutException("simulated slow backend");
+            }
+        };
+
+        await service.TransmitAsync(TestMode, TestImage);
+        Assert.Equal([true], radio.PttCalls);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical);
+
+        // The operator genuinely un-keys via the lock escape hatch -- this must invalidate the stale
+        // flag, not just _pttLocked/_pttLeftKeyedByCall.
+        await service.SetPttLockAsync(true);
+        await service.SetPttLockAsync(false);
+        Assert.Equal([true, true, false], radio.PttCalls);
+
+        logger.Entries.Clear();
+        await service.DisposeAsync();
+
+        // No spurious backstop un-key attempt, no further Warning/Critical.
+        Assert.Equal([true, true, false], radio.PttCalls);
+        Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
