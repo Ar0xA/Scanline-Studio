@@ -1544,7 +1544,7 @@ lost-update/Dekker's-gap/overlap-erosion bug classes; the round-9-modified test
 `IsCompleted` check) is deterministic in BOTH directions -- traced precisely why zero-delay can't
 false-read `true` even with the fix present (nothing signals the wait until the gate is released).
 
-**Chunk 3a round 10 fix applied** (2026-08-20, commit `<pending>`). `SetPttLockAsync`'s
+**Chunk 3a round 10 fix applied** (2026-08-20, commit `40b1c73`). `SetPttLockAsync`'s
 deferred-RX-resume step now uses a fresh `CancellationTokenSource(_cleanupTimeout)`, matching
 `PlayWithPttAsync`'s own `rxResumeCts` pattern exactly. Required updating
 `FakeAudioDeviceEnumerator.RefreshAsync`'s test infra to actually respect its `ct` parameter (via
