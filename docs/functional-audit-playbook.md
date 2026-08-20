@@ -1227,3 +1227,77 @@ Round 5 found 1 real fixed finding in the leaked-keyed-transmitter class -- roun
 as chunk 3a's 1st clean round. Round 6 (independent re-verification of round 5's fix, ideally
 continuing the widened full-sweep approach given 4 consecutive rounds have now found something) is
 the earliest round that can count as chunk 3a's 1st clean round.
+
+**Chunk 3a round 6** (2026-08-20, independent re-verification agent, fresh context). Continued the
+widened sweep, this time hunting for the BROADER "snapshot state, await, act on stale state" pattern
+class (not just Dekker's memory-fence gaps) since round 5 revealed the bug class isn't limited to
+memory-fence issues. **VERDICT: NOT CLEAN -- 3 real risk findings + 1 nit.** Still not chunk 3a's
+first clean round; the rounds 2-5 pattern has not yet terminated.
+
+Part B (round 5's `_pttKeyEpoch` fix) re-verified as correct: every `SetPttAsync(true)` call site
+increments it (none missed), `Volatile.Read`/`Interlocked.Increment` is the right pairing for THIS
+pattern (unlike rounds 2-4's Dekker's gaps, this one genuinely doesn't need a `MemoryBarrier` --
+the auditor traced why precisely), wraparound/double-un-key are non-issues.
+
+Part A's broader sweep found:
+1. **`SetPttLockAsync`'s own unlock-path clears had the IDENTICAL lost-update shape round 5 fixed
+   in `UnkeyForCleanupAsync`** -- round 5 fixed only that twin location and missed this one (the
+   same fix-one-location-miss-the-twin repeat rounds 3→4 already produced in this same method).
+   Leaked-keyed-transmitter class; the false-positive direction (spurious backstop/false Critical)
+   is more reachable than the false-negative leak direction. Same zero-production-caller latency
+   status as prior rounds' findings -- fixed anyway.
+2. **Overlapping `PlayWithPttAsync` calls erase each other's blocker-3 registration**: the publish
+   side (`Interlocked.Exchange`) unconditionally overwrites, while the clear side explicitly
+   anticipated overlap as "pathological" -- but it isn't: `RadioStatusViewModel.TuneAsync` has no
+   TX-in-progress `CanExecute` gate, so clicking Tune during a transmit produces two genuinely live
+   calls in production. Auditor could not construct an actual leaked-transmitter OUTCOME from this
+   (whichever call finishes first still physically un-keys, and the flags DisposeAsync checks still
+   cover the skip-un-key cases) -- defense-in-depth erosion of the shutdown-wait mechanism itself,
+   not a demonstrated leak. Fixed anyway: it's the mechanism blocker 3 exists to guarantee.
+3. **The `_pttKeyEpoch` fix's own atomicity has two residual sub-gaps**: (a) avoidable -- the
+   increment ran AFTER `_pttLocked = locked` instead of before, letting a concurrent un-keyer
+   observe the lock flag before the epoch bump; (b) irreducible without a new lock -- an
+   instruction-scale window between an un-keyer's epoch recheck and its clears. Fixed (a); (b)
+   deliberately left open and honestly documented (matching Risk B's own precedent) rather than
+   adding a new synchronization primitive for an already-astronomically-narrow residual.
+4. **[nit]** The round-5 regression test only asserted `IsPttLocked`, not all three guarded clears
+   -- a partial revert (guard `_pttLocked` only, leave the other two unconditional) would still pass
+   green. Not separately re-tested this round (the new round-6 tests provide adjacent coverage for
+   `_pttLeftKeyedByCall`'s own clear-guard via a different code path); logged, not exhaustively
+   closed.
+
+Re-confirmed NOT findings (traced clean): `pttLockedAtEntry`/`pttLockedAtCleanup` single-read
+snapshots, `DisposeAsync`'s own multi-step chain (re-reads state after each await rather than
+reusing stale locals), `wasReceiving` (RX-class only), `_rxPendingResumeAfterUnlock` (still
+lower-severity, hasn't drifted into the PTT class). All previously-open nits re-confirmed accurate.
+
+**Chunk 3a round 6 fix applied** (2026-08-20, commit `<pending>`). Finding 1: `SetPttLockAsync` now
+snapshots the epoch before its own `SetPttAsync` await (same pattern `UnkeyForCleanupAsync` already
+uses) and gates its unlock-path clears (`_pttLeftKeyedByCall`/`_pttUnkeyFailedOnRealRig`) on the
+epoch being unchanged, logging `PttUnkeyRaceLostToNewerKey` otherwise -- exact same mechanism as
+round 5, just carried to the second location. Finding 2: new `private int _keyedTransmitCount;`,
+incremented alongside every `_keyedTransmitCompletion` publish and decremented alongside every
+clear -- `DisposeAsync`'s "is anything still keyed" check now reads the count, not the field's
+nullness, so it survives being overwritten by an overlapping call. `AwaitInFlightKeyedTransmitAsync`
+itself still only waits on whichever TCS is most recently published (best-effort, unchanged) but the
+OR-condition it feeds is now correct even when the wait has nothing to observe. Finding 3(a): the
+epoch increment in `SetPttLockAsync` moved to run before `_pttLocked = locked`. Finding 3(b):
+documented as an accepted, narrow, deliberately-unfenced residual in `_pttKeyEpoch`'s own doc
+comment, matching Risk B's own honest-documentation precedent -- no new lock added. Also corrected
+a stale "(pathological) overlapping PlayWithPttAsync" comment to state plainly this is a real
+production interleaving.
+
+New regression tests `Round6_SetPttLockAsync_Unlock_LostUpdateRace_DoesNotWipeAConcurrentNewerKey`
+(finding 1, same technique as round 5's own test) and
+`Round6_DisposeAsync_OverlappingTransmits_StillBackstopsWhenNewerCallClearsOlderCallsRegistration`
+(finding 2 -- deterministically nests an entire second `TuneAsync` call, plus a mid-race
+`DisposeAsync()` call, inside the first call's own un-key `BeforeSetPtt` hook; asserts exactly 5 PTT
+commands land, since the fix restores DisposeAsync's own backstop attempt that the old
+nullness-based check would have skipped entirely). Both mutation-verified by reverting each fix and
+confirming the exact predicted failure signature, then restored. All 181
+`ScanlineStudio.Application.Tests` passing, full solution suite (all projects) clean.
+
+Round 6 found real fixed findings in the leaked-keyed-transmitter class -- round 6 does NOT count as
+chunk 3a's 1st clean round. Round 7 (independent re-verification, continuing the widened full-sweep
+approach -- 5 consecutive rounds have now found something) is the earliest round that can count as
+chunk 3a's 1st clean round.
