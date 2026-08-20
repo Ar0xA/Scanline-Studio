@@ -1000,3 +1000,39 @@ bug caught by exactly the kind of rigor this fix's own severity demanded, not a 
 
 Full solution test run (build + all test projects) confirmed clean after this fix, including the
 corrected flaky test.
+
+**Chunk 3a round 2** (2026-08-20, independent re-verification agent, fresh context). Round 1's three
+blockers re-derived independently from current source (not trusted from the write-up) and confirmed
+genuinely closed. **Found one new real blocker, same leaked-keyed-transmitter class**: no `_disposed`
+gate existed anywhere in `SstvSessionService`. `DisposeAsync`'s backstop only guards
+`_keyedTransmitCompletion` state published BEFORE it runs -- a `PlayWithPttAsync` call still resolving
+its playback device (before it has published anything or keyed PTT at all) could let `DisposeAsync`
+run, find nothing to wait on/un-key, and return -- and only then would the call go on to key PTT, with
+no shutdown backstop left. Confirmed reachable on a real production path, not just synthetic:
+`RadioStatusViewModel.TuneAsync` calls `_sstvSession.TuneAsync(1750, 5s)` with **no `CancellationToken`**
+(defaults to `CancellationToken.None`), so nothing can cancel this window away. Also found 4 nits (log
+severity misclassification on one early-throw path, a stale `_rxPendingResumeAfterUnlock` flag,
+non-idempotent `DisposeAsync`, an unlinked shutdown-wait timer) -- not fixed this round, none in the
+leaked-keyed-transmitter class.
+
+**Chunk 3a round 2 fix applied** (2026-08-20). New `volatile bool _disposed` field, same threading
+shape as `_pttLocked`. `DisposeAsync` sets it as the very FIRST line (before even
+`AwaitInFlightKeyedTransmitAsync`'s read of `_keyedTransmitCompletion`). `PlayWithPttAsync` re-checks
+it immediately after publishing `_keyedTransmitCompletion` (publish-then-recheck, same shape as Risk
+B's own pattern already in this file) -- if `_disposed` is now true, throws `ObjectDisposedException`
+*before* issuing the actual key command, so PTT is provably never keyed by a call whose device
+resolution only finished after disposal already ran. `SetPttLockAsync` also rejects the ENGAGE
+direction post-disposal (`ObjectDisposedException.ThrowIf`) while still allowing unlock through --
+disposal must never remove the one remaining way to un-key an already-keyed rig.
+
+New regression test `Round2_DisposeAsync_RacesATuneStillInItsPreKeyWindow_NeverKeysAfterDisposeReturns`
+in `SstvSessionServicePttSafetyTests.cs`: gates `FakeAudioDeviceEnumerator.RefreshAsync` (new `Gate`
+hook) to park a `TuneAsync` call inside its pre-key window, disposes the service while it's parked,
+releases the gate, and asserts PTT is never commanded ON (`Assert.DoesNotContain(true, radio.PttCalls)`)
+and the call throws `ObjectDisposedException`. Mutation-verified by temporarily reverting the
+disposed-check in `PlayWithPttAsync` -- test failed with the exact predicted signature ("No exception
+was thrown"/`ObjectDisposedException` expected), then restored. Full `ScanlineStudio.Application.Tests`
+172/172 passing, full solution suite (all projects) clean.
+
+Round 2 found a real blocker -- **not** a clean round. Round 3 (independent re-verification of this
+fix) required next before chunk 3a can start counting toward the 2-consecutive-clean-round gate.

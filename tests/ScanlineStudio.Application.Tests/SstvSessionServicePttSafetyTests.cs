@@ -31,11 +31,12 @@ public sealed class SstvSessionServicePttSafetyTests
             Func<FakeAudioEngine, IAudioEngine>? wrapEngine = null,
             TimeSpan? cleanupTimeout = null,
             TimeSpan? playbackStopWaitBudget = null,
-            TimeSpan? inFlightKeyedTransmitWait = null)
+            TimeSpan? inFlightKeyedTransmitWait = null,
+            FakeAudioDeviceEnumerator? deviceEnumerator = null)
     {
         var inner = new FakeAudioEngine();
         var engine = wrapEngine?.Invoke(inner) ?? inner;
-        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        deviceEnumerator ??= new FakeAudioDeviceEnumerator
         {
             InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
             OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025])],
@@ -364,6 +365,48 @@ public sealed class SstvSessionServicePttSafetyTests
         await service.SetPttLockAsync(false);
 
         Assert.True(((FakeAudioEngine)engine).IsCapturing, "RX must never be stranded stopped by an unlock racing cleanup");
+    }
+
+    // ------------------------------------------------------------------ round 2 blocker
+
+    [Fact]
+    public async Task Round2_DisposeAsync_RacesATuneStillInItsPreKeyWindow_NeverKeysAfterDisposeReturns()
+    {
+        // Round-2 finding (independent re-audit): DisposeAsync's backstop only guarded
+        // _keyedTransmitCompletion state published BEFORE it ran. A PlayWithPttAsync call still
+        // resolving its playback device (RefreshAsync -- well before this call has published anything
+        // or keyed PTT at all) let DisposeAsync run, find nothing to wait on/un-key, and return -- and
+        // ONLY THEN did the call go on to key PTT, with no shutdown backstop left to catch it.
+        // Reachable for real: RadioStatusViewModel.TuneAsync passes CancellationToken.None, so nothing
+        // can ever cancel this window away.
+        var deviceGate = new TaskCompletionSource();
+        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
+            OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025])],
+            Gate = deviceGate.Task,
+        };
+        var (service, _, radio, _) = CreateService(deviceEnumerator: deviceEnumerator);
+
+        var tune = service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+
+        // The tune is parked inside ResolveDeviceAsync's RefreshAsync call -- before it has published
+        // _keyedTransmitCompletion or keyed PTT at all.
+        await Task.Delay(50);
+        Assert.Empty(radio.PttCalls);
+
+        await service.DisposeAsync();
+
+        // Only now does the parked tune get to continue.
+        deviceGate.SetResult();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => tune);
+
+        // THE property: PTT must never be commanded ON by a call whose device resolution only
+        // finished AFTER DisposeAsync had already run its backstop and returned -- a defensive un-key
+        // attempt in cleanup (harmless, idempotent) is fine, but the rig must never have been keyed in
+        // the first place.
+        Assert.DoesNotContain(true, radio.PttCalls);
     }
 
     // ------------------------------------------------------------------ helpers

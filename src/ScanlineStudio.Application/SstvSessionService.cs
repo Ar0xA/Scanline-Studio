@@ -59,6 +59,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // it too -- same failure class as blocker 3, one field to close. Same threading shape as _pttLocked.
     private volatile bool _pttLeftKeyedByCall;
 
+    // Tier A Batch 3 chunk 3a round-2 finding: DisposeAsync's backstop only guards
+    // _keyedTransmitCompletion state published BEFORE it runs -- a PlayWithPttAsync call that hasn't
+    // reached its own publish point yet (e.g. RadioStatusViewModel.TuneAsync's real production call
+    // passes CancellationToken.None, so nothing can ever cancel it) could previously key PTT AFTER
+    // DisposeAsync had already run its backstop and returned, with no shutdown safety net left to catch
+    // it. Read by PlayWithPttAsync's own thread, written by whatever thread calls DisposeAsync -- same
+    // threading shape as _pttLocked above.
+    private volatile bool _disposed;
+
     // Hot-path exception rate-limiting (docs/logging-guidelines.md's "Hot-path rule") -- these
     // handlers run on the audio engine's own capture-forwarding path, once per captured chunk;
     // logging every occurrence would turn a logging change into dropped RX samples. First
@@ -228,6 +237,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
         await _pttLockGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Round-2 fix: only the ENGAGE direction is rejected post-disposal -- an unlock must stay a
+            // valid escape hatch for a rig this class already left keyed (matches _pttLocked's own
+            // failed-unlock-stays-true reasoning below; disposal must never remove the one remaining
+            // way to un-key a rig that is still physically keyed).
+            if (locked)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+            }
+
             await _radioSession.SetPttAsync(locked, ct).ConfigureAwait(false);
             _pttLocked = locked;
             if (!locked)
@@ -724,6 +742,24 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // cleanup un-key's own failure reporting. Erring true costs at most one spurious
                 // Warning; erring false is the blocker-2 silent swallow.
                 pttKeyedOnRealRig = true;
+
+                // Round-2 fix, publish-then-recheck (same shape as Risk B's own at the RX-resume branch
+                // further down this method): either DisposeAsync's read of _keyedTransmitCompletion
+                // (its own very first line now sets _disposed before that read) sees THIS call's
+                // just-published completion and waits for it, or this call sees _disposed here and
+                // never issues the actual key command below at all -- the two sides can no longer miss
+                // each other the way a TuneAsync call with no CancellationToken
+                // (RadioStatusViewModel.TuneAsync passes CancellationToken.None) previously could race
+                // a closing DisposeAsync.
+                if (_disposed)
+                {
+                    // Provably never keyed BY THIS CALL -- the actual SetPttAsync(true) command is
+                    // still below this block. Only an already-engaged lock could have the rig keyed
+                    // independent of this call, and pttLockedAtEntry covers exactly that -- keeps the
+                    // cleanup un-key's Critical-vs-Debug classification honest in the finally below.
+                    pttKeyedOnRealRig = pttLockedAtEntry;
+                    throw new ObjectDisposedException(nameof(SstvSessionService));
+                }
             }
 
             if (!pttLockedAtEntry)
@@ -1053,6 +1089,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     public async ValueTask DisposeAsync()
     {
+        // Round-2 fix: must be the very FIRST thing this method does, before even
+        // AwaitInFlightKeyedTransmitAsync's read of _keyedTransmitCompletion just below -- this is the
+        // other half of the publish-then-recheck race PlayWithPttAsync now performs against this same
+        // field (see its own disposed-check right after publishing _keyedTransmitCompletion). Whichever
+        // side's write happens first, the other side's read is guaranteed to observe it.
+        _disposed = true;
+
         // ---- Blocker 3 (Tier A Batch 3 chunk 3a) ----
         // ORDER CHANGED DELIBERATELY: the PTT backstop now runs BEFORE StopReceivingAsync, which used
         // to be this method's first line. StopReceivingAsync ends in MiniAudioCaptureSession.Dispose's
