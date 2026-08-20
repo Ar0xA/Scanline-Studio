@@ -309,12 +309,35 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
     // Band-1 fix (pre-Phase-2 audit): DrainLoop's per-subscriber catch below used to be silent --
     // deliberately kept (a raw background Thread dying from an unhandled exception kills the whole
     // process) but with zero way for a caller to learn a subscriber ever threw. `volatile` (not a
-    // plain auto-property like TimedOutDuringClose): that one is written once, under the write
-    // lock, during Dispose, with _drainThread.Join() supplying the happens-before for its single
-    // read site -- this is written repeatedly on a live drain thread with readers on arbitrary
-    // other threads, so it needs its own visibility guarantee. _subscriberExceptionCount is
-    // Interlocked-incremented/Volatile-read for the same reason, mirroring OverrunCount's "raw
-    // counter for the caller to interpret" shape.
+    // plain auto-property like TimedOutDuringClose): this field is written repeatedly, on a LIVE
+    // drain thread that keeps running afterward, with readers on arbitrary other threads at
+    // arbitrary times relative to those writes -- it needs its own visibility guarantee because
+    // there is no other synchronization between a given write and a given read.
+    //
+    // TimedOutDuringClose (functional-audit round-6 correction: an earlier version of this comment
+    // claimed "_drainThread.Join() supplies the happens-before for its single read site" -- both
+    // halves were wrong. _drainThread.Join() orders the DISPOSING thread against the DRAIN thread;
+    // it has nothing to do with TimedOutDuringClose's own write, which happens on whichever thread
+    // is executing Dispose() -- sometimes that IS the drain thread (the self-dispose path, where
+    // Join is deliberately SKIPPED, see Dispose's own comment), sometimes a pool thread (the
+    // Task.Run(session.Dispose) path). Nor is there a single read site for THIS class's own
+    // TimedOutDuringClose -- MiniAudioEngine reads it, and separately this class's own Dispose()
+    // reads it again a few lines down to gate a real native-lifetime decision (whether
+    // MiniAudioContext.Release() is safe to call), not merely for diagnostics (round-6 code-review
+    // correction: an earlier version of this comment called that second read "diagnostics"). What
+    // actually makes a plain property safe here: on the FIRST (real) Dispose() call for a given
+    // instance, it's written exactly once, under the write lock, and every production read happens
+    // strictly after that same Dispose() call has already returned to its caller -- either on the
+    // SAME thread (the inline self-dispose path, trivially ordered) or across the
+    // `await Task.Run(session.Dispose)` boundary (MiniAudioEngine.cs), whose own task-completion
+    // semantics supply the happens-before, not this class's own Join call. A hypothetical SECOND
+    // Dispose() call (idempotency no-op, writes nothing) is instead ordered by the write lock's own
+    // release/acquire pair across the two calls -- not production-reachable today (the engine claims
+    // each session exactly once before ever calling Dispose), noted here for completeness rather
+    // than because the mechanism above needs it.
+    // _subscriberExceptionCount is Interlocked-incremented/Volatile-read for the same "written
+    // repeatedly on the drain thread, read anytime elsewhere" reason _lastSubscriberException is
+    // volatile, mirroring OverrunCount's "raw counter for the caller to interpret" shape.
     private volatile Exception? _lastSubscriberException;
     private int _subscriberExceptionCount;
 
@@ -467,8 +490,10 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
         // production path, just the same class of gap if one were ever added.
         //
         // Not a deadlock (Dispose itself never waits on the poller, only the reverse) and not
-        // corruption -- bounded by CloseTimeout (~5s), typically near-instant (see :502-503 below
-        // for why the common case is fast), then ALSO throws ObjectDisposedException once unblocked
+        // corruption -- bounded by CloseTimeout (~5s), typically near-instant (round-6 fix: dropped
+        // a stale in-file line citation here -- see the native-close comment further down in this
+        // same method for why the common case is fast), then ALSO throws ObjectDisposedException
+        // once unblocked
         // (_disposed is set inside this same write lock, so a reader that just blocked here always
         // observes it true on waking) -- block-then-throw, not block-instead-of-throw. In the
         // documented pathological case where a SamplesAvailable subscriber itself hangs (see that
