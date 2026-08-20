@@ -69,12 +69,13 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
         PttCalls.Add(tx);
     }
 
-    /// <summary>Test-only hook, invoked at the very start of <see cref="SetPttAsync"/> -- BEFORE the
-    /// RigId check below, so a test can mutate <see cref="RigId"/> from inside the call. That is
-    /// exactly how the real blocker-2 race works (Tier A Batch 3 chunk 3a):
-    /// <c>RadioController.DisconnectAsync</c>/<c>DisposeAsync</c> reset <c>_rigId</c> to
-    /// <c>"none"</c> WITHOUT un-keying, so <see cref="RigId"/> can read <c>"none"</c> at the precise
-    /// moment a genuinely-keyed rig's un-key fails.</summary>
+    /// <summary>Test-only hook, invoked BEFORE the RigId check below (and, round-9 nit: BEFORE this
+    /// point, after <see cref="Gate"/> if that's also set -- not literally "the very start of
+    /// <see cref="SetPttAsync"/>" once a test parks the call there first), so a test can mutate
+    /// <see cref="RigId"/> from inside the call. That is exactly how the real blocker-2 race works
+    /// (Tier A Batch 3 chunk 3a): <c>RadioController.DisconnectAsync</c>/<c>DisposeAsync</c> reset
+    /// <c>_rigId</c> to <c>"none"</c> WITHOUT un-keying, so <see cref="RigId"/> can read <c>"none"</c>
+    /// at the precise moment a genuinely-keyed rig's un-key fails.</summary>
     public Action<bool>? BeforeSetPtt { get; set; }
 
     /// <summary>Test-only hook (Tier A Batch 3 chunk 3a round 8): when set, <see cref="SetPttAsync"/>
