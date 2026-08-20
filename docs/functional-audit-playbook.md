@@ -1623,7 +1623,7 @@ nothing added across rounds 5-10 introduced a new sequential wait on that path. 
 candidate findings during the sweep (a `StopReceivingAsync`/drain-thread self-join deadlock that
 turned out not to be one; a real backend assumption that checked out against actual source).
 
-**Chunk 3a round 11 fix applied** (2026-08-21, commit `<pending>`). Finding 1: documented as an
+**Chunk 3a round 11 fix applied** (2026-08-21, commit `b0a028b`). Finding 1: documented as an
 explicit, considered accepted risk (not code-fixed) -- new prose in `_pttLockGate`'s own doc comment
 and the round-7/11 catch block, both cross-referencing the existing sibling race. Findings 2: comment
 corrected. Findings 3-4: logged, not fixed (nits). Test-quality issue: `WaitAsync(TimeSpan)` guards
