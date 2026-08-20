@@ -267,10 +267,20 @@ public interface ISstvSessionService : IAsyncDisposable
     /// name: this is the audio-engine's own dropped-frame overrun count (status bar's "· N XRUN"
     /// half), not the decoder's internal sample-history buffer. 0 whenever RX capture isn't running,
     /// same as the underlying engine property -- unlike that underlying property (see its own doc
-    /// comment), THIS one genuinely upholds the class-level "safe to read from any thread" contract:
-    /// the implementation absorbs the underlying engine's documented stop-capture race and reports
+    /// comment), THIS one absorbs the underlying engine's documented stop-capture race and reports
     /// <c>0</c> rather than letting it throw, matching this member's own "capture isn't running"
-    /// contract value exactly (auditor round 1, batch-5 wiring).</summary>
+    /// contract value exactly (auditor round 1, batch-5 wiring). <b>Tier A Batch 1 re-audit round 5
+    /// correction: this does NOT fully uphold the class-level "safe to read from any thread"
+    /// contract</b> -- the underlying engine property's own doc comment now also documents a
+    /// distinct hazard this implementation's <c>catch (ObjectDisposedException)</c> cannot absorb:
+    /// the SAME race can make the underlying read BLOCK (on the disposing
+    /// <c>MiniAudioCaptureSession</c>'s own write lock) rather than throw, for as long as that
+    /// `Dispose()` call takes -- typically near-instant, bounded by
+    /// <c>MiniAudioCaptureSession.CloseTimeout</c> (~5s) in the common case, unbounded if a
+    /// `SamplesAvailable` subscriber elsewhere hangs. In this port's own real call graph that means
+    /// the caller (`RxImagePaneViewModel`'s 250ms `DispatcherTimer` poll) can stall the UI thread,
+    /// not just observe a caught exception. See <see cref="ScanlineStudio.Abstractions.Audio.IAudioEngine.CaptureOverrunCount"/>'s
+    /// own doc comment for the full mechanism.</summary>
     int CaptureOverrunCount { get; }
 
     /// <summary>Manual-keying diagnostic aid: holds PTT keyed independent of any

@@ -320,4 +320,45 @@ public class MiniAudioRingTests
 
         Assert.IsType<InvalidOperationException>(exception);
     }
+
+    // Tier A Batch 1 re-audit round 5 nit: yoniq_audio_ring_create's `<= 0` guard (native/yoniq_audio.c,
+    // right above the overflow guard the test above covers) had no test either. Real, if a lower one:
+    // a channels <= 0 value that somehow slipped past this guard would reach Write/Read's own
+    // `data.Length % _channels` (MiniAudioRing.cs) as a DivideByZeroException, a much less
+    // diagnosable failure than a clean constructor-time InvalidOperationException. Code-review
+    // correction: zero alone doesn't clearly discriminate the guard for `channels` (0 is plausibly
+    // rejected downstream regardless) -- negative is the value where the guard is actually
+    // load-bearing (a naive cast, e.g. to `ma_uint32`, would turn `-1` into 4294967295), so both are
+    // covered, not just zero despite the original "NonPositive" naming.
+    [Fact]
+    public void Constructor_ZeroChannels_Throws()
+    {
+        var exception = Record.Exception(() => new MiniAudioRing(capacityFrames: 64, channels: 0));
+
+        Assert.IsType<InvalidOperationException>(exception);
+    }
+
+    [Fact]
+    public void Constructor_NegativeChannels_Throws()
+    {
+        var exception = Record.Exception(() => new MiniAudioRing(capacityFrames: 64, channels: -1));
+
+        Assert.IsType<InvalidOperationException>(exception);
+    }
+
+    [Fact]
+    public void Constructor_ZeroCapacityFrames_Throws()
+    {
+        var exception = Record.Exception(() => new MiniAudioRing(capacityFrames: 0, channels: 1));
+
+        Assert.IsType<InvalidOperationException>(exception);
+    }
+
+    [Fact]
+    public void Constructor_NegativeCapacityFrames_Throws()
+    {
+        var exception = Record.Exception(() => new MiniAudioRing(capacityFrames: -1, channels: 1));
+
+        Assert.IsType<InvalidOperationException>(exception);
+    }
 }

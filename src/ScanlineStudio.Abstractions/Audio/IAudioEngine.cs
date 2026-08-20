@@ -86,7 +86,15 @@ public interface IAudioEngine : IAsyncDisposable
     /// polls this on a timer, as <c>ScanlineStudio.Application.ISstvSessionService.CaptureOverrunCount</c>'s
     /// own implementation does, must not assume this member alone is safe to read unguarded from any
     /// thread the way the class doc comment's general "Memory lifetime"/"Lifecycle-error contract"
-    /// sections promise for the rest of this interface.</summary>
+    /// sections promise for the rest of this interface. <b>Also not guaranteed non-blocking</b>
+    /// (Tier A Batch 1 re-audit round 5): the same race window can make an implementation's read
+    /// BLOCK rather than throw -- see <c>MiniAudioEngine.CaptureOverrunCount</c>'s own doc comment
+    /// for the mechanism (a non-atomic null-conditional read against a session mid-`Dispose()`,
+    /// which holds a write lock across a drain-thread join). A caller that catches
+    /// <see cref="ObjectDisposedException"/> around this read (as
+    /// <c>ScanlineStudio.Application.ISstvSessionService.CaptureOverrunCount</c>'s own
+    /// implementation does) is NOT thereby protected from stalling on this call for as long as that
+    /// Dispose takes.</summary>
     int CaptureOverrunCount { get; }
 
     /// <param name="periodSizeInFrames">Requested native hardware/backend buffer period size (0 =
