@@ -269,6 +269,18 @@ public class MiniAudioPlaybackSessionTests
 
             Assert.True(playbackSession.UnderrunCount > 0, "Expected genuine underruns with nothing ever written -- test setup itself is wrong if this is 0.");
 
+            // Tier A Batch 1 re-audit round 8: discriminates "counts real-time CALLBACKS that
+            // underran" (the actual, documented, correct semantics -- yoniq_audio.c's own
+            // underrun_count field comment) from "counts FRAMES padded with silence" (what the
+            // native header's own doc comment wrongly said before this round's fix). 2 seconds of
+            // continuous underrun at SampleRate would drop on the order of 2*SampleRate (~88,200)
+            // frames if this were a frame counter -- real-time callbacks firing that often (every
+            // ~11 microseconds) isn't a real backend period size. A generously loose upper bound,
+            // comfortably above any real callback count for a 2-second window at any reasonable
+            // period size, still catches a regression back to frame-counting by roughly two orders
+            // of magnitude.
+            Assert.True(playbackSession.UnderrunCount < 20000, $"UnderrunCount ({playbackSession.UnderrunCount}) is high enough to suggest it's counting padded FRAMES, not underrun CALLBACKS -- 2s at {SampleRate}Hz would pad ~{2 * SampleRate} frames if so, but real-time callbacks don't fire anywhere near that often.");
+
             var leftPeak = await CapturePeakAsync(monitor!.Id, AudioChannelSource.Left, requiredSeconds: 1);
             var rightPeak = await CapturePeakAsync(monitor.Id, AudioChannelSource.Right, requiredSeconds: 1);
 

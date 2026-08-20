@@ -215,12 +215,19 @@ YONIQ_AUDIO_API int yoniq_audio_playback_session_write(yoniq_audio_playback_sess
  * closing early would truncate the tail of a real transmission. Returns -1 on error. */
 YONIQ_AUDIO_API int yoniq_audio_playback_session_pending_frames(yoniq_audio_playback_session *session);
 
-/* Returns the cumulative count of frames the real-time callback has had to pad with silence
- * because the ring ran dry (an underrun) since the session was opened. Distinguishing an expected
- * underrun (nothing left to play, transmission legitimately finished) from an unwanted one
- * (managed code fell behind mid-transmission) requires knowing how many frames were actually
- * enqueued vs. expected to play -- context only the caller has, not this shim -- so this is a raw
- * counter for the caller to interpret, not a verdict. */
+/* Functional-audit fix (Tier A Batch 1 re-audit round 8): this comment previously said "cumulative
+ * count of FRAMES the real-time callback has had to pad with silence" -- wrong, and a real ABI-
+ * contract mismatch, not just imprecise wording. The actual, always-correct implementation
+ * (yoniq_audio.c's own underrun_count field comment) increments this exactly ONCE PER CALLBACK
+ * that padded with silence, never once per padded frame -- an event counter, not a frame counter.
+ * A caller computing e.g. "seconds of audio dropped" as underrun_count/sample_rate would be wrong
+ * by roughly the period size, growing with buffer size. Returns the cumulative count of REAL-TIME
+ * CALLBACKS in which the callback has had to pad with silence because the ring ran dry (an
+ * underrun) since the session was opened. Distinguishing an expected underrun (nothing left to
+ * play, transmission legitimately finished) from an unwanted one (managed code fell behind
+ * mid-transmission) requires knowing how many frames were actually enqueued vs. expected to play --
+ * context only the caller has, not this shim -- so this is a raw counter for the caller to
+ * interpret, not a verdict. */
 YONIQ_AUDIO_API int yoniq_audio_playback_session_underrun_count(yoniq_audio_playback_session *session);
 
 YONIQ_AUDIO_API int yoniq_audio_playback_session_check_and_clear_stopped(yoniq_audio_playback_session *session);
