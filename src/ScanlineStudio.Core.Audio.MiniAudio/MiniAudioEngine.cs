@@ -610,7 +610,15 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     /// unlike Start/Stop it is deliberately NOT covered by piece Engine 3's `_playbackLock`: a
     /// concurrent <see cref="StopPlaybackAsync"/> racing this call can still surface the underlying
     /// session's own <see cref="ObjectDisposedException"/> if it wins the race, left untranslated
-    /// here (a genuine, narrow, documented gap -- not silently swallowed). Reads the `volatile`
+    /// here (a genuine, narrow, documented gap -- not silently swallowed). Tier A Batch 1 re-audit
+    /// round 6 addition: the same mechanism round 5 documented for
+    /// <see cref="CaptureOverrunCount"/> applies here too -- the racing `Write` call can BLOCK
+    /// (on <see cref="MiniAudioPlaybackSession"/>'s own read lock, held by a concurrent
+    /// <see cref="StopPlaybackAsync"/>'s `Dispose()` across up to its own `CloseTimeout`) before it
+    /// throws, not merely throw. Lower-severity than the capture case: this call's only real
+    /// production caller (<c>SstvSessionService.EnqueueAllAsync</c>) runs on a background TX task,
+    /// not the UI thread, and there is no UI poller for <see cref="PlaybackUnderrunCount"/> the way
+    /// <see cref="CaptureOverrunCount"/> has one for capture. Reads the `volatile`
     /// <see cref="_playbackSession"/> field directly, which is sufficient for this method's own
     /// correctness (a torn read is impossible for a reference-type field, and `volatile` guarantees
     /// this thread observes the most recent publish from <see cref="StartPlaybackAsync"/>).</summary>

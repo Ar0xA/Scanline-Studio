@@ -207,6 +207,19 @@ static int string_to_device_id(ma_backend backend, const char *device_id, ma_dev
          * other way -- enumeration alone would have looked fine, masking this). */
         strncpy(out_id->coreaudio, device_id, sizeof(out_id->coreaudio) - 1);
         return 0;
+    case ma_backend_jack:
+        /* Functional-audit fix (Tier A Batch 1 re-audit round 6): this case was missing entirely,
+         * the same bug shape as the coreaudio fix immediately above -- ma_backend_jack IS in this
+         * shim's own requested backend list (see the backends[] array a few lines up), so a host
+         * where PulseAudio and ALSA context-init both fail but JACK succeeds would enumerate real
+         * devices fine (device_id_to_string's own jack case, above, already handles the reverse
+         * direction) but then fail every single yoniq_audio_get_native_formats/
+         * capture_session_open/playback_session_open call unconditionally -- exactly the
+         * "enumeration alone would have looked fine, masking this" trap the coreaudio comment
+         * already names. device_id_to_string's own jack case renders id->jack via "%d" (a plain
+         * int), so parse it back the same way. */
+        out_id->jack = atoi(device_id);
+        return 0;
 #if defined(_WIN32)
     case ma_backend_wasapi:
     {
