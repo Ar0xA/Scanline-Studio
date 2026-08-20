@@ -1482,7 +1482,7 @@ never published skips the clear cleanly; `_pttLockGate`'s own serialization is u
 restructure). No new instance of any prior bug class (Dekker's gap / lost-update / overlap-erosion)
 found in round 8's own new code.
 
-**Chunk 3a round 9 fix applied** (2026-08-20, commit `<pending>`). Finding 1: `SetPttLockAsync` now
+**Chunk 3a round 9 fix applied** (2026-08-20, commit `f6d4fca`). Finding 1: `SetPttLockAsync` now
 rechecks `_disposed` (via `ObjectDisposedException.ThrowIf`) immediately after publishing the
 registration, before the key command -- 3 lines, strictly additive, matching `PlayWithPttAsync`'s
 own already-tested pattern exactly. No dedicated regression test for the exact instruction-scale
