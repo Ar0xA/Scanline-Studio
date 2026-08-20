@@ -329,6 +329,29 @@ public class MiniAudioEngineTests
         await Assert.ThrowsAsync<AudioDeviceUnavailableException>(() => engine.StartCaptureAsync(bogusDevice, sampleRate: 44100));
     }
 
+    // Tier A Batch 1 re-audit round 4: OpenCaptureSession's dedicated ArgumentOutOfRangeException
+    // catch (added in round 2's own code review, so an out-of-range drainThreadPriority surfaces as
+    // "invalid settings" instead of the misleading "device unavailable" every OTHER failure mode in
+    // this method produces) had zero test coverage at the engine level -- MiniAudioCaptureSessionTests'
+    // own two ctor-level tests stop at the session boundary and never exercise this catch. Deleting
+    // that branch (or reordering it after the general ArgumentException filter below it) would be
+    // silent: ArgumentOutOfRangeException derives from ArgumentException, so it would just fall
+    // through to the generic message, and nothing in the suite would fail. This closes that gap at
+    // the same layer its two same-commit sibling tests already cover the session-level guards at.
+    // Hardware-free: the validation runs before any native device is touched, so the bogus device id
+    // here is never actually reached.
+    [Fact]
+    public async Task StartCaptureAsync_WithOutOfRangeDrainThreadPriority_ThrowsWithAnInvalidSettingsMessage_NotADeviceUnavailableOne()
+    {
+        await using var engine = new MiniAudioEngine(NullLogger<MiniAudioEngine>.Instance);
+        var bogusDevice = new AudioDeviceInfo("this-device-does-not-exist", "Bogus", MaxInputChannels: 1, MaxOutputChannels: 0, SupportedSampleRates: []);
+
+        var exception = await Assert.ThrowsAsync<AudioDeviceUnavailableException>(
+            () => engine.StartCaptureAsync(bogusDevice, sampleRate: 44100, drainThreadPriority: (ThreadPriority)42));
+
+        Assert.Contains("Invalid capture settings", exception.Message);
+    }
+
     // Engine-level mirror of MiniAudioCaptureSessionTests.
     // Dispose_CalledFromWithinSamplesAvailableCallback_DoesNotSelfJoinDeadlock -- proves the
     // engine's own inline-vs-Task.Run dispatch (see MiniAudioEngine.DisposeCaptureSessionAsync)
