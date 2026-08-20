@@ -321,6 +321,111 @@ public class MiniAudioCaptureSessionTests
         }
     }
 
+    // Tier A Batch 1 re-audit round 5: HasStopped/OverrunCount had zero test coverage for their own
+    // _lifetimeLock-based post-dispose guard, unlike MiniAudioRing's identical ObjectDisposedException
+    // pair (MiniAudioRingTests.Write_Throws_AfterDispose/Read_Throws_AfterDispose) and
+    // MiniAudioPlaybackSession's own concurrent-stress test below. Simple, direct pair first.
+    [RequiresPipeWireFact]
+    public async Task HasStoppedAndOverrunCount_ThrowObjectDisposedException_AfterDispose()
+    {
+        var sinkName = $"sstv_capture_dispose_guard_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Capture_Dispose_Guard_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100, NullLogger.Instance);
+            session.Dispose();
+
+            Assert.Throws<ObjectDisposedException>(() => session.HasStopped);
+            Assert.Throws<ObjectDisposedException>(() => session.OverrunCount);
+        }
+        finally
+        {
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
+    // Companion stress test, mirroring MiniAudioPlaybackSessionTests'
+    // ConcurrentUseAndDispose_NeverThrowsAnythingOtherThanObjectDisposedException exactly -- the
+    // same _lifetimeLock fix protects both classes, and only the playback side had a test proving
+    // it holds under real concurrent contention rather than just a clean sequential dispose. This
+    // also exercises the round-5 finding's own read-lock/write-lock contention (userThread genuinely
+    // blocks on HasStopped/OverrunCount's EnterReadLock while session.Dispose() below holds the
+    // write lock), but NOT the round-5 stall's own timing specifically -- code-review correction:
+    // session.Dispose() is synchronous on THIS (the main test) thread, so any block userThread hits
+    // resolves (one way or another) before Dispose() itself returns, i.e. before
+    // userThread.Join(10s) is ever reached; the 10s bound is a generic safety margin against the
+    // test hanging for some OTHER reason (e.g. a self-join regression), not specifically sized to
+    // absorb the round-5 stall.
+    [RequiresPipeWireFact]
+    public async Task ConcurrentUseAndDispose_NeverThrowsAnythingOtherThanObjectDisposedException()
+    {
+        var sinkName = $"sstv_capture_race_test_{Guid.NewGuid():N}";
+
+        RunPactl($"load-module module-null-sink sink_name={sinkName} sink_properties=device.description=SSTV_Capture_Race_Test", out var moduleIdOutput);
+        var moduleId = moduleIdOutput.Trim();
+        Assert.False(string.IsNullOrEmpty(moduleId), "pactl load-module did not return a module id -- is a PulseAudio/PipeWire-pulse server running?");
+
+        Process? toneProcess = null;
+        try
+        {
+            using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+            await enumerator.RefreshAsync();
+            var monitor = enumerator.InputDevices.FirstOrDefault(d => d.Id.Contains($"{sinkName}.monitor", StringComparison.OrdinalIgnoreCase));
+            Assert.True(monitor is not null, $"Virtual sink's monitor was not found among {enumerator.InputDevices.Count} enumerated input devices.");
+
+            toneProcess = StartToneIntoSink(sinkName, durationSeconds: 5);
+
+            var session = new MiniAudioCaptureSession(monitor!.Id, sampleRate: 44100, NullLogger.Instance);
+            using var start = new Barrier(2);
+
+            var userThread = new Thread(() =>
+            {
+                start.SignalAndWait();
+                try
+                {
+                    while (true)
+                    {
+                        _ = session.HasStopped;
+                        _ = session.OverrunCount;
+                        _ = session.LastSubscriberException;
+                        _ = session.SubscriberExceptionCount;
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Expected once Dispose wins the race.
+                }
+            })
+            {
+                IsBackground = true,
+            };
+            userThread.Start();
+
+            start.SignalAndWait();
+            session.Dispose();
+
+            Assert.True(userThread.Join(TimeSpan.FromSeconds(10)), "User thread did not observe Dispose within the expected bound.");
+        }
+        finally
+        {
+            if (toneProcess is not null && !toneProcess.HasExited)
+            {
+                toneProcess.Kill(entireProcessTree: true);
+            }
+
+            RunPactl($"unload-module {moduleId}", out _);
+        }
+    }
+
     private static async Task<float> CapturePeakAsync(string deviceId, AudioChannelSource channelSource)
     {
         var receivedChunks = new List<float[]>();
