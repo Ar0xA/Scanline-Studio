@@ -43,7 +43,7 @@ internal sealed class SlantTracker
     private const int HistorySize = 16;
     private const int FitPoints = 5; // GetSqerrPos is only ever called with n=5 in legacy
 
-    private readonly double[] _history = new double[HistorySize];
+    private readonly int[] _history = new int[HistorySize];
     private readonly double[] _limitsHz;
     private readonly int[] _thresholdLinePositions;
     private readonly double _lineDurationMs;
@@ -68,7 +68,10 @@ internal sealed class SlantTracker
     private int _totalLinesObserved;
     private int _linesSinceBaseline;
     private int _bitMask;
-    private double _baselinePosition = double.MaxValue; // 0x7fffffff sentinel: "no baseline yet"
+    // Legacy's `int m_ASBgnPos` with its literal 0x7fffffff "no baseline yet" sentinel
+    // (Main.h:1360, Main.cpp:3807/3989). _hasBaseline carries the actual decision; the sentinel is
+    // kept for type/value fidelity with legacy.
+    private int _baselinePosition = int.MaxValue;
     private bool _hasBaseline;
 
     /// <param name="sampleRate">This decoder's sample rate.</param>
@@ -95,7 +98,7 @@ internal sealed class SlantTracker
     /// mode's sync segment is expected to start (already wrapped to the representation closest to
     /// zero — see <c>AnalogFmSstvDecoder</c>). Returns a corrected samples-per-line value once a
     /// drift correction commits, else null.</summary>
-    public double? ProcessLine(double relativePositionSamples) => ProcessLineCore(relativePositionSamples, suppressCommit: false);
+    public double? ProcessLine(int relativePositionSamples) => ProcessLineCore(relativePositionSamples, suppressCommit: false);
 
     /// <summary>RX buffer subsystem Phase 6b -- the third code path round-1 plan-review found missing:
     /// legacy's own suppressed-replay re-feed (`Main.cpp:3989-4017`, `m_ASDis=1` bracketed) runs the
@@ -112,11 +115,13 @@ internal sealed class SlantTracker
     /// deliberately: nothing should ever act on this quantity during a suppressed pass, and exposing it
     /// would invite a future caller to "notice" and apply it, exactly what legacy's own `m_ASDis`
     /// exists to prevent.</summary>
-    public void ProcessLineSuppressed(double relativePositionSamples) => ProcessLineCore(relativePositionSamples, suppressCommit: true);
+    public void ProcessLineSuppressed(int relativePositionSamples) => ProcessLineCore(relativePositionSamples, suppressCommit: true);
 
-    private double? ProcessLineCore(double relativePositionSamples, bool suppressCommit)
+    private double? ProcessLineCore(int relativePositionSamples, bool suppressCommit)
     {
-        // Main.cpp:3964-3966: unconditional history shift + push, every call.
+        // Main.cpp:3964-3966: unconditional history shift + push, every call. `int[]` matches
+        // legacy's `int m_AutoStopAPos[16]` (Main.h:1351) -- the caller has already applied
+        // legacy's own truncation chain (see AnalogFmSstvDecoder's `relative`).
         Array.Copy(_history, 1, _history, 0, HistorySize - 1);
         _history[HistorySize - 1] = relativePositionSamples;
         _totalLinesObserved++;
@@ -130,7 +135,10 @@ internal sealed class SlantTracker
             // ultracode audit finding #7: the loop bound used to be `i > HistorySize - FitPoints`
             // (11), an off-by-one that checked only 4 deltas (indices 15..12) instead of legacy's 5,
             // making this gate a strict superset-permissive subset of legacy's real check.
-            var maxDelta = 0.0;
+            // Main.cpp:3971-3981 -- `int df = ABS(int - int)` against the int `8*m_Mult`. With an
+            // int history this comparison is now exact, with no float-boundary ambiguity at
+            // df == 8*mult (previously a fractional maxDelta of 159.9999... vs 160 could flip it).
+            var maxDelta = 0;
             for (var i = HistorySize - 1; i > HistorySize - FitPoints - 1; i--)
             {
                 maxDelta = Math.Max(maxDelta, Math.Abs(_history[i] - _history[i - 1]));
@@ -173,7 +181,7 @@ internal sealed class SlantTracker
     /// <see cref="_currentSampleRate"/>/<see cref="_nominalSamplesPerLine"/>, and — via
     /// <see cref="Reset"/> on any committed correction — <c>Array.Clear</c> the very history it is
     /// supposed to be preserving.</summary>
-    public void ProcessLineHistoryOnly(double relativePositionSamples)
+    public void ProcessLineHistoryOnly(int relativePositionSamples)
     {
         // Main.cpp:3964-3966 -- byte-for-byte ProcessLine's own first three statements.
         Array.Copy(_history, 1, _history, 0, HistorySize - 1);
@@ -185,9 +193,14 @@ internal sealed class SlantTracker
         _linesSinceBaseline++;
     }
 
-    /// <summary><c>GetSqerrPos(5)</c> (`Main.cpp:3867-3880`) — least-squares linear fit's value at
-    /// i=0 (the most recent sample) over the last 5 history entries.</summary>
-    private double GetSqerrPos()
+    /// <summary><c>GetSqerrPos(5)</c> (`Main.cpp:3867-3881`) — least-squares linear fit's value at
+    /// i=0 (the most recent sample) over the last 5 history entries. Legacy accumulates in
+    /// <c>double</c> but is declared <c>int __fastcall GetSqerrPos(int n)</c> (Main.h:1342) and
+    /// returns a <c>double l0</c>, so the fit result is TRUNCATED TOWARD ZERO on return -- not
+    /// rounded, and specifically not banker's-rounded. That truncated value is what becomes
+    /// <c>m_ASBgnPos</c> and what the drift formula differences against, so it is observable, not
+    /// cosmetic.</summary>
+    private int GetSqerrPos()
     {
         double t = 0, l = 0, tt = 0, tl = 0;
         for (var i = 0; i < FitPoints; i++)
@@ -196,10 +209,10 @@ internal sealed class SlantTracker
             var value = _history[HistorySize - 1 - i];
             l += value;
             tt += (double)i * i;
-            tl += i * value;
+            tl += i * value; // legacy's `TL += i * l` -- int*int, both operands small and bounded
         }
 
-        return (l * tt - t * tl) / (FitPoints * tt - t * t);
+        return (int)((l * tt - t * tl) / (FitPoints * tt - t * t));
     }
 
     /// <summary>Main.cpp:3994-4017 -- the drift calculation and staged threshold ladder.
@@ -208,7 +221,7 @@ internal sealed class SlantTracker
     /// latching below (`:4006-4010`) is NOT gated by it (matches legacy -- those bits latch during a
     /// suppressed replay pass too) -- only the trailing `_currentSampleRate`/`_nominalSamplesPerLine`
     /// write and <see cref="Reset"/> call are skipped when <see langword="true"/>.</summary>
-    private double? TryComputeCorrection(double fittedPosition, bool suppressCommit)
+    private double? TryComputeCorrection(int fittedPosition, bool suppressCommit)
     {
         var d = (_baselinePosition - fittedPosition) * _currentSampleRate / _nominalSamplesPerLine / _linesSinceBaseline;
         var candidateSampleRate = _correctionAverage.Add(_currentSampleRate - d);
@@ -297,9 +310,28 @@ internal sealed class SlantTracker
     /// <c>m_SampFreq</c> regardless of which mechanism last corrected it.</summary>
     internal void AdoptCorrectedRate(double correctedSampleRate)
     {
-        _currentSampleRate = correctedSampleRate;
-        _nominalSamplesPerLine = _lineDurationMs / 1000.0 * correctedSampleRate;
+        SetRatePair(correctedSampleRate);
         Reset();
+    }
+
+    /// <summary>Legacy's bare <c>SSTVSET.m_SampFreq = ...; SSTVSET.SetSampFreq();</c> with NO
+    /// <c>InitAutoStop</c> -- the rate half of a commit only. Used by the manual Correct Slant path
+    /// (both its forward commit and its revert), because in legacy <c>InitAutoStop</c> is reached
+    /// only from INSIDE <c>UpdateSampFreq</c> (<c>Main.cpp:5600</c>), i.e. only on the success arm
+    /// (<c>Main.cpp:5418</c>'s <c>RedrawSampFreq(FALSE)</c> -> <c>:5585</c> -> <c>:5600</c>). The
+    /// revert arm (<c>Main.cpp:5420-5423</c>) is a bare <c>m_SampFreq = StartSamp; SetSampFreq();</c>
+    /// -- baseline, 16-entry history, moving average and bitmask ALL survive a reverted manual
+    /// correction in legacy. This port's <c>PerformReplay</c> supplies the success-arm reset at its
+    /// own <see cref="ResetBaseline"/> call, which sits after every one of its early-exit
+    /// <c>return false</c>s and before every <c>return true</c> -- the same boundary legacy draws.
+    /// Deliberately a separate method rather than a bool parameter on
+    /// <see cref="AdoptCorrectedRate"/>: a mis-passed flag on a commit API is silent.</summary>
+    internal void RestoreRateWithoutReset(double sampleRate) => SetRatePair(sampleRate);
+
+    private void SetRatePair(double sampleRate)
+    {
+        _currentSampleRate = sampleRate;
+        _nominalSamplesPerLine = _lineDurationMs / 1000.0 * sampleRate;
     }
 
     /// <summary>RX buffer subsystem Phase 6b -- public exposure of <see cref="Reset"/> for a replay
@@ -320,7 +352,7 @@ internal sealed class SlantTracker
         _totalLinesObserved = 0;
         _linesSinceBaseline = 0;
         _hasBaseline = false;
-        _baselinePosition = double.MaxValue;
+        _baselinePosition = int.MaxValue;
         _bitMask = 0;
         _correctionAverage.Clear();
     }
@@ -366,5 +398,11 @@ internal sealed class SlantTracker
 
     /// <summary>Test-only visibility into the raw recorded-position history buffer -- a defensive
     /// copy, since the real field is mutated in place by every subsequent call.</summary>
-    internal double[] HistoryForTests => (double[])_history.Clone();
+    internal int[] HistoryForTests => (int[])_history.Clone();
+
+    /// <summary>Test-only visibility into <c>m_ASBgnPos</c> (Main.h:1360) -- the captured baseline is
+    /// the direct, unaveraged output of <see cref="GetSqerrPos"/>, so this is the only place a test
+    /// can observe that fit's TRUNCATION rule (toward zero, per legacy's `int GetSqerrPos`) without
+    /// it being laundered through the moving average and the NormalSampFreq quantizer.</summary>
+    internal int BaselinePositionForTests => _baselinePosition;
 }
