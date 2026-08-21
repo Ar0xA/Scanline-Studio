@@ -32,7 +32,7 @@ public class PixelSampleReaderTests
     [Fact]
     public void ReadPeakPicked_TiesKeepTheBareSample_StrictLessThanOnly()
     {
-        // sstv.cpp:4062's `*ip < *(ip+m_KSB)` is strict -- a tie must keep the bare (first) sample,
+        // Main.cpp:4062's `*ip < *(ip+m_KSB)` is strict -- a tie must keep the bare (first) sample,
         // not the peek-ahead one. Using `<=` here would invert behavior on every flat region.
         var reader = FromList([1900.0, 1900.0], ksbSamples: 1, lineEndSampleExclusive: 10, luminanceMinHz: 1500.0, neverPeakPicks: false);
         Assert.Equal(1900.0, reader.ReadPeakPicked(0, 0));
@@ -89,6 +89,15 @@ public class PixelSampleReaderTests
 
         Assert.Equal(1600.0, reader.ReadPeakPicked(0, 0));
         Assert.Equal(reader.ReadBare(0, 0), reader.ReadPeakPicked(0, 0));
+    }
+
+    [Fact]
+    public void Constructor_KsbSamplesLessThanOne_ThrowsArgumentOutOfRangeException()
+    {
+        // Legacy guarantees ksbSamples >= 1 (sstv.cpp:1179's `if(!m_KSB) m_KSB++`) -- a 0 would
+        // silently degrade every peak-pick to a bare read with no test failing otherwise.
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new PixelSampleReader(_ => 0.0, ksbSamples: 0, lineEndSampleExclusive: 10, luminanceMinHz: 1500.0, neverPeakPicks: false));
     }
 
     [Fact]
