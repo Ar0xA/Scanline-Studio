@@ -2370,7 +2370,7 @@ gap class. **Nit 11**: `SafeLog`'s own doc comment, given the established 2-roun
 "comprehensive" claim being subsequently found incomplete, should say so explicitly rather than risk
 round 22+ trusting it the same way.
 
-**Chunk 3a round 21 fixes applied** (2026-08-21, commit pending). All 3 blockers, both risk-6/6b
+**Chunk 3a round 21 fixes applied** (2026-08-21, commit `f8e7f8e`). All 3 blockers, both risk-6/6b
 findings, nit 10, and finding 7 fixed as real code changes; nit 9 and 11 handled as documented,
 reasoned deferrals (not silently dropped). ~28 individual `Log.*` call sites wrapped in `SafeLog` across
 findings 1/2/3/4/5/8 (`DisposeAsync`'s region, `PlayWithPttAsync`'s StopPlayback path,
