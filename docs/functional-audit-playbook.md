@@ -5001,3 +5001,26 @@ dropped-setting `docs/removed-features.md` entry in 7d; the batch's most substan
 fidelity expression-order fix, and one coverage gap; 7f (non-port, standalone-correctness review)
 found zero functional bugs, one doc nit, and closed a real sign-convention coverage gap. Commits:
 8e9ffdf, c451c1f, b2bb210, 51b2c82, e150259, 71c621f.
+
+## Tier A Batch 8 -- IN PROGRESS, started 2026-08-21
+
+Binary/encoding boundaries (approved batch plan, row 8). Six files, ~1021 lines total -- real sizes
+confirmed by reading (not assumed from the plan table's own file list):
+`src/ScanlineStudio.Core.Audio/WavFile.cs` (152, note: `Core.Audio`, not `Core.Sstv` -- the plan
+table's own path was implicit), `FskStationIdEncoder.cs` (159), `FskStationIdWireFormat.cs` (101),
+`StationIdCallsignNormalizer.cs` (40), `AnalogFmSstvEncoder.cs` (418, the TX encode core -- by far
+the largest and highest-risk file in this batch), `CwMorseGenerator.cs` (151).
+
+Chunking, smallest/most-isolated first:
+- **8a** `WavFile.cs` (152) -- RIFF chunk-walking, standalone binary-format parsing, no legacy
+  YONIQ/QSSTV counterpart to compare against (own port-equivalence question: does it correctly parse
+  the WAV/RIFF spec, not "does it match legacy").
+- **8b** `FskStationIdEncoder.cs` (159) + `FskStationIdWireFormat.cs` (101) +
+  `StationIdCallsignNormalizer.cs` (40) -- the station-ID encode pipeline, three small related files
+  (300 lines combined).
+- **8c** `AnalogFmSstvEncoder.cs` (418) -- the TX encode core. Largest/highest-risk file in the
+  batch; full Tier A rigor, budget for a possible round 2 given the file's size and that it's real
+  TX-path DSP/codec logic (CLAUDE.md's port-first scope center).
+- **8d** `CwMorseGenerator.cs` (151) -- CW/Morse code generation, last chunk of this batch.
+
+Dispatching 8a now.
