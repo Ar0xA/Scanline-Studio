@@ -3880,3 +3880,45 @@ formal 2-consecutive-clean-round gate. Same deliberate-exception precedent as ch
 own closures.
 
 Commit `9da8a45` (code) / this entry (docs). Full solution suite green throughout.
+
+## Chunk 4c round 1 (2026-08-21)
+
+**A real functional bug found and fixed** -- unlike chunks 4a/4b, this round did NOT close with an
+unconditional go. TX (both encoders) and RX verified independently against `Main.cpp`'s
+`LineMRT`/`LineSCT`/`LineSC2180`/`LineP`/`LineAVT`/`LineMC` and `LineRM`, plus the matching per-pixel
+RX decode switch (`:4227-4503`). Channel order confirmed correct for every RGB-sequential mode
+including Scottie (the documented Scottie incident's own real fix, re-confirmed, not just
+self-consistent); `MonoAveragedPairedScanlineEncoder`'s two-row averaging (vs. YCbCr line-paired's
+single-row-reused chroma -- a genuinely different shape, verified against `LineRM` directly, not
+assumed) confirmed correct.
+
+**Blocker found and fixed**: `RgbSequentialScanlineDecoder` truncated AFTER the `+128` bias instead
+of before, unlike its three sibling decoders (ultracode audit finding #28, previously scoped only to
+Y/R-Y/B-Y). Legacy's RGB-sequential RX branch (`Main.cpp:4459-4461`, Scottie's own copy at
+`:4230-4233`) reads through the same `int`-returning `GetPictureLevel`/`GetPixelLevel` every
+Y/R-Y/B-Y site does, so truncation happens in the raw zero-centered domain, before the bias. The
+prior floor-after-bias shape made every sub-mid-gray channel value exactly one level too dark,
+systematically, across 15 of the 43 registered modes (Martin, Scottie, SC2, Pasokon, AVT, MC). Fixed
+to match the sibling decoders' established pattern; mutation-verified (reverting to floor-after-bias
+reproduces the predicted 100-vs-101 off-by-one exactly).
+
+**Coverage gap closed, the closest remaining Scottie-class trap in this chunk**: no test pinned that
+`MonoAveragedPairedScanlineEncoder` genuinely averages BOTH source rows (legacy's `LineRM`), not one
+-- gradient-based round-trip/golden-vector fixtures can't see a "reads only one row" regression
+(~0.5-level difference). New `MonoAveragedPairedScanlineEncoderTests.cs`, mutation-verified (forcing
+a single-row read makes the new test fail as predicted).
+
+One nit fixed: `RgbSequentialScanlineEncoder.cs`'s class doc said "Martin/Scottie-family," omitting
+AVT/Pasokon/SC2/MC. One off-scope note, not chased: `MonoAveragedPairedScanlineDecoder` deliberately
+doesn't replicate legacy's two int truncations (measured bound 2) the way 3 sibling decoders now
+replicate theirs (bound 1) -- a documented, tested inconsistency in principle, not a bug; worth one
+deliberate project-level decision rather than four independent ones.
+
+No RX golden vector exists for MR/ML specifically (noted in chunk 4b); this chunk's own RX golden
+vectors (`martin-m1`/`scottie-s1`/`scottie-dx`/`rm8`) all re-passed after the fix, absorbing the
+small expected delta shift within existing tolerance (~2x headroom).
+
+Commit `b89b4ac`. Full `ScanlineStudio.Core.Sstv.Tests` suite re-confirmed at 1029/1030 (1 unrelated
+intentional skip). Auditor's verdict: NOT a go as originally found -- fix-and-reverify required (now
+done); round 2 needed to independently confirm the fix before closing, per the standard process for
+a round that found a real functional bug rather than only nits/gaps.
