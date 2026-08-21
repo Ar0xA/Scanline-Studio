@@ -4672,3 +4672,84 @@ every prior batch's own closures.
 
 Full round-by-round detail for all five chunks lives in this section's own per-round entries above,
 not reproduced here.
+
+## Tier A Batch 7 -- IN PROGRESS, started 2026-08-21
+
+DSP primitives, numeric fidelity float-vs-double (approved batch plan, row 7). Full Tier A rigor
+throughout -- every file here is real DSP math, none of Batch 5's table-verification downgrade.
+Per the plan's own row note, the three demodulator types (Hilbert/PLL/zero-crossing) are user-
+selectable via `DemodType` and must all be audited, not just one sibling skipped.
+
+Triage: `AfcTracker.cs` has coverage via `AfcTests.cs`; `TankFilter.cs`/`MovingAverage.cs` have
+coverage via `SlantTests.cs`; `IirFilter.cs` has coverage via `HilbertFmDemodulatorTests.cs`.
+`Vco.cs` (46 lines) has NO real test coverage anywhere -- only referenced in a DI composition-root
+test, not a behavioral one. A real coverage gap, flagged for whichever chunk covers it.
+
+Chunked by relationship, ordered by dependency (foundational primitives first, since they feed
+everything else in this batch):
+
+- **7a** Foundational primitives: `TankFilter.cs` (41 lines), `IirFilter.cs` (88), `MovingAverage.cs`
+  (58), `Vco.cs` (46) -- 233 lines total. Small individually but shared building blocks; `Vco.cs`'s
+  real coverage gap lives here.
+- **7b** `HilbertFmDemodulator.cs` (314 lines) -- this port's main picture demodulator (largest file
+  in the batch), audited alone given its size.
+- **7c** `PllFmDemodulator.cs` (143) + `ZeroCrossingFrequencyCounter.cs` (129) -- the other two
+  `DemodType` options, audited together per the plan's own "don't skip a sibling" note.
+- **7d** `SearchBandpassFilter.cs` (269) + `TxOutputBandpassFilter.cs` (169) -- the RX-search/TX-
+  output bandpass filter pair.
+- **7e** `AfcTracker.cs` (147) + `LevelAgc.cs` (123) -- AFC/AGC tracking utilities.
+- **7f** `RadixTwoFft.cs` (78) -- standalone FFT, last chunk of this batch.
+
+Starting with 7a.
+
+## Chunk 7a round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed
+
+Full Tier A rigor round on the four foundational primitives (`TankFilter.cs`, `IirFilter.cs`,
+`MovingAverage.cs`, `Vco.cs`, 233 lines total). `TankFilter.cs` was already independently verified
+byte-for-byte during Batch 6 chunk 6a's own audit -- re-spot-checked fresh, not re-derived from
+scratch, and the earlier finding held. `IirFilter.cs` and `Vco.cs` had NO legacy line citations at
+all in their own comments; both fully re-derived from the real legacy source (`fir.cpp`'s free
+`MakeIIR`/`CIIR::MakeIIR`/`CIIR::Do`, `sstv.cpp`'s `CVCO::SetGain`/`SetFreeFreq`/`Do`) rather than
+trusted from any prior claim.
+
+**Zero functional bugs.** `IirFilter.Design`'s bilinear-transform coefficient math and `Process`'s
+cascade application confirmed exact against the real `MakeIIR`/`CIIR::Do`, including the specific
+claim that legacy's Chebyshev branch is real but genuinely unused by every `sstv.cpp` demod-path
+call site (verified by finding every `bc=` call argument, not trusted from the comment).
+`MovingAverage`'s three methods confirmed against `CSmooz`, including the specific `SetCount(n)`-
+equals-existing-capacity condition claimed to trigger the "clear to empty" branch (found the real
+call site, `sstv.cpp:1660`'s `InitAFC`, and confirmed `n` really does equal existing capacity
+there). `Vco`'s table-lookup oscillator confirmed exact against `CVCO`, including that a truncated
+ctor-default field legacy has is correctly NOT reproduced (legacy's own real callers always
+overwrite it before use).
+
+Two real nits fixed in `Vco.cs`, both cheap and legacy-faithful even though currently unobservable
+(every real caller sets gain/frequency before `Process`): the sine-table build now precomputes the
+angle increment once before the loop, matching legacy's own FP operation order (previously ~1 ULP
+off per table entry from a different association); the constructor now sets the same default gain
+legacy's own ctor does, as defense-in-depth for a future caller that forgets `SetGain`. Two doc-
+citation fixes: `MovingAverage.cs`'s `Clear` doc pointed at a call site that doesn't unambiguously
+prove the claimed branch; repointed to the real exact-match call site. A test comment in
+`SlantTests.cs` named the wrong method (said `Reset()`, meant `Clear()` -- the two have opposite
+seeding behavior).
+
+**Four real `[risk]`-level coverage gaps closed with mutation-verified tests, not just noted** --
+every one of this chunk's four files had either no direct test or a test loose enough to pass under
+a materially wrong implementation. `TankFilter`'s only prior coverage asserted `onFreq >
+offFreq*5`, loose enough to pass with legacy's own unused `#if 0` coefficient variant or a missing
+denormal flush. `IirFilter` and `MovingAverage` had zero direct tests. `Vco` had zero test coverage
+anywhere in the suite. Added `TankFilterTests.cs`, `IirFilterTests.cs` (covering both the even-order
+and the odd-order-with-tail code paths, the latter otherwise unexercised anywhere in the suite),
+`VcoTests.cs`, and `MovingAverageTests.cs` -- all pinning actual output values independently
+computed (Python, double precision, replicating each formula's exact operation order) rather than
+read back from the port's own output. All four mutation-verified: a coefficient-formula change in
+each of the four files makes its corresponding new test fail, confirmed one mutation per file before
+trusting the set.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1235/1236 (1 unrelated intentional
+skip).
+
+Chunks 7b-7f remain open.

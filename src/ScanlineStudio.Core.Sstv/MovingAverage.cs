@@ -49,7 +49,9 @@ internal sealed class MovingAverage
     /// real "clear to genuinely empty" path (`sstv.h:125-127`'s <c>else</c> branch: <c>Cnt = Wp =
     /// 0</c>). Distinct from <see cref="Reset"/>, which instantly seeds every slot with one value;
     /// this instead makes the average restart from scratch, refilling gradually via
-    /// <see cref="Add"/> as legacy's own post-InitAutoStop average does (`Main.cpp:3810`).</summary>
+    /// <see cref="Add"/>. Exact-match confirmed at `sstv.cpp:1660`'s <c>InitAFC</c>
+    /// (<c>m_AFCAVG.SetCount(m_AFCAVG.Max)</c> -- the call's own `n` literally equals the existing
+    /// capacity, guaranteeing the else branch).</summary>
     public void Clear()
     {
         _writeIndex = 0;
