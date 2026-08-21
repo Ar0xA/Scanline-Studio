@@ -240,7 +240,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 var count = Interlocked.Increment(ref _decoderExceptionCount);
                 if (count == 1 || count % ExceptionLogEveryN == 0)
                 {
-                    Log.DecoderPushSamplesFailed(_logger, count, ex);
+                    SafeLog(() => Log.DecoderPushSamplesFailed(_logger, count, ex));
                 }
             }
         };
@@ -255,7 +255,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 var count = Interlocked.Increment(ref _waterfallExceptionCount);
                 if (count == 1 || count % ExceptionLogEveryN == 0)
                 {
-                    Log.WaterfallPushSamplesFailed(_logger, count, ex);
+                    SafeLog(() => Log.WaterfallPushSamplesFailed(_logger, count, ex));
                 }
             }
         };
@@ -475,7 +475,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // rule this file already applies everywhere else.
                     Interlocked.Increment(ref _pttKeyEpoch);
                     _pttLeftKeyedByCall = true;
-                    Log.PttKeyCommandFailedMayHaveKeyed(_logger);
+                    SafeLog(() => Log.PttKeyCommandFailedMayHaveKeyed(_logger));
 
                     // Round-11 found this catch never attempts an immediate recovery un-key (unlike
                     // PlayWithPttAsync's own finally), leaving the rig recorded-but-not-recovered for
@@ -548,7 +548,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     if (_pttLocked || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig)
                     {
                         _pttUnkeyFailedOnRealRig = true;
-                        Log.PttStillKeyedAfterFailedUnkey(_logger);
+                        SafeLog(() => Log.PttStillKeyedAfterFailedUnkey(_logger));
                     }
 
                     throw;
@@ -595,7 +595,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     }
                     else
                     {
-                        Log.PttUnkeyRaceLostToNewerKey(_logger);
+                        SafeLog(() => Log.PttUnkeyRaceLostToNewerKey(_logger));
                     }
                 }
 
@@ -641,7 +641,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     throw new ObjectDisposedException(GetType().FullName);
                 }
 
-                Log.PttLockChanged(_logger, locked);
+                SafeLog(() => Log.PttLockChanged(_logger, locked));
 
                 if (!locked && _rxPendingResumeAfterUnlock)
                 {
@@ -681,7 +681,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     }
                     catch (Exception ex)
                     {
-                        Log.CleanupStepFailed(_logger, "Resume RX (after unlock)", ex);
+                        SafeLog(() => Log.CleanupStepFailed(_logger, "Resume RX (after unlock)", ex));
                     }
                     finally
                     {
@@ -881,7 +881,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
-            Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestartOverdue), ex);
+            SafeLog(() => Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestartOverdue), ex));
         }
     }
 
@@ -898,7 +898,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
-            Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestarted), ex);
+            SafeLog(() => Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestarted), ex));
         }
     }
 
@@ -931,7 +931,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
-            Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestartCriticallyOverdue), ex);
+            SafeLog(() => Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestartCriticallyOverdue), ex));
         }
     }
 
@@ -981,7 +981,30 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // disposes the decoder/waterfall/engine -- reaching this point afterward would subscribe
         // handlers to a disposed engine and call ResetAgc() on a disposed decoder. Throwing here is
         // caught by this method's own callers exactly like the entry check already is.
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        //
+        // Round-21 re-raised finding: throwing here alone used to leak the native capture session
+        // StartCaptureAsync just opened above -- _isReceiving is still false at this point (it only
+        // flips true below), so a later StopReceivingAsync call unconditionally early-returns via its
+        // own `if (!_isReceiving) return;` guard, and this session is never closed. Rounds 18/19 made
+        // an abandoned/timed-out RX-resume the NORMAL way to reach this branch (not an exotic race),
+        // so this is a real session/device/thread leak at shutdown, not just a theoretical one.
+        // Best-effort close the session we just opened before throwing -- swallow any failure from
+        // that close, since ObjectDisposedException is already about to propagate and is the
+        // operative signal to whatever caller/fault-observer is left; nothing here re-touches
+        // _isReceiving, since it is correctly still false either way.
+        if (_disposed)
+        {
+            try
+            {
+                await _audioEngine.StopCaptureAsync().WaitAsync(_cleanupTimeout, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                SafeLog(() => Log.CleanupStepFailed(_logger, "StopCapture (abandoned resume, disposed mid-flight)", ex));
+            }
+
+            throw new ObjectDisposedException(GetType().FullName);
+        }
 
         _audioEngine.SamplesCaptured += _decoderHandler;
         _audioEngine.SamplesCaptured += _waterfallHandler;
@@ -989,7 +1012,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         // ultracode audit finding #6: legacy resets its AGC (CLVL::Init) at every TX<->RX transition
         // (Sound.cpp:398,443) -- this is that transition point on the RX-resuming side.
-        _decoder.ResetAgc();
+        //
+        // Round-21 finding (risk 6/6b): previously unguarded -- a throwing ResetAgc() propagated out
+        // of this method even though capture had already genuinely started and _isReceiving was
+        // already latched true above, and skipped Log.RxStarted below. Swallow-and-log instead: the
+        // capture-started state is real regardless of whether AGC reset itself succeeded.
+        try
+        {
+            _decoder.ResetAgc();
+        }
+        catch (Exception ex)
+        {
+            SafeLog(() => Log.CleanupStepFailed(_logger, "ResetAgc (RX start)", ex));
+        }
+
         Log.RxStarted(_logger, device.Id, _decoder.SampleRate);
     }
 
@@ -1042,7 +1078,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // AGC reset (ultracode finding #6) un-run and no "RX stopped" line ever logged on this
                 // specific path, even though _isReceiving still correctly flips false via the finally
                 // either way.
-                Log.CleanupStepFailed(_logger, "StopCapture", ex);
+                SafeLog(() => Log.CleanupStepFailed(_logger, "StopCapture", ex));
                 stopTask = Task.CompletedTask;
             }
 
@@ -1065,16 +1101,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // the playback side, which is flagged, not fixed): MiniAudioEngine's own claim step
                 // nulls _captureSession AND unsubscribes SamplesAvailable together, before release, so
                 // the abandoned session cannot interleave audio into the new one.
-                Log.CaptureStopWatchdogFired(_logger, _cleanupTimeout);
+                SafeLog(() => Log.CaptureStopWatchdogFired(_logger, _cleanupTimeout));
                 _ = stopTask.ContinueWith(
-                    t => Log.CleanupStepFailed(_logger, "StopCapture (finished after watchdog)", t.Exception!),
+                    t => SafeLog(() => Log.CleanupStepFailed(_logger, "StopCapture (finished after watchdog)", t.Exception!)),
                     CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
                     TaskScheduler.Default);
             }
             catch (Exception ex)
             {
-                Log.CleanupStepFailed(_logger, "StopCapture", ex);
+                SafeLog(() => Log.CleanupStepFailed(_logger, "StopCapture", ex));
             }
         }
         finally
@@ -1090,8 +1126,25 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
 
         // ultracode audit finding #6: the RX-halting (entering-TX) side of the same transition.
-        _decoder.ResetAgc();
-        Log.RxStopped(_logger);
+        //
+        // Round-21 finding (risk 6): previously unguarded -- a throwing ResetAgc() here propagated
+        // out of StopReceivingAsync even though _isReceiving was already correctly latched false by
+        // the finally above, and skipped Log.RxStopped below. This is also the direct fix for the
+        // "risk 6b" call site in PlayWithPttAsync's entry (a bare `await StopReceivingAsync()`, inside
+        // its own single-flight-guarded try but before PTT is ever touched) -- with ResetAgc() no
+        // longer able to throw out of this method, that call site needs no separate guard of its own:
+        // capture is genuinely stopped either way, no PTT/radio state is touched yet, and the
+        // single-flight guard's own finally still releases normally.
+        try
+        {
+            _decoder.ResetAgc();
+        }
+        catch (Exception ex)
+        {
+            SafeLog(() => Log.CleanupStepFailed(_logger, "ResetAgc (RX stop)", ex));
+        }
+
+        SafeLog(() => Log.RxStopped(_logger));
     }
 
     public async Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
@@ -1652,7 +1705,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     }
                     catch (Exception ex)
                     {
-                        Log.CleanupStepFailed(_logger, "StopPlayback", ex);
+                        SafeLog(() => Log.CleanupStepFailed(_logger, "StopPlayback", ex));
                     }
 
                     // Round-18 finding: UnkeyForCleanupAsync's own bool return (whether the un-key was
@@ -1947,7 +2000,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         catch (Exception ex)
         {
             // A synchronous throw (e.g. ObjectDisposedException) never produces a Task at all.
-            Log.CleanupStepFailed(_logger, "StopPlayback", ex);
+            SafeLog(() => Log.CleanupStepFailed(_logger, "StopPlayback", ex));
             return;
         }
 
@@ -1966,15 +2019,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
             catch (Exception ex)
             {
                 // Same best-effort contract as TryCleanupAsync -- see its own doc comment.
-                Log.CleanupStepFailed(_logger, "StopPlayback", ex);
+                SafeLog(() => Log.CleanupStepFailed(_logger, "StopPlayback", ex));
             }
 
             return;
         }
 
-        Log.PlaybackStopWatchdogFired(_logger, _playbackStopWaitBudget);
+        SafeLog(() => Log.PlaybackStopWatchdogFired(_logger, _playbackStopWaitBudget));
         _ = stopTask.ContinueWith(
-            t => Log.CleanupStepFailed(_logger, "StopPlayback (finished after watchdog)", t.Exception!),
+            t => SafeLog(() => Log.CleanupStepFailed(_logger, "StopPlayback (finished after watchdog)", t.Exception!)),
             CancellationToken.None,
             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
@@ -2062,12 +2115,27 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <summary>Round-20 finding: this class's own cleanup/dispose paths, across rounds 17-19, all
     /// assumed logging a failure could itself never fail -- a throwing logging provider (a file logger
     /// on a full disk, the realistic source this chunk has repeatedly treated as in-scope) proved that
-    /// wrong at <see cref="TryUnkeyPttAsync"/>, defeating every guard built on top of it. Deliberately
-    /// silent on failure -- there is nothing safe left to log TO if the logger itself is broken, and
-    /// propagating here would defeat the entire reason this helper exists (a broken logger must never
-    /// be able to mask a safety-critical cleanup step). Used at every log call inside this class's
-    /// PTT-safety-critical catch/cleanup paths, not applied file-wide -- see each call site's own
-    /// reasoning for why that specific one is in scope.</summary>
+    /// wrong at <see cref="TryUnkeyPttAsync"/>, defeating every guard built on top of it. Used at every
+    /// log call this class's own cleanup/dispose/catch paths reach -- round 21 finding: round 20's own
+    /// claim that this was already true was itself false (round 19 and round 20 each thought they'd
+    /// found "the" instance of the never-throws-callee pattern and were each wrong one frame deeper);
+    /// round 21 did a full enumeration of every <c>Log.*</c> call site in the file and applied this
+    /// everywhere a throw could skip a safety-relevant step or escape into a background/drain thread
+    /// with no isolation of its own. Given that round 19 and round 20 each made this same
+    /// "comprehensive" claim and were each subsequently found incomplete, treat "applied everywhere"
+    /// above as a snapshot of round 21's own sweep, not a closed guarantee -- a future round finding
+    /// one more unwrapped <c>Log.*</c> call inside a catch/cleanup/fault-observer path on this class's
+    /// PTT-safety-relevant chain would not be a surprise; keep checking rather than trusting this
+    /// comment.
+    ///
+    /// Round-21 finding 7: NOT silent-only anymore. A totally broken logging provider (this whole
+    /// mechanism's own threat model) used to leave an operator with ZERO indication a transmitter
+    /// might still be keyed -- "safe" and "silent" are not the same thing for a Critical "PTT MAY
+    /// STILL BE KEYED" message. Falls back to stderr, bypassing the broken <see cref="ILogger"/>
+    /// entirely, so a broken PROVIDER specifically still surfaces something. That fallback is itself
+    /// wrapped -- if stderr is ALSO broken (e.g. redirected somewhere failing), there is genuinely
+    /// nothing left this method can safely do, and it gives up rather than risk being the thing that
+    /// crashes the process.</summary>
     private static void SafeLog(Action logAction)
     {
         try
@@ -2075,10 +2143,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
             logAction();
         }
 #pragma warning disable CA1031 // Deliberately catches everything -- see this method's own doc comment.
-        catch
-#pragma warning restore CA1031
+        catch (Exception ex)
         {
+            try
+            {
+                Console.Error.WriteLine($"[SstvSessionService] Logging provider failed while reporting a safety-critical event: {ex}");
+            }
+            catch
+            {
+                // Truly nothing left to do -- see this method's own doc comment.
+            }
         }
+#pragma warning restore CA1031
     }
 
     /// <summary>Returns whether <paramref name="step"/> actually completed without throwing --
@@ -2203,7 +2279,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
-            Log.CleanupStepFailed(_logger, "AwaitInFlightKeyedTransmit (dispose)", ex);
+            SafeLog(() => Log.CleanupStepFailed(_logger, "AwaitInFlightKeyedTransmit (dispose)", ex));
         }
 
         // A rig can be physically keyed at shutdown for FOUR distinct reasons, and _pttLocked only
@@ -2242,7 +2318,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
             }
             catch (Exception ex)
             {
-                Log.CleanupStepFailed(_logger, "UnkeyForCleanup (dispose backstop)", ex);
+                SafeLog(() => Log.CleanupStepFailed(_logger, "UnkeyForCleanup (dispose backstop)", ex));
             }
         }
 
@@ -2259,7 +2335,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
-            Log.CleanupStepFailed(_logger, "StopReceiving (dispose)", ex);
+            SafeLog(() => Log.CleanupStepFailed(_logger, "StopReceiving (dispose)", ex));
         }
 
         try
@@ -2271,7 +2347,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
-            Log.CleanupStepFailed(_logger, "Waterfall.Dispose", ex);
+            SafeLog(() => Log.CleanupStepFailed(_logger, "Waterfall.Dispose", ex));
         }
 
         // RX buffer subsystem Phase 7 (disposal-chain sub-piece): _decoder is ISstvDecoder-typed, not
@@ -2289,7 +2365,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
-            Log.CleanupStepFailed(_logger, "Decoder.Dispose", ex);
+            SafeLog(() => Log.CleanupStepFailed(_logger, "Decoder.Dispose", ex));
         }
     }
 
@@ -2318,7 +2394,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
             return;
         }
 
-        Log.WaitingForKeyedTransmitAtShutdown(_logger);
+        SafeLog(() => Log.WaitingForKeyedTransmitAtShutdown(_logger));
         // Round-14 nit: same uncancelled-Task.Delay leak as StopPlaybackWithWatchdogAsync's own --
         // this runs once per DisposeAsync, so bounded, but closed the same way for consistency.
         using var waitCts = new CancellationTokenSource();
@@ -2329,7 +2405,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         else
         {
-            Log.KeyedTransmitCleanupWaitTimedOut(_logger, _inFlightKeyedTransmitWait);
+            SafeLog(() => Log.KeyedTransmitCleanupWaitTimedOut(_logger, _inFlightKeyedTransmitWait));
         }
     }
 
@@ -2397,7 +2473,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
             var count = Interlocked.Increment(ref _transmitProgressHandlerExceptionCount);
             if (count == 1 || count % ExceptionLogEveryN == 0)
             {
-                Log.TransmitProgressHandlerFailed(_logger, count, ex);
+                SafeLog(() => Log.TransmitProgressHandlerFailed(_logger, count, ex));
             }
         }
     }
