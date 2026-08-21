@@ -173,14 +173,38 @@ public class PllFmDemodulatorTests
     [Fact]
     public void ProcessSample_DigitalSilence_NeverProducesNaNOrThrows()
     {
-        // All-zero input can't divide by zero here: _max/_min reset to +-1.0 on every zero crossing
-        // (keeping agcRange >= 2.0), but this was previously unverified by any test -- mirrors
-        // HilbertFmDemodulator's own analogous silence-robustness test.
+        // Batch 7 chunk 7c correction: all-zero input never actually reaches the AGC's own
+        // `5.0/agcRange` division in the first place -- `_prevInput` starts at (and stays) 0.0, so
+        // the `input >= 0 && _prevInput < 0` zero-crossing condition never fires for silence. This
+        // test proves real silence-robustness (no NaN/Infinity leaks through the filters either
+        // way), but NOT the AGC floor mechanism -- see
+        // ProcessSample_SubFloorAlternatingSignal_AgcPinsAtFloor_NoDivideByZero below for that.
         var demod = new PllFmDemodulator(SampleRate, 1500, 2300);
         double last = 0;
         for (var i = 0; i < SampleRate; i++)
         {
             last = demod.ProcessSample(0.0);
+        }
+
+        Assert.False(double.IsNaN(last));
+        Assert.False(double.IsInfinity(last));
+    }
+
+    [Fact]
+    public void ProcessSample_SubFloorAlternatingSignal_AgcPinsAtFloor_NoDivideByZero()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 7 chunk 7c (docs/functional-audit-playbook.md):
+        // the digital-silence test above never actually exercises the `5.0 / (_max - _min)` AGC
+        // division, since all-zero input never crosses zero. A tiny alternating signal DOES cross
+        // zero every sample while staying inside legacy's own +-1.0 window floor (sstv.cpp:325-326),
+        // so agcRange == 2.0 exactly and _agc settles at 5.0/2.0 = 2.5 -- CPLL::Do's own identical
+        // below-floor behavior, not a port-specific quirk (see this class's own doc comment on the
+        // int16-domain calling convention every real call site honors).
+        var demod = new PllFmDemodulator(SampleRate, 1500, 2300);
+        double last = 0;
+        for (var i = 0; i < SampleRate; i++)
+        {
+            last = demod.ProcessSample(i % 2 == 0 ? 1e-6 : -1e-6);
         }
 
         Assert.False(double.IsNaN(last));
