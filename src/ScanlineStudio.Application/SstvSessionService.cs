@@ -567,8 +567,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         // leaked-keyed-transmitter class (the rig is already confirmed un-keyed by the
                         // time this runs -- see this block's own `!locked` guard), but a real
                         // availability bug in the one API this whole method exists to keep working.
+                        //
+                        // Round-16 correction: passing rxResumeCts.Token as the CALLEE's own `ct`
+                        // parameter alone does NOT bound this -- MiniAudioDeviceEnumerator.RefreshAsync
+                        // and MiniAudioEngine.StartCaptureAsync both only check `ct` at their own
+                        // start/lock-acquire boundary, never during the actual blocking native call, so
+                        // a token cancelling mid-call does not unblock it. WaitAsync(rxResumeCts.Token)
+                        // closes this: it observes the SAME token's cancellation independently of
+                        // whether the awaited task itself ever polls it, which is exactly what was
+                        // missing -- round 10 through round 15 all assumed this CTS alone was already a
+                        // real bound.
                         using var rxResumeCts = new CancellationTokenSource(_cleanupTimeout);
-                        await StartReceivingAsync(rxResumeCts.Token).ConfigureAwait(false);
+                        await StartReceivingAsync(rxResumeCts.Token).WaitAsync(rxResumeCts.Token).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -877,7 +887,56 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured -= _waterfallHandler;
         try
         {
-            await _audioEngine.StopCaptureAsync().ConfigureAwait(false);
+            // Round-16 finding: IAudioEngine.StopCaptureAsync takes no CancellationToken at all, and
+            // its drain-thread join is unbounded by design (MiniAudioCaptureSession's own doc comment
+            // -- only a managed SamplesCaptured subscriber that never returns can make it hang, but
+            // the handlers are already detached two lines up, so that specific cause can't apply to
+            // THIS call; a genuinely wedged native close is still possible). Mirrors
+            // StopPlaybackWithWatchdogAsync's own shape exactly -- bounded with WaitAsync on the TASK
+            // itself, not a token (there is none to bound), swallow-and-log on either a real failure
+            // or a timeout, never propagate. WaitAsync specifically, not Task.WhenAny+Task.Delay: on
+            // an ALREADY-COMPLETED task (the common case -- every ordinary uncontended stop, and the
+            // synchronous drain-thread-inline path OnDecoderRestartCriticallyOverdue's own
+            // GetAwaiter().GetResult() call relies on) WaitAsync returns the same task directly with
+            // no hop, so that path stays genuinely synchronous and zero-allocation exactly as before;
+            // WhenAny would force a state-machine yield even when nothing is actually pending, moving
+            // ResetAgc()/the log line/MaintenanceCriticalStopRaised off the drain thread on EVERY
+            // call, not just a hung one -- a real regression the WhenAny shape would have introduced.
+            Task stopTask;
+            try
+            {
+                stopTask = _audioEngine.StopCaptureAsync();
+            }
+            catch (Exception ex)
+            {
+                // A synchronous throw (e.g. ObjectDisposedException) never produces a Task at all --
+                // same shape as StopPlaybackWithWatchdogAsync's own sync-throw arm.
+                Log.CleanupStepFailed(_logger, "StopCapture", ex);
+                return;
+            }
+
+            try
+            {
+                await stopTask.WaitAsync(_cleanupTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                // The handlers are already detached above, so "not receiving" (set in the finally
+                // below regardless of this branch) is the only state consistent with reality whether
+                // or not the underlying stop call ever actually finishes. The abandoned stopTask is
+                // left running in the background -- observe its eventual fault so it doesn't surface
+                // as an unobserved task exception at GC time, detached from this call's own context.
+                Log.CaptureStopWatchdogFired(_logger, _cleanupTimeout);
+                _ = stopTask.ContinueWith(
+                    t => Log.CleanupStepFailed(_logger, "StopCapture (finished after watchdog)", t.Exception!),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
+            catch (Exception ex)
+            {
+                Log.CleanupStepFailed(_logger, "StopCapture", ex);
+            }
         }
         finally
         {
@@ -993,11 +1052,28 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public async Task<int> GetTxVolumePercentAsync(CancellationToken ct = default)
     {
         var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
-        return settings.TxVolumePercent ?? 100;
+
+        // Round-16 finding: unlike GetStationIdTransmitOptionsAsync's own WPM/tone-frequency
+        // boundary validation (see that method's own comment, same threat model: a corrupted/hand-
+        // edited settings.json), this value flowed straight into PlayWithPttAsync's `gain` multiplier
+        // with no range check at all -- an out-of-range value (e.g. a typo'd 10000, or a negative
+        // number) reaches PumpToPlaybackAsync's unclamped `sample * gain` directly, hard-clipping the
+        // transmitted audio into a square wave (real-world splatter risk on an actual transmitter) or
+        // inverting phase. Clamped here so every reader gets a safe value regardless of what's on
+        // disk.
+        return Math.Clamp(settings.TxVolumePercent ?? 100, 0, 100);
     }
 
     public async Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
     {
+        // Round-16 finding: clamped on write too, not just on read -- GetTxVolumePercentAsync's own
+        // clamp already makes an out-of-range value on disk safe to READ, but leaving it unclamped
+        // here would still let a bogus value silently reach disk via this API's own normal use (e.g.
+        // a UI control with a bug, or a scripted settings import), for GetTxVolumePercentAsync to mask
+        // again on every future read -- clamping at the write boundary keeps what's actually stored
+        // consistent with what every reader promises.
+        percent = Math.Clamp(percent, 0, 100);
+
         var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
         var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
             ?? new AudioDeviceSettings();
@@ -1089,19 +1165,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
             var wasReceiving = _isReceiving;
             if (wasReceiving)
             {
-                // Round-15 finding 3 (deferred, NOT the same fix as the three awaits inside the
-                // guarded try/finally below): this call has the identical "hang here strands
-                // _transmitInFlight forever" exposure, but a naive WaitAsync bound here is UNSAFE, not
-                // just incomplete -- StopReceivingAsync takes no CancellationToken at all, sits OUTSIDE
-                // the guarded region (so no finally would run its own cleanup), and abandoning it mid-
-                // MiniAudioCaptureSession.Dispose's drain-thread join leaves _isReceiving stuck (its
-                // own finally, which clears it, never runs), permanently blocking every future
-                // StartReceivingAsync's early-return guard -- trading one permanent-lockout failure
-                // mode for a different one, not fixing it. A real fix needs a paired change (bound
-                // the wait AND force _isReceiving = false on the timeout path) or belongs where the
-                // actual unbounded join lives (MiniAudioCaptureSession, already documented there as
-                // deliberately unbounded-by-design). Left unfixed this round; flagged for a dedicated
-                // pass, not silently dropped.
+                // Round-15 finding 3 flagged this call as having the identical "hang here strands
+                // _transmitInFlight forever" exposure as the three awaits inside the guarded
+                // try/finally below, but judged a naive WaitAsync bound here UNSAFE (this call sits
+                // OUTSIDE the guarded region, so no finally would run its own cleanup) and deferred it,
+                // pending a "paired change" (bound the wait AND force _isReceiving = false on the
+                // timeout path). Round-16 finding: that paired fix exists and is now applied INSIDE
+                // StopReceivingAsync itself (see its own comment) -- the handlers are already detached
+                // before its own bounded stop attempt, so "not receiving" is truthfully the state on
+                // a timeout regardless of whether the underlying native close ever finishes, closing
+                // the exact gap round 15 correctly identified but didn't yet have a design for.
                 await StopReceivingAsync().ConfigureAwait(false);
                 // User-reported gap (2026-08-18): see CapturePausedForTransmitChanged's own doc comment.
                 // Raised AFTER the await completes -- capture is genuinely stopped by the time a
@@ -1386,6 +1459,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // the same starvation bug blocker 1 is about, one step further down the chain. At most
                     // one StartReceivingAsync call runs per invocation (the three branches below are
                     // mutually exclusive on wasReceiving/skipUnkeyAndRxResume), so one source is enough.
+                    //
+                    // Round-16 correction (mirrors SetPttLockAsync's own twin CTS's identical fix, see
+                    // its own comment): every StartReceivingAsync(rxResumeCts.Token) call below is now
+                    // ALSO wrapped in .WaitAsync(rxResumeCts.Token) -- passing the token as the callee's
+                    // own `ct` parameter alone never actually bounded this call, since
+                    // MiniAudioDeviceEnumerator.RefreshAsync/MiniAudioEngine.StartCaptureAsync only check
+                    // `ct` at their own start/lock-acquire boundary, not during the blocking native call
+                    // itself. Without this, a wedged capture device leaves this await pending forever,
+                    // and since this whole method's outer finally (where _transmitInFlight is finally
+                    // released) can't complete while ANY await inside it is still pending, that strands
+                    // _transmitInFlight too -- the exact permanent-lockout class rounds 13-15 closed at
+                    // every OTHER site in this method, missed here because this CTS looked
+                    // already-sufficient.
                     using var rxResumeCts = new CancellationTokenSource(_cleanupTimeout);
 
                     if (!skipUnkeyAndRxResume)
@@ -1399,7 +1485,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         if (!wasReceiving && _rxPendingResumeAfterUnlock)
                         {
                             _rxPendingResumeAfterUnlock = false;
-                            await TryCleanupAsync("Resume RX (stranded lock pending-resume)", () => StartReceivingAsync(rxResumeCts.Token)).ConfigureAwait(false);
+                            await TryCleanupAsync("Resume RX (stranded lock pending-resume)", () => StartReceivingAsync(rxResumeCts.Token).WaitAsync(rxResumeCts.Token)).ConfigureAwait(false);
                             RaiseCapturePausedForTransmitChanged(false);
                         }
                     }
@@ -1408,7 +1494,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     {
                         if (!skipUnkeyAndRxResume)
                         {
-                            await TryCleanupAsync("Resume RX", () => StartReceivingAsync(rxResumeCts.Token)).ConfigureAwait(false);
+                            await TryCleanupAsync("Resume RX", () => StartReceivingAsync(rxResumeCts.Token).WaitAsync(rxResumeCts.Token)).ConfigureAwait(false);
                             // User-reported gap (2026-08-18): fires once the resume attempt has finished,
                             // success or failure -- this event is "no longer paused FOR THIS transmission,"
                             // not a restatement of IsReceiving itself (see the event's own doc comment).
@@ -1451,7 +1537,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                             if (!_pttLocked && _rxPendingResumeAfterUnlock)
                             {
                                 _rxPendingResumeAfterUnlock = false;
-                                await TryCleanupAsync("Resume RX (unlock raced cleanup)", () => StartReceivingAsync(rxResumeCts.Token)).ConfigureAwait(false);
+                                await TryCleanupAsync("Resume RX (unlock raced cleanup)", () => StartReceivingAsync(rxResumeCts.Token).WaitAsync(rxResumeCts.Token)).ConfigureAwait(false);
                                 RaiseCapturePausedForTransmitChanged(false);
                             }
                         }
@@ -2057,6 +2143,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "StopPlayback did not finish within {Budget}; continuing to the PTT un-key without waiting (the stop is still running in the background)")]
         public static partial void PlaybackStopWatchdogFired(ILogger logger, TimeSpan budget);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "StopCapture did not finish within {Budget}; treating RX as stopped without waiting (the stop is still running in the background)")]
+        public static partial void CaptureStopWatchdogFired(ILogger logger, TimeSpan budget);
 
         [LoggerMessage(Level = LogLevel.Critical, Message = "PTT MAY STILL BE KEYED -- the un-key command failed on a rig this session actually keyed. Check the radio and un-key it manually.")]
         public static partial void PttStillKeyedAfterFailedUnkey(ILogger logger);

@@ -1180,6 +1180,95 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Equal([true, false], radio.PttCalls);
     }
 
+    // ------------------------------------------------------------------ round 16 findings
+
+    [Fact]
+    public async Task Round16_PlayWithPttAsync_RxResumeHangsIgnoringToken_TimesOutRatherThanStrandingTransmitInFlightForever()
+    {
+        // Round-16 finding 1: StartReceivingAsync(rxResumeCts.Token) alone never actually bounded
+        // PlayWithPttAsync's own RX-resume steps -- MiniAudioDeviceEnumerator.RefreshAsync/
+        // MiniAudioEngine.StartCaptureAsync only check `ct` at their own start/lock-acquire boundary,
+        // never during the blocking native call itself, so a token cancelling mid-call does not
+        // unblock a genuinely wedged device. GatedStartCaptureAudioEngine ignores its own `ct`
+        // entirely (unlike FakeAudioDeviceEnumerator.Gate, which respects it and so could never have
+        // caught this gap) -- hangOnCallNumber: 2 targets the RESUME call specifically, not the
+        // initial StartReceivingAsync below.
+        var gate = new TaskCompletionSource().Task;
+        var (service, _, radio, logger) = CreateService(
+            wrapEngine: inner => new GatedStartCaptureAudioEngine(inner, gate, hangOnCallNumber: 2),
+            cleanupTimeout: TimeSpan.FromMilliseconds(50));
+
+        await service.StartReceivingAsync();
+
+        // Round-11 precedent: wrapped in WaitAsync(TimeSpan), not just awaited directly -- reverting
+        // the fix parks the resume forever, so an un-guarded await would hang the whole test run
+        // instead of failing this one test loudly and immediately.
+        await service.TransmitAsync(TestMode, TestImage).WaitAsync(TimeSpan.FromSeconds(5));
+
+        // THE property: the hung resume was swallowed (TryCleanupAsync's own best-effort contract,
+        // unchanged by this fix) and logged, NOT left to hang the whole transmit -- and RX is
+        // correctly NOT marked receiving (the resume never got far enough to set _isReceiving = true).
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("Resume RX", StringComparison.Ordinal));
+        Assert.False(service.IsReceiving);
+
+        // _transmitInFlight must have been released too -- a subsequent transmit (RX not running this
+        // time, so it never touches the still-hung gate at all) must succeed cleanly.
+        await service.TransmitAsync(TestMode, TestImage);
+        Assert.Equal([true, false, true, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round16_StopReceivingAsync_StopCaptureHangs_TimesOutRatherThanHangingForever()
+    {
+        // Round-16 finding 2: IAudioEngine.StopCaptureAsync takes no CancellationToken at all, and
+        // its drain-thread join is unbounded by design -- StopReceivingAsync now bounds the wait with
+        // WaitAsync and treats RX as stopped (_isReceiving = false) regardless, mirroring
+        // StopPlaybackWithWatchdogAsync's own established shape for the playback side.
+        var gate = new TaskCompletionSource().Task;
+        var (service, _, _, logger) = CreateService(
+            wrapEngine: inner => new GatedStopCaptureAudioEngine(inner, gate),
+            cleanupTimeout: TimeSpan.FromMilliseconds(50));
+
+        await service.StartReceivingAsync();
+
+        await service.StopReceivingAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        // THE property: the call returned (did not hang) despite the underlying stop never
+        // completing, IsReceiving correctly reflects "stopped" (the handlers are already detached
+        // regardless of the stop's own outcome), and the timeout was logged, not silently swallowed.
+        Assert.False(service.IsReceiving);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("StopCapture did not finish within", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Round16_TxVolumePercent_OutOfRangeSettingsValue_ClampedOnReadAndWrite()
+    {
+        // Round-16 finding 3: TxVolumePercent flowed straight into PlayWithPttAsync's `gain`
+        // multiplier with no range check at all -- a corrupted/hand-edited settings.json (the same
+        // threat model GetStationIdTransmitOptionsAsync's own WPM/tone-frequency validation already
+        // codes against) could put an arbitrary multiplier on the transmitted audio.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { TxVolumePercent = 99999 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var (service, _, _, _) = CreateService(settingsStore: settingsStore);
+
+        // Read-side clamp.
+        Assert.Equal(100, await service.GetTxVolumePercentAsync());
+
+        // Write-side clamp -- an out-of-range value passed to the setter must not reach disk
+        // unclamped either, otherwise every future read would keep needing the read-side clamp to
+        // mask what's actually stored. Inspects the STORED value directly via settingsStore, not
+        // through GetTxVolumePercentAsync -- reading it back through the getter would pass even with
+        // the write-side clamp mutated away, since the read-side clamp masks an unclamped write too.
+        await service.SetTxVolumePercentAsync(-20);
+        var stored = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        Assert.Equal(0, stored?.TxVolumePercent);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
@@ -1231,6 +1320,43 @@ public sealed class SstvSessionServicePttSafetyTests
         public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 
+    /// <summary>Round-16 finding 2: the capture-side mirror of <see cref="GatedStopPlaybackAudioEngine"/>
+    /// -- parks <see cref="StopCaptureAsync"/> on a caller-controlled gate. Stands in for
+    /// <c>MiniAudioCaptureSession</c>'s own unbounded-by-design drain-thread join.</summary>
+    private sealed class GatedStopCaptureAudioEngine(IAudioEngine inner, Task gate) : IAudioEngine
+    {
+        public int CaptureOverrunCount => inner.CaptureOverrunCount;
+
+        public event Action<ReadOnlyMemory<float>>? SamplesCaptured
+        {
+            add => inner.SamplesCaptured += value;
+            remove => inner.SamplesCaptured -= value;
+        }
+
+        public Task StartCaptureAsync(
+            AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+            int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+            CancellationToken ct = default) =>
+            inner.StartCaptureAsync(device, sampleRate, drainThreadPriority, periodSizeInFrames, periods, channelSource, ct);
+
+        public async Task StopCaptureAsync()
+        {
+            await gate.ConfigureAwait(false);
+            await inner.StopCaptureAsync().ConfigureAwait(false);
+        }
+
+        public Task StartPlaybackAsync(
+            AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+            bool stereoTx = false, CancellationToken ct = default) =>
+            inner.StartPlaybackAsync(device, sampleRate, periodSizeInFrames, periods, stereoTx, ct);
+
+        public Task StopPlaybackAsync() => inner.StopPlaybackAsync();
+
+        public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) => inner.EnqueuePlaybackSamples(samples);
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
     /// <summary>Round-14 finding 2: the mirror-image of <see cref="GatedStopPlaybackAudioEngine"/> --
     /// parks <see cref="StartPlaybackAsync"/> on a caller-controlled gate instead of
     /// <see cref="StopPlaybackAsync"/>. Stands in for MiniAudioPlaybackSession's own synchronous
@@ -1271,6 +1397,54 @@ public sealed class SstvSessionServicePttSafetyTests
 
             await inner.StartPlaybackAsync(device, sampleRate, periodSizeInFrames, periods, stereoTx, ct).ConfigureAwait(false);
         }
+
+        public Task StopPlaybackAsync() => inner.StopPlaybackAsync();
+
+        public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) => inner.EnqueuePlaybackSamples(samples);
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    /// <summary>Round-16 finding 1: hangs the N-th call (1-based) to <see cref="StartCaptureAsync"/>
+    /// on a caller-controlled gate that IGNORES `ct` entirely -- unlike
+    /// <see cref="FakeAudioDeviceEnumerator.Gate"/> (which deliberately DOES respect `ct`, per its own
+    /// round-10 comment), this matches the REAL <c>MiniAudioEngine.StartCaptureAsync</c>/
+    /// <c>MiniAudioDeviceEnumerator.RefreshAsync</c> contract: `ct` is only checked at the
+    /// start/lock-acquire boundary, never during the blocking native call itself, so a token
+    /// cancelling mid-call does not unblock it. A ct-respecting fake could never have caught this
+    /// gap -- see the round-16 playbook entry for why round 10's own equivalent test passed even
+    /// before this fix existed.</summary>
+    private sealed class GatedStartCaptureAudioEngine(IAudioEngine inner, Task gate, int hangOnCallNumber) : IAudioEngine
+    {
+        private int _callCount;
+
+        public int CaptureOverrunCount => inner.CaptureOverrunCount;
+
+        public event Action<ReadOnlyMemory<float>>? SamplesCaptured
+        {
+            add => inner.SamplesCaptured += value;
+            remove => inner.SamplesCaptured -= value;
+        }
+
+        public async Task StartCaptureAsync(
+            AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+            int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+            CancellationToken ct = default)
+        {
+            if (Interlocked.Increment(ref _callCount) == hangOnCallNumber)
+            {
+                await gate.ConfigureAwait(false);
+            }
+
+            await inner.StartCaptureAsync(device, sampleRate, drainThreadPriority, periodSizeInFrames, periods, channelSource, ct).ConfigureAwait(false);
+        }
+
+        public Task StopCaptureAsync() => inner.StopCaptureAsync();
+
+        public Task StartPlaybackAsync(
+            AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+            bool stereoTx = false, CancellationToken ct = default) =>
+            inner.StartPlaybackAsync(device, sampleRate, periodSizeInFrames, periods, stereoTx, ct);
 
         public Task StopPlaybackAsync() => inner.StopPlaybackAsync();
 
