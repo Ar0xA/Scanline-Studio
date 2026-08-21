@@ -3808,3 +3808,21 @@ on this chunk.
 Commit `4c6f1f4`. Full solution suite confirmed green: `ScanlineStudio.Core.Sstv.Tests` at 1025/1025
 (1 unrelated intentional skip, up from 1022 before this round's 3 new tests), every other project's
 test suite green.
+
+## Chunk 4a CLOSED (2026-08-21) -- by explicit user decision, not the formal 2-consecutive-clean-round gate
+
+**1 round, 3 real findings fixed** (a missing `ksbSamples >= 1` constructor guard, a wrong legacy
+citation, and a real test-coverage gap on `YCbCr.FromRgb`/`ToRgb` closed with an exhaustive
+legacy-reference sweep). Round 1 itself closed with an UNCONDITIONAL auditor go-for-production
+verdict ("ship as-is, don't spend another round on this chunk"). The user, asked directly how to
+close, chose to accept that verdict and move on to chunk 4b rather than dispatch a round 2 purely to
+chase the formal 2-consecutive-clean-round gate. Same deliberate-exception precedent as chunks
+3a/3b/3c's own closures.
+
+Two nits left queued, not chased, per the auditor's own unconditional go: a comment-precision issue
+on `FromRgb`'s bit-exactness argument, and `ReadPeakPicked`'s boundary-guard asymmetry -- both on
+`YCbCr.cs`, neither behavioral.
+
+Commit `4c6f1f4` (code) / `02791a9` (docs). Full solution suite confirmed green:
+`ScanlineStudio.Core.Sstv.Tests` at 1025/1025 (1 unrelated intentional skip), every other project's
+test suite green.
