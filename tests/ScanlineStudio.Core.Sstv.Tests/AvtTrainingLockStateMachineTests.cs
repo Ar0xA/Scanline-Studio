@@ -39,17 +39,26 @@ public class AvtTrainingLockStateMachineTests
 
         Assert.NotNull(completedAt);
 
-        // Measured, not assumed: a real, sustained lock through the whole 32-block sequence
-        // finishes at sample 58608 (~5316.9ms), right at the training sequence's own real content
-        // duration (58568 samples, ~5312.9ms) -- not anywhere near the full ~7141ms worst-case
-        // nominal budget (78732 samples) a signal with no lock at all would wait out (see
-        // NoTrainingSignalAtAll_CompletesAtTheFullNominalBudget below). This is the entire value
-        // of this piece over the existing fixed-duration skip (see class doc comment) -- confirmed
-        // working, not just structurally plausible. Loose band (+/-300ms) since the exact
-        // completion point depends on legacy's own recalculation arithmetic, not an independently
-        // re-derived formula.
-        var expected = (int)Math.Round(VisHeader.AvtTrainingSequenceDurationMs / 1000.0 * SampleRate);
-        Assert.InRange(completedAt!.Value, expected - (int)Math.Round(0.3 * SampleRate), expected + (int)Math.Round(0.3 * SampleRate));
+        // Batch 6 chunk 6d fix (docs/functional-audit-playbook.md): the prior +/-300ms (+/-3308
+        // sample) band was 58x too loose to actually prove a real lock happened -- a signal with
+        // NO lock at all completes only ~57 samples away from a real lock's own completion point
+        // (see the no-lock comparison below), well inside that old band. This is exactly how the
+        // second documented bug (an earlier version overwriting _phaseCounter in the h==0x40
+        // branch, a ~63-sample/~5.7ms shift) went undetected by this same test. Tight band, a real
+        // golden value independently re-measured against the CURRENT code (not pasted from a prior
+        // round's own claim, which was off by 26 samples) -- re-measure this value again if this
+        // file's timing constants ever change deliberately.
+        Assert.InRange(completedAt!.Value, 58626, 58642);
+
+        // The actual point of this class over the fixed-duration skip (see class doc comment): a
+        // real lock must finish STRICTLY EARLIER than the never-locked timeout path. Without this,
+        // the tight assertion above would still pass even with DecodeBits' checksum check and the
+        // per-block timeout recalculation deleted entirely -- the two outcomes are separated by
+        // only ~57 samples out of a ~58600-sample budget.
+        var noLockCompletionAt = (int)((9.0 + VisHeader.AvtTrainingSequenceDurationMs) / 1000.0 * SampleRate);
+        Assert.True(
+            completedAt!.Value < noLockCompletionAt,
+            $"lock completed at {completedAt}, no-lock timeout is {noLockCompletionAt} -- recalculation may not be happening");
     }
 
     [Fact]
@@ -73,7 +82,11 @@ public class AvtTrainingLockStateMachineTests
         // This class is only ever constructed once AnalogFmSstvDecoder has already skipped past all
         // 3 VIS repeats (see AvtTrainingLockStateMachine's own doc comment on why its internal budget
         // is scoped to just the training sequence's own duration, not legacy's full case-3 figure,
-        // which would double-count those already-skipped repeats).
+        // which would double-count those already-skipped repeats). ~5321ms/58667 samples here, NOT
+        // legacy's own full "9 + 2xVIS-block + training" figure (~7141ms/78732 samples) -- that
+        // pre-rescoping-fix number belonged to a version of this class that double-counted the two
+        // VIS-repeat durations the caller already skips (Batch 6 chunk 6d correction: a stale
+        // comment elsewhere in this file cited the old figure after the fix already landed).
         var expected = (int)Math.Round((9.0 + VisHeader.AvtTrainingSequenceDurationMs) / 1000.0 * SampleRate);
         Assert.InRange(completedAt!.Value, expected - 10, expected + 10);
     }
