@@ -881,9 +881,9 @@ into 3, following Batch 2's precedent:
 
 **Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds (see "Chunk 3a CLOSED" entry near the
 end of this batch's section) -- closed by explicit user decision, not the formal 2-consecutive-clean-
-round gate. Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) started -- round 1 done (see "Chunk 3b
-round 1" entry below), 2 blockers + 3 risks fixed, not clean yet, round 2 next. Chunk 3c
-(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) not yet started.
+round gate. Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) in progress -- rounds 1-2 done (2 blockers
++ 3 risks, then 3 risks + 1 nit, one of round 2's own findings being a gap in round 1's own fix), not
+clean yet, round 3 next. Chunk 3c (`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) not yet started.
 
 **Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
 never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
@@ -3389,3 +3389,55 @@ Full solution suite green: `ScanlineStudio.Core.Radio.Tests` 123/123, `ScanlineS
 
 Round 1 found real blockers, so it does not count toward the 2-consecutive-clean-round gate. Round 2 is
 next -- the earliest round that can start that count.
+
+## Chunk 3b round 2 (2026-08-21)
+
+Fresh, independent re-derivation against the post-round-1 code (not a re-read of round 1's writeup),
+per this project's standing per-round discipline. Found real gaps -- one of them in round 1's OWN fix,
+not something round 1 missed elsewhere.
+
+1. **[risk]** Round 1's `PollLoopShutdownTimeout` bound (10s) on `DisconnectAsync`'s wait for the poll
+   loop task was defeated one line later: the very next statement, `await protocol.DisposeAsync()`, was
+   still unbounded, and `HamlibRadioProtocol.DisposeAsync` takes its own semaphore with no token/timeout
+   -- held for the whole duration of a wedged native call. A CAT device wedged mid-poll still hung app
+   shutdown indefinitely; round 1's own fix bought exactly 10 seconds and a log line before hitting this.
+   Fixed with a second bounded wait, `ProtocolDisposeTimeout` (10s).
+2. **[risk]** `ConnectAsync`'s `ct.ThrowIfCancellationRequested()` sat OUTSIDE its own try block -- a
+   cancelled token was the one failure between `Connecting` and `Connected` that published no terminal
+   event at all, latching every subscriber on `Connecting` forever. Fixed by moving the check inside the
+   try, alongside reordering `_sessionActive = true` before the `RigId` read (a throwing `RigId` getter
+   used to leave `_protocol` non-null with `_sessionActive` false -- the one state `DisconnectAsync`'s
+   teardown skips entirely; both shipped `RigId` getters are constants, so this half was unreachable
+   today, fixed anyway since it was free in the same edit).
+3. **[risk]** `TcpTransport.ReadAsync`'s EOF branch (`bytesRead == 0`) threw without calling
+   `AbortConnection()`, unlike the cancellation branch 15 lines above it -- so `IsOpen` kept reporting
+   `true` on a dead socket, and `IsOpen` is exactly what `RigctldClientProtocol.EnsureConnectedAsync`
+   uses to decide whether to reopen. A later `Set*Async` (the PTT-keying path, not just the
+   self-healing poll path) on the same protocol instance would write into a dead socket. Fixed to match
+   the cancellation branch's own handling. `FakeRadioTransport`'s script-exhaustion path updated to
+   abort too, per `IRadioTransport`'s own "no more forgiving approximation" rule for test doubles.
+4. **[nit]** `TcpTransport.WriteAsync` re-read the `_stream` field after its own null check -- a racing
+   `AbortConnection()` (from a concurrent cancelled read, `CloseAsync`, or `DisposeAsync`) could turn a
+   guarded `InvalidOperationException` into a `NullReferenceException`. Fixed by capturing into a local
+   first, same pattern `ReadAsync` already uses.
+
+Three of the four got fast regression tests (`RadioControllerTests.ConnectAsync_CancelledToken_
+PublishesFailed_NotStuckOnConnecting`, an extension of `TcpTransportTests.ReadAsync_ThrowsIOException_
+WhenRemoteClosesConnection` asserting `IsOpen` is false afterward), each mutation-verified (reverted the
+fix, confirmed the exact predicted failure, restored). The first (unbounded protocol dispose) mirrors
+round 1's own `PollLoopShutdownTimeout` fix, left untested for the same reason: a real 10s-hang scenario
+isn't cheap to test without injecting the timeout as a constructor parameter, which felt like scope
+creep beyond the auditor's given fix.
+
+**Explicitly deferred, per the auditor's own go/no-go guidance** (narrow-risk, not blocking, don't spend
+another full round chasing them): a CompareExchange-ordering gap in the poll loop's reconnect path
+needing a ~10s preemption window between a timed-out `DisconnectAsync` teardown and the reconnect's own
+claim to actually bite; and the complete absence of any lock serializing `ConnectAsync`/
+`DisconnectAsync`/`DisposeAsync` against each other (arguably a contract-documentation gap on
+`IRadioController` rather than a code defect, per the auditor's own framing).
+
+Full solution suite green: `ScanlineStudio.Core.Radio.Tests` 124/124, `ScanlineStudio.Core.Sstv.Tests`
+1022/1022 (1 unrelated intentional skip), every other project passing. Committed as `1889fa8`.
+
+Round 2 found real issues, so it does not count toward the 2-consecutive-clean-round gate either. Round
+3 is next -- the earliest round that can start that count.
