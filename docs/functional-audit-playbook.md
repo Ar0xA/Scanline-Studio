@@ -3868,3 +3868,15 @@ Auditor's verdict: unconditional go -- ship as-is, don't spend another round on 
 
 Commit `9da8a45`. Full solution suite confirmed green: `ScanlineStudio.Core.Sstv.Tests` at 1026/1027
 (1 unrelated intentional skip), every other project's test suite green.
+
+## Chunk 4b CLOSED (2026-08-21) -- by explicit user decision, not the formal 2-consecutive-clean-round gate
+
+**1 round, no functional bug, 2 real gaps closed** (a legacy RX/TX self-inconsistency documented so
+it isn't "corrected" the wrong way later, and a genuine Scottie-class coverage gap -- line-paired
+chroma sourced from the odd row -- closed with a mutation-verified test). Round 1 closed with an
+UNCONDITIONAL auditor go-for-production verdict. The user, asked directly how to close, chose to
+accept that verdict and move on to chunk 4c rather than dispatch a round 2 purely to chase the
+formal 2-consecutive-clean-round gate. Same deliberate-exception precedent as chunks 3a/3b/3c/4a's
+own closures.
+
+Commit `9da8a45` (code) / this entry (docs). Full solution suite green throughout.
