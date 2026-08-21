@@ -1982,6 +1982,50 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
     }
 
+    // ------------------------------------------------------------------ round 28 findings
+
+    [Fact]
+    public async Task Round28_PlayWithPttAsync_ConfirmedUnkeyBeforeOwnKeyCommand_CleanupStillAttemptsUnkey()
+    {
+        // Round-28 finding (blocker): unkeyEpochAtEntry used to be snapshotted at METHOD ENTRY --
+        // before this call's own key command -- so a confirmed un-key that happened BEFORE this call
+        // keyed the rig was misread, at cleanup time, as "confirmed AFTER I keyed", and the cleanup
+        // un-key was wrongly skipped. The two-epoch check (round 27) only proves "nobody re-keyed since
+        // MY key phase" -- it says nothing about whether the confirmed un-key it paired with actually
+        // postdates that key, unless both epochs are read at the SAME point.
+        var keyGate = new TaskCompletionSource();
+        var reachedKeyGate = new TaskCompletionSource();
+        var (service, _, radio, _) = CreateService();
+        radio.Gate = keyGate.Task;
+        radio.GateOnCallNumber = 1; // the transmit's own key command
+        radio.OnCallStarted = callNumber =>
+        {
+            if (callNumber == 1)
+            {
+                reachedKeyGate.TrySetResult();
+            }
+        };
+
+        var transmit = service.TransmitAsync(TestMode, TestImage);
+
+        // Deterministic happens-before point: the transmit's own key command has genuinely started and
+        // is now parked at the gate, BEFORE it ever reaches the wire.
+        await reachedKeyGate.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // A confirmed un-key completes BEFORE the transmit's own key command ever reaches the wire --
+        // says nothing about whether THIS call's own upcoming key stays on.
+        await service.SetPttLockAsync(false);
+        Assert.Equal([false], radio.PttCalls);
+
+        // Release the transmit's own key command -- it now reaches the wire AFTER the confirmed
+        // un-key.
+        keyGate.SetResult();
+        await transmit;
+
+        // THE property: the transmit's own cleanup must still attempt its own un-key.
+        Assert.Equal([false, true, false], radio.PttCalls);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)

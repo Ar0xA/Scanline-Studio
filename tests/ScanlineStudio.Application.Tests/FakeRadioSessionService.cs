@@ -50,6 +50,7 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     {
         ct.ThrowIfCancellationRequested();
         var callNumber = Interlocked.Increment(ref _callCount);
+        OnCallStarted?.Invoke(callNumber);
         if (HangOnCallNumber == callNumber)
         {
             // Round-14 test hook: hangs forever, never returning -- unlike Gate (below), this only
@@ -116,6 +117,15 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// <see cref="SetPttAsync"/>'s own comment for why this exists separately from
     /// <see cref="Gate"/>.</summary>
     public int? HangOnCallNumber { get; set; }
+
+    /// <summary>Test-only hook (round 28): invoked with the 1-based call number the INSTANT
+    /// <see cref="SetPttAsync"/> is entered, before any <see cref="HangOnCallNumber"/>/<see cref="Gate"/>
+    /// check. Needed because this fake has no real-time pacing -- a test racing a SECOND, independent
+    /// call (e.g. <c>SetPttLockAsync</c>) against a GATED first call cannot otherwise tell "the first
+    /// call has genuinely reached and is now parked at its own gate" from external polling alone, the
+    /// same problem <c>SignalingGatedStopPlaybackAudioEngine</c> (round 25) solves for the audio engine.
+    /// Gives a deterministic happens-before point to synchronize on instead.</summary>
+    public Action<int>? OnCallStarted { get; set; }
 
     private int _callCount;
     private readonly TaskCompletionSource _neverCompletes = new();
