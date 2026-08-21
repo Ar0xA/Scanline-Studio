@@ -1269,6 +1269,64 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Equal(0, stored?.TxVolumePercent);
     }
 
+    // ------------------------------------------------------------------ round 17 findings
+
+    [Fact]
+    public async Task Round17_SetPttLockAsync_KeyCommandHangs_TimesOutRatherThanStrandingTheLockGateForever()
+    {
+        // Round-17 finding 1: SetPttLockAsync's own PTT command had no bound of its own -- the
+        // identical gap PlayWithPttAsync's own key command had before round 14's fix, never given the
+        // same treatment here. Verified against both shipped backends: HamlibRadioProtocol.SetPttAsync's
+        // CallAsync wrapper takes no CancellationToken at all; RigctldClientProtocol's reply read has
+        // no timeout of its own either. A wedged rig here previously hung this call forever WHILE
+        // HOLDING _pttLockGate -- stranding every future SetPttLockAsync call, including a future
+        // emergency unlock.
+        var (service, _, radio, logger) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(50));
+        radio.HangOnCallNumber = 1;
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(true));
+
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical);
+
+        // THE property: _pttLockGate must have been released -- a subsequent call must not be stuck
+        // behind the hung one. Round-11 precedent: wrapped in WaitAsync(TimeSpan) so a bug here fails
+        // this one test loudly instead of hanging the whole run.
+        radio.HangOnCallNumber = null;
+        await service.SetPttLockAsync(true).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Round17_TryUnkeyPttAsync_UnkeyCommandHangs_TimesOutRatherThanHangingForever()
+    {
+        // Round-17 finding 2 (the single most safety-critical await in the file): TryUnkeyPttAsync's
+        // own un-key command had no REAL bound -- UnkeyForCleanupAsync's fresh unkeyCts.Token was
+        // passed as the callee's own `ct` parameter, which round 16 already proved does not bound
+        // either shipped backend's native/protocol call. This is the exact same mistake, one call
+        // away from the whole reason this file exists: PlayWithPttAsync's finally, SetPttLockAsync's
+        // recovery, and (worst of all) DisposeAsync's own backstop all funnel through this one method.
+        // ThrowOnStartPlaybackAudioEngine forces an abnormal termination deterministically (throws
+        // from StartPlaybackAsync, AFTER PTT is keyed but before any sample is pumped) so the cleanup
+        // un-key is the SECOND SetPttAsync call, which HangOnCallNumber targets specifically -- the
+        // FIRST call (the key itself) must succeed normally.
+        var (service, _, radio, logger) = CreateService(
+            wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner),
+            cleanupTimeout: TimeSpan.FromMilliseconds(50));
+        radio.HangOnCallNumber = 2;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage));
+
+        // THE property: the hung un-key timed out rather than hanging PlayWithPttAsync's own finally
+        // forever, and the operator is told loudly (Critical) rather than the app just stalling.
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
+
+        // _transmitInFlight must have been released too -- a subsequent transmit must reach the SAME
+        // (still-throwing, by design) engine again rather than being rejected as "already in
+        // progress." Round-11 precedent: wrapped in WaitAsync(TimeSpan) so a bug here fails this one
+        // test loudly instead of hanging the whole run.
+        radio.HangOnCallNumber = null;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage).WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)

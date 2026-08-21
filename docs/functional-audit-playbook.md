@@ -2012,3 +2012,82 @@ Round 16 fixed 1 new blocker (a gap in a mechanism every round since round 10 ha
 closed) plus 2 more real risks -- round 16 does NOT count as chunk 3a's 1st clean round. Round 17 is
 now the earliest round that can count as chunk 3a's 1st clean round. Fifteen consecutive rounds (2-16)
 have now each found something real in this file.
+
+**Chunk 3a round 17** (2026-08-21, independent agent, fresh context, agent `ae95d3b5040f6dc28`).
+Re-derived and confirmed all three of round 16's fixes correct, verifying the drain-thread synchronous
+fast path end-to-end (not assumed) and confirming no downstream double-clamp on the TX gain fix.
+Applying round 16's own lesson exhaustively -- re-examining EVERY remaining `CancellationTokenSource`/
+token site in the file for the same "callee-`ct`-without-outer-`WaitAsync`" gap -- found two more
+instances of the identical mechanism, both on the PTT command itself, never bounded in 16 rounds:
+**(1) [BLOCKER]** `SetPttLockAsync`'s own `_radioSession.SetPttAsync(locked, ct)` call had no bound of
+its own -- the same gap `PlayWithPttAsync`'s key command had before round 14's fix, never given the
+same treatment here. Verified against both shipped backends directly: `HamlibRadioProtocol.SetPttAsync`'s
+`CallAsync` wrapper takes NO `CancellationToken` at all (airtight -- once the blocking native call
+starts, nothing can interrupt it); `RigctldClientProtocol`'s reply read has no timeout of its own
+either. A wedge here (either direction) hangs forever WHILE HOLDING `_pttLockGate`, permanently
+blocking every future `SetPttLockAsync` call including a future emergency unlock -- the one escape
+hatch this whole method exists to be. **(2) [BLOCKER, the single most safety-critical await in the
+file]** `TryUnkeyPttAsync`'s own `_radioSession.SetPttAsync(false, ct)` call -- the UN-KEY -- had the
+identical gap. `UnkeyForCleanupAsync`'s fresh `unkeyCts.Token` was passed as the callee's own `ct`
+parameter, which round 16 already proved does not bound either backend's native/protocol call. This
+method has 5 call sites: `PlayWithPttAsync`'s finally (hang here strands `_transmitInFlight` --
+permanent TX/Tune lockout, PTT keyed, and `Log.PttStillKeyedAfterFailedUnkey` never fires since
+nothing ever returns), `SetPttLockAsync`'s recovery, and worst of all **`DisposeAsync`'s own
+backstop** -- which would never return, letting the host's ~10s teardown bound expire and the process
+exit with the transmitter physically keyed and the Critical "PTT MAY STILL BE KEYED" log never even
+emitted. The exact scenario this entire chunk exists to make impossible, silently skipped, 16 rounds
+in. Also found: **(3) [risk]** `.WaitAsync(...)` structurally cannot bound a callee's SYNCHRONOUS
+PREFIX (e.g. `JsonSettingsStore.LoadAsync`'s blocking `File.Exists`/`File.OpenRead` before its first
+`await`) -- every settings-backed `WaitAsync` bound in this file (rounds 15/16's fixes, transitively
+the RX-resume chain too) inherits this hole on a hung network-mounted settings path. **(4) [risk]**
+`DisposeAsync`'s tail (`StopReceivingAsync`/`Waterfall.Dispose()`/`_decoder.Dispose()`) had no guard at
+all -- one throw skips whatever comes after, leaking that resource; `MiniAudioEngine.DisposeAsync`
+already has the equivalent fix for the identical shape. **(5) [risk]** `TuneAsync` does no range
+validation on `duration`/`frequencyHz` -- the strictly stronger case of round 16's own `TxVolumePercent`
+precedent, since `duration` directly controls how long PTT stays keyed and the only production caller
+(`RadioStatusViewModel`) passes `CancellationToken.None` with no Stop command. **(6)-(9) [nits]**:
+`StopReceivingAsync`'s sync-throw arm skipped `ResetAgc()`/`Log.RxStopped`; its own round-16 comment
+overclaimed the watchdog bounds anything on the drain-thread fast path (it bounds nothing there --
+the stop is already synchronous and complete by the time `WaitAsync` is reached); the capture-side
+twin of `StopPlaybackWithWatchdogAsync`'s own documented "known consequence" was undocumented (verified
+benign, unlike the playback-side residual); a round-11 comment claiming a double-subscription bug
+"survives... for the rest of the process's life" may be overstated against the CURRENT `MiniAudioEngine`
+(not fully re-verified, out of this chunk's own failure class either way).
+
+**Chunk 3a round 17 fixes applied** (2026-08-21, commit TBD). Findings 1/2: both wrapped with
+`WaitAsync` -- finding 1 uses `.WaitAsync(_cleanupTimeout, ct)` (matching `PlayWithPttAsync`'s own
+key-command fix exactly); finding 2 uses `.WaitAsync(ct)` alone, since `ct` here IS already
+`unkeyCts.Token` (a fresh CTS carrying `_cleanupTimeout`) -- reusing it rather than adding a second,
+redundant timeout, matching round 16's own RX-resume fix pattern. `UnkeyForCleanupAsync`'s own doc
+comment (which claimed the fresh CTS alone "is blocker 1's actual fix") corrected to note that giving
+it its own budget and actually BOUNDING the await are two different things -- the first was already
+true, the second was missing until now. Finding 4: `DisposeAsync`'s three tail steps each wrapped in
+their own try/catch + `Log.CleanupStepFailed`, matching `MiniAudioEngine.DisposeAsync`'s own
+established fix for the identical shape. Nit 6: the sync-throw arm no longer early-returns past
+`ResetAgc()`/`Log.RxStopped` (falls through with `stopTask = Task.CompletedTask`, letting the rest of
+the method run unchanged rather than duplicating the tail logic). Nits 7-9: comment corrections only.
+Findings 3 and 5 deliberately NOT fixed this round -- both require a broader design decision
+(finding 3: `Task.Run`-wrapping every settings read vs. a `JsonSettingsStore`-level fix; finding 5:
+what validation/clamp shape and limits are appropriate for direct caller arguments, as opposed to a
+persisted setting) that shouldn't be rushed alongside two blockers in the same round -- flagged for a
+dedicated future round, not silently dropped.
+
+New regression tests for findings 1 and 2 (the two blockers), using the existing
+`FakeRadioSessionService.HangOnCallNumber` mechanism (round 14) -- no new test infrastructure needed.
+Finding 2's test targets the SECOND `SetPttAsync` call specifically (the cleanup un-key, forced via
+`ThrowOnStartPlaybackAudioEngine`'s deterministic abnormal termination), leaving the first (the key
+itself) to succeed normally. Both mutation-verified: each hung outright under an external `timeout`
+bound when their `WaitAsync` bound was reverted -- finding 2's especially so, being the single most
+safety-critical await in the file. Finding 4 (DisposeAsync tail guard) intentionally NOT given a
+dedicated test this round -- would need new throw-injection hooks on `FakeSstvDecoder`/
+`FakeWaterfallSource` that don't exist yet, and the fix itself mirrors an already-proven pattern
+(`MiniAudioEngine.DisposeAsync`'s own equivalent, from the Batch 1 audit) closely enough to judge safe
+to ship without one, given this round's already-large scope. Restored, rebuilt clean, both new tests
+re-confirmed passing, no stray test-host processes survived either mutation. All 199
+`ScanlineStudio.Application.Tests` passing (197 pre-existing + 2 new), full solution suite (all
+projects) clean.
+
+Round 17 fixed 2 new blockers -- including the single most safety-critical await in the entire file,
+unbounded for all 16 prior rounds -- does NOT count as chunk 3a's 1st clean round. Round 18 is now the
+earliest round that can count as chunk 3a's 1st clean round. Sixteen consecutive rounds (2-17) have
+now each found something real in this file.
