@@ -117,6 +117,58 @@ public sealed class WaterfallSourceTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new WaterfallSource(sampleRate: 8000, windowSize: 64, hopSize: hopSize));
     }
 
+    [Fact]
+    public void PushSamples_HopSizeEqualsWindowSize_NoOverlap_EmitsBackToBackFrames()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 9 chunk 9a (docs/functional-audit-playbook.md):
+        // hopSize==windowSize (no overlap, keep=0) is constructor-valid but was never exercised by
+        // any test -- traced by hand to be correct (Array.Copy with a zero length is legal, no
+        // throw), pinned here directly rather than left as an implicit boundary.
+        const int windowSize = 64;
+        using var source = new WaterfallSource(sampleRate: 8000, windowSize: windowSize, hopSize: windowSize);
+        var frames = new List<WaterfallFrame>();
+        source.Frames.Subscribe(frames.Add);
+
+        source.PushSamples(new float[windowSize * 2]);
+
+        Assert.Equal(2, frames.Count);
+    }
+
+    [Fact]
+    public void PushSamples_OverlapRetention_CarriesForwardTheCorrectHalf_NotTheWrongOne()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 9 chunk 9a: every existing multi-frame test
+        // above asserts only FRAME COUNT, never frame CONTENT -- a bug retaining the WRONG half of
+        // the window across a hop (e.g. Array.Copy's source offset) would leave all of them green.
+        // A tone confined to the FIRST hop only, followed by silence, discriminates: the correctly
+        // retained second frame must carry forward SILENCE (samples[hopSize..windowSize), which are
+        // all zero here), not the tone-containing first hop.
+        const int sampleRate = 8000;
+        const int windowSize = 64;
+        const int hopSize = 32;
+        const int targetBin = 8; // 8 * (8000/64) = 1000Hz
+
+        using var source = new WaterfallSource(sampleRate, windowSize, hopSize);
+        var frames = new List<WaterfallFrame>();
+        source.Frames.Subscribe(frames.Add);
+
+        var samples = new float[96]; // one full window (64) + one more hop (32)
+        for (var i = 0; i < hopSize; i++)
+        {
+            samples[i] = MathF.Sin(2f * MathF.PI * targetBin * i / windowSize); // tone confined to the FIRST hop only
+        }
+
+        // samples[32..95] left at 0f -- pure silence for the rest.
+        source.PushSamples(samples);
+
+        Assert.Equal(2, frames.Count);
+        Assert.True(frames[0].MagnitudesDb[targetBin] > -60f, $"expected a real tone peak in frame 0, got {frames[0].MagnitudesDb[targetBin]}dB");
+
+        // Frame 1 = retained samples[32..63] (must be silence) + new samples[64..95] (silence) -- a
+        // wrong-half retain would instead carry the tone-containing first hop forward here.
+        Assert.All(frames[1].MagnitudesDb, db => Assert.True(db < -150f, $"expected near-floor silence in frame 1, got {db}dB -- looks like the wrong half was retained."));
+    }
+
     [Theory]
     [InlineData(float.PositiveInfinity)]
     [InlineData(float.NegativeInfinity)]
