@@ -2290,7 +2290,7 @@ was re-examined and NOT confirmed -- the cited comments correctly use past-tense
 describe a genuinely still-live DIFFERENT interleaving (`PlayWithPttAsync` racing `SetPttLockAsync`,
 not round-12's already-closed `PlayWithPttAsync`-vs-`PlayWithPttAsync` case), so no correction applied.
 
-**Chunk 3a round 20 fixes applied** (2026-08-21, commit TBD). New shared `SafeLog` helper (swallows
+**Chunk 3a round 20 fixes applied** (2026-08-21, commit `d35417d`). New shared `SafeLog` helper (swallows
 any exception the log call itself throws -- deliberately silent, since there is nothing safe left to
 log TO if the logger itself is broken) applied at every log call inside this class's PTT-safety-
 critical catch/cleanup paths: both `TryUnkeyPttAsync` catch arms, `UnkeyForCleanupAsync`'s 3 log
