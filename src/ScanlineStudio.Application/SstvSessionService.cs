@@ -833,7 +833,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
             }
             catch (ObjectDisposedException)
             {
-                Log.CaptureOverrunCountRaceObserved(_logger);
+                // Round-22 finding (risk): this getter's own doc comment states the reason this catch
+                // exists -- polled every 250ms by RxImagePaneViewModel's telemetry timer, and a
+                // DispatcherTimer tick exception has nowhere safe to land. A throwing log call (a
+                // broken logging provider) used to defeat that guarantee one frame deeper.
+                SafeLog(() => Log.CaptureOverrunCountRaceObserved(_logger));
                 return 0;
             }
         }
@@ -876,7 +880,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
         try
         {
             _maintenanceWarningActive = true;
-            Log.MaintenanceWarningRaised(_logger);
+            // Round-22 finding (nit): same log-before-invoke shape as OnDecoderRestartCriticallyOverdue's
+            // own MaintenanceCriticalStop fix above -- a throwing log call used to skip Invoke() below.
+            SafeLog(() => Log.MaintenanceWarningRaised(_logger));
             MaintenanceWarningRaised?.Invoke();
         }
         catch (Exception ex)
@@ -892,7 +898,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
             if (_maintenanceWarningActive)
             {
                 _maintenanceWarningActive = false;
-                Log.MaintenanceWarningCleared(_logger);
+                // Round-22 finding (nit): same log-before-invoke shape as the other 2 maintenance
+                // handlers above -- a throwing log call used to skip Invoke() below.
+                SafeLog(() => Log.MaintenanceWarningCleared(_logger));
                 MaintenanceWarningCleared?.Invoke();
             }
         }
@@ -926,7 +934,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // fixing or re-confirming the underlying question.
             StopReceivingAsync().GetAwaiter().GetResult();
             _maintenanceWarningActive = false;
-            Log.MaintenanceCriticalStop(_logger);
+            // Round-22 finding (nit): a throwing log call here used to skip Invoke() below entirely
+            // (sequenced after it) -- RX would already be force-stopped with the UI never told why.
+            SafeLog(() => Log.MaintenanceCriticalStop(_logger));
             MaintenanceCriticalStopRaised?.Invoke();
         }
         catch (Exception ex)
@@ -1026,7 +1036,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
             SafeLog(() => Log.CleanupStepFailed(_logger, "ResetAgc (RX start)", ex));
         }
 
-        Log.RxStarted(_logger, device.Id, _decoder.SampleRate);
+        // Round-22 finding (nit): round 21's own ResetAgc() fix above justified itself partly as "no
+        // longer skips Log.RxStarted below" -- but this call itself was still unwrapped, so a throwing
+        // provider still propagated out of this method after capture had genuinely started (swallowed
+        // on the RX-resume path via TryCleanupAsync, but not on the direct UI Start-RX path).
+        SafeLog(() => Log.RxStarted(_logger, device.Id, _decoder.SampleRate));
     }
 
     public async Task StopReceivingAsync()
@@ -1341,9 +1355,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private static readonly TimeSpan PlaybackStopWaitBudget = TimeSpan.FromSeconds(5);
 
     // Blocker 3: how long DisposeAsync waits for an in-flight keyed transmit's OWN cleanup before
-    // force-un-keying itself. Sized against ScanlineStudio.Host/Program.cs's 10s total host-teardown
-    // bound: this (3s) + the backstop un-key's own CleanupTimeout (5s) = 8s worst case, leaving
-    // headroom for the rest of teardown rather than guaranteeing a TeardownTimedOut.
+    // force-un-keying itself. Originally sized against ScanlineStudio.Host/Program.cs's 10s total
+    // host-teardown bound as this (3s) + the backstop un-key's own CleanupTimeout (5s) = 8s worst
+    // case.
+    //
+    // Round-22 finding (nit): that arithmetic is now stale -- round 16 added a 5s StopCapture
+    // watchdog inside StopReceivingAsync, which DisposeAsync also calls, bringing the real worst case
+    // to roughly 13s, plus Waterfall.Dispose()/Decoder.Dispose() (both unbounded, out of this chunk's
+    // scope). No PTT consequence today -- the backstop un-key is deliberately ordered first and
+    // completes well inside its own budget regardless of what runs after it -- but a future round
+    // sizing a NEW budget against this comment's original "8s worst case" claim would be misled.
     private static readonly TimeSpan InFlightKeyedTransmitWait = TimeSpan.FromSeconds(3);
 
     // Round-13 finding: EnqueueAllAsync's own "buffer full, wait 10ms, retry" loop (see its own
@@ -1615,7 +1636,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // auto-cutoff -- see TxControlsPaneViewModel for which one) -- this layer has no way to
                 // tell which caused it, so it's logged generically at Information, not as a failure.
                 abnormalTermination = true;
-                Log.PlaybackCancelled(_logger);
+                // Round-22 finding (risk): a throwing log call here (a broken logging provider) used
+                // to REPLACE this OperationCanceledException as what propagates out of this method --
+                // TxControlsPaneViewModel's own catch (OperationCanceledException) branches on this
+                // exception identity to distinguish an SWR-cutoff abort from a generic failure (see
+                // RaiseCapturePausedForTransmitChanged's own doc comment for the identical harm, which
+                // round 20 already guarded against for that method). PTT itself is unaffected either
+                // way -- the finally below still runs the urgent un-key -- only the exception identity
+                // reaching the caller was at risk.
+                SafeLog(() => Log.PlaybackCancelled(_logger));
                 throw;
             }
             catch (ObjectDisposedException) when (_disposed)
@@ -1631,13 +1660,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // ObjectDisposedException reached OUTSIDE of shutdown (_disposed still false) still falls
                 // through to the generic catch below and logs as a real Error-level failure.
                 abnormalTermination = true;
-                Log.PlaybackAbortedByDispose(_logger);
+                // Round-22 finding (risk): same shape as the OperationCanceledException arm above -- a
+                // throwing log call used to substitute an unrelated exception for the
+                // ObjectDisposedException this class's own established convention has callers branch
+                // on (see SetPttLockAsync's own post-dispose recovery guard for the same reasoning).
+                SafeLog(() => Log.PlaybackAbortedByDispose(_logger));
                 throw;
             }
             catch (Exception ex)
             {
                 abnormalTermination = true;
-                Log.PlaybackFailed(_logger, ex);
+                // Round-22 finding (nit): same log-before-rethrow shape as the two typed catch arms
+                // above, wrapped for consistency -- abnormalTermination is already set and the finally
+                // below still runs the urgent un-key regardless, so this is exception-identity-only.
+                SafeLog(() => Log.PlaybackFailed(_logger, ex));
                 throw;
             }
             finally
