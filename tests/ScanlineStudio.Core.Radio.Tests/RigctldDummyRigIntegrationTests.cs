@@ -28,85 +28,97 @@ public class RigctldDummyRigIntegrationTests
     [Fact]
     public async Task PollAsync_ReadsTheDummyRigsRealDefaultState()
     {
-        if (!RigctldIsAvailable.Value)
+        await RunAgainstDummyRigAsync(async sut =>
         {
-            return;
-        }
+            var state = await sut.PollAsync(CancellationToken.None);
 
-        await using var dummy = await DummyRigctldProcess.StartAsync();
-        var transport = new TcpTransport("127.0.0.1", dummy.Port);
-        var sut = new RigctldClientProtocol(transport, TimeSpan.FromSeconds(5));
-
-        var state = await sut.PollAsync(CancellationToken.None);
-
-        // Hamlib's Dummy backend's real shipped defaults (rigs/dummy/dummy.c) -- not invented.
-        Assert.Equal(145_000_000, state.FrequencyHz);
-        Assert.Equal(RadioMode.Fm, state.Mode);
-
-        await sut.DisposeAsync();
+            // Hamlib's Dummy backend's real shipped defaults (rigs/dummy/dummy.c) -- not invented.
+            Assert.Equal(145_000_000, state.FrequencyHz);
+            Assert.Equal(RadioMode.Fm, state.Mode);
+        });
     }
 
     [Fact]
     public async Task SetFrequencyAsync_ThenPollAsync_ReflectsTheRealChange()
     {
-        if (!RigctldIsAvailable.Value)
+        await RunAgainstDummyRigAsync(async sut =>
         {
-            return;
-        }
+            await sut.SetFrequencyAsync(7_074_000, CancellationToken.None);
+            var state = await sut.PollAsync(CancellationToken.None);
 
-        await using var dummy = await DummyRigctldProcess.StartAsync();
-        var transport = new TcpTransport("127.0.0.1", dummy.Port);
-        var sut = new RigctldClientProtocol(transport, TimeSpan.FromSeconds(5));
-
-        await sut.SetFrequencyAsync(7_074_000, CancellationToken.None);
-        var state = await sut.PollAsync(CancellationToken.None);
-
-        Assert.Equal(7_074_000, state.FrequencyHz);
-
-        await sut.DisposeAsync();
+            Assert.Equal(7_074_000, state.FrequencyHz);
+        });
     }
 
     [Fact]
     public async Task SetModeAsync_ThenPollAsync_ReflectsTheRealChange()
     {
-        if (!RigctldIsAvailable.Value)
+        await RunAgainstDummyRigAsync(async sut =>
         {
-            return;
-        }
+            await sut.SetModeAsync(RadioMode.Usb, CancellationToken.None);
+            var state = await sut.PollAsync(CancellationToken.None);
 
-        await using var dummy = await DummyRigctldProcess.StartAsync();
-        var transport = new TcpTransport("127.0.0.1", dummy.Port);
-        var sut = new RigctldClientProtocol(transport, TimeSpan.FromSeconds(5));
-
-        await sut.SetModeAsync(RadioMode.Usb, CancellationToken.None);
-        var state = await sut.PollAsync(CancellationToken.None);
-
-        Assert.Equal(RadioMode.Usb, state.Mode);
-
-        await sut.DisposeAsync();
+            Assert.Equal(RadioMode.Usb, state.Mode);
+        });
     }
 
     [Fact]
     public async Task Capabilities_PttUnsupportedOnTheDummyRig_IsProbedCorrectly()
+    {
+        await RunAgainstDummyRigAsync(async sut =>
+        {
+            var state = await sut.PollAsync(CancellationToken.None);
+
+            // Real, verified Dummy-backend behavior (manually smoke-tested against a real rigctld
+            // process): 't' (get_ptt) returns "RPRT -11" (not implemented) on this backend -- the
+            // exact capability-absence path RigctldClientProtocolTests exercises with a hand-derived
+            // fixture.
+            Assert.False(sut.Capabilities.HasFlag(RadioCapabilities.PttControl));
+            Assert.False(state.IsTransmitting);
+        });
+    }
+
+    /// <summary>Starts a fresh dummy `rigctld` process, runs <paramref name="body"/> against it, and
+    /// tears it down -- retrying the whole thing (fresh process, fresh port) up to
+    /// <paramref name="maxAttempts"/> times on an <see cref="IOException"/>.
+    ///
+    /// This retry exists for a real, observed flake, not a hypothetical one: killing one test's
+    /// `rigctld` child process and immediately starting the next test's own instance on a
+    /// newly-chosen ephemeral port occasionally left the new process's very first accepted
+    /// connection closing mid-response ("rigctld connection closed by remote host") for reasons this
+    /// external Hamlib binary's own internals don't expose -- reproducible at roughly a 15-20% rate
+    /// once a second concurrent test elsewhere in the suite added one more actively-churning loopback
+    /// socket to the process (see chunk 3b round 1's own investigation). Retrying with an entirely
+    /// fresh process/port is the correct fix regardless of the exact external cause: every one of
+    /// these tests already asserts against the Dummy backend's fixed, deterministic default state, so
+    /// a retried attempt is exactly as meaningful as the first.</summary>
+    private static async Task RunAgainstDummyRigAsync(
+        Func<RigctldClientProtocol, Task> body, int maxAttempts = 3)
     {
         if (!RigctldIsAvailable.Value)
         {
             return;
         }
 
-        await using var dummy = await DummyRigctldProcess.StartAsync();
-        var transport = new TcpTransport("127.0.0.1", dummy.Port);
-        var sut = new RigctldClientProtocol(transport, TimeSpan.FromSeconds(5));
-
-        var state = await sut.PollAsync(CancellationToken.None);
-
-        // Real, verified Dummy-backend behavior (manually smoke-tested against a real rigctld
-        // process): 't' (get_ptt) returns "RPRT -11" (not implemented) on this backend -- the exact
-        // capability-absence path RigctldClientProtocolTests exercises with a hand-derived fixture.
-        Assert.False(sut.Capabilities.HasFlag(RadioCapabilities.PttControl));
-        Assert.False(state.IsTransmitting);
-
-        await sut.DisposeAsync();
+        for (var attempt = 1; ; attempt++)
+        {
+            await using var dummy = await DummyRigctldProcess.StartAsync();
+            var transport = new TcpTransport("127.0.0.1", dummy.Port);
+            var sut = new RigctldClientProtocol(transport, TimeSpan.FromSeconds(5));
+            try
+            {
+                await body(sut).ConfigureAwait(false);
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                continue;
+            }
+            finally
+            {
+                await sut.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     private static bool CheckRigctldAvailable()
