@@ -2478,7 +2478,7 @@ investigated. Off-scope note: `Waterfall.Dispose()`/`Decoder.Dispose()` in `Disp
 unbounded synchronous calls inside a method sized against a 10s host-teardown budget -- explicitly noted
 by the agent as off-scope for this chunk, not a finding.
 
-**Chunk 3a round 22 fixes applied** (2026-08-21, commit pending). All 3 risks and all applicable nits
+**Chunk 3a round 22 fixes applied** (2026-08-21, commit `5954d85`). All 3 risks and all applicable nits
 fixed as real code changes; the 3 decoder-command dispatch logs (out of all 3 failure classes) and the
 2 unverified assumptions deliberately left untouched -- explicitly out of scope, not silently missed.
 Findings 1/2/3 and the `PlaybackFailed` nit: all 4 `PlayWithPttAsync`/`CaptureOverrunCount` log calls
