@@ -5259,4 +5259,49 @@ Chunking:
   `HamlibVersionGate.cs` (35) + `NativeLibraryLoader.cs` (14) -- all 5 Hamlib native-loading files as
   one chunk (392 lines combined), last chunk of this batch.
 
-Dispatching 9a now.
+## Chunk 9a round 1: WaterfallSource.cs
+
+Verdict: EQUIVALENT-WITH-RISKS, go for production as-is. Zero functional bugs -- the chunk's primary
+reason for existing (verify the concurrency/scheduler contract claim) came back CONFIRMED: traced
+`PushSamples` -> `EmitFrame` -> `_frames.OnNext` and found no `Task.Run`/`ObserveOn`/queue/lock
+anywhere -- the interface doc's "synchronous and inline" claim is literally true, not just plausible.
+The sliding-window buffering (multi-chunk fills, multi-window-per-call, exact-fill boundary), the
+NaN/Inf guard (confirmed applied per-element, not just index 0 -- also confirmed `_hannWindow[size-1]`
+is independently exactly 0f, the same hazard at the other window edge), the Hann window formula, and
+the dB floor all checked out correct.
+
+**Doc-comment fixes, all pre-existing-behavior-accurate, framing-only:**
+- `IWaterfallSource.cs`'s "exactly mirroring `IRadioController.StateChanges`" overstated in two real
+  ways: `StateChanges` catches and contains a throwing subscriber (this class doesn't -- contained in
+  practice by the production fan-out's own try/catch, not by this class), and `StateChanges` is a
+  `BehaviorSubject` (replays the last value) while `Frames` is a plain `Subject` (the right choice for
+  a rolling display, just not "the same pattern"). Corrected the framing.
+- Added the explicit single-producer-only requirement to `IWaterfallSource.cs`'s contract -- the
+  previous wording ("from whatever thread called PushSamples") could be read as "any thread is fine,"
+  when the internal accumulator has no synchronization of its own and two concurrent callers would
+  silently interleave. Safe today (single documented drain thread), now stated as a real requirement
+  for a future second caller.
+- `WaterfallSource.cs`'s "legacy clamps... so a non-finite raw sample can never reach its FFT" claim
+  was inaccurate for NaN specifically -- legacy's clamp is a plain `>`/`<` comparison, false for NaN,
+  so legacy actually lets NaN pass through UNCLAMPED (only +-Inf gets clamped). This port's guard is
+  strictly wider (Inf AND NaN), so the practical outcome is unaffected; only the citation was wrong.
+
+**Two real coverage gaps closed, both mutation-verified.** Every existing multi-frame test asserted
+only frame COUNT, never frame CONTENT -- a bug retaining the wrong half of the window across a hop
+boundary would have passed every one of them. Added
+`PushSamples_OverlapRetention_CarriesForwardTheCorrectHalf_NotTheWrongOne` (a tone confined to the
+first hop only, followed by silence -- the correctly-retained second frame must show near-floor
+silence, not leaked tone energy), mutation-verified: retaining the wrong (first) half instead of the
+correct (second) half makes the second frame show real energy (~-13dB instead of near-floor), caught
+exactly as predicted. Also added `PushSamples_HopSizeEqualsWindowSize_NoOverlap_EmitsBackToBackFrames`
+for the previously-unexercised no-overlap boundary (`keep=0`), mutation-verified against a plausible
+future off-by-one in the hop-size validity check.
+
+Auditor's verdict: go for production as-is -- no round 2 needed for a round that found no functional
+bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 1292, Skipped: 1, Total: 1293.
+
+## Chunk 9a CLOSED
+
+Chunks 9b-9d remain open.

@@ -77,11 +77,16 @@ public sealed class WaterfallSource : IWaterfallSource, IDisposable
         for (var i = 0; i < _windowSize; i++)
         {
             // ultracode audit finding #18: legacy clamps input to +-32768 before windowing
-            // (Fft.cpp:667-675), so a non-finite raw sample can never reach its FFT. This port has no
-            // equivalent guard, and windowing alone doesn't help -- _hannWindow[0] is exactly 0f, so
-            // Inf*0=NaN corrupts the frame regardless of which sample was non-finite. Guarded in this
-            // port's own [-1,1] domain, not legacy's +-32768 (a display-only class, no legacy sample
-            // scale to match here).
+            // (Fft.cpp:667-675). Citation correction (Tier A Batch 9 chunk 9a): legacy's clamp is a
+            // plain `&gt;`/`&lt;` comparison, which is false for NaN -- it clamps +-Inf but lets NaN
+            // pass through UNCLAMPED into legacy's own FFT. This port's guard is strictly wider (Inf
+            // AND NaN), so the practical outcome (no corrupt frame either way) is still correct; only
+            // the "a non-finite raw sample can never reach its FFT" framing overstated what legacy's
+            // clamp actually covers. This port has no equivalent guard, and windowing alone doesn't
+            // help -- _hannWindow[0] AND _hannWindow[size-1] are both exactly 0f (confirmed both
+            // ends, not just index 0), so Inf*0=NaN corrupts the frame regardless of which sample or
+            // which window edge was non-finite. Guarded in this port's own [-1,1] domain, not
+            // legacy's +-32768 (a display-only class, no legacy sample scale to match here).
             var sample = _accumulator[i];
             real[i] = float.IsFinite(sample) ? sample * _hannWindow[i] : 0f;
         }
