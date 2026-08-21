@@ -881,10 +881,12 @@ into 3, following Batch 2's precedent:
 
 **Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds (see "Chunk 3a CLOSED" entry near the
 end of this batch's section) -- closed by explicit user decision, not the formal 2-consecutive-clean-
-round gate. Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) in progress -- rounds 1-3 done (2 blockers
-+ 3 risks; then 3 risks + 1 nit including a gap in round 1's own fix; then a live blocker in the same
-failure class rounds 1-2 were already fixing, plus round 2's own 2 deferred items resolved), not clean
-yet, round 4 next. Chunk 3c (`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) not yet started.
+round gate. Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) rounds 1-4 done -- round 4 found 2 more
+real risks (the 4th poll-loop publish site, socket-error abort handling) but closed with the auditor's
+own explicit "fix these, then it's a go, no further round needed" verdict. NOT closed under the formal
+2-consecutive-clean-round gate -- awaiting the user's call on whether the auditor's conditional go-ahead
+is sufficient to close now, or whether to run a round 5 seeking the formal gate. Chunk 3c
+(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) not yet started.
 
 **Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
 never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
@@ -3508,3 +3510,60 @@ other project passing. Committed as `33eb82a`.
 
 Round 3 found a real blocker, so it does not count toward the 2-consecutive-clean-round gate. Round 4 is
 next -- the earliest round that can start that count.
+
+## Chunk 3b round 4 (2026-08-21)
+
+Fresh independent re-derivation against the post-round-3 code. Given the pattern across rounds 1-3 (each
+round finding a sibling branch the previous round's own fix missed, in the exact same
+cancellation/abort-consistency failure class), this round was explicitly asked to hunt for exactly that
+shape of gap -- and found two.
+
+1. **[risk]** The poll loop has FOUR publish sites, not three -- round 3 guarded `CommandFailed`,
+   `Reconnecting`, and the success-path `PublishState`, but missed the reconnect-attempt-failed catch's
+   `Failed` publish. Reachable in exactly the scenario the other three guards exist for: an abandoned
+   loop (`PollLoopShutdownTimeout` expired) resumes after `DisconnectAsync`'s teardown already published
+   `Disconnected`, and this path would publish a terminal `Failed` afterward that nothing ever supersedes
+   -- every subscriber latches on it permanently. Fixed with the same `ct.IsCancellationRequested` early
+   return the other three sites already use.
+2. **[risk]** `TcpTransport`'s read/write try blocks only caught `OperationCanceledException` -- a
+   generic socket-level failure (`IOException`/`SocketException`, e.g. a peer RST or broken pipe) fell
+   straight through with `_stream` left non-null, the identical "`IsOpen` lies" hazard round 2 already
+   fixed for the graceful-EOF case. Fixed by widening both catches to `catch (Exception)`.
+
+Both mutation-verified with new regression tests, one per direction
+(`ReadAsync_AbortsConnection_OnAResetCloseNotJustAGracefulOne`,
+`WriteAsync_AbortsConnection_OnAResetClose`) -- **the read-side test needed a second iteration to get
+right**: the first attempt used `Socket.LingerState = new LingerOption(true, 0)` before a normal
+`Dispose()`, following the standard "force an RST" recipe, but a standalone probe (written specifically
+to check this before trusting the test) showed that combination still produces a graceful 0-byte read on
+this environment, not an exception -- the mutation-test run against the deliberately-reverted code
+PASSED when it should have failed, the tell that the test wasn't exercising the intended path at all.
+Switched to `Socket.Close(0)`, which reliably forces a real RST; re-ran the mutation test and it failed
+exactly as expected, then passed clean once restored. A real instance of this project's own
+"verify, don't assume a hand-written test is testing what you think it is" discipline.
+
+Also fixed opportunistically (auditor's own nits, cheap, directly parallel to the two findings above):
+the poll loop's success-path `ct.IsCancellationRequested` guard now runs before its own "reconnected"
+log line, not after (an abandoned loop's late-arriving success no longer logs a false recovery message
+after `Disconnected` was already logged); `FakeRadioTransport.DisposeAsync` now routes through
+`AbortConnection()` instead of only clearing `_open`; `FakeRadioTransport.ReadAsync`'s cancellation check
+moved to the loop top, before a buffer refill, matching `TcpTransport`'s own real ordering (a
+pre-cancelled token no longer lets the fake consume one replay chunk first).
+
+**Auditor's own go/no-go verdict: apply these two findings, then it's a go -- no further review round
+needed.** Findings 3-8 in the auditor's report (guard-log ordering, a wording nit on a rare "inconsistent
+state" exception message surfaced verbatim as a UI-visible reason, `_rigId`/RigId-getter-throw handling
+in the reconnect path not mirroring `ConnectAsync`'s own deliberate handling, `LastKnownState` throwing
+post-disposal instead of returning null) were left as queued, not chased -- explicitly nit-severity per
+the auditor's own framing, not blocking.
+
+Full solution suite green: `ScanlineStudio.Core.Radio.Tests` 127/127 (confirmed clean across 5
+consecutive runs), `ScanlineStudio.Core.Sstv.Tests` 1022/1022 (1 unrelated intentional skip), every other
+project passing. Committed as `4ee250a`.
+
+Round 4 found 2 real risks, so it does not count toward the 2-consecutive-clean-round gate either --
+but the auditor's own conditional go-ahead (fix these two, then ship, no further round needed) is, in
+substance, the same "explicit go signal, don't chase more rounds" this project's standing practice
+already accepts from a direct go-for-production question. Whether to treat that as sufficient to close
+the chunk now, or to spend a round 5 seeking the formal 2-consecutive-clean-round gate, is the user's
+call -- flagged, not decided unilaterally.
