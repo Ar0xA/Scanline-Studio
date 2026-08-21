@@ -1557,6 +1557,55 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Empty(radio.PttCalls);
     }
 
+    // ------------------------------------------------------------------ round 20 findings
+
+    [Fact]
+    public async Task Round20_UnkeyForCleanupAsync_LoggingFailsThroughoutTheWholeUnkeyPath_StateStillLatchedCorrectly()
+    {
+        // Round-20 finding 1 (blocker): TryUnkeyPttAsync's own "never throws" contract was false --
+        // when its OWN log calls failed (a broken logging provider), the throw propagated BEFORE
+        // UnkeyForCleanupAsync ever reached its own state-latching write, leaving
+        // _pttUnkeyFailedOnRealRig false despite a genuinely failed un-key on a keyed rig --
+        // DisposeAsync's own backstop would find nothing to do and the process could exit silently
+        // on-air. Fixed via SafeLog (making the logging itself non-throwing) AND an assume-failed-
+        // until-confirmed reorder in UnkeyForCleanupAsync (the state write now happens BEFORE the
+        // attempt, not after). This test fails the LOGGING for every "PTT off"-related message this
+        // whole path can reach (both round-18's own un-key attempts AND round-19's own wrapper
+        // catches), proving the state record no longer depends on ANY of them succeeding.
+        var (service, _, radio, logger) = CreateService(wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner));
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx)
+            {
+                throw new TimeoutException("simulated: unkey command failed");
+            }
+        };
+        logger.ThrowOnMessageContaining = "PTT off";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage).WaitAsync(TimeSpan.FromSeconds(5)));
+
+        // Clear the logging failure so DisposeAsync's own backstop attempt (and its own logging) can
+        // proceed normally.
+        logger.ThrowOnMessageContaining = null;
+
+        // THE property: DisposeAsync's backstop must still fire -- proving _pttUnkeyFailedOnRealRig
+        // was correctly latched despite every log call along the way failing.
+        await service.DisposeAsync();
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
+    }
+
+    // Round-20 finding 2 (SetPttLockAsync's two now-guarded UnkeyForCleanupAsync call sites): NOT
+    // given a dedicated test. Its own reachability mechanism was "UnkeyForCleanupAsync throws" -- the
+    // SAME mechanism finding 1's fix (this round) closes by making every log call inside
+    // TryUnkeyPttAsync/UnkeyForCleanupAsync non-throwing via SafeLog. After that fix, no currently-
+    // known way exists to make UnkeyForCleanupAsync actually throw, so a test built on the same
+    // trigger (an already-tried `ThrowOnMessageContaining` targeting the wrapper's own log message)
+    // would be vacuous -- the wrapper's own catch is simply never entered. The fix itself remains
+    // genuinely valuable as defense-in-depth (protects this method's exception classification if a
+    // FUTURE change reintroduces a throwing path inside UnkeyForCleanupAsync), just not independently
+    // exercisable with current test infrastructure. Noted here rather than shipped with a test that
+    // would silently prove nothing.
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
