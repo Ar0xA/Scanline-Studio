@@ -110,6 +110,30 @@ public class MiniAudioDeviceEnumeratorTests
         }
     }
 
+    [RequiresPipeWireFact]
+    public async Task DisposeThenDisposeAsync_SecondDisposalIsANoOp_DoesNotDoubleReleaseTheContext()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 9 chunk 9b (docs/functional-audit-playbook.md):
+        // TryClaimDispose's `if (_disposed) return false;` guard is the ONLY thing preventing a
+        // second MiniAudioContext.Release() call on this instance -- a real double-release would
+        // throw InvalidOperationException("Release() called without a matching Acquire()") and
+        // corrupt the process-wide refcount for every other enumerator/session sharing it. A
+        // Dispose()-then-DisposeAsync() call shape (or the reverse) is realistic (e.g. a caller
+        // stuck with `using` that also happens to call DisposeAsync defensively), not just a
+        // synthetic double-call.
+        var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+        await enumerator.RefreshAsync();
+
+        enumerator.Dispose();
+        var secondDisposeException = await Record.ExceptionAsync(async () => await enumerator.DisposeAsync());
+        Assert.Null(secondDisposeException);
+
+        // If the second disposal had double-released, a THIRD MiniAudioDeviceEnumerator's own
+        // Acquire() would be operating against a corrupted refcount -- constructing and immediately
+        // disposing one here is the simplest way to prove the shared context is still sound.
+        using var sentinel = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
+    }
+
     // Opus-review fix: reading only stdout via ReadToEnd() before WaitForExit(), while stderr is
     // also redirected but never drained, is the classic pipe-buffer deadlock -- if pactl ever
     // writes enough to stderr to fill its OS pipe buffer, it blocks writing to a stream nobody is
