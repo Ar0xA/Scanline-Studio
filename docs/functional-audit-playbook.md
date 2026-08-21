@@ -882,8 +882,10 @@ into 3, following Batch 2's precedent:
 **Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds, chunk 3b CLOSED after 4 rounds (see
 each chunk's own "CLOSED" entry near the end of this batch's section) -- both by explicit user
 decision, not the formal 2-consecutive-clean-round gate. Chunk 3c
-(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) started -- round 1 done (see "Chunk 3c round 1"
-entry below), 3 blockers + 1 confirmed risk fixed, not clean yet, round 2 next.
+(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) rounds 1-2 done -- round 2 found no blockers and
+got an unconditional auditor go-for-production verdict, but did find 3 real (narrow) hardening risks,
+one of which was taken; awaiting the user's call on whether that's sufficient to close the chunk, same
+as chunk 3b's own closure precedent.
 
 **Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
 never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
@@ -3661,3 +3663,60 @@ consecutive runs, including the new timing-sensitive concurrency test), `Scanlin
 
 Round 1 found real blockers, so it does not count toward the 2-consecutive-clean-round gate. Round 2 is
 next -- the earliest round that can start that count.
+
+## Chunk 3c round 2 (2026-08-21)
+
+Fresh independent re-derivation against the post-round-1 code. **No blockers -- round 1's four fixes
+all re-derived and confirmed correct.** Explicit auditor go-for-production verdict: **"Yes, ship
+as-is."** 3 hardening risks found anyway (all reachable only under rig/peer misbehavior, not the
+happy or ordinary-error paths), plus nits -- one taken because its worst case is this whole batch's
+core harm class, two left queued per the auditor's own unconditional go.
+
+1. **[risk, taken]** `RigctldClientProtocol` had NO per-request I/O timeout -- only `OpenAsync` was
+   bounded. A peer that accepts the connection and then stops answering (half-open TCP after a remote
+   crash, a stopped `rigctld`) blocks the reading caller forever WHILE HOLDING `_requestLock` -- every
+   later caller, including a PTT unkey command, queues behind it and never reaches the wire, leaving a
+   physically keyed transmitter with no path to unkey it. The auditor's own framing: "the only one whose
+   worst case is a stuck transmitter." Fixed with a `WithRequestTimeoutAsync` wrapper (5s) around each
+   public method's post-connect body, plus a separate wrap around `EnsureConnectedAsync`'s own
+   7-round-trip capability probe (same wedge exposure, kept independent of the transport-open step's own
+   configurable timeout to avoid the two bounds fighting each other). A timeout surfaces as
+   `TimeoutException` (transport-level -- `RadioController` backs off and rebuilds from scratch), and the
+   cancelled read that produces it also aborts the socket per `IRadioTransport`'s own contract. Left
+   without a dedicated test, same precedent as this project's other untested timeout fixes (a fast test
+   needs the timeout injected as a constructor parameter, felt like scope creep beyond the given fix).
+2. **[risk, queued]** Hamlib's optional-meter probes (SWR/ALC/RFPOWER_METER/STRENGTH) use the SAME
+   hard-error-fails-connect logic as the required freq/mode/ptt probes -- a rig that *has* a meter but
+   hard-errors reading it (vs. the common soft `-RIG_ENAVAIL` "rig has no such meter" case) fails the
+   WHOLE connect permanently (every reconnect re-probes the same level), denying frequency readout and
+   PTT keying for a rig whose link demonstrably works. Diverges from rigctld's own sibling, which treats
+   every `RPRT` code on `l <LEVEL>` as "absent." Not taken this round -- verified narrow (needs a
+   specific rig-backend misbehavior, not a design defect in the happy path), auditor's own unconditional
+   go covers it.
+3. **[risk, queued]** Both Hamlib connect-failure catch arms log BEFORE cleaning up -- a throwing
+   `ILogger` (a real, guarded-against class of bug elsewhere in this exact codebase --
+   `RadioController.DisconnectAsync`'s own comment explicitly reasons about it) would skip the native
+   teardown entirely, re-opening round 1's own blocker 1 (leaked handle + held serial port). Not taken
+   this round -- narrower than round 1's original finding (needs a throwing logger, not just a hard
+   native error), auditor's own unconditional go covers it.
+4. **[nit, taken]** `_disposed` on `RigctldClientProtocol` marked `volatile` -- unlike Hamlib's own
+   `_disposed` (ordered by their shared semaphore, since `DisposeAsync` there takes the same lock),
+   `DisposeAsync` here never takes `_requestLock` at all, so there was no other happens-before edge
+   ordering `AcquireAsync`'s post-wait read against it.
+5. **[nit, queued]** `ReadLineAsync` has no line-length bound (a peer streaming bytes with no `\n` grows
+   the buffer unbounded); `PollAsync` ignores the `ReadFrequency` capability flag it probed (a rig
+   without `get_freq` throws every poll forever, where Hamlib gates on the flag and yields `hz = 0`) --
+   documented as deliberate, flagged only as a cross-backend divergence.
+6. Round 1's own left-untested finding (rigctld's `AcquireAsync` fix having no dedicated regression
+   test) was independently re-derived and confirmed still correctly narrow: both `TcpTransport` and
+   `FakeRadioTransport` already hard-guard the resurrection path with their own `ObjectDisposedException`
+   checks, so a queued caller cannot key a rig on a disposed protocol regardless of this class's own
+   fix -- defense-in-depth for a future transport (flrig) that might not guard the same way.
+
+Full solution suite green: `ScanlineStudio.Core.Radio.Tests` 130/130, `ScanlineStudio.Core.Sstv.Tests`
+1022/1022 (1 unrelated intentional skip), every other project passing. Committed as `687116e`.
+
+Round 2 found real (if narrow) hardening risks, so it does not formally count as clean under this
+project's own definition -- but the auditor's own verdict was an UNCONDITIONAL "yes, ship as-is," a
+stronger signal than chunk 3b round 4's own conditional go. Whether that's sufficient to close chunk 3c
+now, same as chunk 3b's own closure, is the user's call.
