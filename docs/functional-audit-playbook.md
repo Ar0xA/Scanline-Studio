@@ -4420,4 +4420,53 @@ no functional bug, same rigor rule as this batch's own precedent.
 Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1216/1217 (1 unrelated intentional
 skip).
 
-Chunks 6b-6e remain open.
+## Chunk 6b round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed
+
+Full Tier A rigor round on `SyncIntervalTracker.cs` (223 lines): the peak-interval pattern tracker
+(legacy's `CSYNCINT`, `sstv.cpp:1290-1411`) behind all three of legacy's parallel sync-acquisition
+strategies. This chunk specifically targeted `CheckConsecutiveHistory`'s history-window loop bound
+(`for (var i = HistorySize - 2; i >= depth.Value; i--)`) as the highest-risk line in the file --
+exactly the shape of bug class (off-by-one window bounds, local-vs-absolute-index confusion) this
+project has hit multiple times before in RX buffer work.
+
+**Zero functional bugs -- every audited point matches legacy exactly**, verified line-by-line
+against `sstv.cpp`'s real `SyncInc`/`SyncTrig`/`SyncMax`/`SyncStart`/`SyncCheck`/`SyncCheckSub`,
+including the exact order of operations in `SyncStart` (history push happens unconditionally,
+`_lastAcceptedPosition` also updates unconditionally inside the separation gate even when the
+min-interval check fails, the peak is consumed either way) and every constant (`HistorySize=8`,
+tolerance 3ms, min-separation 50ms, min-interval 63ms, max-interval 1390*3ms). The
+`HistorySize-2` loop bound this chunk specifically targeted is confirmed correct: legacy's own
+`for(i--; i>=e; i--)` after a `MSYNCLINE-1` init is the same pre-decrement, scanning `[e,
+MSYNCLINE-2]`, not `[e, MSYNCLINE-1]` -- deliberately never re-checking the entry `Check()` itself
+just evaluated.
+
+One doc-comment nit fixed in both `SyncIntervalTracker.cs` and `SyncIntervalTrackerTests.cs`: both
+claimed the class's three decoder usage sites were "later, separately-scoped work," not yet wired
+in -- they have been for some time (`_syncBypass1Tracker`/`_syncBypassTracker`/
+`_syncBypassNarrowTracker` in `AnalogFmSstvDecoder.cs`, driven from `TrySyncIntervalDetectionStep`).
+Corrected to name the real wiring and its own separate test files.
+
+**Two real coverage gaps closed with mutation-verified tests, not just noted** -- both exactly the
+shape flagged as this project's recurring bug class. `SyncStart`'s min-separation gate (a peak
+within 50ms of the last accepted one must be rejected outright, not recorded into history, without
+advancing `_lastAcceptedPosition`) had no test at all -- deleting the guard entirely previously
+survived the whole suite. Added
+`PeakTooCloseToLastAccepted_IsRejected_AndDoesNotDisruptTheNextMatch`, mutation-verified (removing
+the guard makes the eventual match fail, since the too-close peak's rejected position would
+otherwise corrupt the next real interval). `CheckConsecutiveHistory`'s `HistorySize-2` bound itself
+had no test distinguishing it from an off-by-one `HistorySize-1` start -- every existing test used a
+fully-periodic sequence where both bounds produce the same result. Added
+`NarrowTracker_PriorHistoryUsesLegacysSubharmonicCap_CurrentEntryCanStillUseK3`: a sequence where
+the current (most recent) entry only matches via its 3x subharmonic (allowed for narrow bands by
+`Check()`'s own limit of 3, but NOT allowed by the history-window check's narrow-band cap of 2) --
+mutation-verified that reverting the loop start to `HistorySize-1` makes this fail exactly as
+predicted (the off-by-one bound would re-check the current 3x entry against the wrong, stricter cap
+and reject it).
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1218/1219 (1 unrelated intentional
+skip).
+
+Chunks 6c-6e remain open.
