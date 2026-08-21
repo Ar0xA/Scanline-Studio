@@ -49,11 +49,21 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
     // leaving a fresh background enumeration touching the native context after Dispose released
     // it, which is exactly the hazard this whole mechanism exists to prevent. A single lock around
     // "check disposed, then (start a refresh) or (mark disposed and capture the task to wait on)"
-    // makes the two operations properly mutually exclusive.
+    // makes the two operations properly mutually exclusive. Doc correction (Tier A Batch 9 chunk
+    // 9b): this closes the race for THE MOST RECENT refresh only -- _refreshTask is a single slot,
+    // not a set, so two concurrent RefreshAsync calls leave the earlier task untracked; Dispose then
+    // waits on (and bases its release decision on) only the later one. Confirmed non-catastrophic by
+    // tracing into the native shim (yoniq_audio.c's g_context_mutex is held around both the
+    // enumerate/probe calls AND context_uninit), so an orphaned earlier refresh can't be mid-call
+    // when the context is torn down -- it just fails cleanly and logs at Error, leaving a stale
+    // snapshot rather than corrupting anything. Low-risk given today's actual call pattern, but not
+    // the "no in-flight work survives Dispose" guarantee this comment could be read as making.
     private readonly object _gate = new();
     private bool _disposed;
     private Task _refreshTask = Task.CompletedTask;
     private volatile DeviceSnapshot _snapshot = EmptySnapshot;
+
+    private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
 
     public MiniAudioDeviceEnumerator(ILogger<MiniAudioDeviceEnumerator> logger)
     {
@@ -195,7 +205,7 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
         bool completedInTime;
         try
         {
-            completedInTime = refreshTask.Wait(TimeSpan.FromSeconds(5));
+            completedInTime = refreshTask.Wait(DisposeTimeout);
         }
         catch (AggregateException ex)
         {
@@ -224,7 +234,18 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
         // Task.WhenAny never throws even if refreshTask itself faults -- it only reports which one
         // finished first, so there is no need to observe/rethrow refreshTask's own result here;
         // only whether it settled within the bound matters for the release decision below.
-        var completedTask = await Task.WhenAny(refreshTask, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+        var completedTask = await Task.WhenAny(refreshTask, Task.Delay(DisposeTimeout)).ConfigureAwait(false);
+
+        // Round-1 code-review finding (Tier A Batch 9 chunk 9b): unlike the synchronous Dispose()
+        // above, this path never logged a faulted-during-dispose refresh at all -- a real
+        // observability gap since DI containers (this class is a DI singleton) prefer
+        // IAsyncDisposable when a type implements both, making THIS the actual production dispose
+        // path, not the synchronous one this file's own doc comments focus on.
+        if (completedTask == refreshTask && refreshTask.IsFaulted)
+        {
+            Log.RefreshFaultedDuringDispose(_logger, refreshTask.Exception!);
+        }
+
         ReleaseIfCompletedInTime(completedInTime: completedTask == refreshTask);
     }
 
@@ -253,13 +274,21 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
     /// yoniq_audio_context_uninit) here would be the exact use-after-free this fix exists to
     /// prevent. Mirrors MiniAudioCaptureSession/PlaybackSession's TimedOutDuringClose: a
     /// deliberate, accepted leak of this instance's context reference in that rare case,
-    /// preferable to a crash.</summary>
-    private static void ReleaseIfCompletedInTime(bool completedInTime)
+    /// preferable to a crash. Round-1 code-review finding (Tier A Batch 9 chunk 9b, this chunk's own
+    /// carry-over item from Batch 1 round-4): unlike the two session types, which expose
+    /// <c>TimedOutDuringClose</c> for <c>MiniAudioEngine</c> to check and log, this instance is
+    /// disposed with no surviving object for anyone else to read a signal off -- so the leak was
+    /// previously 100% silent. Logged here, at the point of detection, since there is no later
+    /// consumer to log it instead.</summary>
+    private void ReleaseIfCompletedInTime(bool completedInTime)
     {
         if (completedInTime)
         {
             MiniAudioContext.Release();
+            return;
         }
+
+        Log.RefreshTimedOutDuringDispose(_logger, DisposeTimeout.TotalSeconds);
     }
 
     private static partial class Log
@@ -270,10 +299,13 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Device id '{DeviceId}' is too long for the native ABI's fixed buffer; cannot probe its supported formats")]
         public static partial void DeviceIdTooLongToProbe(ILogger logger, string deviceId);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Native format probe failed for device '{DeviceId}'; reporting no constraints")]
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Native format probe returned no usable formats for device '{DeviceId}' (probe failure or a genuinely unconstrained device); reporting no constraints")]
         public static partial void NativeFormatProbeFailed(ILogger logger, string deviceId);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "In-flight device refresh faulted during synchronous Dispose")]
+        [LoggerMessage(Level = LogLevel.Debug, Message = "In-flight device refresh faulted during Dispose")]
         public static partial void RefreshFaultedDuringDispose(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "In-flight device refresh did not finish within {TimeoutSeconds}s of disposal; this enumerator's MiniAudioContext reference was deliberately not released (the shared native context will not be torn down)")]
+        public static partial void RefreshTimedOutDuringDispose(ILogger logger, double timeoutSeconds);
     }
 }

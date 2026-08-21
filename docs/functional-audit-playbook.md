@@ -5304,4 +5304,62 @@ Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 129
 
 ## Chunk 9a CLOSED
 
-Chunks 9b-9d remain open.
+## Chunk 9b round 1: MiniAudioDeviceEnumerator.cs
+
+Not a legacy port (legacy has no cross-platform native-audio abstraction) -- standalone concurrency/
+lifecycle/native-interop review. Carries this batch's flagged carry-over item from Batch 1 round-4.
+
+Verdict: EQUIVALENT-WITH-RISKS, **no-go until the carry-over gap was fixed, then go**. Zero functional
+bugs, but the auditor gave an explicit conditional verdict (fix finding 2 first) rather than an
+unconditional go, since this chunk's whole reason for existing was that specific item. The `_gate`
+lock's TOCTOU-closing claim was verified correct for the historical race it documents (traced by
+hand, confirmed no deadlock, confirmed no lock-ordering hazard with `MiniAudioContext`'s own lock).
+The torn-pair `InputDevices`/`OutputDevices` doc claim was independently verified accurate on both
+halves (the pair CAN tear, but `volatile DeviceSnapshot` really does keep each individual property
+internally consistent -- traced the actual mechanism, not just trusted the comment). The `count<0`
+vs `count<=0` enumeration/probe-failure distinction, native-buffer truncation safety, and the
+`AggregateException`-means-faulted-not-timed-out reasoning in `Dispose()` all checked out correct.
+
+**Carry-over gap confirmed real and fixed.** `ReleaseIfCompletedInTime` silently leaked this
+instance's `MiniAudioContext` reference on a `RefreshAsync` timeout with zero observability -- unlike
+`MiniAudioCaptureSession`/`PlaybackSession`, which expose a `TimedOutDuringClose` property
+`MiniAudioEngine` checks and logs, this class had no surviving object for anyone else to read a
+signal off, and its own `_logger` field went unused for this case. Fixed by logging directly at the
+point of detection (matching `MiniAudioCaptureSession`'s own construction-failure close path, which
+does the same for the identical "nobody left to ask" reason) -- new `Log.RefreshTimedOutDuringDispose`
+warning, `[LoggerMessage]`-pattern per this project's mandatory CA1848 rule. Also closed a related
+asymmetry the auditor flagged while fixing this: `DisposeAsync` (confirmed the actual production
+dispose path for a DI singleton implementing both `IDisposable`/`IAsyncDisposable`) never logged a
+faulted in-flight refresh at all, unlike the synchronous `Dispose()` path -- now logs via the same
+existing `RefreshFaultedDuringDispose` message.
+
+**Doc-comment overstatement fixed.** The `_gate` doc comment's TOCTOU-closing claim didn't state that
+`_refreshTask` is a single slot, not a set -- two concurrent `RefreshAsync` calls leave the earlier
+task untracked, so `Dispose` only waits on (and bases its release decision on) the later one.
+Confirmed low-risk by tracing into the native shim directly (the same mutex guards enumerate/probe
+AND context-uninit, so an orphaned earlier refresh can't be mid-call when the context tears down --
+it just fails cleanly with an Error-level log), but the doc's implied "no in-flight work survives
+Dispose" guarantee was corrected to the narrower true one.
+
+**One real coverage gap closed with a mutation-verified test.** `TryClaimDispose`'s `if (_disposed)`
+guard is the only thing preventing a double `MiniAudioContext.Release()` call, which would corrupt
+the process-wide refcount for every other enumerator/session sharing it -- previously untested. Added
+`DisposeThenDisposeAsync_SecondDisposalIsANoOp_DoesNotDoubleReleaseTheContext`, mutation-verified:
+disabling the guard produces a real `InvalidOperationException: Release() called without a matching
+Acquire()`, caught exactly as predicted. (This environment has a live PipeWire server -- all
+`[RequiresPipeWireFact]`-gated tests, including the new one, actually ran, not skipped.)
+
+Not fixed (auditor's own explicit recommendation): the timeout branch of the new log line itself has
+no test, since covering it needs a real design change (an injectable timeout + a stall hook) solely
+for that coverage -- shipping the log without a test, documented honestly, per the auditor's own
+"don't add a production seam solely for this" call. Two other low-priority coverage gaps (a
+concurrent-`RefreshAsync` test, a synchronous-`Dispose()`-race test) also left open on the same
+reasoning.
+
+Auditor's verdict: go for production as-is once the carry-over fix landed -- no round 2 needed.
+
+Full `ScanlineStudio.Core.Audio.MiniAudio.Tests` run: 84 passed, 0 failed (real run, not skipped).
+
+## Chunk 9b CLOSED
+
+Chunks 9c-9d remain open.
