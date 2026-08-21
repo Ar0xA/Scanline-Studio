@@ -30,7 +30,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // already is (this field's own reads/writes now span more than one caller thread with no lock
     // between them).
     private volatile bool _isReceiving;
-    private bool _maintenanceWarningActive;
+
+    // Round-15 nit: every other cross-thread flag on this class (_isReceiving immediately above,
+    // _pttLocked/_rxPendingResumeAfterUnlock below) is volatile with an explicit comment justifying
+    // it -- this one is written from OnDecoderRestarted/OnDecoderRestartCriticallyOverdue (see the
+    // latter's own doc comment: reachable from the audio drain thread, not just a UI-thread caller)
+    // and read from OnDecoderRestarted, with no lock between them.
+    private volatile bool _maintenanceWarningActive;
 
     // See SetPttLockAsync's own doc comment for the full concurrency reasoning. volatile (not a
     // plain bool) since this is written from whatever thread calls SetPttLockAsync and read from
@@ -788,11 +794,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
         {
             // The decoder has ALREADY force-restarted unconditionally by the time this fires (see
             // ISstvDecoderMaintenance's own doc comment) -- this only needs to tear down capture and
-            // notify the user, not request another swap. Confirmed safe to call synchronously here
-            // (round-3 plan review traced the full MiniAudioEngine/MiniAudioCaptureSession shutdown
-            // chain): RestartableSstvDecoder raises this event strictly after releasing its own
-            // swap lock, so ResetAgc() re-entering it from inside StopReceivingAsync below never
-            // contends for anything already held.
+            // notify the user, not request another swap. RestartableSstvDecoder raises this event
+            // strictly after releasing its own swap lock, so ResetAgc() re-entering it from inside
+            // StopReceivingAsync below never contends for anything already held -- that part is
+            // confirmed (round-3 plan review).
+            //
+            // Round-15 correction: the earlier version of this comment additionally claimed the
+            // GetAwaiter().GetResult() below was "confirmed safe" via that same round-3 tracing.
+            // That tracing covered only the decoder swap lock above, not this synchronous block --
+            // MiniAudioEngine's OWN doc comments (ClaimCaptureSessionAsync's round-3-engine-review
+            // fix, DisposeCaptureSessionAsync's own doc comment) are the authoritative, currently-
+            // maintained source on whether a drain-thread-originated synchronous re-entrant call like
+            // this one can deadlock -- re-check those directly rather than trusting this comment's own
+            // conclusion, which was never independently verified against them and can go stale as
+            // that class evolves on its own schedule. Not re-verified as part of this chunk (out of
+            // scope -- MiniAudioEngine is a different project); flagging the overstated claim, not
+            // fixing or re-confirming the underlying question.
             StopReceivingAsync().GetAwaiter().GetResult();
             _maintenanceWarningActive = false;
             Log.MaintenanceCriticalStop(_logger);
@@ -910,7 +927,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// path share this exact same resolution, so they can never disagree with each other.</summary>
     public async Task<StationIdTransmitOptions> GetStationIdTransmitOptionsAsync(CancellationToken ct = default)
     {
-        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        // Round-15 finding (discovered while testing finding 3, not itself in the auditor's report):
+        // same unbounded-external-read shape as ResolveDeviceAsync/GetTxVolumePercentAsync/
+        // LoadAudioSettingsAsync inside PlayWithPttAsync -- but reached from TransmitAsync's own
+        // preamble, BEFORE PlayWithPttAsync (and its _transmitInFlight guard) is ever entered. Lower
+        // severity than finding 3 (a hang here does NOT strand _transmitInFlight, since it hasn't
+        // been acquired yet -- a concurrent second TransmitAsync/TuneAsync call is unaffected), but
+        // still a real unbounded wait on a settings read (e.g. a config file on a hung network mount)
+        // with no caller-visible way to bound it on the TuneAsync-with-no-ct production path. Same
+        // fix, same reasoning.
+        var appSettings = await _settingsStore.LoadAsync(ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
         var stationIdSettings = appSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)
             ?? new StationIdSettings();
         var operatorSettings = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
@@ -1063,6 +1089,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
             var wasReceiving = _isReceiving;
             if (wasReceiving)
             {
+                // Round-15 finding 3 (deferred, NOT the same fix as the three awaits inside the
+                // guarded try/finally below): this call has the identical "hang here strands
+                // _transmitInFlight forever" exposure, but a naive WaitAsync bound here is UNSAFE, not
+                // just incomplete -- StopReceivingAsync takes no CancellationToken at all, sits OUTSIDE
+                // the guarded region (so no finally would run its own cleanup), and abandoning it mid-
+                // MiniAudioCaptureSession.Dispose's drain-thread join leaves _isReceiving stuck (its
+                // own finally, which clears it, never runs), permanently blocking every future
+                // StartReceivingAsync's early-return guard -- trading one permanent-lockout failure
+                // mode for a different one, not fixing it. A real fix needs a paired change (bound
+                // the wait AND force _isReceiving = false on the timeout path) or belongs where the
+                // actual unbounded join lives (MiniAudioCaptureSession, already documented there as
+                // deliberately unbounded-by-design). Left unfixed this round; flagged for a dedicated
+                // pass, not silently dropped.
                 await StopReceivingAsync().ConfigureAwait(false);
                 // User-reported gap (2026-08-18): see CapturePausedForTransmitChanged's own doc comment.
                 // Raised AFTER the await completes -- capture is genuinely stopped by the time a
@@ -1089,9 +1128,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
             try
             {
-                var device = await ResolveDeviceAsync(forCapture: false, ct).ConfigureAwait(false);
-                var gain = (await GetTxVolumePercentAsync(ct).ConfigureAwait(false)) / 100f;
-                var audioSettings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
+                // Round-15 finding 3: these three awaits had no bound of their own either -- unlike
+                // findings 1/2 (round 14), PTT is NOT yet keyed at this point, so a hang here is not
+                // the leaked-keyed-transmitter class. It is still a real, severe bug: RX was already
+                // paused above (StopReceivingAsync, outside this guarded region -- see that call's own
+                // comment for why it is deliberately NOT given the same treatment here), and a hang in
+                // ANY of these three permanently strands _transmitInFlight (round 12's single-flight
+                // guard never releases while an await here is still pending), killing TX *and* RX for
+                // the rest of the process's life from a single wedged device enumeration or a settings
+                // read against a hung network mount -- worth fixing on its own even without the PTT
+                // angle. Bounded with the same WaitAsync treatment as findings 1/2: a TimeoutException
+                // here routes through the generic catch below -> abnormalTermination -> the un-key
+                // attempt (a harmless no-op via TryUnkeyPttAsync's own RigId=="none"/never-keyed
+                // handling, since pttKeyedOnRealRig is still false at this point) and RX-resume, then
+                // releases _transmitInFlight.
+                var device = await ResolveDeviceAsync(forCapture: false, ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+                var gain = (await GetTxVolumePercentAsync(ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false)) / 100f;
+                var audioSettings = await LoadAudioSettingsAsync(ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
 
                 // Guarded on RigId ("none" = the null-object "no radio" backend, spec/18-path-to-1.0.md
                 // Critical item 1), not Capabilities -- see IRadioController.RigId's own doc comment for
@@ -1172,10 +1225,45 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         // completes the awaited task with OperationCanceledException (the benign arm
                         // below), while exceeding the budget with no cancellation surfaces as
                         // TimeoutException instead, correctly routing through the generic catch below
-                        // -> abnormalTermination -> urgent un-key-before-StopPlayback. The underlying
-                        // call is left running in the background either way -- same trade-off
-                        // EnqueueAllAsync's own round-13 stall fix accepts.
-                        await _radioSession.SetPttAsync(true, ct).WaitAsync(_cleanupTimeout).ConfigureAwait(false);
+                        // -> abnormalTermination -> urgent un-key-before-StopPlayback. `ct` is passed
+                        // to WaitAsync itself too (CA2016 -- not just the inner call): WaitAsync(TimeSpan,
+                        // CancellationToken) races completion/timeout/cancellation independently, so a
+                        // genuine caller cancellation is observed and classified correctly HERE even if
+                        // the backend itself never polls `ct` promptly once its native call has started
+                        // (HamlibRadioProtocol's own documented limitation -- round-15 finding 4, closed
+                        // by this rather than just caveated).
+                        //
+                        // Round-15 caveat: that urgent un-key is only a genuine recovery when the backend
+                        // doesn't serialize requests behind the very command that just timed out --
+                        // RigctldClientProtocol/HamlibRadioProtocol both hold a single request
+                        // semaphore across the reply read, so the abandoned key command still holds it
+                        // and the un-key attempt is expected to itself time out and log Critical
+                        // ("MAY STILL BE KEYED"), not silently recover -- still strictly better than
+                        // the pre-round-14 unbounded hang (the operator is now told, loudly, instead
+                        // of the app just stalling), but this is a signal to disconnect/reconnect the
+                        // CAT link, not evidence the rig is actually off. The underlying call is left
+                        // running in the background either way -- same trade-off EnqueueAllAsync's own
+                        // round-13 stall fix accepts.
+                        try
+                        {
+                            await _radioSession.SetPttAsync(true, ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+                        }
+                        catch (Exception)
+                        {
+                            // Round-15 finding: this call is just as much a lost-update hazard as
+                            // SetPttLockAsync's own key-failure catch (round-8 finding, see its own
+                            // comment) -- a failed-but-possibly-keyed attempt is a NEW key for
+                            // _pttKeyEpoch's purposes. Without this, a concurrent un-keyer that
+                            // snapshotted the epoch BEFORE this call reached the wire can read the
+                            // epoch as unchanged after this call's own cleanup un-key also fails, and
+                            // wrongly clear _pttUnkeyFailedOnRealRig -- reporting a rig this call may
+                            // have genuinely keyed as confirmed off. This was the one site rounds 5-8
+                            // missed of this class; round 14's WaitAsync fix made it newly reachable in
+                            // practice (a hung key command now reliably throws instead of hanging).
+                            Interlocked.Increment(ref _pttKeyEpoch);
+                            throw;
+                        }
+
                         // Round-5 finding: see _pttKeyEpoch's own doc comment.
                         Interlocked.Increment(ref _pttKeyEpoch);
                         Log.PttKeyed(_logger);
@@ -1190,10 +1278,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // PTT is already keyed (or was already locked keyed at entry) by this point, so an
                 // indefinite native device-open hang here is exactly as much a leaked-keyed-
                 // transmitter exposure as finding 1's key command itself, not a smaller-window
-                // variant of it. Same WaitAsync treatment, same reasoning.
+                // variant of it. Same WaitAsync treatment, same reasoning. Round-15 nit:
+                // MiniAudioEngine.StartPlaybackAsync holds its own playback lock across the abandoned
+                // native open, so the following StopPlaybackWithWatchdogAsync's own claim step queues
+                // FIFO-behind it and can burn its own full watchdog budget too (self-healing, not a
+                // new failure mode -- the queued claim still eventually gets and disposes the late-
+                // published session -- but worth knowing this path's worst case is roughly
+                // 2x _cleanupTimeout, not 1x, if this lands during DisposeAsync's own bounded wait).
                 await _audioEngine.StartPlaybackAsync(
                     device, sampleRate, audioSettings.PeriodSizeInFrames, audioSettings.Periods,
-                    audioSettings.StereoTxEnabled, ct).WaitAsync(_cleanupTimeout).ConfigureAwait(false);
+                    audioSettings.StereoTxEnabled, ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
                 await PumpToPlaybackAsync(samples, gain, sampleRate, totalSamplesEstimate, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)

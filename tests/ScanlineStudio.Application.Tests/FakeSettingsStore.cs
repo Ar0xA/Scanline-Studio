@@ -11,7 +11,23 @@ internal sealed class FakeSettingsStore : ISettingsStore, IDisposable
 
     public IObservable<AppSettings> Changes => _changes;
 
-    public Task<AppSettings> LoadAsync(CancellationToken ct = default) => Task.FromResult(Settings);
+    /// <summary>Test-only hook (Tier A Batch 3 chunk 3a round 15): when set, <see cref="LoadAsync"/>
+    /// parks on this until it completes -- lets a test simulate a settings read hanging (e.g. a
+    /// config file on a wedged network mount), the failure mode round-15 finding 3's
+    /// ResolveDeviceAsync/GetTxVolumePercentAsync/LoadAudioSettingsAsync WaitAsync bounds exist to
+    /// close. Respects `ct` via Task.WaitAsync, matching FakeAudioDeviceEnumerator.Gate's own
+    /// round-10 pattern.</summary>
+    public Task? Gate { get; set; }
+
+    public async Task<AppSettings> LoadAsync(CancellationToken ct = default)
+    {
+        if (Gate is not null)
+        {
+            await Gate.WaitAsync(ct).ConfigureAwait(false);
+        }
+
+        return Settings;
+    }
 
     public Task SaveAsync(AppSettings settings, CancellationToken ct = default)
     {
