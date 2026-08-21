@@ -2415,3 +2415,95 @@ round 20's own "applied SafeLog everywhere" claim, made after round 19 ALSO made
 claim, was itself only a "hand-picked subset". Does NOT count as chunk 3a's 1st clean round -- round 22
 is now the earliest round that can count as chunk 3a's 1st clean round. Twenty consecutive rounds
 (2-21) have now each found something real in this file.
+
+**Chunk 3a round 22** (2026-08-21, independent agent, fresh context, agent `a088b1dc4c6eb8d5c`). Verdict
+EQUIVALENT-WITH-RISKS. Round 21's own "applied SafeLog everywhere" claim disproven a THIRD time --
+round 21's own doc comment on `SafeLog` predicted this and told the reader not to trust it, correctly. A
+fresh, independent enumeration of all 63 `Log.*` call sites found 21 still unwrapped, 4 inside a catch
+whose entire documented purpose is defeated by a throwing log call. No finding in failure class 1
+(leaked keyed transmitter); one is class-2-adjacent. **(1) [risk]** `PlayWithPttAsync`'s
+`catch (OperationCanceledException)` log call (`Log.PlaybackCancelled`) was unwrapped -- a throwing log
+call there REPLACES the OCE as what propagates out of the method, and `TxControlsPaneViewModel`'s own
+`catch (OperationCanceledException)` branches on that exact exception identity to distinguish an
+SWR-cutoff abort from a generic failure (verbatim the harm `RaiseCapturePausedForTransmitChanged`'s own
+doc comment names, which round 20 already guarded for that method while leaving this one bare). PTT
+itself unaffected -- the `finally` still un-keys either way. **(2) [risk]** same shape on the shutdown
+path: `PlayWithPttAsync`'s `catch (ObjectDisposedException) when (_disposed)` log call
+(`Log.PlaybackAbortedByDispose`) was unwrapped, similarly able to substitute an unrelated exception for
+the `ObjectDisposedException` this class's own established convention has callers branch on. **(3)
+[risk]** `CaptureOverrunCount`'s own `catch (ObjectDisposedException)` log call
+(`Log.CaptureOverrunCountRaceObserved`) was unwrapped -- that getter's own doc comment states this catch
+exists because it's polled every 250ms by `RxImagePaneViewModel`'s telemetry timer and a
+`DispatcherTimer` tick exception has nowhere safe to land; a throwing log call voided that guarantee one
+frame deeper. Not PTT, but the same "catch's stated safety property defeated one frame deeper" pattern
+rounds 19-21 each chased. Nits: `PlayWithPttAsync`'s generic `catch (Exception)` log call
+(`Log.PlaybackFailed`) unwrapped, same shape, no independent PTT hazard since `abnormalTermination` is
+already set first; round 21's own `_decoder.ResetAgc()` fix in `StartReceivingAsync` stopped one line
+short of its own stated justification -- `Log.RxStarted` immediately below it was still unwrapped, so a
+throwing provider still propagated out of that method after capture had genuinely started (swallowed on
+the RX-resume path, not on the direct UI Start-RX path); the 3 maintenance-handler log calls
+(`MaintenanceCriticalStop`, `MaintenanceWarningRaised`, `MaintenanceWarningCleared`) all run BEFORE their
+own event `Invoke()` call, so a throwing log skips the UI notification even though the underlying
+RX-state change already happened (outer catch swallows the throw into `MaintenanceHandlerFailed`); the
+`InFlightKeyedTransmitWait` sizing comment's "8s worst case" arithmetic is stale -- round 16 added a 5s
+`StopCapture` watchdog inside `StopReceivingAsync`, which `DisposeAsync` also calls, bringing the real
+worst case to ~13s (no PTT consequence today, but could mislead a future round sizing against it); 3
+decoder-command dispatch logs (`ReSyncRequested`/`CorrectSlantRequested`/`ForceMode`) run before the
+action they describe, outside any catch and outside all 3 failure classes -- noted, explicitly not
+chased.
+
+Explicitly checked and confirmed already-handled, stated rather than left silent: `Log.PttKeyed`'s own
+unwrapped call is safe (a throw there routes to the generic catch, which sets `abnormalTermination` FIRST,
+so the `finally` still un-keys); `SetPttAsync` has no blocking synchronous prefix on any of the 4 backend
+implementations (verified directly against `RadioSessionService`/`RadioController`/
+`HamlibRadioProtocol`/`RigctldClientProtocol`), so round 18's sync-prefix hazard doesn't apply to the
+key/un-key commands; `StopReceivingAsync`'s handler `-=` unsubscribes cannot throw (`MiniAudioEngine`'s
+`SamplesCaptured` is a field-like event, lock-free `CompareExchange`), confirming round 21's claim that
+`PlayWithPttAsync`'s own `StopReceivingAsync()` call site no longer has anything able to throw uncaught;
+`DisposeAsync`'s "four states only reachable on a non-`none` rig" claim still holds
+(`NoneRadioProtocol.SetPttAsync` always throws synchronously); no other unguarded non-log operation
+remains in any catch/cleanup/`finally` region (walked `PlayWithPttAsync`'s full cleanup,
+`SetPttLockAsync`'s two finallys, and all of `DisposeAsync`); round 21's nit 9
+(`ResumeReceivingBoundedAsync`'s fault-observer race) remains harmless with one correction to the stated
+rationale -- if `resumeTask` FAULTS (not just completes) in the narrow window, that fault is genuinely
+lost, not "just not double-observed" as round 21 put it, but the consequence is one missing log line
+(.NET's default unobserved-task-exception policy doesn't escalate), so it stays a deferred nit, not
+promoted.
+
+Assumptions the agent flagged as unverified (informational, not findings): `OnDecoderRestartCriticallyOverdue`'s
+drain-thread reentrancy claim (already flagged as unverified by round 15's own comment, out of chunk
+scope) was not independently re-checked; `Console.Error.WriteLine` inside `SafeLog` is assumed
+non-blocking (a redirected-to-full-pipe stderr could in principle stall a cleanup path) but was not
+investigated. Off-scope note: `Waterfall.Dispose()`/`Decoder.Dispose()` in `DisposeAsync` remain
+unbounded synchronous calls inside a method sized against a 10s host-teardown budget -- explicitly noted
+by the agent as off-scope for this chunk, not a finding.
+
+**Chunk 3a round 22 fixes applied** (2026-08-21, commit pending). All 3 risks and all applicable nits
+fixed as real code changes; the 3 decoder-command dispatch logs (out of all 3 failure classes) and the
+2 unverified assumptions deliberately left untouched -- explicitly out of scope, not silently missed.
+Findings 1/2/3 and the `PlaybackFailed` nit: all 4 `PlayWithPttAsync`/`CaptureOverrunCount` log calls
+wrapped in `SafeLog`. The 3 maintenance-handler log calls each wrapped in `SafeLog` too, rather than
+reordered relative to their own `Invoke()` call -- the log call itself can no longer throw, which
+neutralizes the log-before-invoke hazard without touching event-firing order (simpler, and matches this
+file's established SafeLog-only convention rather than introducing a second mitigation shape).
+`Log.RxStarted` in `StartReceivingAsync`
+wrapped in `SafeLog`, completing round 21's own stated intent for that fix. `InFlightKeyedTransmitWait`'s
+sizing comment corrected to state the real ~13s current worst case, with the original "8s" figure kept
+for historical context.
+
+New regression test:
+`Round22_PlayWithPttAsync_CancellationLoggingFails_OperationCanceledExceptionStillPropagates` -- exercises
+finding 1 end-to-end via `TuneAsync`/`cts.Cancel()` (the same shape `TxControlsPaneViewModel.Dispose()`
+uses), with `RecordingLogger.ThrowOnMessageContaining = "Playback cancelled"`; asserts the ORIGINAL
+`OperationCanceledException` reaches the caller, not the simulated logging-provider failure, and that PTT
+is still correctly un-keyed regardless. Mutation-verified: reverted the `SafeLog` wrap on
+`Log.PlaybackCancelled`, reproduced the exact predicted failure (`SimulatedLoggingProviderFailureException`
+propagating instead of `OperationCanceledException`), restored, rebuilt clean, re-confirmed passing.
+209/209 `ScanlineStudio.Application.Tests` passing (208 pre-existing + 1 new), full solution suite run in
+progress at time of writing -- confirm clean before treating this round as closed.
+
+Round 22 fixed 3 real risks plus 4 nits, all of the "log call inside a catch/cleanup/log-before-invoke
+site defeats the surrounding safety property one frame deeper" pattern that has now recurred in every
+round from 19 through 22 -- each round's own "exhaustive" sweep claim disproven by the next round's fresh
+enumeration. Does NOT count as chunk 3a's 1st clean round -- round 23 is now the earliest round that can.
+Twenty-one consecutive rounds (2-22) have now each found something real in this file.
