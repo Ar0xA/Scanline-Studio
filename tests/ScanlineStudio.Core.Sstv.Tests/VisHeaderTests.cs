@@ -163,6 +163,97 @@ public class VisHeaderTests
         Assert.Equal(1305.0, VisHeader.MaxSearchCeilingMs, precision: 6);
     }
 
+    [Fact]
+    public void GenerateAvtSegments_TrainingBitPattern_MatchesLegacyShiftRegister()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 5 chunk 5c (docs/functional-audit-playbook.md):
+        // GenerateAvtSegments_TotalHeaderDuration_MatchesLegacy only pins total duration, which is
+        // pattern-independent -- exactly the Scottie-incident failure class (CLAUDE.md SS4). This pins
+        // the actual bit-1600/bit-2200 tone sequence for the first and last of the 32 training blocks,
+        // hand-derived from legacy's real shift register (Main.cpp:7564-7574): sd seeded 0x5fa0, each
+        // block reads sd's 16 bits MSB-first (bit&0x8000 -> 1600 else 2200) then
+        // sd = ((sd&0xff00)-0x0100) | ((sd&0x00ff)+0x0001), applied 31 times before the last block.
+        var segments = VisHeader.GenerateAvtSegments(SstvModeRegistry.Avt.VisCode).ToList();
+
+        // Layout: 3 VIS blocks (13 segments each = 39) + 32 * (1 marker + 16 bits = 17) + 1 tail.
+        const int visBlockSegments = 3 * 13;
+        const int trainingBlockSegments = 17;
+
+        double[] block0Expected = [2200, 1600, 2200, 1600, 1600, 1600, 1600, 1600, 1600, 2200, 1600, 2200, 2200, 2200, 2200, 2200];
+        double[] block31Expected = [2200, 1600, 2200, 2200, 2200, 2200, 2200, 2200, 1600, 2200, 1600, 1600, 1600, 1600, 1600, 1600];
+
+        var block0Start = visBlockSegments;
+        var block31Start = visBlockSegments + 31 * trainingBlockSegments;
+        var tailIndex = visBlockSegments + 32 * trainingBlockSegments;
+
+        Assert.Equal(1900.0, segments[block0Start].FrequencyHz); // marker
+        Assert.Equal(block0Expected, segments.Skip(block0Start + 1).Take(16).Select(s => s.FrequencyHz));
+
+        Assert.Equal(1900.0, segments[block31Start].FrequencyHz); // marker
+        Assert.Equal(block31Expected, segments.Skip(block31Start + 1).Take(16).Select(s => s.FrequencyHz));
+
+        Assert.Equal(0.0, segments[tailIndex].FrequencyHz);
+        Assert.Equal(0.30514375, segments[tailIndex].DurationMs, precision: 8);
+        Assert.Equal(tailIndex + 1, segments.Count);
+    }
+
+    [Fact]
+    public void GenerateExtendedSegments_Mr73_TransmitsLegacyRawWord0x4523()
+    {
+        // Main.cpp:7501 -- legacy's real MR73 word is 0x4523 (escape 0x23 low byte, 0x45 high byte),
+        // sent as 16 raw LSB-first bits with no parity, then a single stop bit -- a swapped
+        // escape/code byte order would pass any round-trip test (this port's own encoder/decoder
+        // would agree with each other while both disagreeing with a real legacy receiver).
+        var segments = VisHeader.GenerateExtendedSegments(SstvModeRegistry.Mr73.ExtendedVisCode!.Value).ToList();
+
+        Assert.Equal(4 + 16 + 1, segments.Count); // leader,break,leader,start + 16 bits + stop
+
+        var value = 0;
+        for (var bitIndex = 0; bitIndex < 16; bitIndex++)
+        {
+            var bit = segments[4 + bitIndex].FrequencyHz == VisHeader.Bit1FrequencyHz ? 1 : 0;
+            value |= bit << bitIndex;
+        }
+
+        Assert.Equal(0x4523, value);
+        Assert.Equal(VisHeader.StartStopFrequencyHz, segments[^1].FrequencyHz); // stop bit, no parity
+    }
+
+    [Fact]
+    public void GenerateNarrowModeSegments_Mn73_TransmitsLegacyPacketBytes()
+    {
+        // Main.cpp:7395-7424: [0x2d][0x15][modeCode][modeCode^0x15], 6 bits/byte LSB-first via
+        // WriteFSK (sstv.cpp:2942), preceded by leader(1900/300)+guard(2100/100)+start-bit-train(1900/22).
+        // MN73's real narrow mode code is 0x02 (Main.cpp:7403).
+        var segments = VisHeader.GenerateNarrowModeSegments(SstvModeRegistry.Mn73.NarrowModeCode!.Value).ToList();
+
+        Assert.Equal(1900.0, segments[0].FrequencyHz);
+        Assert.Equal(VisHeader.NarrowLeaderDurationMs, segments[0].DurationMs);
+        Assert.Equal(2100.0, segments[1].FrequencyHz);
+        Assert.Equal(VisHeader.NarrowGuardDurationMs, segments[1].DurationMs);
+        Assert.Equal(1900.0, segments[2].FrequencyHz); // start-bit training pulse
+        Assert.Equal(VisHeader.NarrowBitDurationMs, segments[2].DurationMs);
+
+        Assert.Equal(3 + 4 * 6, segments.Count); // preamble + 4 bytes * 6 bits, no stop bit
+
+        int DecodeByte(int startIndex)
+        {
+            var value = 0;
+            for (var bitIndex = 0; bitIndex < 6; bitIndex++)
+            {
+                var bit = segments[startIndex + bitIndex].FrequencyHz == 1900.0 ? 1 : 0;
+                value |= bit << bitIndex;
+            }
+
+            return value;
+        }
+
+        Assert.Equal(0x2d, DecodeByte(3));
+        Assert.Equal(0x15, DecodeByte(9));
+        Assert.Equal(0x02, DecodeByte(15)); // MN73's mode code
+        Assert.Equal(0x02 ^ 0x15, DecodeByte(21)); // checksum
+    }
+
     /// <summary>Segment layout from <see cref="VisHeader.GenerateSegments"/>: 0=leader, 1=break,
     /// 2=leader, 3=start bit, 4-10=7 data bits (LSB first), 11=parity, 12=stop bit.</summary>
     private static int ExtractVisByte(IReadOnlyList<(double FrequencyHz, double DurationMs)> segments)

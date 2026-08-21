@@ -4194,3 +4194,50 @@ Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1201/1202 (1 unrela
 skip).
 
 Chunks 5c (`VisHeader.cs`) and 5d (`VisBitDecision.cs` + `SyncAnchorCorrector.cs`) remain open.
+
+## Chunk 5c round 1 (2026-08-21) -- CLOSED, single-pass table-verification, no round 2 needed
+
+Verified all four sections of `VisHeader.cs` (464 lines) against legacy source: the normal VIS
+header (leader/break/leader/start/7-data-bits/parity/stop, `sstv.cpp:1948-2153`), extended VIS
+(16-raw-bit two-byte format for MR/MP/ML, `Main.cpp:7549-7561`), the MN/MC narrow mode-announce FSK
+packet (`Main.cpp:7395-7424`, `sstv.cpp:2942-2949`, `sstv.h:705-707`), and the Scottie post-VIS
+pulse + AVT triple-VIS-repeat/32-block training sequence (`Main.cpp:7563-7579`). This file had
+never been audited as its own dedicated target before, though it had already absorbed several real
+fixes from a separate, earlier sweep (cited in-file as "S8 fix", "S10 fix", "D6 round 3/4/9",
+"Band-1 S3 fix") that targeted `AnalogFmSstvDecoder.cs`'s VIS-decode region and touched these
+constants as a side effect -- all re-verified fresh rather than trusted from that history.
+
+**Zero constant/behavioral mismatches.** All 24 normal VIS bytes independently re-derived from
+`Main.cpp:7437-7547` and cross-checked against parity; the AVT training shift register (`sd` seeded
+`0x5fa0`, MSB-first bit read, byte-split increment/decrement) confirmed bit-exact against
+`Main.cpp:7564-7574` including the no-overflow claim across all 32 iterations; every derived
+search-ceiling/duration constant confirmed arithmetically self-consistent with its own doc comment.
+
+Three doc/citation nits fixed: the class-level comment claiming LSB-first bit order was "not yet
+cross-checked" (it now is, both directions -- comment updated with the real TX/RX citations);
+`GenerateExtendedSegments`' doc comment had no real line citation for its TX-code claim (added
+`Main.cpp:7549-7554`/`:7561`); `AvtExtraHeaderDurationMs`'s section comment could read as if this
+port's formula were missing legacy's leading 9ms slack term -- clarified that legacy's 9ms is a
+different quantity (an RX sync-search timeout ceiling, not a TX header-skip deadline) so a future
+reader doesn't "fix" a non-bug.
+
+**Three real coverage gaps closed with new tests, not just noted** -- the AVT bit-pattern gap in
+particular is exactly the Scottie-incident failure class (CLAUDE.md §4): the existing
+`GenerateAvtSegments_TotalHeaderDuration_MatchesLegacy` test only pinned total duration, which is
+pattern-independent (a scrambled shift register with the same iteration count would still pass).
+Added to `VisHeaderTests.cs`: `GenerateAvtSegments_TrainingBitPattern_MatchesLegacyShiftRegister`
+(hand-derived expected tone sequences for the first and last of the 32 training blocks, computed
+independently via a throwaway Python re-implementation of the shift register, not copied from the
+port); `GenerateExtendedSegments_Mr73_TransmitsLegacyRawWord0x4523` (pins escape/code byte order);
+`GenerateNarrowModeSegments_Mn73_TransmitsLegacyPacketBytes` (pins packet byte order and the XOR
+checksum formula). All three mutation-verified: reversing the shift register's seed, swapping the
+extended-VIS byte order, and dropping the checksum's XOR term each make the corresponding new test
+fail as predicted.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a single-pass
+table-verification chunk that found no real mismatch, same rigor rule as chunk 5a.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1204/1205 (1 unrelated intentional
+skip).
+
+Chunk 5d (`VisBitDecision.cs` + `SyncAnchorCorrector.cs`) remains open.
