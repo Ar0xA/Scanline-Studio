@@ -3826,3 +3826,45 @@ on `FromRgb`'s bit-exactness argument, and `ReadPeakPicked`'s boundary-guard asy
 Commit `4c6f1f4` (code) / `02791a9` (docs). Full solution suite confirmed green:
 `ScanlineStudio.Core.Sstv.Tests` at 1025/1025 (1 unrelated intentional skip), every other project's
 test suite green.
+
+## Chunk 4b round 1 (2026-08-21)
+
+No functional-equivalence bug found. TX and RX verified independently (never inferred one from the
+other, per CLAUDE.md §4's own Scottie warning) against `Main.cpp`'s `LineR72`/`LineR24`/`LineMR`
+(-> `YCbCrSequentialScanlineEncoder`), `LinePD`/`LineMP`/`LineMN` (-> `YCbCrLinePairedScanlineEncoder`),
+and the matching per-pixel RX decode switch (`:4315-4430`). Channel order, chroma array indices,
+peak-pick-vs-bare, Limit256 asymmetries, per-channel trim factors, and segment offsets all confirmed
+to match, including two easy-to-miss legacy asymmetries (sequential chroma uses `m_KS2S`, line-paired
+chroma uses `m_KSS` -- correct, not a copy-paste slip; Y2 in line-paired is genuinely unclamped in
+legacy, not a port gap).
+
+Two real gaps closed, both non-behavioral:
+
+- **Documentation**: MR/ML's three 0.1ms hold gaps -- legacy's own RX (`sstv.cpp:871-874`/`:966-969`)
+  computes these as 0.1 *samples*, not 0.1ms (the only unscaled term in those blocks), while legacy's
+  own TX (`Main.cpp:6772`) emits a real 0.1ms gap -- legacy's RX is self-inconsistent with its own TX
+  here by ~1-2 samples of chroma shift. This port matches legacy's TX/real on-air signals, not
+  legacy's inconsistent RX constant -- a deliberate, verified choice, now documented at
+  `YCbCrSequentialScanlineDecoder.cs`'s hold-segment branch so a future reader doesn't "correct" it
+  toward the wrong legacy value.
+- **Coverage gap, the closest remaining Scottie-class trap in this chunk**: no test pinned that
+  PD/MP/MN's line-paired encoder sources its one transmitted chroma pair from the ODD (first) row,
+  not the even row (`Main.cpp:6694`/`:6703` etc.) -- round-trip and the smooth-gradient golden TX
+  fixtures can't catch a row swap here, since the decoder applies the same chroma pair to both output
+  rows either way. New `YCbCrLinePairedScanlineEncoderTests.cs`, mutation-verified (swapping the
+  source row makes the new test fail as predicted).
+
+Also fixed: two wrong `Main.cpp` line citations (`YCbCrSequentialScanlineDecoder.cs`'s
+`:4338/4347` -> `:4341/4350`; `YCbCrLinePairedScanlineDecoder.cs`'s `:4393/4402` -> `:4396/4405`), and
+`YCbCrLinePairedScanlineEncoder.cs`'s class doc, which omitted the MN family entirely. One off-scope
+note, not chased: `RgbSequentialScanlineDecoder.cs` truncates after its `+128` bias rather than
+before, unlike this chunk's three siblings -- not in chunk 4b's file list.
+
+No RX golden vector exists for MR/ML (`mr73` has a TX fixture but no `.mmv` capture) -- the sequential
+decoder's group-C/D trim factors and 0.1ms gap handling are verified against source only for that
+family; Robot-72 does cover the sequential RX chroma path with a real capture.
+
+Auditor's verdict: unconditional go -- ship as-is, don't spend another round on this chunk.
+
+Commit `9da8a45`. Full solution suite confirmed green: `ScanlineStudio.Core.Sstv.Tests` at 1026/1027
+(1 unrelated intentional skip), every other project's test suite green.
