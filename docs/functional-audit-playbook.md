@@ -3034,7 +3034,7 @@ documented window; and `_pttLocked = locked;`'s own unconditional write outside 
 unlock site -- confirmed safe, since `_pttLockGate` serializes all `SetPttLockAsync` calls and
 `PlayWithPttAsync` never writes `_pttLocked = true` itself, so no concurrent writer can stomp it.
 
-**Chunk 3a round 29 fixes applied** (2026-08-21, commit pending). Risk fixed: `pttCommand`'s declaration
+**Chunk 3a round 29 fixes applied** (2026-08-21, commit `ab2637f`). Risk fixed: `pttCommand`'s declaration
 moved outside the `try` (a local declared inside a `try` is not in scope in that try's own `catch`
 blocks, so this was needed regardless) as a nullable `Task?`, with the identical `ContinueWith`
 fault-observer pattern (`OnlyOnFaulted`, gated on `!IsCompleted`) added to BOTH catch arms (engage and
