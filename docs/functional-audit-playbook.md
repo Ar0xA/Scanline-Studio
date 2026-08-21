@@ -1849,3 +1849,92 @@ round 13's own severity call, the same pattern as round 13 was itself an amplifi
 count as chunk 3a's 1st clean round. Thirteen consecutive rounds (2-14) have now each found something
 real in this file -- finding 3 (the 3 remaining pre-key unbounded awaits) is a known, deliberately
 deferred item for round 15 or later to pick up.
+
+**Chunk 3a round 15** (2026-08-21, independent agent, fresh context, agent `a6635b5e4576e96c6`).
+Re-derived round 14's two `.WaitAsync(_cleanupTimeout)` fixes and confirmed both correct (genuinely
+bounded regardless of callee behavior, `TimeoutException` routes cleanly through the generic catch
+with no special-casing, a genuine caller `ct` cancellation still surfaces as `OperationCanceledException`,
+`_transmitInFlight` releases on both paths). Also independently confirmed round 14's CHOICE of
+`WaitAsync` over a fresh `CancellationTokenSource` was correct for a reason round 14 itself didn't
+state: a fresh linked CTS on the key command would cancel at the protocol semaphore gate, making a
+timed-out key indistinguishable from an operator Stop TX at the catch site -- `WaitAsync` keeps them
+distinct. Evaluated round 14's own deferred finding 3 (the 3 pre-key unbounded awaits) and found round
+14's severity call correct on the PTT axis (no physical-transmitter exposure) but recommended fixing
+NOW anyway: the actual consequence is not "TX unavailable" but **TX and RX both dead for the process
+lifetime** (RX was already paused above these awaits; nothing resumes it on this path), from a single
+wedged device enumeration or a settings read against a hung network mount -- severe enough on its own
+merits regardless of the PTT distinction. Found 4 new items: **(1) [risk]** `PlayWithPttAsync`'s own
+key-command catch never bumped `_pttKeyEpoch` -- the FIFTH site of the lost-update pattern rounds 5-8
+closed everywhere else (the twin site in `SetPttLockAsync`, round-8 finding, got this treatment;
+`PlayWithPttAsync`'s own key-command catch never did). Round 14's `WaitAsync` fix made this newly
+reachable in practice (a hung key command now reliably throws instead of hanging forever). **(2)
+[risk]** the round-14 comment's claim that the urgent un-key is a working recovery after a key-command
+timeout is misleading -- both shipped CAT backends (`RigctldClientProtocol`/`HamlibRadioProtocol`)
+serialize every request behind a single semaphore held ACROSS the reply read, so the abandoned,
+still-running key command still holds it, and the cleanup un-key attempt is *expected* to itself time
+out and log Critical, not silently recover. Still net-better than the pre-round-14 unbounded hang (the
+operator is now told, loudly), but the comment overstated it as a working fallback. **(3)** as above,
+recommended fixing the 3 deferred pre-key awaits now (of the 4, `StopReceivingAsync` specifically
+needs a DIFFERENT fix shape -- it takes no `CancellationToken` at all and a naive bound would abandon
+a drain-thread join mid-flight, permanently stranding `_isReceiving` instead of fixing anything).
+**(4)-(9) [nits]**: the cancellation-preservation claim only holds if the callee polls `ct` promptly
+(Hamlib doesn't, once its native call has started); abandoned `WaitAsync` tasks have no fault-observer
+continuation (contrast `StopPlaybackWithWatchdogAsync`'s own `ContinueWith`, Program.cs's global
+`UnobservedTaskException` handler still catches these so no crash, just detached-from-context
+logging); `StartPlaybackAsync`'s timeout path leaves the abandoned open holding `MiniAudioEngine`'s
+own playback lock, so the following watchdog can burn its own full budget too (self-healing, not a
+new failure mode); `StopReceivingAsync` sitting outside the guarded region skips some housekeeping if
+`StopCaptureAsync` throws; a stale/overstated "confirmed safe" comment on
+`OnDecoderRestartCriticallyOverdue`'s synchronous re-entrant `GetResult()` call, whose actual safety
+depends on `MiniAudioEngine`-internal mechanics this chunk doesn't own (out of scope, flagged not
+re-verified); `_maintenanceWarningActive` was a plain `bool` despite being written from the audio
+drain thread, unlike every other cross-thread flag in the class.
+
+**Chunk 3a round 15 fixes applied** (2026-08-21, commit TBD). Finding 1: `PlayWithPttAsync`'s key
+command wrapped in its own `try`/`catch` bumping `_pttKeyEpoch` on ANY exception before rethrowing,
+mirroring `SetPttLockAsync`'s own round-8 fix exactly. Finding 2: comment corrected to describe the
+actual, expected outcome (a Critical-logged failed recovery, not a silent success) rather than
+presenting it as a working fallback. Finding 3: the three `ct`-taking pre-key awaits
+(`ResolveDeviceAsync`, `GetTxVolumePercentAsync`, `LoadAudioSettingsAsync`) all wrapped with
+`.WaitAsync(_cleanupTimeout, ct)`; `StopReceivingAsync` deliberately left unfixed with an explicit
+comment recording the different fix shape it needs and why a naive bound would make things worse, not
+better. While building finding 3's test, discovered (not from the auditor's report) that
+`TransmitAsync`'s own preamble (`GetStationIdTransmitOptionsAsync`) reads settings unbounded too,
+BEFORE `PlayWithPttAsync`/`_transmitInFlight` is ever reached -- fixed with the same `WaitAsync`
+treatment, lower severity noted (no lockout amplification, since the guard isn't held yet) but still a
+real unbounded wait worth closing. Nits 4-9: nit 4 effectively closed as a side effect of passing `ct`
+to `WaitAsync` itself (see below), not just caveated; nits 6/7/8/9 addressed with comment-only fixes
+(playbook-adjacent code comments, not behavior changes) except 9, which is a real one-word field fix
+(`_maintenanceWarningActive` made `volatile`); nit 5 (fault-observer continuations) logged as a queued
+item, not fixed this round -- Program.cs's existing global handler already prevents a crash, so this
+is a diagnostics-quality improvement, not a safety fix, and adding it to 6 call sites (2 from round 14
++ 4 new from round 15) was judged disproportionate scope for this round.
+
+CA2016 (forward `ct` to `WaitAsync`) fired on the new `GetStationIdTransmitOptionsAsync` call site,
+which prompted passing `ct` to ALL SIX `WaitAsync(_cleanupTimeout)` call sites (round 14's original
+two included) as `.WaitAsync(_cleanupTimeout, ct)` instead -- a genuine improvement, not just a lint
+fix: `Task.WaitAsync(TimeSpan, CancellationToken)` observes the passed token independently of the
+awaited task, so a genuine caller cancellation is now noticed and classified correctly even when the
+callee itself never polls `ct` promptly (closing round-15's own nit 4 for these six sites, not just
+caveating it).
+
+New regression tests: `Round15_PlayWithPttAsync_KeyCommandThrows_EpochBump_SurvivesConcurrentUnkeyersStaleClear`
+(finding 1, mirrors the round-8 test's own structure), `Round15_PlayWithPttAsync_ResolveDeviceAsync_Hangs_TimesOutRatherThanStrandingTransmitInFlightForever`
+(finding 3, required adding a `Gate` mechanism to `FakeSettingsStore` matching `FakeAudioDeviceEnumerator.Gate`'s
+own round-10 ct-respecting pattern -- and required using `TuneAsync` rather than `TransmitAsync`, since
+gating the shared settings store also hits the newly-discovered `GetStationIdTransmitOptionsAsync` bound
+first if `TransmitAsync`'s own preamble runs at all), and
+`Round15_GetStationIdTransmitOptionsAsync_SettingsReadHangs_TimesOutRatherThanHangingForever` (the
+newly-discovered fix). All three mutation-verified: each fix reverted in turn, each mutated test
+produced an outright hang under an external `timeout` bound (finding 1's test instead failed a clean
+assertion -- the missing-backstop signature -- since disabling only the epoch bump doesn't itself
+create a hang, just a stale-state race), confirming the exact predicted failure mode each time.
+Restored, rebuilt clean, all three re-confirmed passing, no stray test-host processes survived any
+mutation. All 194 `ScanlineStudio.Application.Tests` passing (191 pre-existing + 3 new), full solution
+suite (all projects) clean.
+
+Round 15 fixed 1 new blocker-class risk (finding 1, a genuine gap in an already-4-times-fixed pattern)
+plus a genuinely new bug discovered outside the auditor's own report (`GetStationIdTransmitOptionsAsync`)
+-- round 15 does NOT count as chunk 3a's 1st clean round. Round 16 is now the earliest round that can
+count as chunk 3a's 1st clean round. Fourteen consecutive rounds (2-15) have now each found something
+real in this file.
