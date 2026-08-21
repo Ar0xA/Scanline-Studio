@@ -5000,4 +5000,4 @@ dropped-setting `docs/removed-features.md` entry in 7d; the batch's most substan
 `AfcTracker.cs` audit) found zero functional bugs but several doc/citation corrections, one legacy-
 fidelity expression-order fix, and one coverage gap; 7f (non-port, standalone-correctness review)
 found zero functional bugs, one doc nit, and closed a real sign-convention coverage gap. Commits:
-8e9ffdf, c451c1f, b2bb210, 51b2c82, e150259, plus 7f's pending commit.
+8e9ffdf, c451c1f, b2bb210, 51b2c82, e150259, 71c621f.
