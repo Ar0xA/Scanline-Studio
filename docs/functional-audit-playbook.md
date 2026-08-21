@@ -4469,4 +4469,68 @@ no functional bug, same rigor rule as this batch's own precedent.
 Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1218/1219 (1 unrelated intentional
 skip).
 
-Chunks 6c-6e remain open.
+## Chunk 6c round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed
+
+Full Tier A rigor round on `VisLockStateMachine.cs` (350 lines): the real-time VIS-lock/bit-decode
+state machine (`sstv.cpp`'s `CSSTVDEM::Do`, `m_SyncMode` cases 0/1/2/9/3). Already carries a real
+fix history (S31/S12/S7/S10, pieces 6c/7b/7c/9, "ultracode audit finding #11") -- every prior fix
+re-verified fresh rather than trusted, none re-litigated without new evidence.
+
+**Zero functional bugs -- every state transition matches legacy exactly**, verified against the
+literal source rather than the file's own (extensive, and in this case accurate) doc comments:
+Search's 3-term trigger; ConfirmLock's sustained-hold semantics (any single failing sample resets
+immediately, countdown only decrements on a passing sample); DecodeVis/DecodeExtendedVis's d13-
+frozen-between-attempts behavior (grepped every `m_iir13`/`m_lpf13` reference repo-wide to confirm),
+the bit-shift accumulation, the escape-code check being reachable only from the first byte
+(confirmed the extended switch has no `0x23` arm), and clean null-match dispatch with no
+`_resolvedMode` contamination; Verify's genuinely-different 2-term condition (independently
+re-verified against the literal source, not the comment's own claim); the AVT caller-branch
+contract (grepped the actual call sites); `Reset()`'s scope; and `MsToSamples`' truncation
+semantics (confirmed `m_SampFreq`'s real C++ type is `double`, matching the truncate-toward-zero
+narrowing this port's own `(int)` cast produces).
+
+One doc-comment nit fixed: the anchor-reconciliation comment claimed a specific "confirmed: 3
+samples" rounding-mismatch figure that doesn't reproduce under independent re-derivation (measured
+at 11025Hz: ~7.5 samples normal, ~13.5 extended). Auditor explicitly recommended NOT changing the
+code -- the ~80-sample envelope-detector group delay dominates by an order of magnitude and this
+truncation's own deficit happens to cancel some of it, so combining-then-rounding would make the
+composite anchor marginally worse, not better. Comment corrected to state the real relationship and
+explicitly warn against "fixing" it.
+
+**One real coverage gap closed with a mutation-verified test; two others attempted but abandoned
+after proving genuinely impossible to construct reliably via natural-signal timing --  a real,
+positive finding about the state machine's own behavior, not a shortcut.** Added
+`LockAnchor_AddsScottiePostVisPulseForScottieFamilyOnly` (4-case theory: MartinM1 non-Scottie, all
+three Scottie sub-modes), mutation-verified (zeroing the Scottie pulse term fails all 3 Scottie
+cases as predicted, the non-Scottie case correctly unaffected).
+
+The other two proposed tests (proving a null-VIS-byte match resets `_state` to `Search` rather than
+wedging, for both the normal and extended decode paths) were built, and initially appeared to pass
+under both correct and mutated code -- investigated rather than accepted at face value, since a
+test that can't fail is worse than no test. Root cause, confirmed via reflection-based per-sample
+tracing: after a null match, `_syncTimeCounter` has ALREADY been reassigned to a fresh
+`BitDurationMs` window one line earlier (as part of accumulating the just-decoded bit, before the
+mode-lookup runs) -- so even without the `_state = Search` reset, the machine doesn't truly wedge.
+It keeps cycling through 330-sample "phantom bit" windows against whatever content follows (typically
+near-silence), and VisBitDecision's own reject condition (`sstv.cpp:1981-1984`'s "too close to
+call"/"both weaker than reference" branches) reliably fires on that ambiguous content within a cycle
+or two, resetting to `Search` via a DIFFERENT, still-intact code path -- masking the missing reset
+almost every time. This is a genuine, legacy-consistent property of the state machine (both resets
+being present makes the distinction unobservable in practice), not a bug -- but it means a
+natural-signal test cannot reliably distinguish "this specific reset is present" from "some other
+reset caught it a cycle later." Confirmed empirically across 5 different constructions (data-bit
+flip, parity flip on two different base modes, unmodified real headers) before concluding this
+wasn't a fixable test-construction mistake. This specific coverage gap (the null-match branch's own
+reset, independent of the bit-reject path's reset) remains open -- closing it properly would need
+either an internal test-only hook to drive the state machine past natural signal timing, or
+accepting the gap given both real resets are independently present and correct. Not chased further
+this round per this batch's own precedent (auditor's own two `[risk]` items were explicitly
+"opportunistic," not blocking).
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1222/1223 (1 unrelated intentional
+skip).
+
+Chunks 6d-6e remain open.
