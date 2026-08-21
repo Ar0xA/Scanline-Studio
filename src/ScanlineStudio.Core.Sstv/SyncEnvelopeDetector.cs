@@ -9,8 +9,11 @@ namespace ScanlineStudio.Core.Sstv;
 /// AM envelope detector. Which center frequency to use is mode-dependent: legacy's own sync-buffer
 /// selection (`sstv.cpp`'s <c>#if NARROW_SYNC == 1200</c> -- false, since <c>NARROW_SYNC</c> is
 /// actually 1900, `sstv.h:440`, so the compiled `#else` branch is the real one) uses <c>d19</c>
-/// (1900Hz) for the MN/MC narrow family and <c>d12</c> (1200Hz) for everyone else, AVT excluded
-/// entirely. Used by <see cref="SlantTracker"/> (via <c>AutoStopJob</c>'s real input,
+/// (1900Hz) for the MN/MC narrow family and <c>d12</c> (1200Hz) for everyone else. Legacy itself
+/// does NOT skip AVT here (it still writes a scaled raw signal into the same buffer,
+/// `sstv.cpp:2299/2303`) -- this port's own, separately documented AVT sync-envelope gap lives at
+/// <c>AnalogFmSstvDecoder</c>'s own Slant-initialization call site, not in legacy's real behavior.
+/// Used by <see cref="SlantTracker"/> (via <c>AutoStopJob</c>'s real input,
 /// <c>m_SyncPos</c>) to find where the sync pulse's signal strength peaks within each line, which is
 /// what Auto Slant measures drift against — entirely separate from the PLL-based main demodulator
 /// and from AFC's zero-crossing counter.
@@ -55,8 +58,8 @@ internal sealed class SyncEnvelopeDetector
     }
 
     /// <summary>Retunes the resonator by an AFC frequency-offset correction, mirroring legacy's
-    /// <c>InitTone</c> (`sstv.cpp:1695-1705`), called from <c>SyncFreq</c> on every AFC lock update
-    /// (`sstv.cpp:2362`: <c>SetFreq(1200/1900+dfq, SampFreq, bw)</c>). Only meaningful while a mode is
+    /// <c>InitTone</c> (`sstv.cpp:1695-1705`: <c>SetFreq(1200/1900+dfq, SampFreq, bw)</c>), called
+    /// from <c>SyncFreq</c> on every AFC lock update. Only meaningful while a mode is
     /// synced -- legacy only calls <c>InitTone</c> from <c>SyncFreq</c>, itself only reachable while
     /// <c>m_Sync</c> -- callers must gate calling this the same way (ultracode audit finding #1).
     /// Deliberately does not reset <see cref="_resonator"/>'s or <see cref="_smoother"/>'s internal

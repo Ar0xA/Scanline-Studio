@@ -4331,3 +4331,93 @@ than manufacture a round 2 purely to satisfy the formal gate).
 
 Full round-by-round detail for all four chunks lives in this section's own per-round entries above,
 not reproduced here.
+
+## Tier A Batch 6 -- IN PROGRESS, started 2026-08-21
+
+Header/lock state machines (approved batch plan, row 6). All five files are real control-flow/DSP
+state-machine logic (unlike Batch 5's mix of tables and logic) -- full Tier A rigor throughout, no
+table-verification downgrade. Every file already has a dedicated test file.
+
+Chunked one file per chunk (line counts: 77/223/350/240/482), ordered by dependency --
+`SyncEnvelopeDetector.cs` is the shared envelope-detector primitive the plan's own row note flags
+as "feeds all four" of its siblings, so it goes first:
+
+- **6a** `SyncEnvelopeDetector.cs` (77 lines + `SyncEnvelopeDetectorTests.cs`) -- resonate-rectify-
+  smooth AM envelope detector (`sstv.cpp`'s `d12`/`d19`), shared by `SlantTracker` and this batch's
+  other state machines.
+- **6b** `SyncIntervalTracker.cs` (223 lines + `SyncIntervalTrackerTests.cs`) -- note: this file's
+  own `GetSyncIntervalMatchDepth`/`GetSyncIntervalCandidates` *inputs* were already audited as part
+  of Batch 5 chunk 5b (`SstvModeRegistry.cs`); this chunk covers the tracker class itself, not that
+  overlap.
+- **6c** `VisLockStateMachine.cs` (350 lines + `VisLockStateMachineTests.cs` +
+  `VisLockStateMachineDecoderTests.cs`).
+- **6d** `AvtTrainingLockStateMachine.cs` (240 lines + `AvtTrainingLockStateMachineTests.cs`).
+- **6e** `NarrowFskHeaderDecoder.cs` (482 lines + `NarrowFskHeaderDecoderTests.cs` +
+  `NarrowFskHeaderDecoderStationIdTests.cs`) -- largest file in this batch, last.
+
+Starting with 6a.
+
+## Chunk 6a round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed
+
+Full Tier A rigor round on `SyncEnvelopeDetector.cs` (77 lines): a resonate-rectify-smooth AM
+envelope detector (`TankFilter` -> `Math.Abs` -> 50Hz/2nd-order Butterworth `IirFilter`), the
+shared primitive the plan's own row note flags as feeding all four of this batch's other state
+machines. Verified against `sstv.cpp`'s `d12`/`d19` computation (`CSSTVDEM::Do`) and `InitTone`
+(`sstv.cpp:1695-1705`).
+
+**Zero functional bugs.** All five audited points confirmed correct: mode-dependent center-
+frequency selection (1900Hz for MN/MC narrow, 1200Hz otherwise, verified against BOTH this file's
+own claim and every real call site that constructs an instance -- not just the comment); the
+80Hz-vs-100Hz bandwidth split between the VIS-bit tone-race detectors and every other use;
+`ProcessSample`'s exact resonate-then-rectify-then-smooth order; `Retune`'s AFC-offset gating
+(confirmed the sole caller is only ever reached while actually synced, never unconditionally); and
+that no filter state resets on retune (confirmed `TankFilter.SetFreq` only recomputes coefficients,
+matching legacy's own `InitTone` never calling `Clear()`).
+
+Two doc-comment nits fixed in `SyncEnvelopeDetector.cs`: the class doc's "AVT excluded entirely"
+claim was wrong -- legacy does NOT skip AVT here, it still writes a scaled raw signal into the same
+buffer (`sstv.cpp:2299/2303`); this port's own real AVT sync-envelope gap lives at a different call
+site, not in legacy's actual behavior (corrected to say so precisely). A stale line citation on
+`Retune`'s doc comment (`sstv.cpp:2362` pointed at `InitTone`'s caller, not the `SetFreq` calls
+themselves at `:1698-1702`) corrected. A third nit fixed in `AfcTests.cs`: a comment claiming
+"legacy never retunes" the sync-bypass-1200 detector was backwards -- legacy's one real `m_iir12`
+IS retuned during a lock and reset to nominal between images (`Stop()`'s `InitTone(0)`,
+`sstv.cpp:1769-1780`); this port's two-separate-instances design (one retuned, one permanently
+nominal) is behaviorally equivalent for the single-image observation the test makes, just for a
+different reason than originally stated -- corrected.
+
+**Two real `[risk]`-level coverage gaps closed with mutation-verified tests, not just noted** --
+flagged above nit severity because `Retune`'s sign has already shipped backwards once in this exact
+call chain (the AFC correction call site) before being caught. `SyncEnvelopeDetectorTests.cs` had
+zero coverage of whether `Retune` has any DSP effect at all (only `AppliedCenterFrequencyHzForTests`
+was ever read, a value `Retune` assigns independently of the actual `_resonator.SetFreq` call --
+deleting that call, or flipping only its sign, silently passed the whole suite). Added three tests:
+`Retune_ActuallyMovesTheResonator_NotJustTheObservationHook` (mutation-verified against both a
+deleted and a sign-flipped `SetFreq` call), `Retune_IsAbsoluteFromTheConstructedCentre_NotCumulative`,
+`Retune_DoesNotResetFilterState`. Also found and fixed one test-integrity defect while applying
+this: an existing test (`NarrowBandwidthDetector_RespondsMoreStronglyToOnFrequencyTone`) had a
+copy-paste bug (both compared detectors constructed at the same 1080Hz center) that the auditor
+flagged -- my first attempted fix (retuning the second detector to 1320Hz) actually broke the
+test's real intent (comparing two DIFFERENT filters' on-frequency response to each other isn't
+"on-frequency vs off-frequency" for one filter), caught by the test itself failing after the change;
+corrected by renaming the variable instead of retuning it, preserving the original (correct)
+same-tuning-different-input-tone comparison. Added a new, distinctly-named
+`NarrowBandwidth_IsMoreSelectiveThanTheDefault` test for the actual `bandwidthHz` parameter, which
+nothing previously exercised (an 80-vs-100 swap would have passed unchanged).
+
+Second real coverage gap: zero direct test pinned the mode-dependent 1200Hz-vs-1900Hz tone selection
+(point 1 above) -- a regression flipping that ternary would only degrade MN/MC slant tracking, which
+nothing asserted. The needed test hooks (`InitializeSlantForTests`, `SyncEnvelopeDetectorForTests`)
+already existed on `AnalogFmSstvDecoder`; added `InitializeSlant_PicksTheLegacySyncBufferTone`
+(4-case theory: Robot 36 and Scottie S1 at 1200Hz, MN73 and MC180 at 1900Hz) and
+`InitializeSlant_Avt_LeavesNoSyncEnvelopeDetector` to `AfcTests.cs`. Mutation-verified: flipping the
+ternary at the real call site (`AnalogFmSstvDecoder.cs`'s `InitializeSlant`) fails all 4 theory cases
+as predicted.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1216/1217 (1 unrelated intentional
+skip).
+
+Chunks 6b-6e remain open.
