@@ -1657,6 +1657,37 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Equal(1, stopCaptureCount);
     }
 
+    // ------------------------------------------------------------------ round 22 findings
+
+    [Fact]
+    public async Task Round22_PlayWithPttAsync_CancellationLoggingFails_OperationCanceledExceptionStillPropagates()
+    {
+        // Round-22 finding (risk): a throwing log call in the OperationCanceledException catch arm
+        // used to REPLACE that OCE as what actually propagates out of PlayWithPttAsync --
+        // TxControlsPaneViewModel's own catch (OperationCanceledException) branches on this exact
+        // exception identity to distinguish an SWR-cutoff abort from a generic failure (same reasoning
+        // round 20 already applied to RaiseCapturePausedForTransmitChanged's own log call). Exercised
+        // end-to-end via TuneAsync/cts.Cancel(), the same shape TxControlsPaneViewModel.Dispose() uses
+        // (round-8's own established pattern, see Blocker3_DisposeAsync_WaitsForAnInFlightKeyedTransmitsOwnUnkey).
+        var (service, _, radio, logger) = CreateService(inFlightKeyedTransmitWait: TimeSpan.FromSeconds(5));
+        logger.ThrowOnMessageContaining = "Playback cancelled";
+
+        using var cts = new CancellationTokenSource();
+        var tune = service.TuneAsync(1750, TimeSpan.FromSeconds(30), ct: cts.Token);
+        await WaitForAsync(() => radio.PttCalls.Count == 1, TimeSpan.FromSeconds(5));
+
+        cts.Cancel();
+
+        // THE property: the ORIGINAL OperationCanceledException must reach the caller -- not whatever
+        // SimulatedLoggingProviderFailureException the broken logging provider throws instead.
+        await Assert.ThrowsAsync<OperationCanceledException>(() => tune);
+
+        // PTT itself must still be correctly un-keyed regardless of the logging failure.
+        logger.ThrowOnMessageContaining = null;
+        await service.DisposeAsync();
+        Assert.Equal(PttOnThenOff, radio.PttCalls);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
