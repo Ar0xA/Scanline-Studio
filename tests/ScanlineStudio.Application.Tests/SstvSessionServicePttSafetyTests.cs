@@ -1893,6 +1893,95 @@ public sealed class SstvSessionServicePttSafetyTests
             TimeSpan.FromSeconds(5));
     }
 
+    // ------------------------------------------------------------------ round 27 findings
+
+    [Fact]
+    public async Task Round27_PlayWithPttAsync_ReKeyFailsAfterConfirmedUnkeyDuringDrain_CleanupStillAttemptsUnkey()
+    {
+        // Round-27 finding (risk): _pttUnkeyEpoch alone answered "did a confirmed un-key happen since
+        // I started", not "is the rig off NOW" -- a key landing AFTER that confirmed un-key but BEFORE
+        // this call's own cleanup was invisible to it, so cleanup wrongly skipped its own un-key
+        // attempt on a rig that had since been re-keyed. Uses a FAILED re-key (fails after physically
+        // keying, the round-7 scenario) specifically because a SUCCESSFUL re-key would already be
+        // caught by pttLockedAtCleanup's own round-25 mechanism (_pttLocked would read true) -- this
+        // scenario needs _pttLocked to stay false (the command never confirmed success) so ONLY the
+        // _pttUnkeyEpoch/_pttKeyEpoch cross-check can catch it.
+        var stopPlaybackGate = new TaskCompletionSource();
+        var (service, _, radio, _) = CreateService(
+            wrapEngine: inner => new GatedStopPlaybackAudioEngine(inner, stopPlaybackGate.Task),
+            playbackStopWaitBudget: TimeSpan.FromSeconds(30));
+
+        var transmit = service.TransmitAsync(TestMode, TestImage);
+        await WaitForAsync(() => radio.PttCalls.Count == 1, TimeSpan.FromSeconds(5));
+
+        // Confirmed un-key (the operator's own emergency unlock) during the drain.
+        await service.SetPttLockAsync(false);
+        Assert.Equal([true, false], radio.PttCalls);
+
+        // A re-key that fails AFTER physically keying -- _pttLeftKeyedByCall latches true and
+        // _pttKeyEpoch bumps, but _pttLocked stays false (the command never confirmed success).
+        radio.BeforeSetPtt = tx =>
+        {
+            if (tx)
+            {
+                throw new TimeoutException("simulated: re-key command failed after physically keying");
+            }
+        };
+        await Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(true));
+        Assert.False(service.IsPttLocked);
+
+        // Clear the hook so the transmit's own cleanup un-key (tx=false) can succeed normally.
+        radio.BeforeSetPtt = null;
+
+        stopPlaybackGate.SetResult();
+        await transmit;
+
+        // THE property: the transmit's own cleanup must still attempt its own un-key -- the rig was
+        // re-keyed after the confirmed un-key, so the "already known to be off" signal must not be
+        // trusted.
+        Assert.Equal([true, false, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round27_PlayWithPttAsync_LockEngagedThenDeviceResolutionFails_AbnormalTerminationStillLatchesCritical()
+    {
+        // Round-27 finding (risk): pttKeyedOnRealRig's own round-25 baseline read _pttLocked via
+        // pttLockedAtEntry, which is deliberately read LATE -- AFTER the three bounded device/settings
+        // awaits. A failure in any of those three awaits (device not found is the realistic one here)
+        // reached the generic catch with pttKeyedOnRealRig still false even when a lock was ALREADY
+        // engaged at this call's own true entry, reproducing verbatim the harm round 25 exists to
+        // prevent.
+        var emptyOutputDevices = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
+            OutputDevices = [],
+        };
+        var (service, _, radio, logger) = CreateService(deviceEnumerator: emptyOutputDevices);
+
+        // Lock successfully on a real rig BEFORE the transmit even starts.
+        await service.SetPttLockAsync(true);
+        Assert.Equal([true], radio.PttCalls);
+
+        // The transmit's own cleanup un-key attempt (tx=false) then ALSO fails -- needed to observe
+        // the classification difference at all: UnkeyForCleanupAsync always attempts the real command
+        // regardless of pttKeyedOnRealRig's own value, so a SUCCEEDING un-key looks identical either
+        // way. Only a FAILING one exposes whether it was classified Critical (genuinely keyed) or
+        // Debug (benign no-radio skip).
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx)
+            {
+                throw new TimeoutException("simulated: cleanup un-key also failed");
+            }
+        };
+
+        // THE property: the transmit aborts on device resolution (before PTT is ever touched by this
+        // call), but the ALREADY-keyed rig must still be reported at Critical, not silently downgraded
+        // to a benign no-radio Debug line.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage));
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
