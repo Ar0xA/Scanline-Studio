@@ -33,7 +33,8 @@ public sealed class SstvSessionServicePttSafetyTests
             TimeSpan? playbackStopWaitBudget = null,
             TimeSpan? inFlightKeyedTransmitWait = null,
             FakeAudioDeviceEnumerator? deviceEnumerator = null,
-            TimeSpan? playbackStallTimeout = null)
+            TimeSpan? playbackStallTimeout = null,
+            FakeSettingsStore? settingsStore = null)
     {
         var inner = new FakeAudioEngine();
         var engine = wrapEngine?.Invoke(inner) ?? inner;
@@ -42,7 +43,7 @@ public sealed class SstvSessionServicePttSafetyTests
             InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
             OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025])],
         };
-        var settingsStore = new FakeSettingsStore
+        settingsStore ??= new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 AudioDeviceSettings.SectionKey,
@@ -1061,6 +1062,122 @@ public sealed class SstvSessionServicePttSafetyTests
         // succeed cleanly rather than being rejected as "already in progress."
         await service.TransmitAsync(TestMode, TestImage);
         Assert.Equal([true, false, true, false], radio.PttCalls);
+    }
+
+    // ------------------------------------------------------------------ round 15 findings
+
+    [Fact]
+    public async Task Round15_PlayWithPttAsync_KeyCommandThrows_EpochBump_SurvivesConcurrentUnkeyersStaleClear()
+    {
+        // Round-15 finding 1: PlayWithPttAsync's OWN key-command catch never bumped _pttKeyEpoch --
+        // the fifth site of the lost-update shape rounds 5-8 already closed everywhere else (see
+        // SetPttLockAsync's own twin, round-8 finding, whose comment explains the reasoning in full).
+        // Round 14's WaitAsync fix made this newly reachable in practice (a hung key command now
+        // reliably throws instead of hanging forever).
+        var relocked = false;
+        var (service, _, radio, _) = CreateService();
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx && !relocked)
+            {
+                relocked = true;
+                // A concurrent TuneAsync lands entirely within this unlock's own SetPttAsync(false)
+                // round-trip: its OWN key command throws (simulating a wedged/failing key attempt),
+                // and its own cleanup un-key ALSO throws -- reassigning the hook to throw
+                // unconditionally covers both, deterministically, without recursing back into this
+                // branch (the reassignment only affects calls AFTER this point; this call's own
+                // BeforeSetPtt invocation has already fired and won't run again).
+                radio.BeforeSetPtt = _ => throw new TimeoutException("simulated: PTT command written, reply read timed out");
+#pragma warning disable xUnit1031
+                Assert.ThrowsAsync<TimeoutException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1))).GetAwaiter().GetResult();
+#pragma warning restore xUnit1031
+            }
+        };
+
+        // This call's own key command succeeds (RigId check passes, no throw for tx=false here --
+        // the reassigned hook only applies to LATER calls) despite the concurrent chaos inside it.
+        await service.SetPttLockAsync(false);
+
+        // THE property: the concurrent tune's own "may still be keyed" state (_pttUnkeyFailedOnRealRig,
+        // set when ITS OWN cleanup un-key also failed) must survive this unlock's stale-epoch clear --
+        // DisposeAsync's backstop must still see it and issue a real un-key. Without the epoch bump,
+        // this unlock's own epoch check would wrongly match (nothing bumped it) and wipe that state,
+        // silently reporting a rig that may genuinely still be keyed as confirmed off.
+        radio.BeforeSetPtt = null;
+        await service.DisposeAsync();
+        Assert.Equal([false, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round15_PlayWithPttAsync_ResolveDeviceAsync_Hangs_TimesOutRatherThanStrandingTransmitInFlightForever()
+    {
+        // Round-15 finding 3: three pre-key awaits (ResolveDeviceAsync, GetTxVolumePercentAsync,
+        // LoadAudioSettingsAsync) had no bound of their own either -- PTT is NOT yet keyed at this
+        // point (not the leaked-keyed-transmitter class), but a hang in any of them still permanently
+        // strands _transmitInFlight (round 12's single-flight guard), killing TX for the rest of the
+        // process's life. ResolveDeviceAsync's own happy path calls LoadAudioSettingsAsync internally
+        // (TryResolveDeviceAsync), so gating the settings store's own LoadAsync hangs the FIRST of the
+        // three -- sufficient to prove the general WaitAsync mechanism works; the other two share the
+        // identical fix shape. Uses TuneAsync, not TransmitAsync: TransmitAsync's OWN preamble
+        // (GetStationIdTransmitOptionsAsync) ALSO reads settings, unbounded, BEFORE PlayWithPttAsync is
+        // even entered -- a separate bug this same round found and fixed by accident while writing
+        // this test (see that method's own comment) -- and gating the shared settings store would hit
+        // THAT bound first, never reaching the one this test targets. TuneAsync has no such preamble.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-1", SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+            Gate = new TaskCompletionSource().Task,
+        };
+        var (service, _, radio, logger) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(50), settingsStore: settingsStore);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1)));
+
+        // THE property: PTT was never KEYED (the hang is entirely pre-key, so no `true` call) -- the
+        // single `false` is the cleanup's own deliberately-unconditional un-key attempt (this class's
+        // established safety-net behavior, harmless here), and the failure is still logged.
+        Assert.Equal([false], radio.PttCalls);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("Playback failed", StringComparison.OrdinalIgnoreCase));
+
+        // _transmitInFlight must have been released too -- a subsequent, non-hanging tune must
+        // succeed cleanly rather than being rejected as "already in progress."
+        settingsStore.Gate = null;
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+        Assert.Equal([false, true, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round15_GetStationIdTransmitOptionsAsync_SettingsReadHangs_TimesOutRatherThanHangingForever()
+    {
+        // Round-15 (discovered while testing finding 3 above, not itself in the auditor's report):
+        // TransmitAsync's own preamble reads settings via GetStationIdTransmitOptionsAsync BEFORE
+        // PlayWithPttAsync is ever entered -- unbounded, the same external-settings-read shape as
+        // finding 3's three awaits, but reached earlier and NOT covered by _transmitInFlight (never
+        // acquired at this point, since PlayWithPttAsync hasn't been called yet), so a hang here
+        // doesn't strand any OTHER call the way finding 3's does -- still a real, unbounded wait on a
+        // settings read worth closing, with the same fix shape.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-1", SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+            Gate = new TaskCompletionSource().Task,
+        };
+        var (service, _, radio, _) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(50), settingsStore: settingsStore);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.TransmitAsync(TestMode, TestImage));
+
+        // THE property: PlayWithPttAsync was never entered -- no PTT calls at all, since both the
+        // hang and its timeout happen entirely before the key command's own guarded region.
+        Assert.Empty(radio.PttCalls);
+
+        // A subsequent, non-hanging transmit must succeed cleanly.
+        settingsStore.Gate = null;
+        await service.TransmitAsync(TestMode, TestImage);
+        Assert.Equal([true, false], radio.PttCalls);
     }
 
     // ------------------------------------------------------------------ helpers
