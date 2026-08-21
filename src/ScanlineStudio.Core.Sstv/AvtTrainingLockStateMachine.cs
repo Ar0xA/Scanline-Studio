@@ -199,7 +199,15 @@ internal sealed class AvtTrainingLockStateMachine
                             // complete ~63 samples (~5.7ms at 11025Hz) earlier than legacy after a
                             // clean 32-block lock, invisible to AvtTrainingLockStateMachineTests'
                             // wide (+/-300ms) completion-time tolerance.
-                            if (_overallTimeoutCounter == 0 || _overallTimeoutCounter >= MsToSamples(BitWindowMs))
+                            // sstv.cpp:2205's own comparison is `m_SyncTime >= 9.7646*SampFreq/1000`
+                            // -- promoting the int m_SyncTime to double for the compare, against the
+                            // UN-truncated 107.654, not against MsToSamples(BitWindowMs)'s truncated
+                            // 107. Batch 6 chunk 6d fix: matches that promotion exactly, not the
+                            // truncated int threshold this port's own MsToSamples would otherwise
+                            // give -- the two differ only at the single value 107 (unreachable on
+                            // the clean lock path, where this counter is 56 here; only reachable on
+                            // a pathological partial-lock, ~5.6ms effect).
+                            if (_overallTimeoutCounter == 0 || _overallTimeoutCounter >= BitWindowMs / 1000.0 * _sampleRate)
                             {
                                 _overallTimeoutCounter = MsToSamples(LastBlockWaitMs);
                             }
