@@ -3914,11 +3914,44 @@ doesn't replicate legacy's two int truncations (measured bound 2) the way 3 sibl
 replicate theirs (bound 1) -- a documented, tested inconsistency in principle, not a bug; worth one
 deliberate project-level decision rather than four independent ones.
 
-No RX golden vector exists for MR/ML specifically (noted in chunk 4b); this chunk's own RX golden
-vectors (`martin-m1`/`scottie-s1`/`scottie-dx`/`rm8`) all re-passed after the fix, absorbing the
-small expected delta shift within existing tolerance (~2x headroom).
+No RX golden vector exists for MR/ML specifically (noted in chunk 4b). Only `martin-m1`/`scottie-s1`
+have a real RX golden vector through `RgbSequentialScanlineDecoder` -- `scottie-dx` and `rm8` are
+either TX-only or decode through a different, unchanged decoder, so they're structurally immune to
+this fix and weren't re-measured. Actually measured (not assumed) after the fix: martin-m1 1.94 ->
+1.44, scottie-s1 1.80 -> 1.10, both improving as predicted (the fix moves values toward the source).
+Recorded in `GoldenVectorTests.cs`'s own measured-value ledger.
 
 Commit `b89b4ac`. Full `ScanlineStudio.Core.Sstv.Tests` suite re-confirmed at 1029/1030 (1 unrelated
 intentional skip). Auditor's verdict: NOT a go as originally found -- fix-and-reverify required (now
 done); round 2 needed to independently confirm the fix before closing, per the standard process for
 a round that found a real functional bug rather than only nits/gaps.
+
+## Chunk 4c round 2 (2026-08-21, independent agent, fresh context)
+
+Independent re-derivation of round 1's fix, not a re-read of round 1's own reasoning -- re-derived the
+truncation-domain identity directly from `sstv.cpp`'s `CFQC::Do`/`CSSTVDEM`'s buffer-negation,
+`Main.cpp`'s `GetPixelLevel`, and `Limit256`, arriving at the same place independently, plus confirmed
+it for the narrow MC110/140/180 sub-family round 1 hadn't separately checked (`NARROW_CENTER`/
+`NARROW_BWH`, `sstv.h:440-445`) -- identical 1-level truncation bug, same fix applies. Re-derived both
+new tests' expected numeric values independently (confirmed `1814.0625Hz` -> raw `100.5` exactly, no
+FP fuzz on the truncation boundary; confirmed the mono-averaged test's `125` = `floor((16+234)/2)`
+against `GetRY`/`LineRM` directly). Fresh full check of all 4 files found no new behavioral defect.
+
+Corrected round 1's own "~2x tolerance headroom" claim -- actual pre-fix margins were 1.55x/1.67x, not
+~2x -- but independently established a stronger, more precise safety argument round 1 hadn't made:
+`ColorToFreq` floors, so the fix's truncation change moves values toward the source for roughly half
+of all pixels and never away from it, meaning deltas should improve or stay flat by construction, not
+merely "probably fit." Confirmed by this round's own actual re-measurement (see round 1's entry, now
+updated with real post-fix numbers rather than an assumed "~2x headroom").
+
+Two nits, both fixed this round (not by round 2 itself, which flagged them as non-blocking): the
+`GoldenVectorTests.cs` measured-value ledger was stale for `martin-m1`/`scottie-s1` (now records the
+real re-measured 1.94->1.44 / 1.80->1.10 deltas); round 1's own docs entry above overstated which
+fixtures were RX-affected (corrected to just the two that actually decode through the changed
+decoder). One off-scope note independently re-confirmed, not chased: `MonoAveragedPairedScanlineDecoder`'s
+own documented 2-truncation divergence (measured bound 2) is now the last undone case of this pattern
+in the file family -- a deliberate, already-tested, already-documented choice, not a new finding.
+
+Auditor's verdict: unconditional GO -- ship chunk 4c as-is, close now, do not dispatch a round 3.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite re-confirmed green after the ledger/docs fixes.
