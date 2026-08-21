@@ -5495,3 +5495,29 @@ coverage gaps in a brand-new always-CI-runnable test file; 9d (the P/Invoke boun
 interop) found zero functional bugs but real doc/citation drift across 3 files, one real latent-bug
 fix, and closed 3 coverage gaps (one honestly reported as not mutation-verifiable, a native-UB
 limitation stated rather than hidden). Commits: 8c27f07, 1563148, 39eea92, a4c46b6.
+
+## Tier A Batch 10 -- IN PROGRESS, started 2026-08-22
+
+Orchestration/utility (approved batch plan, row 10 -- the plan table's own note: "consider demoting
+to Tier B rigor"). This is the LAST batch on the approved plan table -- Tier A is done once this
+closes. Real sizes confirmed by reading:
+`src/ScanlineStudio.Application/TemplateStore.cs` (249), `MacroTextResolver.cs` (175),
+`MaidenheadLocator.cs` (120, plan table's own note: "pure function, one round is plenty"),
+`OptionsSettingsService.cs` (285), `LogbookSessionService.cs` (150), `RadioSessionService.cs` (139) --
+1118 lines total.
+
+Rigor note: per the plan table's own downgrade guidance and this batch's actual content (settings/
+template/macro orchestration, not DSP/concurrency/control-flow), each chunk gets ONE audit round with
+no round-2 budget by default -- escalate only if a round actually finds something real, matching this
+sweep's own established "single clean round closes a chunk" precedent, applied from the start here
+rather than needing a clean round to earn it.
+
+Chunking:
+- **10a** `MaidenheadLocator.cs` (120) -- pure function (grid-square <-> lat/lon conversion), no
+  side effects, standalone.
+- **10b** `TemplateStore.cs` (249) + `MacroTextResolver.cs` (175) -- related template/macro-text
+  subsystem (424 lines combined).
+- **10c** `OptionsSettingsService.cs` (285) + `LogbookSessionService.cs` (150) +
+  `RadioSessionService.cs` (139) -- orchestration/session services (574 lines combined), last chunk.
+
+Dispatching 10a now.
