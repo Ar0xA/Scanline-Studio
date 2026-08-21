@@ -392,6 +392,16 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                 }
                 catch (Exception reconnectEx)
                 {
+                    if (ct.IsCancellationRequested)
+                    {
+                        // Fourth publish site in this loop, guarded for the same reason the other
+                        // three are: an abandoned loop that resumes after DisconnectAsync's teardown
+                        // already published Disconnected must not publish a terminal Failed afterward
+                        // -- nothing publishes again until the next real connect, so every subscriber
+                        // would latch on it permanently.
+                        return;
+                    }
+
                     PublishConnectionEvent(RadioConnectionState.Failed, reconnectEx.Message, reconnectEx);
                     if (_lastLoggedFailureState != RadioConnectionState.Failed)
                     {
@@ -401,6 +411,16 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                 }
 
                 continue;
+            }
+
+            // Checked before any of this iteration's own logging/publishing, not after: an abandoned
+            // loop that resumes here (PollLoopShutdownTimeout expired while a call was wedged) must not
+            // log a false "reconnected" or re-publish a snapshot after DisconnectAsync's teardown
+            // already published Disconnected -- LastKnownState would otherwise read non-null for a
+            // controller with no session, permanently (nothing clears it again until the next connect).
+            if (ct.IsCancellationRequested)
+            {
+                return;
             }
 
             // The real recovery signal -- a poll that actually succeeded, not just a protocol object
@@ -413,14 +433,6 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
             }
 
             attempt = 0;
-            // Same reasoning as the catch guards above: re-publishing a snapshot after teardown has
-            // already run would leave LastKnownState non-null for a controller with no session,
-            // permanently (nothing clears it again until the next real connect).
-            if (ct.IsCancellationRequested)
-            {
-                return;
-            }
-
             PublishState(state);
 
             if (!await DelayAsync(spec.PollInterval, ct).ConfigureAwait(false))
