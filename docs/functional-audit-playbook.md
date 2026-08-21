@@ -2908,3 +2908,85 @@ Round 27 fixed 2 real risks plus 1 nit -- both risks in code that is EITHER bran
 baseline), continuing the pattern that this file's newest code is consistently where the next round's
 findings live. Does NOT count as chunk 3a's 1st clean round -- round 28 is now the earliest round that
 can. Twenty-six consecutive rounds (2-27) have now each found something real in this file.
+
+**Chunk 3a round 28** (2026-08-21, independent agent, fresh context, agent `a9c1cd650326601c8`). Verdict
+NOT EQUIVALENT -- 1 **blocker** (the first since round 19), plus 2 nits. Explicitly pointed at round 27's
+own two fixes specifically (continuing rounds 24-27's own pattern of each round finding a bug in the
+preceding round's newest code), and it worked again. **[blocker]** The two-epoch check round 27 added has
+a THIRD staleness neither round 26 nor round 27 closed: `unkeyEpochAtEntry` was snapshotted at
+`PlayWithPttAsync`'s own METHOD ENTRY -- before this call's own key command -- so a confirmed un-key that
+happened BEFORE this call keyed the rig gets misread, at cleanup time, as "confirmed AFTER I keyed". The
+pairing with `keyEpochAfterOwnKeyAttempt` (round 27's own fix) only proves "nobody re-keyed since MY key
+phase" -- it says nothing about whether the confirmed un-key it's being compared against actually postdates
+that key, unless BOTH epochs are read at the SAME point in time. Concrete leak: a `SetPttLockAsync(false)`
+is in flight (real serial/TCP round trip) when a `PlayWithPttAsync` call (X) enters and snapshots
+`unkeyEpochAtEntry` at its OLD early point -- before the unlock's own command has reached the rig. X then
+issues its own key command, which queues behind the unlock's on the backend's single request gate. The
+unlock reaches the rig first (rig OFF, `_pttUnkeyEpoch` bumps, all 4 shutdown-backstop flags cleared) --
+then X's own key command reaches the rig (rig ON, `_pttKeyEpoch` bumps, X's own
+`keyEpochAfterOwnKeyAttempt` snapshot correctly captures this). X's transmission then completes normally:
+`_pttUnkeyEpoch != unkeyEpochAtEntry` is true (the unlock's bump landed after X's OLD early snapshot) AND
+`_pttKeyEpoch == keyEpochAfterOwnKeyAttempt` is true (nothing re-keyed since X's own key) -- both
+conditions the round-27 guard requires are satisfied, so the cleanup un-key is SKIPPED entirely, with
+every shutdown-backstop flag already cleared by the unlock. **Leaked keyed transmitter with an actively
+misleading log line claiming the rig is "already known to be off" -- failure class 1, the first blocker
+since round 19.** The `_pttLeftKeyedByCall` consumer has the identical structural gap in the same sequence.
+Reachability: requires a `SetPttLockAsync(false)` genuinely in flight at another `PlayWithPttAsync` call's
+entry -- latent today (`SetPttLockAsync` has zero production callers), same status as every finding
+sitting on top of it since round 24, but goes live the moment the PTT-lock UI is wired.
+
+**[nit]** Round 27's own early `pttKeyedOnRealRig = _pttLocked` baseline (moved to fix round 27's own
+finding 2) widened a DIFFERENT false-positive-Critical window from instruction-scale to the full
+three-bounded-await width: lock engaged → during the awaits a confirmed unlock genuinely turns the rig off
+AND `RigId` separately goes to `"none"` → this call never keys but `pttKeyedOnRealRig` stays stuck true
+from the now-early baseline → cleanup attempts a doomed un-key against the null-object backend and logs a
+false Critical on a rig already confirmed off elsewhere. The round-28 blocker fix does not rescue this --
+that confirmed un-key's own epoch bump lands BEFORE `unkeyEpochAtEntry`'s own (also now-later) read, so the
+pair sees no change and doesn't skip the doomed attempt. Narrow (needs
+lock-engaged-then-confirmed-unlock-then-disconnect, all within the awaits) and `SetPttLockAsync`-gated
+(latent) -- a real fix would need the BASELINE itself to be downgradeable by a confirmed un-key observed
+since its own line, not just guardable at the two consumer sites the way `_pttUnkeyEpoch` already is; not
+fixed this round. **[nit]** `unkeyEpochAtEntry`'s own placeholder-safety comment went stale the moment
+round 27 moved `pttKeyedOnRealRig`'s own assignment earlier -- the comment's claim that the placeholder is
+"false-by-default until the try reaches its own snapshot line" is no longer generally true, though the
+placeholder remains safe for a different reason (every consumer requires `pttKeyedOnRealRig` true, which
+requires `_pttKeyEpoch >= 1`, combined with the second epoch term, still erring toward attempting the
+un-key).
+
+Explicitly checked and confirmed clean this round: a fresh independent `Log.*` enumeration (unwrapped
+sites all outside the PTT/cleanup chain, rounds 26/27's "exhausted" claim holds); unguarded non-log
+operations in catch/cleanup/finally re-enumerated (the round-21 `ResetAgc()` class), none found;
+`_transmitInFlight` lockout sweep re-confirmed every await bounded, release unconditional, no new
+lockout; transmission-destruction sweep confirmed nothing new touches a second call's playback session;
+`keyEpochAfterOwnKeyAttempt`'s OWN snapshot point specifically re-verified correct (no await between the
+key bump and the read, so it can't miss this call's own bump; a concurrent bump absorbed in that
+instruction window is benign) -- the genuine defect was specifically the PAIRING with the entry-time
+`unkeyEpochAtEntry` snapshot, not `keyEpochAfterOwnKeyAttempt` itself.
+
+**Chunk 3a round 28 fixes applied** (2026-08-21, commit pending). Blocker fixed: `unkeyEpochAtEntry`'s
+read moved from method entry to the SAME point as `keyEpochAfterOwnKeyAttempt` (immediately after this
+call's own key phase, no await between the two reads) -- the pair now correctly answers "since MY OWN
+key: did anyone confirm off, and did anyone re-key", not two questions anchored to different, unrelated
+points in time. This preserves both of round 26's own original motivating scenarios (an unlock mid-tone,
+an unlock during `StopPlaybackWithWatchdogAsync`'s own drain), both of which land after this point.
+First nit documented at the relevant code (flagged, not fixed -- narrow, latent, and a real fix needs a
+different mechanism than the one already in place). Second nit fixed: the stale comment corrected to
+explain the placeholder's real current safety argument.
+
+New regression test:
+`Round28_PlayWithPttAsync_ConfirmedUnkeyBeforeOwnKeyCommand_CleanupStillAttemptsUnkey` -- needed a new
+test-double hook (`FakeRadioSessionService.OnCallStarted`, invoked with the 1-based call number the
+instant `SetPttAsync` is entered, before any gate/hang check) to get a deterministic happens-before point
+for racing an independent `SetPttLockAsync(false)` against a gated first call, the same problem round 25's
+`SignalingGatedStopPlaybackAudioEngine` solved for the audio engine. Mutation-verified: reverted
+`unkeyEpochAtEntry`'s read to its old entry-time position (fresh backup taken immediately before this
+specific mutation), reproduced the exact predicted failure (the cleanup un-key call missing from the
+expected sequence, `[false, true]` instead of `[false, true, false]`), restored, rebuilt clean,
+re-confirmed passing. 218/218 `ScanlineStudio.Application.Tests` passing (217 pre-existing + 1 new), full
+solution suite run in progress at time of writing -- confirm clean before treating this round as closed.
+
+Round 28 fixed the file's first BLOCKER since round 19 -- a real leaked-keyed-transmitter path in code
+that was only 1 round old (round 27's own fix), continuing the pattern that this file's newest code is
+consistently where the next round's findings live, now proven at blocker severity too, not just
+risk/nit. Does NOT count as chunk 3a's 1st clean round -- round 29 is now the earliest round that can.
+Twenty-seven consecutive rounds (2-28) have now each found something real in this file.
