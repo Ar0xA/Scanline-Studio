@@ -4533,4 +4533,50 @@ no functional bug, same rigor rule as this batch's own precedent.
 Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1222/1223 (1 unrelated intentional
 skip).
 
-Chunks 6d-6e remain open.
+## Chunk 6d round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed
+
+Full Tier A rigor round on `AvtTrainingLockStateMachine.cs` (240 lines): the AVT training-sequence
+lock (`sstv.cpp`'s `CSSTVDEM::Do`, `m_SyncMode` cases 4/5/6/7). This file's own doc comments already
+document TWO real bugs found and fixed by a prior independent review (a timeout-scoping double-
+count bug, and a `_phaseCounter` overwrite that shifted completion timing by ~63 samples, invisible
+to the test suite's own wide tolerance) -- both re-verified fresh, not re-litigated.
+
+**Zero functional bugs.** Every state (MarkerSearch/MarkerConfirm/DecodeBits/WaitNextMarker)
+confirmed against the literal legacy source, including independently re-deriving the 40.96 Hz-to-
+raw-units conversion factor from `PllFmDemodulator`'s and legacy's own gain constants (not trusted
+from the file's own comment), the asymmetric strict/inclusive dead-zone bounds, the MSB-first shift
+(confirmed as the genuine opposite of `VisLockStateMachine`'s LSB-first shift, both independently
+verified), the block-validity checksum, and both previously-fixed bugs' current correctness
+(re-derived from the caller's real construction point and from legacy's own case 8 dead-code
+mechanics, not re-read from the prior fix's own reasoning).
+
+One real nit fixed in production code: the `h==0x40` last-block branch's guard compared against
+`MsToSamples(BitWindowMs)` (truncated to 107), where legacy's own comparison
+(`sstv.cpp:2205`) promotes the un-truncated 107.654 -- a divergence only at the single value 107,
+unreachable on the clean-lock path (~5.6ms effect on a pathological partial lock). Fixed to compare
+against the un-truncated value directly, matching legacy's own promotion.
+
+**One real `[risk]`-level test finding closed, not just noted -- the third time this specific file
+has been bitten by a timing regression its own tests couldn't see.** The sole end-to-end test's
+`+/-300ms` (`+/-3308` sample) completion-time tolerance was ~58x too loose to prove a real lock had
+happened: a signal with NO lock at all completes only ~57 samples away from a real lock's own
+completion point, comfortably inside that old band -- meaning the entire `DecodeBits` checksum
+check and per-block timeout recalculation could be deleted and this test would still pass. This is
+exactly the mechanism that let the second documented bug (the ~63-sample `_phaseCounter` overwrite)
+ship undetected. Independently re-measured the real completion sample against the CURRENT code
+before pinning it as a golden value -- the auditor's own proposed figure (58608) turned out to be
+26 samples off the actual measured value (58634); shipping the auditor's pasted number without
+re-measuring would have made the tightened test fail immediately. Tightened to a real range
+(58626-58642) plus an explicit "must complete strictly before the no-lock timeout" comparison.
+Mutation-verified by reintroducing the exact historical `_phaseCounter`-overwrite bug: the tightened
+test correctly fails (measuring exactly 58608, a 26-sample shift) where the old `+/-300ms` band
+would have passed it silently. Also fixed a stale comment in the sibling test that still cited the
+pre-rescoping-fix nominal-budget figure.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1222/1223 (1 unrelated intentional
+skip).
+
+Chunk 6e remains open -- the last chunk of Batch 6.
