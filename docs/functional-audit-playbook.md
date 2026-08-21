@@ -5023,4 +5023,54 @@ Chunking, smallest/most-isolated first:
   TX-path DSP/codec logic (CLAUDE.md's port-first scope center).
 - **8d** `CwMorseGenerator.cs` (151) -- CW/Morse code generation, last chunk of this batch.
 
-Dispatching 8a now.
+## Chunk 8a round 1: WavFile.cs
+
+No legacy counterpart (legacy has no WAV file I/O at all -- confirmed by the existing test file's own
+doc comment). Reviewed as standalone RIFF/WAV binary-format correctness, including safety against
+malformed/adversarial input (this parses files that could come from anywhere).
+
+Verdict: EQUIVALENT-WITH-RISKS, go for production as-is (test-only usage today; fix before any
+user-facing "open a WAV" feature). The writer's full-scale-edge clamp-before-narrow was independently
+re-verified correct (the `(short)32768f` wrap claim matches real .NET/ECMA-335 narrowing-cast
+semantics, and the post-scale clamp genuinely closes the gap for every input in [-1,1], not just the
+tested cases). The extensible-format GUID wire-layout claim was independently re-verified correct
+against the real Windows on-wire mixed-endian layout. Both existing guards (`data`-before-`fmt`,
+unsupported bit-depth/channel-count) confirmed reachable and correctly gated.
+
+**Two real risk findings fixed, both malformed-input robustness (not memory-unsafe -- the existing
+`chunkSize` bound already prevented any OOB read/unbounded allocation/infinite loop):**
+- A `fmt ` chunk declaring fewer than its required 16 format-field bytes was read past its own
+  declared end without complaint (silent mis-parse/desync, not a crash). Added an explicit
+  `chunkSize < 16` guard.
+- 1-7 stray trailing bytes at EOF (a truncated download, a writer that appended junk) let the next
+  header read leak a bare `EndOfStreamException` -- unlike every other malformed-input path in this
+  method, which throws `InvalidDataException`/`NotSupportedException`. Added an explicit
+  "8 bytes remaining" guard before each chunk-header read.
+
+Also split a too-short WAVE_FORMAT_EXTENSIBLE extension (malformed data) from a genuinely non-PCM
+SubFormat (valid-but-unsupported) into their own distinct exception types/messages -- they previously
+shared one `NotSupportedException` message describing only the SubFormat case. Replaced the unknown-
+chunk skip's `ReadBytes(chunkSize)` with `Seek`, avoiding a throwaway allocation for a large skipped
+chunk (nit, not a functional bug).
+
+**Six real coverage gaps closed, all mutation-verified** (each new/changed-behavior test confirmed to
+fail under the specific code mutation it claims to catch, then the file restored to exactly the
+intended fix set via `git diff --stat`): the `fmt`-too-small guard, the truncated-extension exception-
+type split, the truncated-header-at-EOF guard, the last-chunk-odd-size-no-pad-byte case (the mirror of
+an existing mid-file test), the unsupported-bit-depth/channel-count guard (both halves, 8-bit and
+stereo), and a GUID wire-layout test using hardcoded literal bytes independent of `Guid.ToByteArray()`
+(the existing extensible tests built their SubFormat bytes via `ToByteArray()`, which is self-
+consistent with this class's own `Guid` parsing by construction and so couldn't have caught a wrong
+wire layout -- the "both halves wrong the same way" pattern CLAUDE.md's behavioral-parity rule warns
+about).
+
+Auditor's verdict: go for production as-is (test-only usage today) -- no round 2 needed for this
+non-legacy-port correctness review, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Audio.Tests` filtered run: 24 passed, 0 failed. Full
+`ScanlineStudio.Core.Sstv.Tests` suite run (WavFile is referenced from `SstvRoundTripTests.cs`):
+Passed - Failed: 0, Passed: 1246, Skipped: 1, Total: 1247.
+
+## Chunk 8a CLOSED
+
+Chunks 8b-8d remain open.
