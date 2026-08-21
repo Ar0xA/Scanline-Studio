@@ -2552,7 +2552,7 @@ keyed (own-signal into the decoder) -- inherent to the abandoned-task design rou
 finding; `DisposeAsync` has no idempotency early-return, but a double call is benign (every step re-runs
 harmlessly or early-returns).
 
-**Chunk 3a round 23 fixes applied** (2026-08-21, commit pending). Both findings fixed via `SafeLog` --
+**Chunk 3a round 23 fixes applied** (2026-08-21, commit `26e34f1`). Both findings fixed via `SafeLog` --
 `Log.PttKeyed` and `Log.PttSkippedNoRadio` both wrapped, closing the physically-keyed-window gap.
 
 New regression test:
