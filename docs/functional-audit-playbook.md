@@ -1890,7 +1890,7 @@ depends on `MiniAudioEngine`-internal mechanics this chunk doesn't own (out of s
 re-verified); `_maintenanceWarningActive` was a plain `bool` despite being written from the audio
 drain thread, unlike every other cross-thread flag in the class.
 
-**Chunk 3a round 15 fixes applied** (2026-08-21, commit TBD). Finding 1: `PlayWithPttAsync`'s key
+**Chunk 3a round 15 fixes applied** (2026-08-21, commit `c59d526`). Finding 1: `PlayWithPttAsync`'s key
 command wrapped in its own `try`/`catch` bumping `_pttKeyEpoch` on ANY exception before rethrowing,
 mirroring `SetPttLockAsync`'s own round-8 fix exactly. Finding 2: comment corrected to describe the
 actual, expected outcome (a Critical-logged failed recovery, not a silent success) rather than
