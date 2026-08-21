@@ -212,3 +212,18 @@ and its resolution, verified directly against current source, not inferred from 
   user reports needing header-only lock (e.g. to avoid false-triggering on a busy band's sync-like
   interference) — the fix is a new `SstvDecoderSettings` flag mirroring `SyncRestartEnabled`'s own
   existing wiring, not a DSP change.
+
+## TX output bandpass filter toggle/tap setting
+
+- **Legacy**: `CSSTVMOD::Do`'s always-on filter (`sstv.cpp:2914`) is actually gated by a user
+  checkbox, `m_bpf` (`CBTXBPF`, persisted as `TXBPF`, `Option.cpp:266-289,450`), and its tap count,
+  `m_bpftap` (`TxBpfTap`/`TXBPFTAP`), is user-editable, rebuilt via `CalcFilter`
+  (`sstv.cpp:2918-2928`) whenever changed. Both default on/24 (`sstv.cpp:2759,2764`).
+- **Replacement**: none. Found during the functional-audit sweep (Tier A Batch 7, chunk 7d, round 1,
+  2026-08-21). `TxOutputBandpassFilter.cs` always applies the filter at a fixed 24 taps, matching
+  legacy's shipped defaults exactly.
+- **Impact**: unaffected at shipped defaults (the common case — most users never touch this
+  checkbox/setting). A legacy user who had disabled the TX output filter, or changed its tap count
+  for a narrower/wider transmit passband, has no way to reproduce that in this port. No golden-vector
+  or decode-correctness impact for the default case — this is a TX-side spectral-shaping option, not
+  a core DSP-math difference — but it is a real, silently-dropped user-facing capability.

@@ -533,4 +533,38 @@ public class SearchBandpassFilterTests
         Assert.NotEqual(0.0, outputs[expectedTap]);
         Assert.Equal(0.0, outputs[expectedTap + 1]);
     }
+
+    [Theory]
+    [InlineData(RxBpfPreset.Wide, 96)]
+    [InlineData(RxBpfPreset.Narrow, 256)]
+    [InlineData(RxBpfPreset.VeryNarrow, 384)]
+    public void Constructor_PerPreset_TapCountScalesWithSampleRate_At44100Hz(RxBpfPreset preset, int expectedTap)
+    {
+        // Closes a coverage gap flagged by Tier A Batch 7 chunk 7d (docs/functional-audit-playbook.md):
+        // Constructor_PerPreset_TapCountReachesBuiltFilter above only ever constructs at 11025Hz, where
+        // `(int)(multiplier * sampleRate / 11025.0)` degenerates to `multiplier` -- a regression to
+        // `_tap = multiplier` (dropping the sample-rate scaling entirely) or to a hardcoded 11025.0
+        // inside the ctor's MakeFilter calls would pass the whole suite undetected. Same causal-
+        // impulse-response technique, at 44100Hz (4x11025) so expectedTap is 4x the base multiplier.
+        var filter = new SearchBandpassFilter(44100, preset, syncRestartEnabled: true);
+
+        var outputs = new double[expectedTap + 2];
+        outputs[0] = filter.ProcessSample(1.0, useLocked: true);
+        for (var n = 1; n < outputs.Length; n++)
+        {
+            outputs[n] = filter.ProcessSample(0.0, useLocked: true);
+        }
+
+        Assert.NotEqual(0.0, outputs[expectedTap]);
+        Assert.Equal(0.0, outputs[expectedTap + 1]);
+    }
+
+    [Fact]
+    public void Constructor_OffPreset_ThrowsArgumentOutOfRange()
+    {
+        // RxBpfPreset.Off is a bypass decision owned by AnalogFmSstvDecoder (see class doc comment) --
+        // this class must never be constructed for it. Previously unpinned by any test.
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new SearchBandpassFilter(11025, RxBpfPreset.Off, syncRestartEnabled: true));
+    }
 }

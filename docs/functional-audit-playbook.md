@@ -4854,4 +4854,42 @@ Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 123
 
 ## Chunk 7c CLOSED
 
-Chunks 7d-7f remain open.
+## Chunk 7d round 1: SearchBandpassFilter.cs, TxOutputBandpassFilter.cs
+
+Verdict: EQUIVALENT-WITH-RISKS, unconditional go for production as-is. Every coefficient, constant,
+branch condition, convergence-break ordering, normalization guard, mirroring bound, and convolution
+direction in both files checked out against the real legacy source (`sstv.cpp:1522-1550,1596-1613,
+1819-1834,2755-2830,2903-2930`, `fir.cpp:310-325,346-427,1079-1153`) -- zero functional bugs.
+
+Two real findings fixed in this round:
+- **Stale/backwards doc comment**: `TxOutputBandpassFilter.cs`'s doc comment claimed reusing
+  `SearchBandpassFilter.MakeFilter` at `att=40` would "silently produce a rectangular-window filter,"
+  premised on that class's Kaiser branch being provably unreachable -- true before Band-1 item 4b,
+  false since (Narrow/VeryNarrow's H1 now use `att=40/50`, hitting Kaiser). The auditor confirmed the
+  two implementations are operation-for-operation bit-identical at `tap=24, att=40`. Corrected the
+  class doc comment and the `MakeFilter` inline comment to state the real (now-shared) reachability,
+  not the stale hazard claim.
+- **Real coverage gap**: `SearchBandpassFilter`'s existing `Constructor_PerPreset_TapCountReachesBuiltFilter`
+  test only ever constructs at 11025Hz, where `(int)(multiplier * sampleRate / 11025.0)` degenerates to
+  `multiplier` -- a regression dropping the sample-rate scaling entirely would pass undetected. Added
+  `Constructor_PerPreset_TapCountScalesWithSampleRate_At44100Hz` (same causal-impulse-response
+  technique, at 44100Hz so expected tap is 4x the base multiplier: 96/256/384). Mutation-verified:
+  reverting `_tap` to just `multiplier` makes all three rows fail exactly as predicted.
+
+Also fixed: two stale legacy line-number citations (`sstv.cpp:1530,1536,1542` actually cites H1's
+lines; H2's real lines are `1531,1537,1543`, and the tap-assignment comment had the same off-by-one).
+Added `Constructor_OffPreset_ThrowsArgumentOutOfRange` (previously-unpinned invariant, mutation-
+verified: adding an `Off` arm to the preset switch makes it fail exactly as predicted). Filed
+`docs/removed-features.md`'s new "TX output bandpass filter toggle/tap setting" entry for the
+auditor's nit that legacy's `m_bpf` checkbox and user-editable `m_bpftap` are silently dropped (this
+port always applies the filter at a fixed 24 taps) -- unaffected at shipped defaults, but a real
+dropped capability per CLAUDE.md's removal rule.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 1242, Skipped: 1, Total: 1243.
+
+## Chunk 7d CLOSED
+
+Chunks 7e-7f remain open.
