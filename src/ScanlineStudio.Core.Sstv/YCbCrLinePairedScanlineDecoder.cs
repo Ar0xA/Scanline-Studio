@@ -28,7 +28,7 @@ internal sealed class YCbCrLinePairedScanlineDecoder : IScanlineDecoder
                 // Piece 10: peak-vs-bare folded into the same exhaustive channel switch that already
                 // picks the destination array. "Y1"/"Y2" BOTH peak-pick in legacy (Main.cpp:4385/4420,
                 // GetPictureLevel) -- PD/MP/MN's two luma segments are not a "first only" case; "RY"/
-                // "BY" stay bare (Main.cpp:4393/4402, GetPixelLevel).
+                // "BY" stay bare (Main.cpp:4396/4405, GetPixelLevel).
                 //
                 // SHOULD item 11 (spec/14-roadmap.md): clamp does NOT follow the same "both luma
                 // segments alike" pattern peak-picking does -- confirmed directly against source, a
