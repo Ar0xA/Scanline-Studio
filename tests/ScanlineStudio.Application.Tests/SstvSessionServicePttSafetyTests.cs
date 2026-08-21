@@ -1824,6 +1824,75 @@ public sealed class SstvSessionServicePttSafetyTests
         await service.DisposeAsync();
     }
 
+    // ------------------------------------------------------------------ round 26 findings
+
+    [Fact]
+    public async Task Round26_TuneAsync_LeaveKeyedAfterTune_ConfirmedUnkeyDuringDrain_DisposeDoesNotDoubleUnkey()
+    {
+        // Round-26 finding (risk): _pttLeftKeyedByCall = true used to be written unconditionally once
+        // a leaveKeyedAfterTune call reaches this point, even if a CONFIRMED un-key (e.g. the
+        // operator's own SetPttLockAsync(false)) happened while this call's own StopPlayback drain was
+        // still in flight -- a permanent false "still keyed" belief on a rig that is demonstrably off,
+        // making DisposeAsync's own backstop always fire a redundant un-key.
+        var stopPlaybackGate = new TaskCompletionSource();
+        var (service, _, radio, _) = CreateService(
+            wrapEngine: inner => new GatedStopPlaybackAudioEngine(inner, stopPlaybackGate.Task),
+            playbackStopWaitBudget: TimeSpan.FromSeconds(30));
+
+        var tune = service.TuneAsync(1750, TimeSpan.FromMilliseconds(1), leaveKeyedAfterTune: true);
+        await WaitForAsync(() => radio.PttCalls.Count == 1, TimeSpan.FromSeconds(5));
+
+        // While the tune's own cleanup drain is still in flight, a genuinely independent un-key
+        // confirms the rig off (SetPttLockAsync always issues its own command regardless of current
+        // belief -- this is the exact shape TxControlsPaneViewModel's own emergency-stop path uses).
+        await service.SetPttLockAsync(false);
+        Assert.Equal([true, false], radio.PttCalls);
+
+        stopPlaybackGate.SetResult();
+        await tune;
+
+        // THE property: no redundant backstop un-key -- the rig is already confirmed off, so
+        // DisposeAsync must find nothing left to do.
+        await service.DisposeAsync();
+        Assert.Equal([true, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round26_TryUnkeyPttAsync_AbandonedCommandLaterFails_ObservedNotSilentlyLost()
+    {
+        // Round-26 finding (risk): TryUnkeyPttAsync's own abandoned unkeyTask (once WaitAsync gives up
+        // on the cleanup budget) had no fault-observer, unlike every OTHER abandoned task in this class
+        // (StopReceivingAsync, StopPlaybackWithWatchdogAsync, ResumeReceivingBoundedAsync) -- a late
+        // failure behind a wedged un-key command, on the single most safety-critical await in the
+        // file, surfaced only as an unobserved task exception, never logged.
+        var gate = new TaskCompletionSource();
+        var (service, _, radio, logger) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(50));
+        radio.Gate = gate.Task;
+        radio.GateOnCallNumber = 2; // the cleanup un-key, after the key command (call #1)
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx)
+            {
+                throw new TimeoutException("simulated: un-key command eventually failed after the watchdog gave up");
+            }
+        };
+
+        // Transmit keys (call #1), then its own cleanup un-key (call #2) parks on the gate --
+        // TryUnkeyPttAsync's own WaitAsync gives up after cleanupTimeout (50ms), well before the gate
+        // is ever released, leaving the command abandoned but still running.
+        await service.TransmitAsync(TestMode, TestImage);
+
+        // Release the gate -- the abandoned command now runs to completion, and (via BeforeSetPtt)
+        // fails.
+        gate.SetResult();
+
+        // THE property: that late failure must be observed and logged, not silently lost as an
+        // unobserved task exception.
+        await WaitForAsync(
+            () => logger.Entries.Any(e => e.Message.Contains("PTT off (finished after watchdog)", StringComparison.Ordinal)),
+            TimeSpan.FromSeconds(5));
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
