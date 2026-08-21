@@ -394,9 +394,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // and DisposeAsync's own backstop still catches it) -- but the operator got no signal
                 // at all until shutdown, for a failed EMERGENCY unlock on a genuinely keyed rig, the
                 // one action in this whole class an operator reaches for specifically because
-                // something already went wrong. Captured once, before the command, same blocker-2
-                // discipline as rigIsRealAtKeyTime's own capture just above.
-                var rigIsRealAtUnlockTime = !locked && _radioSession.RigId != "none";
+                // something already went wrong.
+                //
+                // Round-24 finding (risk): round 18's own fix filtered this catch on a FRESH RigId
+                // read (rigIsRealAtUnlockTime) -- the exact blocker-2 anti-pattern this file's own
+                // established rule forbids (see rigIsRealAtKeyTime's own comment just above: never
+                // re-read RigId at catch/failure time). If the CAT link drops between key and unlock
+                // (RadioController.DisconnectAsync sets RigId to "none" WITHOUT un-keying, per its own
+                // doc comment), the rig is still genuinely keyed but this filter reads "none" and never
+                // matches AT ALL -- not even the inner belief-based gate below ever runs, so the
+                // emergency unlock's own failure produced NO log whatsoever, verbatim the harm round 18
+                // exists to prevent. Fixed by filtering on `!locked` instead: the inner gate just below
+                // (_pttLocked || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig) is already the correct,
+                // belief-based test and needs no device-identity filter layered on top of it.
 
                 if (rigIsRealAtKeyTime)
                 {
@@ -524,12 +534,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
                     throw;
                 }
-                catch (Exception) when (rigIsRealAtUnlockTime)
+                catch (Exception) when (!locked)
                 {
-                    // Round-18 finding 5's fix: see rigIsRealAtUnlockTime's own comment. Deliberately
-                    // simpler than the engage-direction arm above -- no epoch bump (this call never
-                    // successfully keyed anything; _pttLocked is untouched by this catch and correctly
-                    // remains true, so no lost-update race is possible here) and no recovery attempt
+                    // Round-18 finding 5's fix, corrected by round 24: see the capture site's own
+                    // comment just above for why this filters on `!locked` rather than a fresh RigId
+                    // read. Deliberately simpler than the engage-direction arm above -- no epoch bump
+                    // (this call never successfully keyed anything; _pttLocked is untouched by this
+                    // catch and correctly remains true, so no lost-update race is possible here) and
+                    // no recovery attempt
                     // (an unlock that itself failed has nothing safe to recover TO -- the existing
                     // "Known, accepted race" this method's own doc comment already documents governs
                     // any retry). Just makes the failure loudly visible immediately, matching
@@ -2358,6 +2370,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // above for why (same shape, same reasoning). UnkeyForCleanupAsync itself does not throw
             // by design (TryUnkeyPttAsync's own doc comment), so this guards only the logging calls
             // inside it, but that is exactly the realistic failure source identified above.
+            //
+            // Round-24 finding (nit, documentation-only): this backstop's own SetPttAsync(false) queues
+            // FIFO behind an abandoned in-flight command on the backend's single request gate if one is
+            // still outstanding (the same trade-off documented at PlayWithPttAsync's urgent un-key and
+            // its retry) -- it can burn its whole CleanupTimeout budget waiting behind that queued
+            // command without ever reaching the rig, and this method still returns once the budget
+            // expires. Presented here as the reliable last-resort step; it is best-effort like every
+            // other step in this method, not a guarantee the command reaches real hardware before the
+            // host's own teardown bound expires.
             try
             {
                 await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
