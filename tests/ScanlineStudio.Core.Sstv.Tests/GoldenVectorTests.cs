@@ -309,6 +309,14 @@ public class GoldenVectorTests
         // documented (see robot-36/robot-72/avt's own history above) -- these fixes were independently
         // verified against actual legacy source across three audit passes before implementation, so
         // the fix itself is not in question; only the tolerance needed updating to reflect it.
+        // Re-measured after functional-audit chunk 4c's fix (RgbSequentialScanlineDecoder now
+        // truncates before its +128 bias, not after -- ultracode audit finding #28 extended to the
+        // RGB family). Only these two fixtures are affected (RgbSequentialScanlineDecoder is the only
+        // decoder that changed): martin-m1 1.94 -> 1.44 (improved), scottie-s1 1.80 -> 1.10 (improved)
+        // -- both move TOWARD the source, confirming the fix's predicted direction (roughly half of
+        // all sub-mid-gray channel values were one level too dark before; the truncation-domain fix
+        // corrects those without affecting the rest). Every other fixture in this dictionary decodes
+        // through a different decoder and is unaffected, not re-measured. No tolerance changes needed.
         var toleranceByModeId = new Dictionary<string, double>
         {
             ["martin-m1"] = 3.0,
