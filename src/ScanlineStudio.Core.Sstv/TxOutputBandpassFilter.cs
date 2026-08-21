@@ -16,15 +16,17 @@ namespace ScanlineStudio.Core.Sstv;
 /// real transmit spectral-purity/RF-hygiene property a ham-radio product's output is expected to
 /// have, not just an internal test-fidelity concern.
 ///
-/// <b>NOT a reuse of <see cref="SearchBandpassFilter"/></b> (confirmed the wrong shape during plan
-/// review): legacy's TX filter uses <c>att=40</c> (`sstv.cpp:2771`), which takes <c>MakeFilter</c>'s
-/// Kaiser/Bessel-windowed branch (`fir.cpp:361-384`, `att&gt;=21`) — the exact branch
-/// <see cref="SearchBandpassFilter"/>'s own doc comment documents as PROVABLY UNREACHABLE for its own
-/// RX filters (both always <c>att=20</c>). Reusing that class's <c>MakeFilter</c> here would compile,
-/// look right, and silently produce a rectangular-window filter instead. Tap count is also different:
-/// legacy TX is <c>m_bpftap = 24</c> HARDCODED (`sstv.cpp:2764`), not scaled by sample rate the way
-/// <see cref="SearchBandpassFilter"/>'s RX-side tap count is (`fs*24/11025.0`) — this filter uses a
-/// fixed 24 taps (25 coefficients, 12-sample group delay) at every supported sample rate.
+/// <b>Not a reuse of <see cref="SearchBandpassFilter"/>, though its own <c>MakeFilter</c> is now
+/// operation-for-operation identical at this file's own parameters</b> — Tier A Batch 7 chunk 7d
+/// round 1 found and corrected a stale claim here: this doc comment previously said reusing
+/// <see cref="SearchBandpassFilter.MakeFilter"/> at <c>att=40</c> would "silently produce a
+/// rectangular-window filter," on the premise that class's Kaiser branch was provably unreachable.
+/// That premise stopped being true once Band-1 item 4b added H1 at <c>att=40/50</c> (Narrow/
+/// VeryNarrow) to <see cref="SearchBandpassFilter"/> — its <c>MakeFilter</c> fully implements Kaiser
+/// and takes <c>tap</c> as a parameter, so at <c>tap=24, att=40</c> the two implementations are
+/// bit-identical, verified operation-by-operation. This class still keeps its own independent copy —
+/// not a functional necessity, just avoiding a cross-class dependency between an RX-search-path type
+/// and the TX encoder for two small, stable, already-duplicated static functions.
 ///
 /// <b>Constructed locally per encode, not held as a field</b>: <c>AnalogFmSstvEncoder</c> is
 /// registered as a DI singleton and is otherwise fully stateless. A ctor-field filter here would leak
@@ -37,6 +39,13 @@ namespace ScanlineStudio.Core.Sstv;
 /// band-pass when the low edge would go non-positive) is not ported: it depends on
 /// <c>g_dblToneOffset</c>, which this port doesn't model, so the fallback's trigger condition is
 /// structurally unreachable here.
+///
+/// <b>Two legacy user settings are dropped, not just defaulted</b>: legacy's <c>m_bpf</c> checkbox
+/// (`CBTXBPF`, persisted as `TXBPF`, `Option.cpp:266-289,450`) lets the user disable this filter
+/// entirely, and <c>m_bpftap</c> (`TxBpfTap`/`TXBPFTAP`) is user-editable, rebuilt via
+/// <c>CalcFilter</c> (`sstv.cpp:2918-2928`) — this port always applies the filter at a fixed 24 taps,
+/// matching legacy's shipped defaults exactly but with no user override. See
+/// `docs/removed-features.md`'s "TX output bandpass filter toggle/tap setting" entry.
 /// </summary>
 internal sealed class TxOutputBandpassFilter
 {
@@ -77,12 +86,11 @@ internal sealed class TxOutputBandpassFilter
         return sum;
     }
 
-    // Literal port of MakeFilter's att>=21 Kaiser/Bessel branch (fir.cpp:346-427) -- unlike
-    // SearchBandpassFilter.MakeFilter (which only ports the att<21 rectangular-window branch, since
-    // that's the only one its own RX filters ever reach), THIS filter's att=40 always takes the
-    // Kaiser branch, so that's the branch ported here. att>=50's alternate alpha formula
-    // (fir.cpp:361-363) is unreachable at att=40 -- omitted, matching SearchBandpassFilter's own
-    // precedent for documenting (not silently dropping) an unreachable branch.
+    // Literal port of MakeFilter's att>=21 Kaiser/Bessel branch (fir.cpp:346-427) -- this filter's
+    // att=40 always takes the Kaiser branch, so that's the branch exercised here (SearchBandpassFilter
+    // .MakeFilter implements this same branch too, as of Band-1 item 4b -- see class doc comment).
+    // att>=50's alternate alpha formula (fir.cpp:361-363) is unreachable at att=40 -- omitted, matching
+    // SearchBandpassFilter's own precedent for documenting (not silently dropping) an unreachable branch.
     internal static double[] MakeFilter(double sampleRate)
     {
         const int half = Tap / 2;

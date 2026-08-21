@@ -22,7 +22,7 @@ namespace ScanlineStudio.Core.Sstv;
 /// <b>RX BPF subsystem (`RxBpfPreset`): H2's params are preset-invariant except tap; H1's are NOT.</b>
 /// `CalcBPF` (`sstv.cpp:1522-1550`) drives all 4 presets (`m_bpf`/`DEMBPF`, `Off`/`Wide`/`Narrow`/
 /// `VeryNarrow`). `H2` is always 400-2500Hz, attenuation 20 across all three constructible presets
-/// (`sstv.cpp:1530,1536,1542` -- tap count still scales with the preset, only cutoffs/attenuation stay
+/// (`sstv.cpp:1531,1537,1543` -- tap count still scales with the preset, only cutoffs/attenuation stay
 /// fixed). `H1`'s `fch`/`att` both vary by preset (Wide 2600Hz/20dB, Narrow 2500Hz/40dB, VeryNarrow
 /// 2400Hz/50dB), AND its `fcl` varies by <c>syncRestartEnabled</c> -- not by preset -- via legacy's
 /// `lfq = (m_SyncRestart ? 1100 : 1200) + g_dblToneOffset` (`sstv.cpp:1524`, computed once above the
@@ -106,7 +106,7 @@ internal sealed class SearchBandpassFilter
                 "by AnalogFmSstvDecoder, which never constructs this class for it."),
         };
 
-        _tap = (int)(multiplier * sampleRate / 11025.0); // bpftap, scaled by sample rate (sstv.cpp:1530/1536/1542)
+        _tap = (int)(multiplier * sampleRate / 11025.0); // bpftap, scaled by sample rate (sstv.cpp:1529/1535/1541)
         var h1Fcl = syncRestartEnabled ? 1100.0 : 1200.0; // lfq, sstv.cpp:1524
         _h1 = MakeFilter(_tap, sampleRate, fcl: h1Fcl, fch: h1Fch, att: h1Att);
         _h2 = MakeFilter(_tap, sampleRate, fcl: 400.0, fch: 2500.0, att: 20.0);
