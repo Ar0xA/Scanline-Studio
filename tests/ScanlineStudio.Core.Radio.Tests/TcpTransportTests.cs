@@ -90,6 +90,43 @@ public class TcpTransportTests
     }
 
     [Fact]
+    public async Task ReadAsync_CancelledMidRead_AbortsConnection_RatherThanDesyncingTheBuffer()
+    {
+        // Regression test for chunk 3b round 1's blocker 2: a cancel landing while stream.ReadAsync was
+        // in flight used to leave the socket connected with the read cursor exactly where the in-flight
+        // response's bytes would land -- so the NEXT ReadAsync call silently parsed a stale prior
+        // response instead of the new one, with no exception ever raised. TcpTransport now aborts the
+        // connection on a cancelled read instead: the failure is loud (IsOpen goes false), and the next
+        // caller must reopen rather than silently misreading.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var acceptTask = listener.AcceptTcpClientAsync();
+
+        await using var transport = new TcpTransport("127.0.0.1", port);
+        await transport.OpenAsync(CancellationToken.None);
+        using var serverClient = await acceptTask;
+
+        using var cts = new CancellationTokenSource();
+        var readTask = Task.Run(async () =>
+        {
+            await foreach (var _ in transport.ReadAsync(cts.Token))
+            {
+            }
+        });
+
+        // No bytes are ever sent -- the read is guaranteed to still be blocked in the underlying socket
+        // read when cancelled below, not racing a real response.
+        await Task.Delay(TimeSpan.FromMilliseconds(50));
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => readTask);
+        Assert.False(transport.IsOpen);
+
+        listener.Stop();
+    }
+
+    [Fact]
     public async Task OpenAsync_Throws_WhenAlreadyOpen()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);

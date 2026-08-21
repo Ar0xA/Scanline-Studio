@@ -212,6 +212,61 @@ public class RadioControllerTests
     }
 
     [Fact]
+    public async Task DisconnectAsync_DuringReconnectBackoffNullProtocolWindow_StillTearsDownFully()
+    {
+        // Regression test for chunk 3b round 1's blocker 1: DisconnectAsync's whole teardown used to be
+        // gated on `_protocol is not null`, which is false for the entire reconnect-backoff window
+        // (SafeDisposeProtocolAsync nulls it, and it stays null for as long as ResolveProtocol keeps
+        // failing/blocking). A disconnect landing there used to skip publishing Disconnected and leave
+        // RigId at the stale live value -- forever, since every later DisconnectAsync also saw
+        // _protocol == null. RadioController now gates teardown on _sessionActive instead, tracked
+        // independently of _protocol's own nullness.
+        var createCount = 0;
+        var resolveGate = new ManualResetEventSlim(initialState: false);
+        var factory = new FakeProtocolFactory(_ => true, _ =>
+        {
+            var count = Interlocked.Increment(ref createCount);
+            if (count == 1)
+            {
+                return new FakeProtocol(_ => throw new IOException("simulated transport failure"));
+            }
+
+            // Deterministic gate, not a timing assumption -- blocks the poll loop's own reconnect
+            // attempt right at the point _protocol is still null, so the test asserts against that
+            // exact window instead of racing how fast a real reconnect resolves.
+            resolveGate.Wait(TimeSpan.FromSeconds(5));
+            return new FakeProtocol(FixedState);
+        });
+
+        var events = new List<RadioConnectionState>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+
+        try
+        {
+            var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(5) };
+            await controller.ConnectAsync(spec, CancellationToken.None);
+            await WaitUntilAsync(() => createCount >= 2, TimeSpan.FromSeconds(2));
+
+            // createCount >= 2 means the reconnect attempt's Create() call is blocked on the gate --
+            // _protocol is guaranteed null right now: SafeDisposeProtocolAsync cleared it after the
+            // first poll failure, and nothing reassigns it until this blocked Create() call returns.
+            var disconnectTask = controller.DisconnectAsync();
+            await Task.Delay(TimeSpan.FromMilliseconds(100)); // let DisconnectAsync's own cts.CancelAsync land
+            resolveGate.Set();
+            await disconnectTask;
+
+            Assert.Contains(RadioConnectionState.Disconnected, events);
+            Assert.Equal("none", controller.RigId);
+            Assert.Null(controller.LastKnownState);
+        }
+        finally
+        {
+            resolveGate.Set();
+        }
+    }
+
+    [Fact]
     public async Task PollLoop_SurvivesAThrowingStateChangesSubscriber()
     {
         var pollCount = 0;
