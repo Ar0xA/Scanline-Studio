@@ -882,7 +882,8 @@ into 3, following Batch 2's precedent:
 **Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds, chunk 3b CLOSED after 4 rounds (see
 each chunk's own "CLOSED" entry near the end of this batch's section) -- both by explicit user
 decision, not the formal 2-consecutive-clean-round gate. Chunk 3c
-(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) is next, not started.
+(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) started -- round 1 done (see "Chunk 3c round 1"
+entry below), 3 blockers + 1 confirmed risk fixed, not clean yet, round 2 next.
 
 **Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
 never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
@@ -3586,3 +3587,77 @@ confirmed green after every round; `ScanlineStudio.Core.Radio.Tests` last confir
 consecutive runs, `ScanlineStudio.Core.Sstv.Tests` at 1022/1022 (1 unrelated intentional skip).
 
 **Chunk 3c (`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) is next, not started.**
+
+## Chunk 3c round 1 (2026-08-21)
+
+First round on the two CAT backend protocol implementations. No legacy counterpart (CLAUDE.md §2 --
+never ported, pure client of external backends) -- judged purely on internal-invariant
+correctness/exception-safety/concurrency, with a known off-scope lead from chunk 3b's own audits
+(`RigctldClientProtocol.DisposeAsync` possibly disposing `_requestLock` without draining an in-flight
+transaction) handed over explicitly to confirm or refute, not take as given.
+
+**3 blockers, 1 confirmed risk, 2 nits.**
+
+1. **[blocker, Hamlib]** A hard error during `ProbeCapabilities` (the SECOND `CallAsync` in
+   `EnsureConnectedAsync`, running AFTER `rig_open` already succeeded) left the rig OPEN with
+   `_connected` still `false` -- `DisposeAsync`'s own `if (_connected)` guard then skipped teardown
+   entirely, and the next `EnsureConnectedAsync` overwrote `_rig` with a fresh `rig_init`, leaking the
+   previous struct AND holding the serial port for the process lifetime. Most reachable path is entirely
+   ordinary, no race: `RadioSessionService.TestConnectionAsync` creates a throwaway protocol, polls, and
+   disposes in a `finally` -- a user clicking "Test connection" with a wrong baud rate hits a hard
+   `RIG_ETIMEOUT`/`RIG_EIO` on the probe and leaks the port, breaking every later Test *and* the real
+   Connect until the app restarts. Fixed with a dedicated cleanup arm (needs `rig_close` THEN
+   `rig_cleanup`, since the pre-open cleanup arm above only ever needs `rig_cleanup`) and switched
+   `DisposeAsync`'s own guard from `_connected` to `_rig != nint.Zero` (handle ownership, not connection
+   state, is what decides whether cleanup is owed).
+2. **[blocker, Hamlib]** `DisposeAsync`'s own `finally { _lock.Release(); }` handed the semaphore slot
+   straight to whatever call queued behind it, without re-checking `_disposed` -- `SemaphoreSlim.Release()`
+   completes a pending `WaitAsync` inside the release, and `Dispose()` does not revoke that grant. A
+   caller already queued on `_lock.WaitAsync(ct)` BEFORE `DisposeAsync` ran fell into
+   `EnsureConnectedAsync` with `_connected` already reset to `false`, and `rig_init`/`rig_open`'d a BRAND
+   NEW rig on a disposed protocol. For `SetPttAsync(true)` that is the exact harm class this whole batch
+   exists for: a transmitter physically keyed on a handle nothing will ever close again, while the
+   caller sees only `ObjectDisposedException` out of its own `Release()` call and concludes the key
+   failed. Fixed with a new `AcquireAsync` helper (used by all 4 public methods) that re-checks
+   `_disposed` AFTER acquiring the lock, and `DisposeAsync` no longer disposes the semaphore at all
+   (`SemaphoreSlim.Dispose()` doesn't fault pending waiters, and disposing it made a concurrent
+   transaction's own release throw `ObjectDisposedException` -- masking whatever real exception was
+   actually in flight). **Mutation-verified with a genuine repro**: a deterministic
+   queued-behind-a-slow-call test (`DisposeAsync_QueuedBehindASlowCall_ThenALaterQueuedCaller_
+   ThrowsObjectDisposedException_NeverResurrectsTheRig`) reverted to the old code and the rig was
+   confirmed to actually resurrect (`rig_init` called twice) with no exception thrown for the queued
+   caller -- restored, and the fixed code throws `ObjectDisposedException` with exactly one `rig_init`
+   call, as expected.
+3. **[blocker, rigctld]** An unparseable PTT (`t`) readback silently defaulted to "not transmitting"
+   instead of throwing, unlike the frequency read 8 lines above (which correctly throws on an
+   unparseable line). "Not transmitting" is the one wrong guess with physical consequences here, and it
+   also silently suppresses that poll's SWR/ALC/power reads (gated on `isTransmitting`) -- a garbled `t`
+   response would disarm the SWR cutoff on a rig that IS actually keyed, with nothing anywhere surfacing
+   the discrepancy. Fixed to throw `RadioProtocolException`, matching the frequency read's own handling
+   (command-level, so `RadioController` keeps cadence rather than tearing the connection down).
+4. **[risk, rigctld -- the chunk-3b lead, CONFIRMED]** `DisposeAsync` disposed `_requestLock` outright,
+   without ever taking it. Two consequences: an in-flight transaction's own `finally { _requestLock
+   .Release(); }` would throw `ObjectDisposedException`, masking the real in-flight exception (usually
+   the `IOException` from the socket `DisposeAsync` just aborted); and, worse, a caller already queued
+   on `WaitAsync` at that moment would wait forever, since `Release()` throws before incrementing the
+   count and `Dispose()` doesn't fault pending waiters -- a `SetPttAsync(false, CancellationToken.None)`
+   unkey call landing in that exact window would leak, permanently pending, never reaching the wire.
+   Detectable by the caller today only because chunk 3a's own bounded waits catch the resulting hang
+   from the outside, not because this class does anything correct on its own. Fixed with the same
+   `AcquireAsync` pattern as Hamlib (minus the `DisposeAsync` restructure, since this class never held
+   the lock during its own teardown to begin with) -- left without a dedicated test, since the
+   reachable-today severity is narrower (`TcpTransport.OpenAsync`'s own `ObjectDisposedException` guard
+   already catches the more severe resurrection case "by accident," one layer down).
+5. **[nit]** Culture-sensitive integer parsing on 3 wire-protocol values (frequency, PTT, the `RPRT`
+   response code) -- switched to `NumberStyles.Integer, CultureInfo.InvariantCulture`, matching the
+   existing float-meter parser's own already-documented reasoning for the same class of bug.
+
+3 of the 4 substantive findings got new regression tests (Hamlib's two, one for the rigctld PTT
+blocker), each mutation-verified (reverted the fix, confirmed the exact predicted failure, restored).
+
+Full solution suite green: `ScanlineStudio.Core.Radio.Tests` 130/130 (confirmed clean across 5
+consecutive runs, including the new timing-sensitive concurrency test), `ScanlineStudio.Core.Sstv.Tests`
+1022/1022 (1 unrelated intentional skip), every other project passing. Committed as `40349f3`.
+
+Round 1 found real blockers, so it does not count toward the 2-consecutive-clean-round gate. Round 2 is
+next -- the earliest round that can start that count.
