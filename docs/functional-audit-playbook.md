@@ -2823,3 +2823,88 @@ and notably the first round to explicitly verify `SetPttLockAsync`'s own body ag
 rounds 24-25 found elsewhere and find it clean, narrowing where the remaining risk actually lives. Does
 NOT count as chunk 3a's 1st clean round -- round 27 is now the earliest round that can. Twenty-five
 consecutive rounds (2-26) have now each found something real in this file.
+
+**Chunk 3a round 27** (2026-08-21, independent agent, fresh context, agent `a42ce7356bea53355`). Verdict
+EQUIVALENT-WITH-RISKS -- explicitly framed as a possible inflection point (no blocker in rounds 24-26) and
+asked to give round 26's own brand-new `_pttUnkeyEpoch` mechanism fresh, skeptical scrutiny. That scrutiny
+found the mechanism has a real asymmetry with `_pttKeyEpoch`, and a second, independent finding surfaced
+in round 25's own baseline. Not a clean round. **(1) [risk]** `_pttUnkeyEpoch`'s guard answers "did a
+confirmed un-key happen since entry", not "is the rig off NOW" -- a key landing AFTER that confirmed
+un-key but BEFORE cleanup is invisible to it. This is NOT the same instruction-scale residual
+`_pttKeyEpoch`'s own field comment documents and accepts: `_pttKeyEpoch`'s own consumers snapshot
+immediately before their own un-key await (one-await-wide window); `_pttUnkeyEpoch`'s consumer snapshots
+at `PlayWithPttAsync`'s entry and acts in the cleanup `finally` -- a window spanning the ENTIRE
+transmission, potentially minutes. Concrete leak: a transmit keys -> a concurrent `SetPttLockAsync(false)`
+confirms the rig off (`_pttUnkeyEpoch` bumps) -> a LATER `SetPttLockAsync(true)` re-keys it (successfully,
+or fails after physically keying -- either way `_pttKeyEpoch` bumps again, per round-7/8's own established
+rule) -> the ORIGINAL transmit's own cleanup sees `_pttUnkeyEpoch` moved and skips its un-key entirely,
+leaving a genuinely re-keyed rig un-attended, caught only by `DisposeAsync`'s backstop "which may not run
+for hours" (this file's own round-18 wording). A weaker successful-re-key variant instead suppresses the
+round-18 immediate retry on a cancelled/SWR-cutoff transmit specifically. Reachability: production-
+unreachable today (`SetPttLockAsync` has zero production callers) -- **becomes blocker-class the moment
+`SetPttLockAsync` is wired to UI.** The sibling `_pttLeftKeyedByCall` consumer has the identical structural
+gap, but the agent could not construct a harmful case for it (whoever re-keys after a confirmed un-key
+sets either `_pttLocked` or `_pttLeftKeyedByCall` itself, so nothing is lost) -- reported as "covered by
+luck," not an independent bug. **(2) [risk]** round 25's own `pttKeyedOnRealRig` baseline is taken AFTER
+the three bounded device/settings awaits, not before -- a failure in any of them (device not found, no
+device configured, or the `WaitAsync` timeout, all realistic) reproduces verbatim the harm round 25 exists
+to prevent: no Critical, no retry, just a Debug "no radio configured" line, because the code never
+reaches the late baseline assignment at all. `_pttLocked` stays true, so `DisposeAsync`'s backstop still
+catches it -- same residual safety net, same lost-immediacy harm. **(3) [nit]** `unkeyConfirmed = true` in
+the retry-gated cleanup block is dead -- nothing rechecks that block's own outer `if` condition
+afterward.
+
+Explicitly checked and confirmed clean this round: independent `Log.*` enumeration (74 sites, 65 wrapped,
+the 9 unwrapped all confirmed off any PTT/cleanup/fault-observer path, consistent with `SafeLog`'s own
+stated criterion -- no new coverage gap); `_pttUnkeyEpoch` bump-site coverage -- exactly 2
+`SetPttAsync(false)` sites exist in the class and BOTH bump it correctly nested inside their own
+`_pttKeyEpoch` guard, no missing site of the round-21/23 "gap" kind; unguarded non-log operations in
+catch/cleanup/finally re-enumerated (the round-21 `ResetAgc()` class), none found; a full
+permanent-lockout sweep on `_transmitInFlight` re-confirmed every await bounded, including a specific
+re-check of the round-18 "blocks before its first await" class against `_audioEngine.StopCaptureAsync()`
+(genuinely offloaded via `Task.Run` inside `MiniAudioEngine`, so `WaitAsync` is a real bound); shared
+mutable state BEYOND the PTT flags (`_isReceiving`, `_maintenanceWarningActive`, `_disposed`,
+`_transmitInFlight`, the `_keyedTransmitCount`/`_keyedTransmitCompletion` pairing) all found balanced on
+every path with no stale-cache surface (every path re-reads, nothing is cached).
+
+Assumptions flagged (informational): `MiniAudioEngine`'s drain-thread-inline re-entrancy question
+(already flagged unverified by round 15, out of chunk scope) not independently re-verified;
+`ISstvEncoder.EncodeAsync`'s enumerable assumed not to stall indefinitely (the one unbounded PRODUCER
+feeding the pump while PTT is keyed -- `EnqueueAllAsync`'s own stall timer only catches a wedged sink, not
+a wedged source) -- not inspected this round, worth a future round's attention if this angle keeps
+recurring. Off-scope note: a user-initiated `StopReceivingAsync` during a transmit is silently undone by
+the cleanup's own RX resume -- UX wart, outside the 3 failure classes.
+
+**Chunk 3a round 27 fixes applied** (2026-08-21, commit pending). Finding 1: both `_pttUnkeyEpoch`
+consumer sites (the retry-gated cleanup un-key skip, and -- for defense-in-depth, not because a harmful
+case was found -- the `_pttLeftKeyedByCall` write skip) now ALSO require a new `keyEpochAfterOwnKeyAttempt`
+snapshot (`_pttKeyEpoch`, taken right after this call's own key phase completes) to be UNCHANGED before
+trusting the "already off" signal -- erring toward attempting the un-key (this file's own established
+rule) whenever anyone has re-keyed since that point. Finding 2: `pttKeyedOnRealRig`'s baseline read AND
+assignment both moved to this call's own true entry (before the three bounded awaits), as a bare
+`_pttLocked` read separate from `pttLockedAtEntry` (which stays late, deliberately, for its own
+"don't double-key an already-engaged lock" purpose -- the two locals can now genuinely differ if
+`_pttLocked` changes during those awaits, which is correct). First version of this fix moved only the
+READ early but left the ASSIGNMENT at its old late position -- caught immediately by the new regression
+test failing against the "fixed" code, corrected before mutation-testing. Finding 3: the dead
+`unkeyConfirmed = true` write removed, replaced with a comment explaining why.
+
+2 new regression tests:
+`Round27_PlayWithPttAsync_ReKeyFailsAfterConfirmedUnkeyDuringDrain_CleanupStillAttemptsUnkey` (finding 1
+-- uses a re-key that FAILS after physically keying specifically, since a successful re-key would already
+be caught by `pttLockedAtCleanup`'s own round-25 mechanism, needing `_pttLocked` to stay false so only the
+new epoch cross-check can catch it) and
+`Round27_PlayWithPttAsync_LockEngagedThenDeviceResolutionFails_AbnormalTerminationStillLatchesCritical`
+(finding 2 -- an empty output-device list forces `ResolveDeviceAsync` to fail; the cleanup un-key is ALSO
+made to fail, since a succeeding un-key looks identical either way and only a failing one exposes the
+Critical-vs-Debug classification difference). Both mutation-verified with a fresh per-mutation backup
+each, reproducing the exact predicted failure (a skipped cleanup un-key on a re-keyed rig; a Debug
+"no radio configured" line instead of Critical), restored, re-confirmed. 217/217
+`ScanlineStudio.Application.Tests` passing (215 pre-existing + 2 new), full solution suite run in progress
+at time of writing -- confirm clean before treating this round as closed.
+
+Round 27 fixed 2 real risks plus 1 nit -- both risks in code that is EITHER brand new this session
+(`_pttUnkeyEpoch`, round 26) OR from the immediately preceding round (round 25's `pttKeyedOnRealRig`
+baseline), continuing the pattern that this file's newest code is consistently where the next round's
+findings live. Does NOT count as chunk 3a's 1st clean round -- round 28 is now the earliest round that
+can. Twenty-six consecutive rounds (2-27) have now each found something real in this file.
