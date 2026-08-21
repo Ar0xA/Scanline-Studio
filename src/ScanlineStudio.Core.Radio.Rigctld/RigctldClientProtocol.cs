@@ -97,8 +97,7 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
 
     public async Task<RadioState> PollAsync(CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        await AcquireAsync(ct).ConfigureAwait(false);
         try
         {
             await EnsureConnectedAsync(ct).ConfigureAwait(false);
@@ -106,7 +105,7 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
             // Frequency is core to RadioState -- always attempted regardless of the probed
             // capability, unlike mode/PTT below (which have meaningful defaults when absent).
             var freqLine = await GetSingleLineOrThrowAsync("f", ct).ConfigureAwait(false);
-            if (!long.TryParse(freqLine, out var hz))
+            if (!long.TryParse(freqLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out var hz))
             {
                 throw new RadioProtocolException($"rigctld 'f' returned an unparseable frequency: '{freqLine}'.");
             }
@@ -121,7 +120,19 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
             if (Capabilities.HasFlag(RadioCapabilities.PttControl))
             {
                 var pttLine = await GetSingleLineOrThrowAsync("t", ct).ConfigureAwait(false);
-                isTransmitting = int.TryParse(pttLine, out var pttValue) && pttValue != 0;
+                if (!int.TryParse(pttLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pttValue))
+                {
+                    // Throws rather than defaulting to false, matching the frequency read above:
+                    // "not transmitting" is the one wrong guess with physical consequences here, and it
+                    // also suppresses this poll's SWR/ALC/power reads (gated on isTransmitting below),
+                    // so a garbled readback would silently disarm the SWR cutoff on a rig that IS
+                    // keyed. RadioProtocolException is command-level -- RadioController keeps cadence
+                    // and publishes CommandFailed instead of tearing the connection down.
+                    throw new RadioProtocolException(
+                        $"rigctld 't' returned an unparseable PTT state: '{pttLine}'.");
+                }
+
+                isTransmitting = pttValue != 0;
             }
 
             // Meters are TX-only readings on a real rig -- gated on the PTT readback already
@@ -174,8 +185,7 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
 
     public async Task SetFrequencyAsync(long hz, CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        await AcquireAsync(ct).ConfigureAwait(false);
         try
         {
             await EnsureConnectedAsync(ct).ConfigureAwait(false);
@@ -196,7 +206,7 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
                 nameof(mode), mode, "This RadioMode has no rigctld wire-format equivalent.");
         }
 
-        await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        await AcquireAsync(ct).ConfigureAwait(false);
         try
         {
             await EnsureConnectedAsync(ct).ConfigureAwait(false);
@@ -213,8 +223,7 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
 
     public async Task SetPttAsync(bool tx, CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        await AcquireAsync(ct).ConfigureAwait(false);
         try
         {
             await EnsureConnectedAsync(ct).ConfigureAwait(false);
@@ -407,7 +416,7 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         }
 
         var codeText = line["RPRT ".Length..];
-        if (!int.TryParse(codeText, out var code) || code != 0)
+        if (!int.TryParse(codeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var code) || code != 0)
         {
             throw new RadioProtocolException($"rigctld command '{command}' failed: {line}");
         }
@@ -445,6 +454,25 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         }
     }
 
+    /// <summary>Acquires <see cref="_requestLock"/> and re-checks <see cref="_disposed"/> AFTER the
+    /// wait, not only before it -- same reasoning as <c>HamlibRadioProtocol.AcquireAsync</c>'s own doc
+    /// comment. <see cref="DisposeAsync"/> doesn't take this lock at all (unlike Hamlib's), so the
+    /// specific hazard here is narrower -- a caller already queued on <c>WaitAsync</c> when
+    /// <see cref="DisposeAsync"/> runs would otherwise proceed into <see cref="EnsureConnectedAsync"/>
+    /// against an already-disposed <see cref="_transport"/>, today caught only incidentally by
+    /// <c>TcpTransport.OpenAsync</c>'s own <see cref="ObjectDisposedException"/> guard -- correctness
+    /// by accident, not by this class's own design.</summary>
+    private async Task AcquireAsync(CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        if (_disposed)
+        {
+            _requestLock.Release();
+            throw new ObjectDisposedException(nameof(RigctldClientProtocol));
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -454,7 +482,13 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
 
         _disposed = true;
         await _transport.DisposeAsync().ConfigureAwait(false);
-        _requestLock.Dispose();
+        // Deliberately NOT _requestLock.Dispose(): SemaphoreSlim only needs disposal if
+        // AvailableWaitHandle was ever touched (it never is here). Disposing it made an in-flight
+        // transaction's own `finally { _requestLock.Release(); }` throw ObjectDisposedException --
+        // masking the real IOException from the socket the line above just aborted -- and left any
+        // caller already queued on WaitAsync waiting forever, since Release() throws before it
+        // increments the count and Dispose() does not fault pending waiters. A
+        // SetPttAsync(false, CancellationToken.None) landing in that window would never reach the wire.
     }
 
     private static partial class Log
