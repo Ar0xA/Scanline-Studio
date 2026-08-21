@@ -881,9 +881,10 @@ into 3, following Batch 2's precedent:
 
 **Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds (see "Chunk 3a CLOSED" entry near the
 end of this batch's section) -- closed by explicit user decision, not the formal 2-consecutive-clean-
-round gate. Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) in progress -- rounds 1-2 done (2 blockers
-+ 3 risks, then 3 risks + 1 nit, one of round 2's own findings being a gap in round 1's own fix), not
-clean yet, round 3 next. Chunk 3c (`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) not yet started.
+round gate. Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) in progress -- rounds 1-3 done (2 blockers
++ 3 risks; then 3 risks + 1 nit including a gap in round 1's own fix; then a live blocker in the same
+failure class rounds 1-2 were already fixing, plus round 2's own 2 deferred items resolved), not clean
+yet, round 4 next. Chunk 3c (`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) not yet started.
 
 **Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
 never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
@@ -3441,3 +3442,69 @@ Full solution suite green: `ScanlineStudio.Core.Radio.Tests` 124/124, `ScanlineS
 
 Round 2 found real issues, so it does not count toward the 2-consecutive-clean-round gate either. Round
 3 is next -- the earliest round that can start that count.
+
+## Chunk 3b round 3 (2026-08-21)
+
+Fresh independent re-derivation against the post-round-2 code, plus round 2's own two explicitly-
+deferred findings weighed in on fresh.
+
+1. **[blocker]** `TcpTransport.ReadAsync`'s loop-top `ct.ThrowIfCancellationRequested()` -- the branch
+   that fires whenever a response line is ALREADY buffered, the routine case, since
+   `RigctldClientProtocol.ReadLineAsync` opens a fresh enumeration per line and a command like `m`
+   legitimately leaves a second line buffered between them -- threw without calling `AbortConnection()`,
+   unlike the `stream.ReadAsync` catch round 2 already fixed 15 lines below it. `IsOpen` stayed `true`
+   on a desynced buffer, so the next enumeration silently returned the stale buffered tail as its own
+   response, with `RadioController` never seeing a transport error to reconnect on. Reachable from a
+   LIVE production cancellation path, not just teardown: `SstvSessionService.cs:502` passes a real `ct`
+   into `SetPttAsync`, and the protocol instance stays alive afterward. Fixed to match the already-fixed
+   branch. Mutation-verified with a new deterministic test (`ReadAsync_CancelledWithBufferedBytesPending_
+   AbortsConnection`: write two lines, read one to leave the second buffered, cancel a fresh enumeration,
+   assert `IsOpen` is false) -- reverted, confirmed the exact predicted failure, restored.
+2. **[risk]** `WriteAsync` didn't abort on a cancelled write -- same desync class, opposite direction (a
+   half-written command leaves the peer seeing a truncated line; a fully-written one leaves a response
+   nobody will read). Fixed to match the read side. `IRadioTransport`'s contract doc and
+   `FakeRadioTransport` updated on both the read and write side.
+3. **[risk]** An abandoned poll loop (the `PollLoopShutdownTimeout`/`ProtocolDisposeTimeout` bounds from
+   rounds 1-2 expiring while a call stayed wedged) could still publish `StateChanges`/`ConnectionEvents`
+   AFTER `DisconnectAsync` already published `Disconnected` once the wedged call finally returned --
+   `LastKnownState` non-null on a session-less controller, or a status strip latched on `Reconnecting`
+   for a radio that isn't connected. Harmless in today's shape (the only real `DisconnectAsync` caller is
+   `DisposeAsync` at app exit) but live the moment a user-initiated reconnect exists. Fixed with early
+   returns guarded on `ct.IsCancellationRequested` at both catch blocks and before the success-path
+   `PublishState` call.
+4. **Round 2's deferred item 10** (a `CompareExchange`-ordering gap in the reconnect path, needing a
+   ~10s preemption window to bite) -- confirmed narrow by round 3's own independent re-derivation, but
+   the fix is free (4 lines): re-check `ct.IsCancellationRequested` AFTER claiming the protocol slot via
+   `CompareExchange`, not only before. Taken.
+5. **Round 2's deferred item 11** (nothing serializes `ConnectAsync`/`DisconnectAsync`/`DisposeAsync`
+   against each other) -- round 3 traced every production caller (`Program.cs`'s single blocking startup
+   connect and its host-dispose-at-exit call; `RadioSessionService` is a pure pass-through; no UI
+   view-model calls connect/disconnect at all) and confirmed round 2's own assessment: a genuine
+   contract-documentation gap, not a live code defect today. Fixed with an explicit
+   "lifecycle calls are not internally serialized" paragraph added to `IRadioController.ConnectAsync`'s
+   doc comment (referenced from `DisconnectAsync`'s), stating the real hazard (a `DisconnectAsync`
+   landing inside a concurrent `ConnectAsync`'s own teardown-then-resolve window can no-op while the
+   session it meant to stop keeps polling) so a future caller with a real concurrent-lifecycle need
+   knows to add its own serialization.
+
+Also fixed alongside, mechanical: `ReadAsync`'s null-check-then-capture of `_stream` swapped to
+capture-then-null-check (matching `WriteAsync`'s own round-2 fix -- a racing `AbortConnection` between
+the two statements would otherwise throw `NullReferenceException` instead of the guarded
+`InvalidOperationException`); `FakeRadioTransport.CloseAsync` now routes through `AbortConnection()`
+(previously left the read buffer un-reset, unlike the real transport); `ConnectAsync`'s success-path
+logging now reads the local `resolved` instead of re-reading the `_protocol` field (a synchronous
+`ConnectionEvents` subscriber reacting to `Connected` by calling `DisconnectAsync` inline could otherwise
+null the field before the log call, throwing `NullReferenceException`).
+
+One real fast regression test added and mutation-verified (finding 1, above). Findings 2-5 and the
+mechanical fixes are either doc-only, narrow-race hardening, or matched to an already-covered sibling
+pattern -- judged correct by code review, consistent with this project's practice of not chasing a slow
+test for every finding when a faster equivalent already exists nearby (see round 2's own
+`ProtocolDisposeTimeout` precedent).
+
+Full solution suite green: `ScanlineStudio.Core.Radio.Tests` 125/125 (confirmed clean across 5
+consecutive runs), `ScanlineStudio.Core.Sstv.Tests` 1022/1022 (1 unrelated intentional skip), every
+other project passing. Committed as `33eb82a`.
+
+Round 3 found a real blocker, so it does not count toward the 2-consecutive-clean-round gate. Round 4 is
+next -- the earliest round that can start that count.
