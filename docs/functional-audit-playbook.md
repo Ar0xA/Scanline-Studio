@@ -5520,4 +5520,50 @@ Chunking:
 - **10c** `OptionsSettingsService.cs` (285) + `LogbookSessionService.cs` (150) +
   `RadioSessionService.cs` (139) -- orchestration/session services (574 lines combined), last chunk.
 
-Dispatching 10a now.
+## Chunk 10a round 1: MaidenheadLocator.cs
+
+Not a legacy port (confirmed via a real grep across the whole legacy tree -- zero DIST/BEAM
+references anywhere). Pure function, single round per this batch's own downgraded rigor.
+
+Verdict: go for production as-is. Real functional bug found and fixed -- for an exactly antipodal
+grid pair, the haversine intermediate `a` is mathematically 1.0 but the floating-point sum of the two
+squared terms can land 1 ulp above 1.0, making `1 - a` negative and `Math.Sqrt` produce NaN, silently
+rendering "NaN km" in a TX overlay instead of a real distance. Antipodal grid pairs are genuinely
+reachable (arbitrary operator-typed grids, e.g. JN58/AE51). Fixed with `Math.Max(0.0, 1 - a)`. All
+other math (Maidenhead field/square/subsquare cell conversion, haversine distance, forward-azimuth
+bearing, the 360-wrap in `FormatBearing`) independently hand-traced and confirmed correct against the
+standard definitions, not a legacy comparison since none exists.
+
+**Fixed two doc-comment inaccuracies and one dead-code nit**: the subsquare-centering comment
+incorrectly claimed the field/square math above it "already centers" (it computes the SW corner, not
+a centered value -- all centering happens in the two branches below it); a real-world grid-label
+comment misidentified JN58tc as Frankfurt (it's Munich) and FN31pr as "New York area" (it's Hartford,
+CT, ~150km away) -- doesn't affect the test's wide assertion ranges, but misleads anyone re-deriving
+expected values by hand; removed a redundant, unreachable `g.Length % 2 != 0` check (4 and 6 are both
+already even).
+
+**Real coverage gaps closed, all mutation-verified except one honestly reported as not
+discriminating**: `TryToLatLon` previously had zero direct lat/lon value assertions -- the entire
+parsing/centering math was validated only through a wide indirect distance range, so swapping the
+4-character centering constants (+0.5 lon/+1.0 lat instead of the correct +1.0/+0.5) would have left
+every existing test green. Added a value-pinning test with four independently hand-derived expected
+values (re-verified by hand against the standard Maidenhead cell-size definitions, not copied from
+the implementation), mutation-verified: the swapped-constant mutation fails exactly the predicted case
+(`"JN58"` expects lat 48.5, mutant produces 49). Added the exact-360-wrap case for `FormatBearing`
+(the one behavior its own doc comment specifically argues for), mutation-verified: removing the
+`% 360` wrap produces `"360°"` instead of `"000°"` for both 359.5 and 359.6, exactly as predicted.
+**Honest limitation**: the antipodal-NaN regression test (`JN58`/`AE51`) does NOT reliably fail when
+the `Math.Max` clamp is removed -- on this platform, `sin²(48.5°)+cos²(48.5°)` happens to round to
+<=1.0 via the Pythagorean identity, so the specific IEEE-754 overflow the fix guards against didn't
+manifest for this pair in this test run. The underlying hazard is real and the fix is still correct
+defensive code; the test pins current correct output but isn't proven to catch a regression removing
+the clamp.
+
+Auditor's verdict: go for production as-is -- no round 2 needed, per this batch's own single-round
+default.
+
+Full `ScanlineStudio.Application.Tests` run: 228 passed, 0 failed.
+
+## Chunk 10a CLOSED
+
+Chunks 10b-10c remain open.
