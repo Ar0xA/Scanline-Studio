@@ -2507,3 +2507,69 @@ site defeats the surrounding safety property one frame deeper" pattern that has 
 round from 19 through 22 -- each round's own "exhaustive" sweep claim disproven by the next round's fresh
 enumeration. Does NOT count as chunk 3a's 1st clean round -- round 23 is now the earliest round that can.
 Twenty-one consecutive rounds (2-22) have now each found something real in this file.
+
+**Chunk 3a round 23** (2026-08-21, independent agent, fresh context, agent `a5548695f41255f4e`). Verdict
+EQUIVALENT-WITH-RISKS. A fresh, independent enumeration of all 67 `Log.*` call sites found round 22's own
+completeness claim disproven a fourth time, but only barely -- 2 sites remained, both in the same short
+`if (RigId != "none") { ...key... } else { ...skip... }` block. **(1) [risk]** `Log.PttKeyed(_logger)`
+(the key-succeeded branch) is THE ONE `Log.*` call in the entire file that executes while a real
+transmitter is physically keyed -- more sensitive than any site fixed in rounds 20-22, all of which sit
+either before key-up or inside a cleanup/catch region. State (`_pttKeyEpoch`, `pttKeyedOnRealRig`) is
+latched BEFORE this line, so a throw here was never a leaked-transmitter (failure class 1) risk -- but it
+WAS a transmission-destruction (failure class 2) risk: a transient logging-provider failure landing in
+this exact window used to abort an otherwise-healthy transmit immediately after key-up, before any audio
+was ever sent -- a bare carrier key-up/key-down burst on air, with the very `PlaybackFailed` log that
+would explain why also swallowed by the same broken provider. Explicitly noted as risk, not blocker,
+given the state-latching order. **(2) [nit]** `Log.PttSkippedNoRadio(_logger)` (the no-radio branch) --
+same shape, but PTT is never touched on this path, so the only harm is a transient logging failure
+aborting a no-radio-configured transmit with a bogus exception type instead of completing normally.
+
+Explicitly checked and confirmed already-handled this round, stated rather than left silent: no unguarded
+non-log operation remains in any of the file's 36 catch/finally bodies (walked all of them -- every one is
+`Interlocked.*`/a plain field write/`SafeLog`/`ContinueWith`/a guarded `await`; the sole non-`SafeLog`
+throwable, `new CancellationTokenSource(_cleanupTimeout)`, is unreachable with the production 5s value);
+`StopReceivingAsync`'s "can no longer throw" claim (relied on by `PlayWithPttAsync`'s bare `await`) holds,
+re-verified directly against `MiniAudioEngine`'s current source (field-like event, lock-free unsubscribe);
+`StopReceivingAsync`'s 5s `StopCapture` watchdog is confirmed a REAL bound for non-drain-thread callers
+(`MiniAudioEngine.cs` offloads the blocking `Dispose()` via `Task.Run`); `DisposeAsync`'s 4-state
+rig-reachability claim re-verified directly against `NoneRadioProtocol`/`RadioController` source, not
+assumed; `SetPttLockAsync`'s UNLOCK direction publishing no `_keyedTransmitCompletion` registration
+(unlike the LOCK direction) traced through and confirmed NOT a leak -- `DisposeAsync`'s 4-state backstop
+still always fires and queues its own bounded un-key FIFO behind any in-flight one; `_pttLocked`'s
+unlock-direction write is safe despite not being epoch-guarded, since `_pttLockGate` already serializes
+it and `PlayWithPttAsync` never writes `_pttLocked` true; every await reachable while
+`_transmitInFlight == 1` re-confirmed bounded. Round-22's 2 open items (nit 9,
+the 3 decoder-command dispatch logs) re-examined with no new reasoning found -- left as previously judged.
+
+Assumptions the agent flagged as unverified (informational, not findings): whether
+`CancellationToken.Register` on an already-disposed `CancellationTokenSource` (a narrow abandoned-task
+edge case) is a no-op or throws was not confirmed against runtime source -- if it does throw, the agent
+traced that the consequence is confined to an already-timed-out abandoned resume task with no PTT/
+`_transmitInFlight` impact; `OnDecoderRestartCriticallyOverdue`'s drain-thread deadlock-freedom claim
+(already flagged unverified by round 15, out of chunk scope) not independently re-checked further.
+Off-scope notes: an abandoned RX-resume completing during a LATER transmit can start capture while PTT is
+keyed (own-signal into the decoder) -- inherent to the abandoned-task design rounds 18-21 accepted, not a
+finding; `DisposeAsync` has no idempotency early-return, but a double call is benign (every step re-runs
+harmlessly or early-returns).
+
+**Chunk 3a round 23 fixes applied** (2026-08-21, commit pending). Both findings fixed via `SafeLog` --
+`Log.PttKeyed` and `Log.PttSkippedNoRadio` both wrapped, closing the physically-keyed-window gap.
+
+New regression test:
+`Round23_PlayWithPttAsync_PttKeyedLoggingFails_TransmitStillCompletesNormally` -- sets
+`ThrowOnMessageContaining = "PTT keyed"` and asserts a normal `TransmitAsync` call now completes
+successfully (not aborted) with the correct key-then-unkey PTT sequence. Mutation-verified: reverted the
+`SafeLog` wrap on `Log.PttKeyed` (fresh backup taken immediately before this specific mutation, per the
+round-22 process-hygiene lesson -- see `PROJECT_BRIEF.md`), reproduced the exact predicted failure
+(`SimulatedLoggingProviderFailureException` propagating and aborting the transmit instead of it
+completing normally), restored from that fresh backup (confirmed via `git diff --stat` showing only the
+2 intended fix hunks, not a full revert), rebuilt clean, re-confirmed passing. 210/210
+`ScanlineStudio.Application.Tests` passing (209 pre-existing + 1 new), full solution suite run in progress
+at time of writing -- confirm clean before treating this round as closed.
+
+Round 23 fixed 1 risk plus 1 nit -- the smallest round since round 20 in raw finding count, but the risk
+finding is arguably the most sensitive site in the whole `SafeLog` sweep (the only log call inside the
+physically-keyed window itself), and the round's own thorough re-verification of rounds 17-22's prior
+trust-boundary claims (all confirmed still holding, not just asserted) is real audit value beyond the 2
+new findings. Does NOT count as chunk 3a's 1st clean round -- round 24 is now the earliest round that can.
+Twenty-two consecutive rounds (2-23) have now each found something real in this file.

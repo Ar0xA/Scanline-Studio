@@ -1606,11 +1606,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
                         // Round-5 finding: see _pttKeyEpoch's own doc comment.
                         Interlocked.Increment(ref _pttKeyEpoch);
-                        Log.PttKeyed(_logger);
+                        // Round-23 finding (risk): the ONE Log.* call in the whole file that executes
+                        // while a real transmitter is physically keyed -- was still unwrapped. A
+                        // transient logging-provider failure landing in this exact window (the state
+                        // latches above already correctly mark this key attempt, so no state-latching
+                        // write is skipped -- just a risk, not a blocker) used to abort the transmit
+                        // with the raw logging exception instead of a caller-recognizable type, and
+                        // swallow the very PlaybackFailed log that would have explained why.
+                        SafeLog(() => Log.PttKeyed(_logger));
                     }
                     else
                     {
-                        Log.PttSkippedNoRadio(_logger);
+                        // Round-23 finding (nit): same shape, no-radio branch -- PTT is never touched
+                        // here, so the only harm is a transient logging failure aborting a no-radio
+                        // transmit with a bogus exception type.
+                        SafeLog(() => Log.PttSkippedNoRadio(_logger));
                     }
                 }
 
